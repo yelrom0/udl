@@ -9,40 +9,32 @@ SQLAlchemyDatabase: the base for SQL database plugins, usable with any SQLAlchem
 # System Imports
 from abc import abstractmethod
 from contextlib import contextmanager
-from typing import Final, Generator, Optional
+from typing import Any, Final, Generator, Optional
 
 # Package Imports
+from sqlalchemy import Engine
 from sqlalchemy import inspect as sa_inspect
 from sqlmodel import create_engine, Session, SQLModel
 
 DEFAULT_DB_PATH: Final[str] = "sqlite:///database.db"
 
 
-class SQLAlchemyDatabase(object):
-    _instances = {}
-
-    def __new__(cls, *args, **kwargs):
-        if cls not in cls._instances:
-            cls._instances[cls] = super().__new__(cls)
-        return cls._instances[cls]
+class SQLAlchemyDatabase:
+    """One database connection. Each instance owns its own engine, so several can coexist."""
 
     def __init__(
         self,
-        db_url: Optional[str] = DEFAULT_DB_PATH,
-        echo: Optional[bool] = False,
+        db_url: str = DEFAULT_DB_PATH,
+        *,
+        echo: bool = False,
     ) -> None:
-        if not hasattr(
-            self,
-            "_initialized",
-        ):
-            self._engine: Engine = create_engine(
-                url=db_url,
-                echo=echo,
-            )
-            self._initialized = True
+        self._engine: Engine = create_engine(
+            url=db_url,
+            echo=echo,
+        )
 
     @property
-    def engine(self):
+    def engine(self) -> Engine:
         return self._engine
 
     @contextmanager
