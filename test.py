@@ -14,7 +14,7 @@ import uuid
 from sqlmodel import SQLModel, table, Field
 
 # Local Imports
-from src.plugins.databases.sqllite import SQLLiteEngine
+from udl.plugins.databases.sqllite import SQLLiteEngine
 
 
 class TestModel1(SQLModel, table=True):
