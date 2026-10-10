@@ -1,0 +1,47 @@
+[project]
+name = "udl"
+version = "0.1.0"
+description = "Ultra Downloader: works out how to download a URL, remembers it per site, and exposes it via CLI, API and MCP"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "aiosqlite>=0.22.1",
+    "fastapi>=0.143.0",
+    "gallery-dl>=1.32.16",
+    "granian>=2.8.4",
+    "httpx>=0.28.1",
+    "mcp>=2.3.0",
+    "platformdirs>=4.12.4",
+    "pydantic-settings>=2.15.0",
+    "rich>=15.0.0",
+    "selectolax>=1.0.0",
+    "sqlmodel>=0.0.48",
+    "tldextract>=5.4.0",
+    "typer>=0.27.3",
+    "yt-dlp>=2026.8.19",
+]
+
+[project.optional-dependencies]
+browser = [
+    "playwright>=1.63.0",
+]
+postgres = [
+    "psycopg[binary]>=3.3.6",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.24,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.168.5",
+    "pyright[nodejs]>=1.1.414",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "pytest-httpserver>=1.2.0",
+    "respx>=0.23.1",
+    "ruff>=0.17.0",
+    "types-yt-dlp>=2026.8.19.20261008",
+]
