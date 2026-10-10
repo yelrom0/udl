@@ -8,13 +8,14 @@ SQLAlchemyDatabase: the base for SQL database plugins, usable with any SQLAlchem
 
 # System Imports
 from abc import abstractmethod
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
-from typing import Any, Final, Generator, Optional
+from typing import Any, Final
 
 # Package Imports
 from sqlalchemy import Engine
 from sqlalchemy import inspect as sa_inspect
-from sqlmodel import create_engine, Session, SQLModel
+from sqlmodel import Session, SQLModel, create_engine, select
 
 DEFAULT_DB_PATH: Final[str] = "sqlite:///database.db"
 
@@ -37,9 +38,22 @@ class SQLAlchemyDatabase:
     def engine(self) -> Engine:
         return self._engine
 
+    def connect(self) -> None:
+        """Open the database for use: creates the schema if it is missing."""
+        self.migrate()
+
+    def migrate(self) -> None:
+        """Create any missing tables for the registered models. Safe to run repeatedly."""
+        SQLModel.metadata.create_all(self._engine)
+
+    def close(self) -> None:
+        """Close every pooled connection."""
+        self._engine.dispose()
+
     @contextmanager
-    def session(self) -> Generator[Session, None, None]:
-        with Session(self._engine) as s:
+    def session(self) -> Generator[Session]:
+        # expire_on_commit=False keeps models usable after their session has closed.
+        with Session(self._engine, expire_on_commit=False) as s:
             yield s
 
     @contextmanager
@@ -54,10 +68,11 @@ class SQLAlchemyDatabase:
 
     def add(
         self,
-        models: type[SQLModel] | list[type[SQLModel]],
+        models: SQLModel | Sequence[SQLModel],
         s: Session | None = None,
-        commit_session: Optional[bool] = True,
+        commit_session: bool = True,
     ) -> None:
+        """Insert model instances. Without `commit_session`, the caller's session must commit."""
         if s is None:
             with self.session() as s:
                 self._do_add(
@@ -74,27 +89,27 @@ class SQLAlchemyDatabase:
 
     def _do_add(
         self,
-        models: type[SQLModel] | list[type[SQLModel]],
+        models: SQLModel | Sequence[SQLModel],
         s: Session,
-        commit_session: Optional[bool] = True,
-    ):
-        if isinstance(models, list):
-            for m in models:
-                SQLModel.metadata.create_all(self._engine, tables=[m.__table__])
-        else:
-            SQLModel.metadata.create_all(self._engine, tables=[models.__table__])
-
+        commit_session: bool = True,
+    ) -> None:
+        s.add_all([models] if isinstance(models, SQLModel) else models)
         self._do_commit(s, commit_session)
 
     def _do_commit(
         self,
         s: Session,
-        commit_session: Optional[bool] = True,
-    ):
+        commit_session: bool = True,
+    ) -> None:
         if commit_session:
             s.commit()
 
-    def list(self) -> None:
+    def list_rows[T: SQLModel](self, model: type[T]) -> list[T]:
+        """Return every row of `model`'s table."""
+        with self.session() as s:
+            return list(s.exec(select(model)).all())
+
+    def list_tables(self) -> None:
         """Print tables and their columns from the database."""
         insp = sa_inspect(self._engine)
         tables = insp.get_table_names()
