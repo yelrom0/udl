@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>A page rendered by JavaScript</title>
+</head>
+<body>
+  <h1>A page rendered by JavaScript</h1>
+  <div id="player"></div>
+  <script>
+    // The media URL only exists once this script runs, so a static scraper finds nothing.
+    const name = ["sam", "ple"].join("");
+    const video = document.createElement("video");
+    video.src = "/" + ["media", name].join("/") + "." + ["m", "p", "4"].join("");
+    video.controls = true;
+    document.getElementById("player").appendChild(video);
+  </script>
+</body>
+</html>

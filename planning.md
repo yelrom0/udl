@@ -13,7 +13,7 @@
 Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task only when it meets the
 [Definition of Done](#definition-of-done-applies-to-every-task).
 
-- [ ] **Phase 0: Foundations, tooling & cleanup**
+- [x] **Phase 0: Foundations, tooling & cleanup**
   - [x] 0.1 `git init` + `.gitignore` (`.venv/`, `__pycache__/`, `*.db`, coverage output)
   - [x] 0.2 Move package management to **uv** (see [Package management](#package-management-uv))
     - [x] 0.2.1 Install uv (`sudo pacman -S uv`) and add a user-level `~/.config/uv/uv.toml` with `link-mode = "clone"` so every project's `.venv` reflinks from one shared cache
@@ -26,7 +26,7 @@ Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task
   - [x] 0.6 🔴→🟢 Test that two DB instances with different URLs coexist, then remove the per-class singleton
   - [x] 0.7 `Settings` model (pydantic-settings): TOML file + `UDL_*` env vars + `platformdirs` defaults
   - [x] 0.8 `UDLError` hierarchy + logging setup
-  - [ ] 0.9 Test fixture site: a local HTTP server with a direct file, a `<video>` page, an iframe embed, a JS-rendered page and a cookie-gated (401) page
+  - [x] 0.9 Test fixture site: a local HTTP server with a direct file, a `<video>` page, an iframe embed, a JS-rendered page and a cookie-gated (401) page
 
 - [ ] **Phase 1: Plugin system & database layer**
   - [ ] 1.1 Plugin registry: entry points (`udl.databases`, `udl.downloaders`, `udl.sites`) + local plugin dir
@@ -227,6 +227,7 @@ src/udl/
 tests/
   conftest.py
   fixtures/site/            # HTML pages + small media files served by the fixture server
+  support/                  # shared helpers imported as `support.*` (fixture_site.py: FixtureSite, Page)
   unit/  contract/  integration/  interface/  smoke/
 ```
 
@@ -277,6 +278,7 @@ udl = "udl.interfaces.cli.app:main"
 dev = [
   "pytest", "pytest-asyncio", "pytest-cov", "pytest-httpserver", "respx",
   "hypothesis", "pyright[nodejs]", "ruff", "types-yt-dlp",
+  "udl[browser]",                      # so pyright and the browser tests always have playwright
 ]
 
 [build-system]

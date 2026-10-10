@@ -8,10 +8,19 @@ Fixtures shared by every test
 
 # System Imports
 import os
+from collections.abc import Iterator
 from pathlib import Path
 
 # Package Imports
 import pytest
+
+# Local Imports
+from support.fixture_site import FixtureSite
+
+TESTS_DIR = Path(__file__).parent
+
+# Tests in these directories get these markers; `network` is deselected by default.
+_LAYER_MARKERS = {"integration": "integration", "smoke": "network"}
 
 # Playwright looks for its browsers under XDG_CACHE_HOME, which the tests point elsewhere,
 # so pin the real location before isolating.
@@ -44,3 +53,19 @@ def isolated_user_dirs(
         if name.startswith("UDL_"):
             monkeypatch.delenv(name)
     return home
+
+
+@pytest.hookimpl(tryfirst=True)  # before -m deselects anything
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Mark tests by layer: tests/integration -> integration, tests/smoke -> network."""
+    for item in items:
+        layer = item.path.relative_to(TESTS_DIR).parts[0]
+        if marker := _LAYER_MARKERS.get(layer):
+            item.add_marker(marker)
+
+
+@pytest.fixture(scope="session")
+def fixture_site() -> Iterator[FixtureSite]:
+    """The local fixture site (tests/support/fixture_site.py), served for the whole run."""
+    with FixtureSite.serve() as site:
+        yield site
