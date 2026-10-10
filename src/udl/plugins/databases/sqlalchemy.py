@@ -9,15 +9,13 @@ SQLAlchemyDatabase: the base for SQL database plugins, usable with any SQLAlchem
 # System Imports
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
-from typing import Final, cast
+from typing import cast
 
 # Package Imports
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Engine, Table
 from sqlalchemy import inspect as sa_inspect
 from sqlmodel import Session, SQLModel, create_engine, delete, select
-
-DEFAULT_DB_PATH: Final[str] = "sqlite:///database.db"
 
 
 class ColumnInfo(BaseModel):
@@ -45,7 +43,7 @@ class SQLAlchemyDatabase:
 
     def __init__(
         self,
-        db_url: str = DEFAULT_DB_PATH,
+        db_url: str,
         *,
         echo: bool = False,
     ) -> None:

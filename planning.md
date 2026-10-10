@@ -20,9 +20,9 @@ Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task
     - [x] 0.2.2 Write `pyproject.toml` (`uv_build` backend, src layout, `browser` + `postgres` extras, `dev` dependency group, `py.typed`) + `.python-version` (`uv python pin 3.14`); add deps with `uv add`
     - [x] 0.2.3 Delete `requirements.txt` and the pip-built `.venv`, run `uv sync`, generate `uv.lock` (commit it in 0.1); all deps import on Python 3.14.7
     - [x] 0.2.4 Check shared disk usage with `btrfs filesystem du`: `.venv` is 556M apparent but only 25 MiB exclusive
-  - [ ] 0.3 Quality tooling: pytest (+ asyncio, cov, respx, pytest-httpserver, hypothesis), pyright **strict**, ruff; a single `make check` command; pre-commit hook (including `uv-lock`); coverage gate
-  - [ ] 0.4 Restructure into the `src/udl/` package (see [Layout](#project-layout))
-  - [ ] 0.5 🔴→🟢 Write regression tests for each existing DB bug (replacing `test.py`), then fix them (see [Phase 0 notes](#phase-0-notes-existing-code-issues))
+  - [x] 0.3 Quality tooling: pytest (+ asyncio, cov, respx, pytest-httpserver, hypothesis), pyright **strict**, ruff; a single `make check` command; pre-commit hook (including `uv-lock`); coverage gate
+  - [x] 0.4 Restructure into the `src/udl/` package (see [Layout](#project-layout))
+  - [x] 0.5 🔴→🟢 Write regression tests for each existing DB bug (replacing `test.py`), then fix them (see [Phase 0 notes](#phase-0-notes-existing-code-issues))
   - [x] 0.6 🔴→🟢 Test that two DB instances with different URLs coexist, then remove the per-class singleton
   - [ ] 0.7 `Settings` model (pydantic-settings): TOML file + `UDL_*` env vars + `platformdirs` defaults
   - [ ] 0.8 `UDLError` hierarchy + logging setup
@@ -299,13 +299,19 @@ build-backend = "uv_build"
 ### `make check`
 
 ```make
+export UV_LOCKED := 1                # every uv command fails if uv.lock is out of date with pyproject.toml
+
 check:
-	uv sync --locked                 # fails if uv.lock is out of date with pyproject.toml
+	uv lock --check
 	uv run ruff format --check .
 	uv run ruff check .
 	uv run pyright
-	uv run pytest --cov=udl --cov-branch --cov-fail-under=90
+	uv run pytest --cov              # branch coverage + the 90 % gate live in [tool.coverage]
 ```
+
+It deliberately avoids `uv sync --locked`: that sync is exact, so it would uninstall extras installed with
+`uv sync --all-extras` (e.g. playwright) on every run. `uv run` syncs inexactly. The coverage threshold lives
+in `pyproject.toml` so the ratchet has one home. `make fmt` applies ruff's formatting and fixes.
 
 The pre-commit hooks are `astral-sh/uv-pre-commit` (`uv-lock`, which keeps `uv.lock` in sync) plus a local hook
 that runs `make check`.

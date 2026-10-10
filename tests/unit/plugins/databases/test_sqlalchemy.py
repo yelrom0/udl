@@ -136,10 +136,14 @@ def test_transaction_commits_when_the_block_succeeds(db: SQLAlchemyDatabase) -> 
 
 
 def test_transaction_rolls_back_and_reraises_when_the_block_fails(db: SQLAlchemyDatabase) -> None:
-    with pytest.raises(RuntimeError, match="boom"), db.transaction() as s:
-        s.add(SampleA(msg="rolled back"))
-        s.flush()
-        raise RuntimeError("boom")
+    def fail_after_writing() -> None:
+        with db.transaction() as s:
+            s.add(SampleA(msg="rolled back"))
+            s.flush()
+            raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        fail_after_writing()
 
     assert db.list_rows(SampleA) == []
 
