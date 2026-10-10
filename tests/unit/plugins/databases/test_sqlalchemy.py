@@ -99,3 +99,19 @@ def test_added_models_stay_usable_after_add_returns(db: SQLAlchemyDatabase) -> N
     db.add(model)
 
     assert model.msg == "still here"
+
+
+def test_transaction_commits_when_the_block_succeeds(db: SQLAlchemyDatabase) -> None:
+    with db.transaction() as s:
+        s.add(SampleA(msg="committed"))
+
+    assert _messages(db, SampleA) == ["committed"]
+
+
+def test_transaction_rolls_back_and_reraises_when_the_block_fails(db: SQLAlchemyDatabase) -> None:
+    with pytest.raises(RuntimeError, match="boom"), db.transaction() as s:
+        s.add(SampleA(msg="rolled back"))
+        s.flush()
+        raise RuntimeError("boom")
+
+    assert db.list_rows(SampleA) == []

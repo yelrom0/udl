@@ -10,7 +10,7 @@ SQLAlchemyDatabase: the base for SQL database plugins, usable with any SQLAlchem
 from abc import abstractmethod
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
-from typing import Any, Final
+from typing import Final
 
 # Package Imports
 from sqlalchemy import Engine
@@ -57,8 +57,9 @@ class SQLAlchemyDatabase:
             yield s
 
     @contextmanager
-    def transacrion(self) -> Generator[Session, Any, None]:
-        with Session(self._engine) as s:
+    def transaction(self) -> Generator[Session]:
+        """A session that commits when the block succeeds and rolls back when it raises."""
+        with self.session() as s:
             try:
                 yield s
                 s.commit()
