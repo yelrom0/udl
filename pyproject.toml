@@ -44,6 +44,7 @@ dev = [
     "respx>=0.23.1",
     "ruff>=0.17.0",
     "types-yt-dlp>=2026.8.19.20261008",
+    "udl[browser]",
 ]
 
 # ---------------------------------------------------------------------------------------------
@@ -127,3 +128,6 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["udl"]
+
+[tool.uv.sources]
+udl = { workspace = true }

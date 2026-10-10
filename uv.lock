@@ -1622,6 +1622,7 @@ dev = [
     { name = "respx" },
     { name = "ruff" },
     { name = "types-yt-dlp" },
+    { name = "udl", extra = ["browser"] },
 ]
 
 [package.metadata]
@@ -1656,6 +1657,7 @@ dev = [
     { name = "respx", specifier = ">=0.23.1" },
     { name = "ruff", specifier = ">=0.17.0" },
     { name = "types-yt-dlp", specifier = ">=2026.8.19.20261008" },
+    { name = "udl", extras = ["browser"], editable = "." },
 ]
 
 [[package]]
