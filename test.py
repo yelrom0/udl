@@ -14,7 +14,7 @@ import uuid
 from sqlmodel import SQLModel, table, Field
 
 # Local Imports
-from udl.plugins.databases.sqllite import SQLLiteEngine
+from udl.plugins.databases.sqlite import SQLitePlugin
 
 
 class TestModel1(SQLModel, table=True):
@@ -31,7 +31,7 @@ def test_sql_lite():
     """
     TODO: Adding and Transactions are broken (when adding with no commit), need to fix
     """
-    sql_lite: SQLLiteEngine = SQLLiteEngine()
+    sql_lite: SQLitePlugin = SQLitePlugin()
     # should be empty
     print(f"Should be empty:\n{sql_lite.list()}")
     sql_lite.add(models=TestModel1(), commit_session=False)

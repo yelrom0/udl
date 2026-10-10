@@ -1,9 +1,9 @@
 """
------------
-- base.py -
------------
+-----------------
+- sqlalchemy.py -
+-----------------
 
-Custom base database engine object (DBEngine) outlining the methods required to connect to DBs
+SQLAlchemyDatabase: the base for SQL database plugins, usable with any SQLAlchemy URL
 """
 
 # System Imports
@@ -18,7 +18,7 @@ from sqlmodel import create_engine, Session, SQLModel
 DEFAULT_DB_PATH: Final[str] = "sqlite:///database.db"
 
 
-class DBBase(object):
+class SQLAlchemyDatabase(object):
     _instances = {}
 
     def __new__(cls, *args, **kwargs):

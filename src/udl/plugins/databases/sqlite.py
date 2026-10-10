@@ -1,9 +1,9 @@
 """
---------------
-- sqllite.py -
---------------
+-------------
+- sqlite.py -
+-------------
 
-Connecting to an embedded sqllite database
+Connecting to an embedded SQLite database
 """
 
 # System Imports
@@ -14,8 +14,8 @@ from sqlalchemy import engine
 from sqlmodel import create_engine, Session, SQLModel
 
 # Local Imports
-from .base import DBBase
+from .sqlalchemy import SQLAlchemyDatabase
 
 
-class SQLLiteEngine(DBBase):
+class SQLitePlugin(SQLAlchemyDatabase):
     pass
