@@ -45,3 +45,82 @@ dev = [
     "ruff>=0.17.0",
     "types-yt-dlp>=2026.8.19.20261008",
 ]
+
+# ---------------------------------------------------------------------------------------------
+# Quality tooling: `make check` runs all of it (see Makefile)
+# ---------------------------------------------------------------------------------------------
+
+[tool.pytest]
+minversion = "9.0"
+testpaths = ["tests"]
+# Shared test helpers live in tests/support and are imported as `support.*`.
+pythonpath = ["tests"]
+addopts = ["--import-mode=importlib", "-ra", "-m", "not network"]
+strict = true
+filterwarnings = ["error"]
+markers = [
+    "integration: real tools or the local fixture site (auto-applied to tests/integration)",
+    "network: talks to real sites, opt-in with `pytest -m network` (auto-applied to tests/smoke)",
+]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+branch = true
+source = ["udl"]
+
+[tool.coverage.report]
+# Ratchet upwards, never down.
+fail_under = 90
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+    "raise NotImplementedError",
+]
+
+[tool.pyright]
+include = ["src", "tests"]
+typeCheckingMode = "strict"
+pythonVersion = "3.14"
+venvPath = "."
+venv = ".venv"
+extraPaths = ["tests"]
+reportUnnecessaryTypeIgnoreComment = "error"
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+src = ["src", "tests"]
+
+[tool.ruff.format]
+# Leave the hand-aligned snippets in planning.md / README.md alone.
+exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F",  # pycodestyle, pyflakes
+    "I",            # isort
+    "N",            # pep8-naming
+    "UP",           # pyupgrade
+    "B",            # bugbear
+    "A",            # builtin shadowing
+    "C4",           # comprehensions
+    "SIM",          # simplify
+    "PT",           # pytest style
+    "PTH",          # pathlib over os.path
+    "RET",          # return statements
+    "RUF",          # ruff-specific
+    "ASYNC",        # async pitfalls
+    "TID",          # tidy imports
+    "BLE",          # blind except
+    "S",            # bandit (security)
+    "T20",          # no print(): interfaces render, library code logs
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]  # assert is how pytest tests are written
+
+[tool.ruff.lint.isort]
+known-first-party = ["udl"]
