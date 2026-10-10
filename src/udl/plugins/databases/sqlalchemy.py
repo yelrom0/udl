@@ -7,17 +7,37 @@ SQLAlchemyDatabase: the base for SQL database plugins, usable with any SQLAlchem
 """
 
 # System Imports
-from abc import abstractmethod
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
-from typing import Final
+from typing import Final, cast
 
 # Package Imports
-from sqlalchemy import Engine
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy import Engine, Table
 from sqlalchemy import inspect as sa_inspect
 from sqlmodel import Session, SQLModel, create_engine, delete, select
 
 DEFAULT_DB_PATH: Final[str] = "sqlite:///database.db"
+
+
+class ColumnInfo(BaseModel):
+    """One column of a table, as reflected from the database."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    type: str
+    nullable: bool
+
+
+class TableInfo(BaseModel):
+    """A table's name, primary key and columns, as reflected from the database."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    primary_key: list[str]
+    columns: list[ColumnInfo]
 
 
 class SQLAlchemyDatabase:
@@ -110,20 +130,20 @@ class SQLAlchemyDatabase:
         with self.session() as s:
             return list(s.exec(select(model)).all())
 
-    def list_tables(self) -> None:
-        """Print tables and their columns from the database."""
+    def list_tables(self) -> list[TableInfo]:
+        """Describe every table in the database (its primary key and columns)."""
         insp = sa_inspect(self._engine)
-        tables = insp.get_table_names()
-        if not tables:
-            print("No tables found.")
-            return
-        for t in tables:
-            cols = insp.get_columns(t)
-            pk = [c["name"] for c in cols if c.get("primary_key")]
-            print(f"\n{t}  (pk: {', '.join(pk) or '—'})")
-            for c in cols:
-                nullable = "" if c["nullable"] else " NOT NULL"
-                print(f"  {c['name']:>20}  {c['type']}{nullable}")
+        return [
+            TableInfo(
+                name=t,
+                primary_key=insp.get_pk_constraint(t)["constrained_columns"],
+                columns=[
+                    ColumnInfo(name=c["name"], type=str(c["type"]), nullable=c["nullable"])
+                    for c in insp.get_columns(t)
+                ],
+            )
+            for t in insp.get_table_names()
+        ]
 
     def delete(self, model: type[SQLModel], s: Session | None = None, **filters: object) -> int:
         """Delete rows matching filters. Returns count of deleted rows.
@@ -142,5 +162,7 @@ class SQLAlchemyDatabase:
         return s.exec(stmt).rowcount
 
     def drop(self, model: type[SQLModel]) -> None:
-        """Drop the table entirely."""
-        model.__table__.drop(self._engine)
+        """Drop the table entirely. connect() creates it again."""
+        # A SQLModel table model always maps a Table; inspect() only types it as a FromClause.
+        table = cast(Table, sa_inspect(model).local_table)
+        table.drop(self._engine)

@@ -8,7 +8,7 @@ Regression tests for SQLAlchemyDatabase (they replace the old test.py script)
 
 # System Imports
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 # Package Imports
@@ -17,7 +17,7 @@ from sqlalchemy import inspect as sa_inspect
 from sqlmodel import Field, SQLModel
 
 # Local Imports
-from udl.plugins.databases.sqlalchemy import SQLAlchemyDatabase
+from udl.plugins.databases.sqlalchemy import ColumnInfo, SQLAlchemyDatabase
 
 
 class SampleA(SQLModel, table=True):
@@ -30,25 +30,52 @@ class SampleB(SQLModel, table=True):
     msg: str = "SampleB"
 
 
+type MakeDB = Callable[[str], SQLAlchemyDatabase]
+
+
 @pytest.fixture
-def db(tmp_path: Path) -> Iterator[SQLAlchemyDatabase]:
-    database = SQLAlchemyDatabase(f"sqlite:///{tmp_path / 'test.db'}")
+def make_db(tmp_path: Path) -> Iterator[MakeDB]:
+    """Create (unconnected) databases in tmp_path by file name; all are closed afterwards."""
+    created: list[SQLAlchemyDatabase] = []
+
+    def make(name: str) -> SQLAlchemyDatabase:
+        created.append(SQLAlchemyDatabase(f"sqlite:///{tmp_path / name}"))
+        return created[-1]
+
+    yield make
+    for database in created:
+        database.close()
+
+
+@pytest.fixture
+def db(make_db: MakeDB) -> SQLAlchemyDatabase:
+    database = make_db("test.db")
     database.connect()
-    yield database
-    database.close()
+    return database
 
 
 def _messages(db: SQLAlchemyDatabase, model: type[SampleA | SampleB]) -> list[str]:
     return sorted(row.msg for row in db.list_rows(model))
 
 
-def test_instances_with_different_urls_coexist(tmp_path: Path) -> None:
-    first = SQLAlchemyDatabase(f"sqlite:///{tmp_path / 'first.db'}")
-    second = SQLAlchemyDatabase(f"sqlite:///{tmp_path / 'second.db'}")
+def test_instances_with_different_urls_coexist(tmp_path: Path, make_db: MakeDB) -> None:
+    first = make_db("first.db")
+    second = make_db("second.db")
 
     assert first is not second
     assert first.engine.url.database == str(tmp_path / "first.db")
     assert second.engine.url.database == str(tmp_path / "second.db")
+
+
+def test_instances_with_different_urls_store_data_separately(make_db: MakeDB) -> None:
+    first, second = make_db("first.db"), make_db("second.db")
+    first.connect()
+    second.connect()
+
+    first.add(SampleA(msg="only in first"))
+
+    assert _messages(first, SampleA) == ["only in first"]
+    assert second.list_rows(SampleA) == []
 
 
 def test_connect_creates_tables_for_registered_models(db: SQLAlchemyDatabase) -> None:
@@ -145,3 +172,29 @@ def test_delete_in_a_callers_session_is_committed_by_the_caller(db: SQLAlchemyDa
         s.commit()
 
     assert db.list_rows(SampleA) == []
+
+
+def test_list_tables_returns_the_schema_instead_of_printing_it(
+    db: SQLAlchemyDatabase, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tables = {table.name: table for table in db.list_tables()}
+
+    assert tables["samplea"].primary_key == ["id"]
+    assert tables["samplea"].columns[1] == ColumnInfo(name="msg", type="VARCHAR", nullable=False)
+    assert capsys.readouterr().out == ""
+
+
+def test_list_tables_is_empty_before_connect(make_db: MakeDB) -> None:
+    assert make_db("empty.db").list_tables() == []
+
+
+def test_drop_removes_the_table_until_connect_recreates_it(db: SQLAlchemyDatabase) -> None:
+    db.add(SampleB())
+
+    db.drop(SampleB)
+    after_drop = {table.name for table in db.list_tables()}
+    db.connect()
+
+    assert "sampleb" not in after_drop
+    assert "samplea" in after_drop
+    assert db.list_rows(SampleB) == []
