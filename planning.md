@@ -24,7 +24,7 @@ Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task
   - [x] 0.4 Restructure into the `src/udl/` package (see [Layout](#project-layout))
   - [x] 0.5 🔴→🟢 Write regression tests for each existing DB bug (replacing `test.py`), then fix them (see [Phase 0 notes](#phase-0-notes-existing-code-issues))
   - [x] 0.6 🔴→🟢 Test that two DB instances with different URLs coexist, then remove the per-class singleton
-  - [ ] 0.7 `Settings` model (pydantic-settings): TOML file + `UDL_*` env vars + `platformdirs` defaults
+  - [x] 0.7 `Settings` model (pydantic-settings): TOML file + `UDL_*` env vars + `platformdirs` defaults
   - [x] 0.8 `UDLError` hierarchy + logging setup
   - [ ] 0.9 Test fixture site: a local HTTP server with a direct file, a `<video>` page, an iframe embed, a JS-rendered page and a cookie-gated (401) page
 
