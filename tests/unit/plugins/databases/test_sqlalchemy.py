@@ -115,3 +115,33 @@ def test_transaction_rolls_back_and_reraises_when_the_block_fails(db: SQLAlchemy
         raise RuntimeError("boom")
 
     assert db.list_rows(SampleA) == []
+
+
+def test_delete_commits_and_returns_the_number_of_rows_removed(db: SQLAlchemyDatabase) -> None:
+    db.add([SampleA(msg="a1"), SampleA(msg="a2"), SampleB()])
+
+    removed = db.delete(SampleA)
+
+    assert removed == 2
+    assert db.list_rows(SampleA) == []
+    assert _messages(db, SampleB) == ["SampleB"]
+
+
+def test_delete_with_filters_only_removes_matching_rows(db: SQLAlchemyDatabase) -> None:
+    db.add([SampleA(msg="a1"), SampleA(msg="a2")])
+
+    removed = db.delete(SampleA, msg="a1")
+
+    assert removed == 1
+    assert _messages(db, SampleA) == ["a2"]
+
+
+def test_delete_in_a_callers_session_is_committed_by_the_caller(db: SQLAlchemyDatabase) -> None:
+    db.add(SampleA(msg="a1"))
+
+    with db.session() as s:
+        db.delete(SampleA, s)
+        assert _messages(db, SampleA) == ["a1"]
+        s.commit()
+
+    assert db.list_rows(SampleA) == []

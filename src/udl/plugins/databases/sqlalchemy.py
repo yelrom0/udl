@@ -15,7 +15,7 @@ from typing import Final
 # Package Imports
 from sqlalchemy import Engine
 from sqlalchemy import inspect as sa_inspect
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, delete, select
 
 DEFAULT_DB_PATH: Final[str] = "sqlite:///database.db"
 
@@ -125,21 +125,21 @@ class SQLAlchemyDatabase:
                 nullable = "" if c["nullable"] else " NOT NULL"
                 print(f"  {c['name']:>20}  {c['type']}{nullable}")
 
-    def delete(self, model: type[SQLModel], s: Session | None = None, **filters) -> int:
-        """Delete rows matching filters. Returns count of deleted rows."""
+    def delete(self, model: type[SQLModel], s: Session | None = None, **filters: object) -> int:
+        """Delete rows matching filters. Returns count of deleted rows.
+
+        Without `s` the delete is committed; in the caller's session the caller commits.
+        """
         if s is None:
-            with self.session() as s:
+            with self.transaction() as s:
                 return self._do_delete(model, s, **filters)
         return self._do_delete(model, s, **filters)
 
-    def _do_delete(self, model: type[SQLModel], s: Session, **filters) -> int:
+    def _do_delete(self, model: type[SQLModel], s: Session, **filters: object) -> int:
         stmt = delete(model)
         if filters:
             stmt = stmt.where(*[getattr(model, k) == v for k, v in filters.items()])
-        result = s.execute(stmt)
-        if s is not None and not s.in_transaction():
-            s.commit()
-        return result.rowcount
+        return s.exec(stmt).rowcount
 
     def drop(self, model: type[SQLModel]) -> None:
         """Drop the table entirely."""
