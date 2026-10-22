@@ -13,6 +13,7 @@ Strategies and downloads refer to their site by its key, which is the same in ev
 # System Imports
 import re
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -148,19 +149,25 @@ class Outcome(_Frozen):
     at: AwareDatetime = pydantic.Field(default_factory=utcnow)
 
 
-class SiteQuery(_Frozen):
+class _Paged(_Frozen):
+    limit: PositiveInt | None = None
+    offset: NonNegativeInt = 0
+
+    def page[T](self, items: Sequence[T]) -> list[T]:
+        """The page of `items` (already filtered and in order) that this query asks for."""
+        end = None if self.limit is None else self.offset + self.limit
+        return list(items[self.offset : end])
+
+
+class SiteQuery(_Paged):
     """Which sites to list. Sites are listed by key."""
 
     # Case-insensitive text to find in the key or name.
     search: str | None = None
-    limit: PositiveInt | None = None
-    offset: NonNegativeInt = 0
 
 
-class DownloadQuery(_Frozen):
+class DownloadQuery(_Paged):
     """Which downloads to list. Downloads are listed newest first."""
 
     site_key: str | None = None
     status: JobStatus | None = None
-    limit: PositiveInt | None = None
-    offset: NonNegativeInt = 0

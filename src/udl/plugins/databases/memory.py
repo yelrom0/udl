@@ -7,7 +7,6 @@ A database that lives in memory: for tests, and for runs that should remember no
 """
 
 # System Imports
-from collections.abc import Sequence
 from uuid import UUID
 
 # Package Imports
@@ -34,10 +33,6 @@ from .base import DatabasePlugin
 def _copy[M: SQLModel](model_type: type[M], model: M) -> M:
     """A validated deep copy, so callers and the store never share a model."""
     return model_type.model_validate(model.model_dump())
-
-
-def _page[T](items: Sequence[T], limit: int | None, offset: int) -> list[T]:
-    return list(items[offset : offset + limit if limit else None])
 
 
 class MemoryDatabase(DatabasePlugin):
@@ -78,7 +73,7 @@ class MemoryDatabase(DatabasePlugin):
                 for site in sites
                 if term in site.key.lower() or (site.name and term in site.name.lower())
             ]
-        return [_copy(Site, site) for site in _page(sites, query.limit, query.offset)]
+        return [_copy(Site, site) for site in query.page(sites)]
 
     async def upsert_site(self, site: Site) -> Site:
         if stored := self._sites.get(site.key):
@@ -145,4 +140,4 @@ class MemoryDatabase(DatabasePlugin):
             if query.site_key in (None, record.site_key) and query.status in (None, record.status)
         ]
         records.sort(key=download_order, reverse=True)
-        return [_copy(DownloadRecord, r) for r in _page(records, query.limit, query.offset)]
+        return [_copy(DownloadRecord, r) for r in query.page(records)]
