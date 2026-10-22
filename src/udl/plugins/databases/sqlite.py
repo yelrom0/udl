@@ -9,8 +9,10 @@ The default database: one SQLite file
 # System Imports
 import asyncio
 from pathlib import Path
+from typing import Any
 
 # Package Imports
+from sqlalchemy import Connection, event
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 # Local Imports
@@ -20,6 +22,14 @@ from udl.errors import ConfigError
 from .sqlalchemy import SQLAlchemyDatabase
 
 _DRIVER = "sqlite+aiosqlite"
+
+
+def _no_implicit_transactions(dbapi_connection: Any, _: Any) -> None:
+    dbapi_connection.isolation_level = None
+
+
+def _begin(conn: Connection) -> None:
+    conn.exec_driver_sql("BEGIN")
 
 
 class SQLitePlugin(SQLAlchemyDatabase):
@@ -46,10 +56,18 @@ class SQLitePlugin(SQLAlchemyDatabase):
 
     def _create_engine(self) -> AsyncEngine:
         if self._file is None:
-            return create_async_engine(self.url)
-        # One connection, shared in turn: SQLite allows one writer at a time, and concurrent
-        # transactions on separate connections can fail with "database is locked".
-        return create_async_engine(self.url, pool_size=1, max_overflow=0)
+            engine = create_async_engine(self.url)
+        else:
+            # One connection, shared in turn: SQLite allows one writer at a time, and concurrent
+            # transactions on separate connections can fail with "database is locked".
+            engine = create_async_engine(self.url, pool_size=1, max_overflow=0)
+        # The sqlite3 module only begins a transaction before INSERT/UPDATE/DELETE, so schema
+        # changes would be committed as they run. Let SQLAlchemy begin every transaction instead,
+        # so a migration that fails leaves nothing behind. (The recipe from SQLAlchemy's docs:
+        # "Serializable isolation / Savepoints / Transactional DDL".)
+        event.listen(engine.sync_engine, "connect", _no_implicit_transactions)
+        event.listen(engine.sync_engine, "begin", _begin)
+        return engine
 
     async def connect(self) -> None:
         # SQLite creates the database file, but not the directory it lives in.

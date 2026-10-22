@@ -8,20 +8,36 @@ SQLAlchemyDatabase: the base for SQL database plugins, usable with any async SQL
 The domain models are mapped onto tables of udl's own (the *Table classes), in a registry of their
 own so they never mix with other SQLModel tables. A SQL plugin is then mostly a name, a URL scheme
 and a driver dependency.
+
+Schema versioning: the schema_version table holds the version of udl's tables in the database.
+migrate() (run by connect()) creates a new database at the current version, and brings one made
+by an older udl up to date by running the `migrations` it lacks, all in one transaction. So a
+change to the tables needs a migration appended to SQLAlchemyDatabase.migrations.
 """
 
 # System Imports
+import logging
 import re
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from uuid import UUID, uuid4
 
 # Package Imports
 from pydantic import AwareDatetime, TypeAdapter
-from sqlalchemy import JSON, BigInteger, DateTime, Dialect, TypeDecorator, func, or_
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Connection,
+    DateTime,
+    Dialect,
+    TypeDecorator,
+    func,
+    insert,
+    or_,
+)
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import ArgumentError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -47,6 +63,11 @@ from udl.db.models import (
 from udl.errors import ConfigError, DatabaseError, ErrorInfo
 
 from .base import DatabasePlugin
+
+log = logging.getLogger(__name__)
+
+type Migration = Callable[[Connection], None]
+"""A step that upgrades the schema by one version, e.g. `conn.exec_driver_sql("ALTER TABLE …")`."""
 
 # ---------------------------------------------------------------------------------------------
 # Column types: store the domain models' Python types faithfully
@@ -143,6 +164,13 @@ class DownloadRecordTable(DownloadRecord, _Table, table=True):
     error: ErrorInfo | None = Field(default=None, sa_type=PydanticJSON(ErrorInfo))
 
 
+class SchemaVersionTable(_Table, table=True):
+    """The version of udl's tables in this database (a single row)."""
+
+    id: int = Field(default=1, primary_key=True)
+    version: int
+
+
 def _site(row: SiteTable) -> Site:
     return Site.model_validate(row, from_attributes=True)
 
@@ -166,6 +194,9 @@ class SQLAlchemyDatabase(DatabasePlugin):
     Each instance owns its own engine (created by connect()), so several can coexist.
     """
 
+    # migrations[n] upgrades the schema from version n + 1 to n + 2.
+    migrations: ClassVar[Sequence[Migration]] = ()
+
     def __init__(self, connection: DBConnectionConfig) -> None:
         super().__init__(connection)
         try:
@@ -175,6 +206,11 @@ class SQLAlchemyDatabase(DatabasePlugin):
                 f"The database connection {connection.name!r} has an invalid URL: {e}"
             ) from e
         self._engine: AsyncEngine | None = None
+
+    @property
+    def schema_version(self) -> int:
+        """The schema version this code creates and uses."""
+        return 1 + len(self.migrations)
 
     def _create_engine(self) -> AsyncEngine:
         """Subclasses can tune the engine (pooling, dialect options) here."""
@@ -199,9 +235,34 @@ class SQLAlchemyDatabase(DatabasePlugin):
     async def migrate(self) -> None:
         try:
             async with self.engine.begin() as conn:
-                await conn.run_sync(_registry.metadata.create_all)
+                await conn.run_sync(self._migrate)
         except SQLAlchemyError as e:
             raise self._error(e) from e
+
+    def _migrate(self, conn: Connection) -> None:
+        name = self.connection.name
+        versions = _registry.metadata.tables[SchemaVersionTable.__tablename__]
+        versions.create(conn, checkfirst=True)
+        stored: int | None = conn.execute(select(versions.c.version)).scalar_one_or_none()
+        if stored is None:
+            _registry.metadata.create_all(conn)
+            conn.execute(insert(versions).values(id=1, version=self.schema_version))
+            return
+        if stored > self.schema_version:
+            raise DatabaseError(
+                f"The {name!r} database has schema version {stored}, but this udl only knows "
+                f"versions up to {self.schema_version}",
+                hint="Upgrade udl to use this database.",
+            )
+        for version in range(stored + 1, self.schema_version + 1):
+            log.info("Migrating the %r database to schema version %d", name, version)
+            try:
+                self.migrations[version - 2](conn)
+            except Exception as e:
+                raise DatabaseError(
+                    f"Could not migrate the {name!r} database to schema version {version}: {e}"
+                ) from e
+            conn.execute(update(versions).values(version=version))
 
     async def health(self) -> bool:
         if self._engine is None:

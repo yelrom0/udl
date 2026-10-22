@@ -72,7 +72,12 @@ async def test_connect_creates_udls_tables_and_no_others(tmp_path: Path, make_db
     async with make_db("udl.db"):
         pass
 
-    assert table_names(tmp_path / "udl.db") == {"site", "strategy", "download_record"}
+    assert table_names(tmp_path / "udl.db") == {
+        "schema_version",
+        "site",
+        "strategy",
+        "download_record",
+    }
 
 
 async def test_connect_and_close_can_be_repeated(make_db: MakeDB) -> None:
