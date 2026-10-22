@@ -17,6 +17,8 @@ from typing import ClassVar
 
 # Package Imports
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 from pydantic import JsonValue, SecretStr, ValidationError
 
 # Local Imports
@@ -46,7 +48,9 @@ from udl.plugins.downloaders.base import (
     RequirementKind,
     cookie_header,
     default_downloader_for,
+    render_template,
     run_blocking,
+    template_parts,
     threadsafe,
 )
 
@@ -563,3 +567,80 @@ def test_media_candidates_need_a_url() -> None:
 
 def test_by_default_a_downloader_cannot_tell_offline_whether_it_handles_a_url() -> None:
     assert Echo().match(URL) is None
+
+
+# ---------------------------------------------------------------------------------------------
+# Filename templates
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "/abs/{title}.{ext}",  # absolute
+        "../{title}.{ext}",  # escapes the output dir
+        "a/../../{title}.{ext}",
+        "{title:>10}.{ext}",  # format specs, conversions and positional fields are not fields
+        "{title!r}.{ext}",
+        "{0}.{ext}",
+        "{}.{ext}",
+        "{title.upper}.{ext}",
+        "{title",  # unbalanced
+        "",
+    ],
+)
+def test_a_bad_filename_template_is_rejected(template: str, tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="filename_template"):
+        DownloadContext(url=URL, output_dir=tmp_path, filename_template=template)
+
+
+def test_a_filename_template_may_have_folders(tmp_path: Path) -> None:
+    ctx = DownloadContext(url=URL, output_dir=tmp_path, filename_template="{site}/{title}.{ext}")
+
+    assert ctx.filename_template == "{site}/{title}.{ext}"
+
+
+def test_a_template_splits_into_literal_text_and_fields() -> None:
+    assert template_parts("{title} [{id}].{ext}") == [
+        ("", "title"),
+        (" [", "id"),
+        ("].", "ext"),
+    ]
+    assert template_parts("100% {{literal}}") == [("100% {literal}", None)]
+
+
+def test_rendering_fills_in_the_fields() -> None:
+    assert render_template(
+        "{site}/{title}.{ext}", {"site": "a.com", "title": "Clip", "ext": "mp4"}
+    ) == ("a.com/Clip.mp4")
+
+
+def test_a_missing_field_renders_as_na() -> None:
+    assert render_template("{title} [{id}].{ext}", {"title": "Clip", "ext": "mp4"}) == (
+        "Clip [NA].mp4"
+    )
+
+
+@pytest.mark.parametrize(
+    ("title", "rendered"),
+    [
+        ("a/b", "a_b.mp4"),
+        ("..", "_.mp4"),
+        ("../../etc/passwd", ".._.._etc_passwd.mp4"),
+        ("nul\0byte", "nul_byte.mp4"),
+        ("", "NA.mp4"),
+    ],
+)
+def test_field_values_cannot_add_folders(title: str, rendered: str) -> None:
+    assert render_template("{title}.{ext}", {"title": title, "ext": "mp4"}) == rendered
+
+
+@given(
+    st.dictionaries(st.sampled_from(["site", "title", "ext"]), st.text()),
+)
+def test_a_rendered_template_never_leaves_the_output_dir(fields: dict[str, str]) -> None:
+    rendered = Path(render_template("{site}/{title}.{ext}", fields))
+
+    assert not rendered.is_absolute()
+    assert ".." not in rendered.parts
+    assert len(rendered.parts) == 2

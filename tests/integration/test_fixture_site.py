@@ -64,6 +64,17 @@ def test_the_video_page_points_at_the_direct_file(fixture_site: FixtureSite) -> 
     assert src_of(html, "video > source[type='video/mp4']") == Page.DIRECT_FILE
 
 
+def test_the_videos_page_has_two_videos(fixture_site: FixtureSite) -> None:
+    html = httpx.get(fixture_site.url(Page.VIDEOS)).text
+
+    sources = [node.attributes.get("src") for node in LexborHTMLParser(html).css("video > source")]
+
+    assert sources == [Page.DIRECT_FILE, Page.OTHER_FILE]
+    assert httpx.get(fixture_site.url(Page.OTHER_FILE)).content == fixture_site.content(
+        Page.DIRECT_FILE
+    )
+
+
 def test_the_embed_page_leads_through_its_iframe_to_the_file(fixture_site: FixtureSite) -> None:
     embed_url = fixture_site.url(Page.EMBED)
 

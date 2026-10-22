@@ -18,11 +18,12 @@ import functools
 import importlib.util
 import logging
 import shutil
+import string
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Self, cast
 from urllib.parse import urlsplit
 
@@ -313,6 +314,60 @@ class DownloadResult(_Frozen):
     handed_off_to: str | None = None  # the downloader that downloaded the media, if not `tool`
 
 
+# ---------------------------------------------------------------------------------------------
+# Filename templates, e.g. "{site}/{title}.{ext}"
+# ---------------------------------------------------------------------------------------------
+
+
+def template_parts(template: str) -> list[tuple[str, str | None]]:
+    """A filename template as (literal text, field name) pairs; text after the last field has
+    the name None. Fields are plain names: `{title}`, not `{title:>10}` or `{0}`. `{{` and `}}`
+    are a literal brace. Raises ValueError."""
+    parts: list[tuple[str, str | None]] = []
+    text = ""
+    for literal, field, spec, conversion in string.Formatter().parse(template):
+        text += literal
+        if field is None:
+            continue
+        if not field.isidentifier() or spec or conversion is not None:
+            raise ValueError(
+                f"{{{field}}} in {template!r} is not a plain field name like {{title}}"
+            )
+        parts.append((text, field))
+        text = ""
+    if text:
+        parts.append((text, None))
+    return parts
+
+
+def _check_template(template: str) -> str:
+    if not template:
+        raise ValueError("the filename template is empty")
+    skeleton = PurePosixPath(
+        "".join(text + ("x" if field else "") for text, field in template_parts(template))
+    )
+    if skeleton.is_absolute() or ".." in skeleton.parts:
+        raise ValueError(f"the filename template {template!r} must stay inside the output dir")
+    return template
+
+
+def _safe_field(value: str | None) -> str:
+    """A field's value as one path segment: it can never add a folder or leave one."""
+    if not value:
+        return "NA"
+    value = value.replace("/", "_").replace("\0", "_")
+    return "_" if value in (".", "..") else value
+
+
+def render_template(template: str, fields: Mapping[str, str]) -> str:
+    """The relative path a filename template gives with these field values (missing ones are
+    "NA"). Only the template's own `/` make folders."""
+    return "".join(
+        text + ("" if field is None else _safe_field(fields.get(field)))
+        for text, field in template_parts(template)
+    )
+
+
 class _Context(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
 
@@ -351,7 +406,7 @@ class DownloadContext(ProbeContext):
 
     output_dir: Path  # where the files go
     # e.g. "{title}.{ext}"; None leaves the naming to the tool. Each tool translates it.
-    filename_template: str | None = None
+    filename_template: Annotated[str, AfterValidator(_check_template)] | None = None
     progress: ProgressSink = _ignore_progress
     downloader_for: DownloaderLookup = default_downloader_for
 

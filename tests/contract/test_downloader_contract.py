@@ -20,10 +20,10 @@ from typing import Any, Final
 
 # Package Imports
 import pytest
-from pydantic import SecretStr
 
 # Local Imports
 from support.downloaders import FakeDownloader, FakeMedia, FakeOptions
+from support.downloads import session_cookie
 from support.fixture_site import COOKIE_NAME, COOKIE_VALUE, FixtureSite, Page
 from udl.errors import (
     AuthRequired,
@@ -36,7 +36,6 @@ from udl.errors import (
 )
 from udl.plugins.downloaders.base import (
     CancelToken,
-    Cookie,
     DownloadContext,
     Downloader,
     DownloadProgress,
@@ -45,6 +44,7 @@ from udl.plugins.downloaders.base import (
     ProbeResult,
     Requirement,
 )
+from udl.plugins.registry import DOWNLOADERS, PluginRegistry
 
 # A cancelled download must stop this soon (the slow file takes far longer to download).
 CANCEL_WITHIN: Final[float] = 3.0
@@ -81,9 +81,19 @@ def fake(site: FixtureSite) -> Case:
     return Case(FakeDownloader(options), site, Page.DIRECT_FILE, Page.PRIVATE_FILE, Page.SLOW_FILE)
 
 
+def installed(name: str) -> Downloader[Any]:
+    """A downloader found the way udl finds it (by entry point), with its default options."""
+    return PluginRegistry.discover().get(DOWNLOADERS, name)()
+
+
+def ytdlp(site: FixtureSite) -> Case:
+    return Case(installed("yt-dlp"), site, Page.DIRECT_FILE, Page.PRIVATE_FILE, Page.SLOW_FILE)
+
+
 # How to get each downloader, and the pages it is meant for.
 CASES: dict[str, Callable[[FixtureSite], Case]] = {
     "fake": fake,
+    "yt-dlp": ytdlp,
 }
 
 
@@ -108,11 +118,6 @@ def workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def files_under(*dirs: Path) -> set[Path]:
     return {path for directory in dirs for path in directory.rglob("*") if path.is_file()}
-
-
-def session_cookie(site: FixtureSite) -> Cookie:
-    host = site.url("/").split("//")[1].split(":")[0]
-    return Cookie(name=COOKIE_NAME, value=SecretStr(COOKIE_VALUE), domain=host)
 
 
 # ---------------------------------------------------------------------------------------------
