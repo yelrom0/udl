@@ -15,6 +15,7 @@ cancelled token stops both.
 # System Imports
 import asyncio
 import functools
+import http.cookiejar
 import importlib.util
 import logging
 import shutil
@@ -148,6 +149,31 @@ class Cookie(_Frozen):
         if self.secure and parts.scheme.lower() != "https":
             return False
         return self.expires is None or self.expires > utcnow()
+
+    def to_http_cookie(self) -> http.cookiejar.Cookie:
+        """This cookie for a standard library cookie jar (yt-dlp's, or a requests session's)."""
+        domain = self.domain
+        if "." not in domain.strip("."):
+            # The cookie jar matches a dotless host (e.g. localhost) as "localhost.local".
+            domain = f"{domain.strip('.')}.local"
+        return http.cookiejar.Cookie(
+            version=0,
+            name=self.name,
+            value=self.value.get_secret_value(),
+            port=None,
+            port_specified=False,
+            domain=domain,
+            domain_specified=True,
+            domain_initial_dot=domain.startswith("."),
+            path=self.path,
+            path_specified=True,
+            secure=self.secure,
+            expires=int(self.expires.timestamp()) if self.expires else None,
+            discard=self.expires is None,
+            comment=None,
+            comment_url=None,
+            rest={"HttpOnly": ""} if self.http_only else {},
+        )
 
 
 def cookie_header(cookies: list[Cookie], url: str) -> str | None:

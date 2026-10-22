@@ -9,7 +9,6 @@ every probe and download; cancelling raises from its progress hook.
 
 # System Imports
 import functools
-import http.cookiejar
 import logging
 import urllib.request
 import weakref
@@ -31,7 +30,6 @@ from yt_dlp.utils import DownloadError as YtDlpDownloadError
 from udl.errors import Cancelled, DownloadError
 from udl.plugins.downloaders.base import (
     CancelToken,
-    Cookie,
     DownloadContext,
     Downloader,
     DownloaderOptions,
@@ -143,31 +141,6 @@ def outtmpl(template: str | None) -> str:
     )
 
 
-def _jar_cookie(cookie: Cookie) -> http.cookiejar.Cookie:
-    domain = cookie.domain
-    if "." not in domain.strip("."):
-        # The cookie jar matches a dotless host (e.g. localhost) as "localhost.local".
-        domain = f"{domain.strip('.')}.local"
-    return http.cookiejar.Cookie(
-        version=0,
-        name=cookie.name,
-        value=cookie.value.get_secret_value(),
-        port=None,
-        port_specified=False,
-        domain=domain,
-        domain_specified=True,
-        domain_initial_dot=domain.startswith("."),
-        path=cookie.path,
-        path_specified=True,
-        secure=cookie.secure,
-        expires=int(cookie.expires.timestamp()) if cookie.expires else None,
-        discard=cookie.expires is None,
-        comment=None,
-        comment_url=None,
-        rest={"HttpOnly": ""} if cookie.http_only else {},
-    )
-
-
 def _error(e: YtDlpDownloadError) -> DownloadError:
     cause = e.exc_info[1] if e.exc_info else None
     if isinstance(cause, HTTPError):
@@ -268,7 +241,7 @@ class YtDlpDownloader(Downloader[YtDlpOptions]):
         try:
             with _YoutubeDL(params) as ydl:
                 for cookie in ctx.cookies:
-                    ydl.cookiejar.set_cookie(_jar_cookie(cookie))
+                    ydl.cookiejar.set_cookie(cookie.to_http_cookie())
                 info = ydl.extract_info(ctx.url, download=report is not None)
         except DownloadCancelled as e:
             raise Cancelled("The download was cancelled") from e

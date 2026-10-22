@@ -5,7 +5,8 @@
 
 A small local website for integration tests: a direct file, a <video> page, an iframe embed,
 a JavaScript-rendered page, a cookie-gated (401) page, a page without media, a page with two
-videos and a file that downloads slowly (to cancel). The pages live in tests/fixtures/site.
+videos, an image gallery and a file that downloads slowly (to cancel). The pages live in
+tests/fixtures/site.
 """
 
 # System Imports
@@ -48,6 +49,8 @@ class Page(StrEnum):
     SLOW = "/slow.html"  # <video><source> pointing at SLOW_FILE
     OTHER_FILE = "/media/other.mp4"  # a second MP4 (the same bytes as DIRECT_FILE)
     VIDEOS = "/videos.html"  # two <video>s: DIRECT_FILE, then OTHER_FILE
+    IMAGE = "/media/pixel.png"  # a small PNG
+    GALLERY = "/gallery.html"  # two <img>s: IMAGE, and one that is not found
 
 
 # The file served for each page, and whether it needs the session cookie.
@@ -63,6 +66,8 @@ _FILES: Final[dict[Page, tuple[str, bool]]] = {
     Page.SLOW: ("slow.html", False),
     Page.OTHER_FILE: ("media/sample.mp4", False),
     Page.VIDEOS: ("videos.html", False),
+    Page.IMAGE: ("media/pixel.png", False),
+    Page.GALLERY: ("gallery.html", False),
 }
 
 

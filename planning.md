@@ -42,7 +42,7 @@ Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task
   - [x] 2.1 `Downloader` ABC, per-plugin `Options` model, `ProbeResult` / `DownloadResult` models + **contract test suite**; add the `udl.downloaders` `PluginKind` to `PLUGIN_KINDS`
   - [x] 2.2 Error taxonomy mapping (table-driven tests per tool: `AuthRequired`, `Unsupported`, `RateLimited`, …)
   - [x] 2.3 `yt-dlp` (in-process API, offline extractor match, `extract_info(download=False)`, progress hooks)
-  - [ ] 2.4 `gallery-dl` (offline `extractor.find()`, in-process job)
+  - [x] 2.4 `gallery-dl` (offline `extractor.find()`, in-process job)
   - [ ] 2.5 `http` direct-file downloader: `httpx` by default, `curl` / `wget` backends when installed, resume support
   - [ ] 2.6 `scraper` (static HTML, `selectolax`): heuristic media discovery, then hand off to `http` / `yt-dlp`
   - [ ] 2.7 `browser` (Playwright): network sniffing for media/manifest URLs + cookie capture, then hand off

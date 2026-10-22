@@ -75,6 +75,18 @@ def test_the_videos_page_has_two_videos(fixture_site: FixtureSite) -> None:
     )
 
 
+def test_the_gallery_has_an_image_and_a_missing_one(fixture_site: FixtureSite) -> None:
+    html = httpx.get(fixture_site.url(Page.GALLERY)).text
+
+    sources = [node.attributes.get("src") for node in LexborHTMLParser(html).css("img")]
+
+    assert sources == [Page.IMAGE, "/media/missing.png"]
+    image = httpx.get(fixture_site.url(Page.IMAGE))
+    assert image.headers["content-type"] == "image/png"
+    assert image.content.startswith(b"\x89PNG")
+    assert httpx.get(fixture_site.url("/media/missing.png")).status_code == 404
+
+
 def test_the_embed_page_leads_through_its_iframe_to_the_file(fixture_site: FixtureSite) -> None:
     embed_url = fixture_site.url(Page.EMBED)
 

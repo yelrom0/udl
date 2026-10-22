@@ -9,8 +9,10 @@ probe and download, cancellation, threads, cookies and handoffs
 
 # System Imports
 import asyncio
+import http.cookiejar
 import threading
 import time
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import ClassVar
@@ -498,6 +500,34 @@ def make_cookie(name: str = "s", **fields: object) -> Cookie:
 )
 def test_a_cookie_is_sent_to_its_domain_and_path(cookie: Cookie, url: str, sent: bool) -> None:
     assert cookie.matches(url) is sent
+
+
+@pytest.mark.parametrize(
+    ("cookie", "url", "sent"),
+    [
+        (make_cookie(), "https://example.com/a", True),
+        (make_cookie(), "https://www.example.com/a", True),
+        (make_cookie(), "https://example.org/a", False),
+        (make_cookie(domain="localhost"), "http://localhost:8080/a", True),
+        (make_cookie(domain="127.0.0.1"), "http://127.0.0.1:8080/a", True),
+        (make_cookie(path="/private"), "https://example.com/a", False),
+        (make_cookie(secure=True), "http://example.com/a", False),
+        (make_cookie(expires=datetime(2999, 1, 1, tzinfo=UTC)), "https://example.com/", True),
+    ],
+)
+def test_a_cookie_works_in_a_standard_cookie_jar(cookie: Cookie, url: str, sent: bool) -> None:
+    jar = http.cookiejar.CookieJar()
+    jar.set_cookie(cookie.to_http_cookie())
+    request = urllib.request.Request(url)  # noqa: S310 - never opened, only asks the jar
+
+    jar.add_cookie_header(request)
+
+    assert (request.get_header("Cookie") == "s=v") is sent
+
+
+def test_an_http_only_cookie_stays_http_only() -> None:
+    assert make_cookie(http_only=True).to_http_cookie().has_nonstandard_attr("HttpOnly")
+    assert not make_cookie().to_http_cookie().has_nonstandard_attr("HttpOnly")
 
 
 def test_the_cookie_header_has_the_cookies_for_the_url() -> None:

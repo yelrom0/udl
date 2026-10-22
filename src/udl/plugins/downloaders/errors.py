@@ -192,6 +192,7 @@ def ytdlp_error(
 # gallery_dl.exception codes, as bits of a job's status.
 _GALLERYDL_CHALLENGE: Final = 8
 _GALLERYDL_AUTH: Final = 16
+_GALLERYDL_NO_EXTRACTOR: Final = 64  # (its command line's)
 _GALLERYDL_OS_ERROR: Final = 128
 
 
@@ -200,6 +201,8 @@ def gallerydl_error(status: int, messages: Sequence[str]) -> DownloadError:
     tool = "gallery-dl"
     text = " | ".join(messages) or f"gallery-dl failed (exit status {status})"
 
+    if status & _GALLERYDL_NO_EXTRACTOR:
+        return UnsupportedURL(text, tool=tool)
     if status & _GALLERYDL_CHALLENGE or _search(r"ChallengeError", text):
         return AuthRequired(text, tool=tool, hint=CHALLENGE_HINT)
     if (code := _status_in(text, r"'(\d{3}) [^']*' for '")) and (

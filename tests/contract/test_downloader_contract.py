@@ -10,6 +10,7 @@ this suite fail).
 
 # System Imports
 import asyncio
+import gc
 import socket
 import threading
 import time
@@ -20,6 +21,7 @@ from typing import Any, Final
 
 # Package Imports
 import pytest
+from pydantic import JsonValue
 
 # Local Imports
 from support.downloaders import FakeDownloader, FakeMedia, FakeOptions
@@ -81,18 +83,29 @@ def fake(site: FixtureSite) -> Case:
     return Case(FakeDownloader(options), site, Page.DIRECT_FILE, Page.PRIVATE_FILE, Page.SLOW_FILE)
 
 
-def installed(name: str) -> Downloader[Any]:
-    """A downloader found the way udl finds it (by entry point), with its default options."""
-    return PluginRegistry.discover().get(DOWNLOADERS, name)()
+def installed(name: str, **options: JsonValue) -> Downloader[Any]:
+    """A downloader found the way udl finds it (by entry point)."""
+    return PluginRegistry.discover().get(DOWNLOADERS, name).configure(options)
 
 
 def ytdlp(site: FixtureSite) -> Case:
     return Case(installed("yt-dlp"), site, Page.DIRECT_FILE, Page.PRIVATE_FILE, Page.SLOW_FILE)
 
 
+def gallerydl(site: FixtureSite) -> Case:
+    return Case(installed("gallery-dl"), site, Page.DIRECT_FILE, Page.PRIVATE_FILE, Page.SLOW_FILE)
+
+
+def gallerydl_cli(site: FixtureSite) -> Case:
+    downloader = installed("gallery-dl", mode="subprocess")
+    return Case(downloader, site, Page.DIRECT_FILE, Page.PRIVATE_FILE, Page.SLOW_FILE)
+
+
 # How to get each downloader, and the pages it is meant for.
 CASES: dict[str, Callable[[FixtureSite], Case]] = {
     "fake": fake,
+    "gallery-dl": gallerydl,
+    "gallery-dl (subprocess)": gallerydl_cli,
     "yt-dlp": ytdlp,
 }
 
@@ -118,6 +131,16 @@ def workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def files_under(*dirs: Path) -> set[Path]:
     return {path for directory in dirs for path in directory.rglob("*") if path.is_file()}
+
+
+async def assert_no_connection_left_open() -> None:
+    """Fail if a downloader left a connection open (e.g. after a failure or a cancel).
+
+    Once the worker threads have exited nothing else can hold one, and an unclosed socket warns
+    as it is collected, which fails the test.
+    """
+    await asyncio.get_running_loop().shutdown_default_executor()
+    gc.collect()
 
 
 # ---------------------------------------------------------------------------------------------
@@ -308,6 +331,8 @@ async def test_a_failed_download_raises_what_went_wrong_and_leaves_no_file(
 
     assert getattr(caught.value, "tool", None) == downloader.name
     assert files_under(tmp_path) == set()
+    del caught
+    await assert_no_connection_left_open()
 
 
 async def test_cancelling_stops_a_download_within_seconds(
@@ -330,3 +355,5 @@ async def test_cancelling_stops_a_download_within_seconds(
     with pytest.raises(Cancelled):
         await asyncio.wait_for(task, timeout=CANCEL_WITHIN)
     assert time.monotonic() - cancelled_at < CANCEL_WITHIN
+    del task
+    await assert_no_connection_left_open()

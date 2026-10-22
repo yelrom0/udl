@@ -8,8 +8,6 @@ matching, filename templates, and options and headers reaching yt-dlp
 """
 
 # System Imports
-import asyncio
-import gc
 import logging
 from collections.abc import Iterator
 from pathlib import Path
@@ -21,9 +19,8 @@ from pytest_httpserver import HTTPServer
 
 # Local Imports
 from support.fixture_site import FixtureSite, Page
-from udl.errors import Cancelled, ErrorCode, ExtractionFailed
+from udl.errors import ErrorCode, ExtractionFailed
 from udl.plugins.downloaders.base import (
-    CancelToken,
     Cookie,
     DownloadContext,
     DownloadProgress,
@@ -249,34 +246,3 @@ def test_progress_hook_statuses_become_progress(
     status: dict[str, object], progress: DownloadProgress | None
 ) -> None:
     assert progress_from_status(status) == progress
-
-
-async def cancel_a_slow_download(site: FixtureSite, output_dir: Path) -> type[Exception] | None:
-    """Start downloading the slow file, cancel it, and return what it raised."""
-    token = CancelToken()
-    started = asyncio.Event()
-    ctx = DownloadContext(
-        url=site.url(Page.SLOW_FILE),
-        output_dir=output_dir,
-        cancel=token,
-        progress=lambda _: started.set(),
-    )
-    task = asyncio.create_task(YtDlpDownloader().download(ctx))
-    await started.wait()
-    token.cancel()
-    try:
-        await task
-    except Cancelled as e:
-        return type(e)
-    return None
-
-
-async def test_a_cancelled_download_leaves_no_connection_open(
-    fixture_site: FixtureSite, tmp_path: Path
-) -> None:
-    assert await cancel_a_slow_download(fixture_site, tmp_path) is Cancelled
-
-    # yt-dlp ran in a worker thread; once it has exited, nothing can hold the connection, and
-    # an unclosed socket warns as it is collected (which fails the test).
-    await asyncio.get_running_loop().shutdown_default_executor()
-    gc.collect()

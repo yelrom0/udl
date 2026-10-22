@@ -355,6 +355,7 @@ GALLERYDL_FAILURES: list[tuple[int, list[str], type[DownloadError]]] = [
         ExtractionFailed,
     ),
     (4, [], ExtractionFailed),
+    (64, ["[gallery-dl][error] Unsupported URL 'https://example.com/'"], UnsupportedURL),
 ]
 
 

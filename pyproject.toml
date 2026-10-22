@@ -35,6 +35,7 @@ memory = "udl.plugins.databases.memory:MemoryDatabase"
 sqlite = "udl.plugins.databases.sqlite:SQLitePlugin"
 
 [project.entry-points."udl.downloaders"]
+gallery-dl = "udl.plugins.downloaders.gallerydl:GalleryDlDownloader"
 yt-dlp = "udl.plugins.downloaders.ytdlp:YtDlpDownloader"
 
 [build-system]
