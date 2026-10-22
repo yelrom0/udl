@@ -28,18 +28,18 @@ Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task
   - [x] 0.8 `UDLError` hierarchy + logging setup
   - [x] 0.9 Test fixture site: a local HTTP server with a direct file, a `<video>` page, an iframe embed, a JS-rendered page and a cookie-gated (401) page
 
-- [ ] **Phase 1: Plugin system & database layer**
-  - [ ] 1.1 Plugin registry: entry points (`udl.databases`, `udl.downloaders`, `udl.sites`) + local plugin dir
-  - [ ] 1.2 Domain models: SQLModel bases (`Site`, `Strategy`, `DownloadRecord`) + table variants, typed JSON fields
-  - [ ] 1.3 `DatabasePlugin` ABC + **shared contract test suite** (parametrised over every DB plugin)
-  - [ ] 1.4 `memory` DB plugin (test double that passes the contract suite)
-  - [ ] 1.5 `SQLAlchemyDatabase` base (async SQLModel), usable by any SQLAlchemy URL
-  - [ ] 1.6 `sqlite` plugin: the default DB, created automatically in the user data dir
-  - [ ] 1.7 `DBManager`: multiple named connections, read policy (`first` / `merge`), write policy (`primary` / `all` / named)
-  - [ ] 1.8 Schema versioning (`schema_version` table + `migrate()` on connect)
+- [x] **Phase 1: Plugin system & database layer**
+  - [x] 1.1 Plugin registry: entry points (`udl.databases`, `udl.downloaders`, `udl.sites`) + local plugin dir
+  - [x] 1.2 Domain models: SQLModel bases (`Site`, `Strategy`, `DownloadRecord`) + table variants, typed JSON fields
+  - [x] 1.3 `DatabasePlugin` ABC + **shared contract test suite** (parametrised over every DB plugin)
+  - [x] 1.4 `memory` DB plugin (test double that passes the contract suite)
+  - [x] 1.5 `SQLAlchemyDatabase` base (async SQLModel), usable by any SQLAlchemy URL
+  - [x] 1.6 `sqlite` plugin: the default DB, created automatically in the user data dir
+  - [x] 1.7 `DBManager`: multiple named connections, read policy (`first` / `merge`), write policy (`primary` / `all` / named)
+  - [x] 1.8 Schema versioning (`schema_version` table + `migrate()` on connect)
 
 - [ ] **Phase 2: Downloader plugins**
-  - [ ] 2.1 `Downloader` ABC, per-plugin `Options` model, `ProbeResult` / `DownloadResult` models + **contract test suite**
+  - [ ] 2.1 `Downloader` ABC, per-plugin `Options` model, `ProbeResult` / `DownloadResult` models + **contract test suite**; add the `udl.downloaders` `PluginKind` to `PLUGIN_KINDS`
   - [ ] 2.2 Error taxonomy mapping (table-driven tests per tool: `AuthRequired`, `Unsupported`, `RateLimited`, …)
   - [ ] 2.3 `yt-dlp` (in-process API, offline extractor match, `extract_info(download=False)`, progress hooks)
   - [ ] 2.4 `gallery-dl` (offline `extractor.find()`, in-process job)
@@ -70,7 +70,7 @@ Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task
   - [ ] 4.7 MCP: `udl mcp` (stdio) + streamable HTTP mounted at `/mcp` in the API
 
 - [ ] **Phase 5: Tag chains (user-defined extraction)**
-  - [ ] 5.1 `TagChain` model with discriminated-union step types
+  - [ ] 5.1 `TagChain` model with discriminated-union step types; add `Strategy.chain` (a schema migration, see [Phase 1 decisions](#decisions-made-while-building-phase-1))
   - [ ] 5.2 One-line shorthand parser (`iframe#player@src >> video source@src`) with round-trip property tests
   - [ ] 5.3 Static chain executor (`selectolax`)
   - [ ] 5.4 Browser chain executor (Playwright: `wait_for`, `click`, `network` steps)
@@ -81,7 +81,7 @@ Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task
   - [ ] 5.9 "All tools failed" returns an actionable hint pointing at chain definition
 
 - [ ] **Phase 6: Site behaviour plugins**
-  - [ ] 6.1 `SitePlugin` ABC (`matches`, `transform_urls`, `strategy`, `prepare`, `output_dir`, `post_process`) + contract tests
+  - [ ] 6.1 `SitePlugin` ABC (`matches`, `transform_urls`, `strategy`, `prepare`, `output_dir`, `post_process`) + contract tests; add the `udl.sites` `PluginKind`
   - [ ] 6.2 Hook site plugins into resolver/executor with documented precedence
   - [ ] 6.3 Example built-in site plugin
   - [ ] 6.4 Local single-file plugins in `~/.config/udl/plugins/` (no packaging needed)
@@ -212,11 +212,11 @@ src/udl/
     urls.py                 # normalisation, site keys
     models.py               # request/response DTOs
   db/
-    models.py               # Site / Strategy / DownloadRecord (+ table variants)
+    models.py               # Site / Strategy / DownloadRecord, Outcome, SiteQuery / DownloadQuery
     manager.py              # DBManager
   plugins/
-    registry.py
-    databases/   base.py  memory.py  sqlalchemy.py  sqlite.py
+    registry.py             # PluginRegistry, PluginKind (DATABASES, …)
+    databases/   base.py  memory.py  sqlalchemy.py (+ table variants)  sqlite.py
     downloaders/ base.py  ytdlp.py  gallerydl.py  http.py  scraper.py  browser.py
     sites/       base.py  <examples>.py
   chains/        models.py  shorthand.py  executor.py  suggest.py
@@ -354,15 +354,16 @@ These are confirmed in the current code. Each one gets a failing regression test
 ### Data model (UUID primary keys, so records can be synced between DBs)
 
 - **Site**: `id`, `key` (eTLD+1, unique), `name`, `default_output_dir: Path | None`, `notes`, `created_at`, `updated_at`
-- **Strategy** (many per site): `id`, `site_id`, `url_pattern: str | None` (regex on path; `None` = whole site),
-  `tool: str` (downloader plugin name), `options` (validated by that downloader's `Options` model),
-  `chain: TagChain | None`, `requires_auth: bool`, `source: StrategySource` (`probe | manual | plugin | import`),
-  `priority`, `success_count`, `failure_count`, `consecutive_failures`, `last_success_at`, `last_error`, `enabled`
-- **DownloadRecord**: `id`, `url`, `site_id`, `strategy_id`, `tool`, `status: JobStatus`, `output_dir`,
-  `files: list[Path]`, `bytes`, `started_at`, `finished_at`, `error`
+- **Strategy** (many per site): `id`, `site_key`, `url_pattern: str | None` (regex on path; `None` = whole site),
+  `tool: str` (downloader plugin name), `options: JsonObject` (validated by that downloader's `Options` model),
+  `requires_auth: bool`, `source: StrategySource` (`probe | manual | plugin | import`), `priority` (lower first),
+  `success_count`, `failure_count`, `consecutive_failures`, `last_success_at`, `last_error: ErrorInfo | None`,
+  `enabled`. `chain: TagChain | None` arrives in 5.1.
+- **DownloadRecord**: `id`, `url`, `site_key`, `strategy_id`, `tool`, `status: JobStatus`, `output_dir`,
+  `files: list[Path]`, `size_bytes`, `started_at`, `finished_at`, `error: ErrorInfo | None`
 
-Pattern: `class StrategyBase(SQLModel)` is plain Pydantic, so non-SQL plugins reuse it.
-`class StrategyTable(StrategyBase, table=True)` lives with the SQLAlchemy plugin.
+Pattern: `class Strategy(SQLModel)` is plain Pydantic, so non-SQL plugins reuse it.
+`class StrategyTable(Strategy, table=True)` lives with the SQLAlchemy plugin.
 
 ### `DatabasePlugin` (repository-level, not SQL-specific, so MongoDB or similar can be a plugin)
 
@@ -372,6 +373,7 @@ class DatabasePlugin(ABC):
     def __init__(self, connection: DBConnectionConfig) -> None: ...
     async def connect(self) -> None: ...                  # runs migrate()
     async def close(self) -> None: ...
+    async def migrate(self) -> None: ...                  # idempotent
     async def health(self) -> bool: ...
     async def get_site(self, key: str) -> Site | None: ...
     async def list_sites(self, query: SiteQuery) -> list[Site]: ...
@@ -379,7 +381,7 @@ class DatabasePlugin(ABC):
     async def delete_site(self, key: str) -> bool: ...
     async def strategies_for(self, site_key: str) -> list[Strategy]: ...
     async def upsert_strategy(self, strategy: Strategy) -> Strategy: ...
-    async def record_outcome(self, strategy_id: UUID, outcome: Outcome) -> None: ...
+    async def record_outcome(self, strategy_id: UUID, outcome: Outcome) -> Strategy | None: ...
     async def add_download(self, record: DownloadRecord) -> None: ...
     async def update_download(self, record: DownloadRecord) -> None: ...
     async def list_downloads(self, query: DownloadQuery) -> list[DownloadRecord]: ...
@@ -402,6 +404,34 @@ yt-dlp = "udl.plugins.downloaders.ytdlp:YtDlpDownloader"
 
 Local plugins: every `*.py` in `plugin_dirs` is imported, and any `DatabasePlugin` / `Downloader` /
 `SitePlugin` subclass it defines is registered.
+
+The registry is generic: each plugin type is a `PluginKind` (entry point group + base class), and
+`PLUGIN_KINDS` lists the ones udl uses. Load order is udl's own entry points, then other installed
+packages', then each plugin dir; a later plugin with the same name overrides an earlier one (with a
+warning), and a plugin that fails to load lands in `registry.problems` (for `plugins list`) instead of
+stopping udl.
+
+### Decisions made while building Phase 1
+
+- **Strategies and downloads refer to their site by `site_key`, not `site_id`.** The key is the same in
+  every connected DB, while two DBs that each learned a site on their own give it different ids. With
+  `site_key`, `DBManager` can write a strategy to several DBs and `merge` reads need no id mapping. A
+  download also knows its site key before the site row exists (first download from a new site).
+- **`upsert_site` matches on `key`** and keeps the stored `id` / `created_at` (it sets `updated_at`).
+  `upsert_strategy` matches on `id` and needs the site stored first. `record_outcome` is one atomic update
+  (concurrent outcomes are all counted) and returns the updated strategy for self-healing (3.6), or `None`.
+- **`Strategy.chain` is left to 5.1.** Nothing in Phases 1–4 reads it, and adding it then (a JSON column)
+  is the first real schema migration.
+- **Errors are typed JSON** (`ErrorInfo`), as are `options` (`JsonObject`) and `files` (`list[Path]`).
+  The SQL plugin stores them through Pydantic-backed column types, so they load as the same types.
+- **`DBManager` reads:** `get_site` takes the highest-priority hit; `strategies_for` follows the read policy;
+  `list_sites` / `list_downloads` always combine every connection (highest-priority copy wins). A failing
+  connection is skipped with a warning, except the primary (the `primary = true` one, else the
+  highest-priority writable one) or a write's leading connection, whose failure raises `DatabaseError`.
+- **Migrations:** a new DB is created at the current version; an older one runs the steps it lacks
+  (`SQLAlchemyDatabase.migrations`) in one transaction; a newer one is refused. The `sqlite` plugin lets
+  SQLAlchemy begin transactions (the sqlite3 module would commit DDL as it runs) and uses one pooled
+  connection, so concurrent writers never hit "database is locked".
 
 ---
 
