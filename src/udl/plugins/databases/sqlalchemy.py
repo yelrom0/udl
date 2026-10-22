@@ -3,164 +3,330 @@
 - sqlalchemy.py -
 -----------------
 
-SQLAlchemyDatabase: the base for SQL database plugins, usable with any SQLAlchemy URL
+SQLAlchemyDatabase: the base for SQL database plugins, usable with any async SQLAlchemy URL.
+
+The domain models are mapped onto tables of udl's own (the *Table classes), in a registry of their
+own so they never mix with other SQLModel tables. A SQL plugin is then mostly a name, a URL scheme
+and a driver dependency.
 """
 
 # System Imports
-from collections.abc import Generator, Sequence
-from contextlib import contextmanager
-from typing import cast
+import re
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+from uuid import UUID, uuid4
 
 # Package Imports
-from pydantic import BaseModel, ConfigDict
-from sqlalchemy import Engine, Table
-from sqlalchemy import inspect as sa_inspect
-from sqlmodel import Session, SQLModel, create_engine, delete, select
+from pydantic import AwareDatetime, TypeAdapter
+from sqlalchemy import JSON, BigInteger, DateTime, Dialect, TypeDecorator, func, or_
+from sqlalchemy.engine import URL, make_url
+from sqlalchemy.exc import ArgumentError, SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.orm import declared_attr, registry
+from sqlmodel import Field, SQLModel, col, delete, select, update
+from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel.sql.sqltypes import AutoString
+
+# Local Imports
+from udl.config import DBConnectionConfig
+from udl.db.models import (
+    DownloadQuery,
+    DownloadRecord,
+    JobStatus,
+    JsonObject,
+    Outcome,
+    Site,
+    SiteQuery,
+    Strategy,
+    StrategySource,
+    utcnow,
+)
+from udl.errors import ConfigError, DatabaseError, ErrorInfo
+
+from .base import DatabasePlugin
+
+# ---------------------------------------------------------------------------------------------
+# Column types: store the domain models' Python types faithfully
+# ---------------------------------------------------------------------------------------------
 
 
-class ColumnInfo(BaseModel):
-    """One column of a table, as reflected from the database."""
+class UTCDateTime(TypeDecorator[datetime]):
+    """An aware datetime, stored in UTC (SQLite keeps no timezone, so it is put back on load)."""
 
-    model_config = ConfigDict(frozen=True)
+    impl = DateTime(timezone=True)
+    cache_ok = True
 
-    name: str
-    type: str
-    nullable: bool
+    def process_bind_param(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        return value.astimezone(UTC) if value is not None else None
 
-
-class TableInfo(BaseModel):
-    """A table's name, primary key and columns, as reflected from the database."""
-
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    primary_key: list[str]
-    columns: list[ColumnInfo]
+    def process_result_value(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        if value is None:
+            return None
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
-class SQLAlchemyDatabase:
-    """One database connection. Each instance owns its own engine, so several can coexist."""
+class PathType(TypeDecorator[Path]):
+    """A filesystem path, stored as text."""
 
-    def __init__(
-        self,
-        db_url: str,
-        *,
-        echo: bool = False,
-    ) -> None:
-        self._engine: Engine = create_engine(
-            url=db_url,
-            echo=echo,
-        )
+    impl = AutoString
+    cache_ok = True
+
+    def process_bind_param(self, value: Path | None, dialect: Dialect) -> str | None:
+        return str(value) if value is not None else None
+
+    def process_result_value(self, value: str | None, dialect: Dialect) -> Path | None:
+        return Path(value) if value is not None else None
+
+
+class PydanticJSON(TypeDecorator[Any]):
+    """A JSON column, (de)serialised through a Pydantic type, so it loads as that type."""
+
+    impl = JSON
+    cache_ok = True
+
+    def __init__(self, pydantic_type: Any) -> None:
+        super().__init__(none_as_null=True)
+        self.pydantic_type = pydantic_type  # part of the statement cache key
+        self._adapter = TypeAdapter[Any](pydantic_type)
+
+    def process_bind_param(self, value: Any, dialect: Dialect) -> Any:
+        return None if value is None else self._adapter.dump_python(value, mode="json")
+
+    def process_result_value(self, value: Any, dialect: Dialect) -> Any:
+        return None if value is None else self._adapter.validate_python(value)
+
+
+# ---------------------------------------------------------------------------------------------
+# Tables: the domain models plus primary keys, constraints and column types
+# ---------------------------------------------------------------------------------------------
+
+_registry = registry()
+
+
+class _Table(SQLModel, registry=_registry):
+    # SiteTable -> site, DownloadRecordTable -> download_record. (SQLModel types __tablename__
+    # as a plain declared_attr, which no override can match.)
+    @declared_attr.directive
+    def __tablename__(cls) -> str:  # noqa: N805  # pyright: ignore[reportIncompatibleVariableOverride]
+        return re.sub(r"(?<!^)(?=[A-Z])", "_", cls.__name__.removesuffix("Table")).lower()
+
+
+class SiteTable(Site, _Table, table=True):
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    key: str = Field(min_length=1, unique=True)
+    default_output_dir: Path | None = Field(default=None, sa_type=PathType)
+    created_at: AwareDatetime = Field(default_factory=utcnow, sa_type=UTCDateTime)
+    updated_at: AwareDatetime = Field(default_factory=utcnow, sa_type=UTCDateTime)
+
+
+class StrategyTable(Strategy, _Table, table=True):
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    site_key: str = Field(min_length=1, foreign_key="site.key", index=True)
+    options: JsonObject = Field(default_factory=dict, sa_type=PydanticJSON(JsonObject))
+    source: StrategySource = Field(sa_type=AutoString)
+    last_success_at: AwareDatetime | None = Field(default=None, sa_type=UTCDateTime)
+    last_error: ErrorInfo | None = Field(default=None, sa_type=PydanticJSON(ErrorInfo))
+
+
+class DownloadRecordTable(DownloadRecord, _Table, table=True):
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    site_key: str = Field(min_length=1, index=True)
+    status: JobStatus = Field(default=JobStatus.QUEUED, sa_type=AutoString)
+    output_dir: Path | None = Field(default=None, sa_type=PathType)
+    files: list[Path] = Field(default_factory=list, sa_type=PydanticJSON(list[Path]))
+    size_bytes: int = Field(default=0, ge=0, sa_type=BigInteger)
+    started_at: AwareDatetime = Field(default_factory=utcnow, sa_type=UTCDateTime, index=True)
+    finished_at: AwareDatetime | None = Field(default=None, sa_type=UTCDateTime)
+    error: ErrorInfo | None = Field(default=None, sa_type=PydanticJSON(ErrorInfo))
+
+
+def _site(row: SiteTable) -> Site:
+    return Site.model_validate(row, from_attributes=True)
+
+
+def _strategy(row: StrategyTable) -> Strategy:
+    return Strategy.model_validate(row, from_attributes=True)
+
+
+def _download(row: DownloadRecordTable) -> DownloadRecord:
+    return DownloadRecord.model_validate(row, from_attributes=True)
+
+
+# ---------------------------------------------------------------------------------------------
+# The plugin
+# ---------------------------------------------------------------------------------------------
+
+
+class SQLAlchemyDatabase(DatabasePlugin):
+    """A SQL database reached through an async SQLAlchemy URL, e.g. `sqlite+aiosqlite:///udl.db`.
+
+    Each instance owns its own engine (created by connect()), so several can coexist.
+    """
+
+    def __init__(self, connection: DBConnectionConfig) -> None:
+        super().__init__(connection)
+        try:
+            self.url: URL = make_url(connection.url)
+        except ArgumentError as e:
+            raise ConfigError(
+                f"The database connection {connection.name!r} has an invalid URL: {e}"
+            ) from e
+        self._engine: AsyncEngine | None = None
+
+    def _create_engine(self) -> AsyncEngine:
+        """Subclasses can tune the engine (pooling, dialect options) here."""
+        return create_async_engine(self.url)
 
     @property
-    def engine(self) -> Engine:
+    def engine(self) -> AsyncEngine:
+        if self._engine is None:
+            raise DatabaseError(f"The {self.connection.name!r} database is not connected")
         return self._engine
 
-    def connect(self) -> None:
-        """Open the database for use: creates the schema if it is missing."""
-        self.migrate()
+    async def connect(self) -> None:
+        if self._engine is None:
+            self._engine = self._create_engine()
+        await self.migrate()
 
-    def migrate(self) -> None:
-        """Create any missing tables for the registered models. Safe to run repeatedly."""
-        SQLModel.metadata.create_all(self._engine)
+    async def close(self) -> None:
+        if self._engine is not None:
+            await self._engine.dispose()
+            self._engine = None
 
-    def close(self) -> None:
-        """Close every pooled connection."""
-        self._engine.dispose()
+    async def migrate(self) -> None:
+        try:
+            async with self.engine.begin() as conn:
+                await conn.run_sync(_registry.metadata.create_all)
+        except SQLAlchemyError as e:
+            raise self._error(e) from e
 
-    @contextmanager
-    def session(self) -> Generator[Session]:
-        # expire_on_commit=False keeps models usable after their session has closed.
-        with Session(self._engine, expire_on_commit=False) as s:
-            yield s
+    async def health(self) -> bool:
+        if self._engine is None:
+            return False
+        try:
+            async with self._engine.connect() as conn:
+                await conn.scalar(select(1))
+        except SQLAlchemyError:
+            return False
+        return True
 
-    @contextmanager
-    def transaction(self) -> Generator[Session]:
+    def _error(self, e: SQLAlchemyError) -> DatabaseError:
+        return DatabaseError(f"The {self.connection.name!r} database failed: {e}")
+
+    @asynccontextmanager
+    async def _transaction(self) -> AsyncGenerator[AsyncSession]:
         """A session that commits when the block succeeds and rolls back when it raises."""
-        with self.session() as s:
-            try:
+        try:
+            async with AsyncSession(self.engine, expire_on_commit=False) as s, s.begin():
                 yield s
-                s.commit()
-            except Exception:
-                s.rollback()
-                raise
+        except SQLAlchemyError as e:
+            raise self._error(e) from e
 
-    def add(
-        self,
-        models: SQLModel | Sequence[SQLModel],
-        s: Session | None = None,
-        commit_session: bool = True,
-    ) -> None:
-        """Insert model instances. Without `commit_session`, the caller's session must commit."""
-        if s is None:
-            with self.session() as s:
-                self._do_add(
-                    models,
-                    s,
-                    commit_session=commit_session,
+    async def get_site(self, key: str) -> Site | None:
+        async with self._transaction() as s:
+            row = (await s.exec(select(SiteTable).where(SiteTable.key == key))).first()
+            return _site(row) if row else None
+
+    async def list_sites(self, query: SiteQuery) -> list[Site]:
+        statement = select(SiteTable).order_by(col(SiteTable.key))
+        if query.search:
+            term = query.search.lower()
+            statement = statement.where(
+                or_(
+                    func.lower(col(SiteTable.key)).contains(term, autoescape=True),
+                    func.lower(col(SiteTable.name)).contains(term, autoescape=True),
                 )
+            )
+        statement = statement.offset(query.offset).limit(query.limit)
+        async with self._transaction() as s:
+            return [_site(row) for row in await s.exec(statement)]
+
+    async def upsert_site(self, site: Site) -> Site:
+        async with self._transaction() as s:
+            row = (await s.exec(select(SiteTable).where(SiteTable.key == site.key))).first()
+            if row is None:
+                row = SiteTable.model_validate(site.model_dump())
+                s.add(row)
+            else:
+                changes = site.model_dump(exclude={"id", "created_at", "updated_at"})
+                row.sqlmodel_update(changes, update={"updated_at": utcnow()})
+            return _site(row)
+
+    async def delete_site(self, key: str) -> bool:
+        async with self._transaction() as s:
+            await s.exec(delete(StrategyTable).where(col(StrategyTable.site_key) == key))
+            result = await s.exec(delete(SiteTable).where(col(SiteTable.key) == key))
+            return result.rowcount > 0
+
+    async def strategies_for(self, site_key: str) -> list[Strategy]:
+        statement = (
+            select(StrategyTable)
+            .where(StrategyTable.site_key == site_key)
+            .order_by(
+                col(StrategyTable.priority),
+                col(StrategyTable.success_count).desc(),
+                col(StrategyTable.id),
+            )
+        )
+        async with self._transaction() as s:
+            return [_strategy(row) for row in await s.exec(statement)]
+
+    async def upsert_strategy(self, strategy: Strategy) -> Strategy:
+        async with self._transaction() as s:
+            site = select(SiteTable.id).where(SiteTable.key == strategy.site_key)
+            if (await s.exec(site)).first() is None:
+                raise DatabaseError(
+                    f"Cannot store a strategy for {strategy.site_key!r}: the site is not stored "
+                    f"in the {self.connection.name!r} database"
+                )
+            row = await s.merge(StrategyTable.model_validate(strategy.model_dump()))
+            return _strategy(row)
+
+    async def record_outcome(self, strategy_id: UUID, outcome: Outcome) -> Strategy | None:
+        # One UPDATE that does its own arithmetic, so concurrent outcomes are all counted.
+        if outcome.ok:
+            values: dict[str, Any] = {
+                "success_count": StrategyTable.success_count + 1,
+                "consecutive_failures": 0,
+                "last_success_at": outcome.at,
+            }
         else:
-            self._do_add(
-                models,
-                s,
-                commit_session=commit_session,
-            )
+            values = {
+                "failure_count": StrategyTable.failure_count + 1,
+                "consecutive_failures": StrategyTable.consecutive_failures + 1,
+                "last_error": outcome.error,
+            }
+        statement = update(StrategyTable).where(col(StrategyTable.id) == strategy_id)
+        async with self._transaction() as s:
+            result = await s.exec(statement.values(values))
+            if result.rowcount == 0:
+                return None
+            row = await s.get_one(StrategyTable, strategy_id)
+            return _strategy(row)
 
-    def _do_add(
-        self,
-        models: SQLModel | Sequence[SQLModel],
-        s: Session,
-        commit_session: bool = True,
-    ) -> None:
-        s.add_all([models] if isinstance(models, SQLModel) else models)
-        self._do_commit(s, commit_session)
+    async def add_download(self, record: DownloadRecord) -> None:
+        async with self._transaction() as s:
+            if await s.get(DownloadRecordTable, record.id) is not None:
+                raise DatabaseError(f"Download {record.id} is already stored")
+            s.add(DownloadRecordTable.model_validate(record.model_dump()))
 
-    def _do_commit(
-        self,
-        s: Session,
-        commit_session: bool = True,
-    ) -> None:
-        if commit_session:
-            s.commit()
+    async def update_download(self, record: DownloadRecord) -> None:
+        async with self._transaction() as s:
+            if await s.get(DownloadRecordTable, record.id) is None:
+                raise DatabaseError(f"Download {record.id} is not stored")
+            await s.merge(DownloadRecordTable.model_validate(record.model_dump()))
 
-    def list_rows[T: SQLModel](self, model: type[T]) -> list[T]:
-        """Return every row of `model`'s table."""
-        with self.session() as s:
-            return list(s.exec(select(model)).all())
-
-    def list_tables(self) -> list[TableInfo]:
-        """Describe every table in the database (its primary key and columns)."""
-        insp = sa_inspect(self._engine)
-        return [
-            TableInfo(
-                name=t,
-                primary_key=insp.get_pk_constraint(t)["constrained_columns"],
-                columns=[
-                    ColumnInfo(name=c["name"], type=str(c["type"]), nullable=c["nullable"])
-                    for c in insp.get_columns(t)
-                ],
-            )
-            for t in insp.get_table_names()
-        ]
-
-    def delete(self, model: type[SQLModel], s: Session | None = None, **filters: object) -> int:
-        """Delete rows matching filters. Returns count of deleted rows.
-
-        Without `s` the delete is committed; in the caller's session the caller commits.
-        """
-        if s is None:
-            with self.transaction() as s:
-                return self._do_delete(model, s, **filters)
-        return self._do_delete(model, s, **filters)
-
-    def _do_delete(self, model: type[SQLModel], s: Session, **filters: object) -> int:
-        stmt = delete(model)
-        if filters:
-            stmt = stmt.where(*[getattr(model, k) == v for k, v in filters.items()])
-        return s.exec(stmt).rowcount
-
-    def drop(self, model: type[SQLModel]) -> None:
-        """Drop the table entirely. connect() creates it again."""
-        # A SQLModel table model always maps a Table; inspect() only types it as a FromClause.
-        table = cast(Table, sa_inspect(model).local_table)
-        table.drop(self._engine)
+    async def list_downloads(self, query: DownloadQuery) -> list[DownloadRecord]:
+        statement = select(DownloadRecordTable).order_by(
+            col(DownloadRecordTable.started_at).desc(), col(DownloadRecordTable.id).desc()
+        )
+        if query.site_key is not None:
+            statement = statement.where(DownloadRecordTable.site_key == query.site_key)
+        if query.status is not None:
+            statement = statement.where(DownloadRecordTable.status == query.status)
+        statement = statement.offset(query.offset).limit(query.limit)
+        async with self._transaction() as s:
+            return [_download(row) for row in await s.exec(statement)]

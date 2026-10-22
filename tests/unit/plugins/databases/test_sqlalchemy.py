@@ -3,202 +3,120 @@
 - test_sqlalchemy.py -
 ----------------------
 
-Regression tests for SQLAlchemyDatabase (they replace the old test.py script)
+SQLAlchemyDatabase: what SQL plugins add to the database contract (tests/contract), including the
+regression tests for the Phase 0 bugs (the per-class singleton, writes that were never committed)
 """
 
 # System Imports
-import uuid
-from collections.abc import Callable, Iterator
+import re
+import sqlite3
+from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 
 # Package Imports
 import pytest
-from sqlalchemy import inspect as sa_inspect
-from sqlmodel import Field, SQLModel
 
 # Local Imports
-from udl.plugins.databases.sqlalchemy import ColumnInfo, SQLAlchemyDatabase
-
-
-class SampleA(SQLModel, table=True):
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    msg: str = "SampleA"
-
-
-class SampleB(SQLModel, table=True):
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    msg: str = "SampleB"
-
+from udl.config import DBConnectionConfig
+from udl.db.models import DownloadQuery, DownloadRecord, Site, SiteQuery
+from udl.errors import ConfigError, DatabaseError
+from udl.plugins.databases.sqlalchemy import SQLAlchemyDatabase
 
 type MakeDB = Callable[[str], SQLAlchemyDatabase]
 
 
+def connection(url: str, name: str = "test") -> DBConnectionConfig:
+    return DBConnectionConfig(name=name, plugin="sqlalchemy", url=url)
+
+
 @pytest.fixture
-def make_db(tmp_path: Path) -> Iterator[MakeDB]:
-    """Create (unconnected) databases in tmp_path by file name; all are closed afterwards."""
-    created: list[SQLAlchemyDatabase] = []
+def make_db(tmp_path: Path) -> MakeDB:
+    """Create (unconnected) databases in tmp_path, by file name."""
 
     def make(name: str) -> SQLAlchemyDatabase:
-        created.append(SQLAlchemyDatabase(f"sqlite:///{tmp_path / name}"))
-        return created[-1]
+        return SQLAlchemyDatabase(connection(f"sqlite+aiosqlite:///{tmp_path / name}"))
 
-    yield make
-    for database in created:
-        database.close()
+    return make
 
 
-@pytest.fixture
-def db(make_db: MakeDB) -> SQLAlchemyDatabase:
-    database = make_db("test.db")
-    database.connect()
-    return database
+def table_names(path: Path) -> set[str]:
+    with closing(sqlite3.connect(path)) as raw:
+        rows = raw.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+    return {name for (name,) in rows}
 
 
-def _messages(db: SQLAlchemyDatabase, model: type[SampleA | SampleB]) -> list[str]:
-    return sorted(row.msg for row in db.list_rows(model))
+async def test_instances_with_different_urls_store_data_separately(make_db: MakeDB) -> None:
+    async with make_db("first.db") as first, make_db("second.db") as second:
+        await first.upsert_site(Site(key="first.com"))
+
+        assert [site.key for site in await first.list_sites(SiteQuery())] == ["first.com"]
+        assert await second.list_sites(SiteQuery()) == []
 
 
-def test_instances_with_different_urls_coexist(tmp_path: Path, make_db: MakeDB) -> None:
-    first = make_db("first.db")
-    second = make_db("second.db")
+async def test_writes_are_committed(make_db: MakeDB) -> None:
+    site, record = (
+        Site(key="example.com"),
+        DownloadRecord(url="https://example.com/v", site_key="example.com"),
+    )
+    async with make_db("udl.db") as db:
+        await db.upsert_site(site)
+        await db.add_download(record)
 
-    assert first is not second
-    assert first.engine.url.database == str(tmp_path / "first.db")
-    assert second.engine.url.database == str(tmp_path / "second.db")
-
-
-def test_instances_with_different_urls_store_data_separately(make_db: MakeDB) -> None:
-    first, second = make_db("first.db"), make_db("second.db")
-    first.connect()
-    second.connect()
-
-    first.add(SampleA(msg="only in first"))
-
-    assert _messages(first, SampleA) == ["only in first"]
-    assert second.list_rows(SampleA) == []
+    async with make_db("udl.db") as reopened:
+        assert await reopened.get_site("example.com") == site
+        assert await reopened.list_downloads(DownloadQuery()) == [record]
 
 
-def test_connect_creates_tables_for_registered_models(db: SQLAlchemyDatabase) -> None:
-    tables = sa_inspect(db.engine).get_table_names()
+async def test_connect_creates_udls_tables_and_no_others(tmp_path: Path, make_db: MakeDB) -> None:
+    async with make_db("udl.db"):
+        pass
 
-    assert {"samplea", "sampleb"} <= set(tables)
-
-
-def test_connect_is_idempotent(db: SQLAlchemyDatabase) -> None:
-    db.add(SampleA(msg="kept"))
-
-    db.connect()
-
-    assert _messages(db, SampleA) == ["kept"]
+    assert table_names(tmp_path / "udl.db") == {"site", "strategy", "download_record"}
 
 
-def test_add_inserts_a_row(db: SQLAlchemyDatabase) -> None:
-    db.add(SampleA(msg="hello"))
+async def test_connect_and_close_can_be_repeated(make_db: MakeDB) -> None:
+    db = make_db("udl.db")
 
-    assert _messages(db, SampleA) == ["hello"]
-
-
-def test_add_inserts_every_model_in_a_list(db: SQLAlchemyDatabase) -> None:
-    db.add([SampleA(msg="a1"), SampleB(msg="b1"), SampleA(msg="a2")])
-
-    assert _messages(db, SampleA) == ["a1", "a2"]
-    assert _messages(db, SampleB) == ["b1"]
+    await db.connect()
+    await db.connect()
+    await db.close()
+    await db.close()
+    async with db:
+        assert await db.health() is True
 
 
-def test_add_without_commit_is_not_persisted(db: SQLAlchemyDatabase) -> None:
-    db.add(SampleA(), commit_session=False)
+async def test_using_a_database_before_connecting_raises_database_error(make_db: MakeDB) -> None:
+    db = make_db("udl.db")
 
-    assert db.list_rows(SampleA) == []
-
-
-def test_add_into_a_callers_session_is_committed_by_the_caller(db: SQLAlchemyDatabase) -> None:
-    with db.session() as s:
-        db.add(SampleA(msg="batched"), s, commit_session=False)
-        assert db.list_rows(SampleA) == []
-        s.commit()
-
-    assert _messages(db, SampleA) == ["batched"]
+    with pytest.raises(DatabaseError, match=re.escape("'test' database is not connected")):
+        await db.get_site("example.com")
 
 
-def test_added_models_stay_usable_after_add_returns(db: SQLAlchemyDatabase) -> None:
-    model = SampleA(msg="still here")
+async def test_a_database_that_cannot_be_opened_raises_database_error(tmp_path: Path) -> None:
+    db = SQLAlchemyDatabase(
+        connection(f"sqlite+aiosqlite:///{tmp_path / 'missing' / 'udl.db'}", name="broken")
+    )
 
-    db.add(model)
+    with pytest.raises(DatabaseError, match="'broken' database") as excinfo:
+        await db.connect()
 
-    assert model.msg == "still here"
-
-
-def test_transaction_commits_when_the_block_succeeds(db: SQLAlchemyDatabase) -> None:
-    with db.transaction() as s:
-        s.add(SampleA(msg="committed"))
-
-    assert _messages(db, SampleA) == ["committed"]
+    assert "unable to open database file" in str(excinfo.value)
+    assert await db.health() is False
+    await db.close()
 
 
-def test_transaction_rolls_back_and_reraises_when_the_block_fails(db: SQLAlchemyDatabase) -> None:
-    def fail_after_writing() -> None:
-        with db.transaction() as s:
-            s.add(SampleA(msg="rolled back"))
-            s.flush()
-            raise RuntimeError("boom")
-
-    with pytest.raises(RuntimeError, match="boom"):
-        fail_after_writing()
-
-    assert db.list_rows(SampleA) == []
-
-
-def test_delete_commits_and_returns_the_number_of_rows_removed(db: SQLAlchemyDatabase) -> None:
-    db.add([SampleA(msg="a1"), SampleA(msg="a2"), SampleB()])
-
-    removed = db.delete(SampleA)
-
-    assert removed == 2
-    assert db.list_rows(SampleA) == []
-    assert _messages(db, SampleB) == ["SampleB"]
-
-
-def test_delete_with_filters_only_removes_matching_rows(db: SQLAlchemyDatabase) -> None:
-    db.add([SampleA(msg="a1"), SampleA(msg="a2")])
-
-    removed = db.delete(SampleA, msg="a1")
-
-    assert removed == 1
-    assert _messages(db, SampleA) == ["a2"]
-
-
-def test_delete_in_a_callers_session_is_committed_by_the_caller(db: SQLAlchemyDatabase) -> None:
-    db.add(SampleA(msg="a1"))
-
-    with db.session() as s:
-        db.delete(SampleA, s)
-        assert _messages(db, SampleA) == ["a1"]
-        s.commit()
-
-    assert db.list_rows(SampleA) == []
-
-
-def test_list_tables_returns_the_schema_instead_of_printing_it(
-    db: SQLAlchemyDatabase, capsys: pytest.CaptureFixture[str]
+async def test_database_errors_are_raised_as_database_error(
+    tmp_path: Path, make_db: MakeDB
 ) -> None:
-    tables = {table.name: table for table in db.list_tables()}
+    async with make_db("udl.db") as db:
+        with closing(sqlite3.connect(tmp_path / "udl.db")) as raw:
+            raw.execute("DROP TABLE site")
 
-    assert tables["samplea"].primary_key == ["id"]
-    assert tables["samplea"].columns[1] == ColumnInfo(name="msg", type="VARCHAR", nullable=False)
-    assert capsys.readouterr().out == ""
-
-
-def test_list_tables_is_empty_before_connect(make_db: MakeDB) -> None:
-    assert make_db("empty.db").list_tables() == []
+        with pytest.raises(DatabaseError, match=r"'test' database failed.*no such table: site"):
+            await db.get_site("example.com")
 
 
-def test_drop_removes_the_table_until_connect_recreates_it(db: SQLAlchemyDatabase) -> None:
-    db.add(SampleB())
-
-    db.drop(SampleB)
-    after_drop = {table.name for table in db.list_tables()}
-    db.connect()
-
-    assert "sampleb" not in after_drop
-    assert "samplea" in after_drop
-    assert db.list_rows(SampleB) == []
+def test_an_invalid_url_raises_config_error_naming_the_connection() -> None:
+    with pytest.raises(ConfigError, match=re.escape("'test'")):
+        SQLAlchemyDatabase(connection("not a url"))

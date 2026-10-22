@@ -32,6 +32,7 @@ postgres = [
 # Built-in plugins are registered the same way third-party plugins are.
 [project.entry-points."udl.databases"]
 memory = "udl.plugins.databases.memory:MemoryDatabase"
+sqlite = "udl.plugins.databases.sqlite:SQLitePlugin"
 
 [build-system]
 requires = ["uv_build>=0.13.5,<0.14.0"]

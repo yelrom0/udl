@@ -23,6 +23,7 @@ import pytest
 from support.plugins import GADGETS, WIDGETS, Gadget, Widget
 from udl.errors import PluginError
 from udl.plugins.databases.memory import MemoryDatabase
+from udl.plugins.databases.sqlite import SQLitePlugin
 from udl.plugins.registry import DATABASES, PluginInfo, PluginRegistry, PluginSource
 
 GEAR = """
@@ -354,5 +355,6 @@ def test_udls_own_plugins_are_registered_as_builtins() -> None:
     registry = PluginRegistry.discover()
 
     assert registry.get(DATABASES, "memory") is MemoryDatabase
+    assert registry.get(DATABASES, "sqlite") is SQLitePlugin
     assert {info.source for info in registry.plugins(DATABASES)} == {PluginSource.BUILTIN}
     assert registry.problems == []

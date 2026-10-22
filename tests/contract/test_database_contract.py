@@ -39,6 +39,9 @@ from udl.plugins.registry import DATABASES, PluginRegistry
 # How to connect each plugin to a fresh, empty database in a temporary directory.
 CONNECTIONS: dict[str, Callable[[Path], DBConnectionConfig]] = {
     "memory": lambda _: DBConnectionConfig(name="contract", plugin="memory", url="memory://"),
+    "sqlite": lambda tmp: DBConnectionConfig(
+        name="contract", plugin="sqlite", url=f"sqlite+aiosqlite:///{tmp / 'udl.db'}"
+    ),
 }
 
 T0 = datetime(2026, 1, 2, 3, 4, 5, 678901, tzinfo=UTC)

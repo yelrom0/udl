@@ -66,7 +66,8 @@ def default_db_path() -> Path:
     return data_dir() / "udl.db"
 
 
-def _expand(path: Path) -> Path:
+def expand_path(path: Path) -> Path:
+    """`path` with `~` and `$VARS` expanded."""
     return Path(os.path.expandvars(path)).expanduser()
 
 
@@ -74,7 +75,7 @@ def _empty_is_none(value: object) -> object:
     return None if value == "" else value
 
 
-type ExpandedPath = Annotated[Path, AfterValidator(_expand)]
+type ExpandedPath = Annotated[Path, AfterValidator(expand_path)]
 """A path in which `~` and `$VARS` are expanded."""
 
 
@@ -222,7 +223,7 @@ class Settings(BaseSettings):
         """
         if config_file is None and (named := os.environ.get("UDL_CONFIG")):
             config_file = Path(named)
-        path = _expand(config_file) if config_file else default_config_file()
+        path = expand_path(config_file) if config_file else default_config_file()
         if config_file and not path.is_file():
             raise ConfigError(f"Config file not found: {path}")
 
