@@ -29,6 +29,7 @@ from pydantic import BaseModel, ConfigDict
 
 # Local Imports
 from udl.errors import PluginError
+from udl.plugins.databases.base import DatabasePlugin
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +73,12 @@ class PluginProblem(BaseModel):
     error: str
 
 
+DATABASES: Final = PluginKind("udl.databases", DatabasePlugin)
+
+# Every kind of plugin udl uses.
+PLUGIN_KINDS: Final[tuple[PluginKind[Any], ...]] = (DATABASES,)
+
+
 @dataclass(frozen=True)
 class _Entry:
     cls: type[Any]
@@ -81,14 +88,14 @@ class _Entry:
 class PluginRegistry:
     """The plugins of each kind, by name."""
 
-    def __init__(self, kinds: Iterable[PluginKind[Any]]) -> None:
+    def __init__(self, kinds: Iterable[PluginKind[Any]] = PLUGIN_KINDS) -> None:
         self._kinds = list(kinds)
         self._plugins: dict[str, dict[str, _Entry]] = {kind.group: {} for kind in self._kinds}
         self._problems: list[PluginProblem] = []
 
     @classmethod
     def discover(
-        cls, plugin_dirs: Iterable[Path] = (), *, kinds: Iterable[PluginKind[Any]]
+        cls, plugin_dirs: Iterable[Path] = (), *, kinds: Iterable[PluginKind[Any]] = PLUGIN_KINDS
     ) -> Self:
         """A registry with every installed plugin, then the plugins in `plugin_dirs`."""
         registry = cls(kinds)

@@ -22,7 +22,8 @@ import pytest
 # Local Imports
 from support.plugins import GADGETS, WIDGETS, Gadget, Widget
 from udl.errors import PluginError
-from udl.plugins.registry import PluginInfo, PluginRegistry, PluginSource
+from udl.plugins.databases.memory import MemoryDatabase
+from udl.plugins.registry import DATABASES, PluginInfo, PluginRegistry, PluginSource
 
 GEAR = """
 from support.plugins import Widget
@@ -347,3 +348,11 @@ def test_getting_a_plugin_of_a_kind_the_registry_does_not_know_raises_plugin_err
 
     with pytest.raises(PluginError, match=re.escape("udl_test.gadgets")):
         registry.get(GADGETS, "cog")
+
+
+def test_udls_own_plugins_are_registered_as_builtins() -> None:
+    registry = PluginRegistry.discover()
+
+    assert registry.get(DATABASES, "memory") is MemoryDatabase
+    assert {info.source for info in registry.plugins(DATABASES)} == {PluginSource.BUILTIN}
+    assert registry.problems == []

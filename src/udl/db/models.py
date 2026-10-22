@@ -131,6 +131,11 @@ class DownloadRecord(SQLModel):
     error: ErrorInfo | None = None
 
 
+def download_order(record: DownloadRecord) -> tuple[datetime, uuid.UUID]:
+    """The order databases list downloads in, reversed: newest first, then by id (descending)."""
+    return (record.started_at, record.id)
+
+
 class _Frozen(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
