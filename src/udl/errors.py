@@ -30,6 +30,7 @@ class ErrorCode(StrEnum):
     NOT_FOUND = "not_found"
     TOOL_UNAVAILABLE = "tool_unavailable"
     NO_STRATEGY_FOUND = "no_strategy_found"
+    CANCELLED = "cancelled"
 
 
 class ErrorInfo(BaseModel):
@@ -41,6 +42,7 @@ class ErrorInfo(BaseModel):
     message: str
     hint: str | None = None
     tool: str | None = None
+    retry_after: float | None = None  # seconds, for rate_limited
 
 
 class UDLError(Exception):
@@ -131,6 +133,9 @@ class RateLimited(DownloadError):
         super().__init__(message, tool=tool, hint=hint)
         self.retry_after = retry_after
 
+    def to_info(self) -> ErrorInfo:
+        return super().to_info().model_copy(update={"retry_after": self.retry_after})
+
 
 class NetworkError(DownloadError):
     """A connection problem rather than a problem with the strategy. Retry with backoff."""
@@ -158,3 +163,26 @@ class NoStrategyFound(UDLError):
     """Every candidate tool failed on a URL."""
 
     code = ErrorCode.NO_STRATEGY_FOUND
+
+
+class Cancelled(UDLError):
+    """The download was cancelled (by the user, or because udl is stopping).
+
+    Not a DownloadError, so code that tries the next tool after a failure stops instead.
+    """
+
+    code = ErrorCode.CANCELLED
+
+
+def _classes(cls: type[UDLError]) -> list[type[UDLError]]:
+    return [cls, *(sub for child in cls.__subclasses__() for sub in _classes(child))]
+
+
+def error_from_info(info: ErrorInfo) -> UDLError:
+    """The error that `info` describes (e.g. a probe result's error), to raise or react to."""
+    cls = next((c for c in _classes(UDLError) if c.code == info.code), UDLError)
+    if issubclass(cls, RateLimited):
+        return cls(info.message, retry_after=info.retry_after, tool=info.tool, hint=info.hint)
+    if issubclass(cls, DownloadError):
+        return cls(info.message, tool=info.tool, hint=info.hint)
+    return cls(info.message, hint=info.hint)

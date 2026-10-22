@@ -24,7 +24,13 @@ from support.plugins import GADGETS, WIDGETS, Gadget, Widget
 from udl.errors import PluginError
 from udl.plugins.databases.memory import MemoryDatabase
 from udl.plugins.databases.sqlite import SQLitePlugin
-from udl.plugins.registry import DATABASES, PluginInfo, PluginRegistry, PluginSource
+from udl.plugins.registry import (
+    DATABASES,
+    DOWNLOADERS,
+    PluginInfo,
+    PluginRegistry,
+    PluginSource,
+)
 
 GEAR = """
 from support.plugins import Widget
@@ -358,3 +364,26 @@ def test_udls_own_plugins_are_registered_as_builtins() -> None:
     assert registry.get(DATABASES, "sqlite") is SQLitePlugin
     assert {info.source for info in registry.plugins(DATABASES)} == {PluginSource.BUILTIN}
     assert registry.problems == []
+
+
+def test_downloader_plugins_are_found(plugin_dir: Path) -> None:
+    write_plugin(
+        plugin_dir,
+        "mine.py",
+        """
+        from udl.plugins.downloaders.base import Downloader
+
+        class Mine(Downloader):
+            name = "mine"
+
+            async def _probe(self, ctx):
+                raise NotImplementedError
+
+            async def _download(self, ctx):
+                raise NotImplementedError
+        """,
+    )
+
+    registry = PluginRegistry.discover([plugin_dir])
+
+    assert registry.get(DOWNLOADERS, "mine").__name__ == "Mine"

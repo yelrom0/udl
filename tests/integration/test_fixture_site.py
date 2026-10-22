@@ -7,6 +7,7 @@ The local fixture site that the downloader integration tests run against
 """
 
 # System Imports
+import time
 from urllib.parse import urljoin
 
 # Package Imports
@@ -17,7 +18,7 @@ from playwright.sync_api import sync_playwright
 from selectolax.lexbor import LexborHTMLParser
 
 # Local Imports
-from support.fixture_site import COOKIE_NAME, COOKIE_VALUE, FixtureSite, Page
+from support.fixture_site import COOKIE_NAME, COOKIE_VALUE, SLOW_SIZE, FixtureSite, Page
 
 
 def src_of(html: str, selector: str) -> str:
@@ -74,6 +75,40 @@ def test_the_embed_page_leads_through_its_iframe_to_the_file(fixture_site: Fixtu
     assert file_url == fixture_site.url(Page.DIRECT_FILE)
 
 
+def test_the_page_without_media_has_none(fixture_site: FixtureSite) -> None:
+    response = httpx.get(fixture_site.url(Page.NO_MEDIA))
+
+    assert response.headers["content-type"].startswith("text/html")
+    assert LexborHTMLParser(response.text).css("video, audio, source, iframe, a, script") == []
+    assert ".mp4" not in response.text
+
+
+def test_the_slow_file_trickles_out(fixture_site: FixtureSite) -> None:
+    start = time.monotonic()
+    with httpx.stream("GET", fixture_site.url(Page.SLOW_FILE)) as response:
+        first = next(response.iter_raw())
+        elapsed = time.monotonic() - start
+
+    assert response.headers["content-type"] == "video/mp4"
+    assert int(response.headers["content-length"]) == SLOW_SIZE
+    assert first.startswith(fixture_site.content(Page.DIRECT_FILE)[:16])  # an MP4's header
+    assert len(first) < SLOW_SIZE / 50  # the rest takes seconds
+    assert elapsed < 1
+
+
+def test_head_on_the_slow_file_has_its_size(fixture_site: FixtureSite) -> None:
+    response = httpx.head(fixture_site.url(Page.SLOW_FILE))
+
+    assert response.headers["content-type"] == "video/mp4"
+    assert int(response.headers["content-length"]) == SLOW_SIZE
+
+
+def test_the_slow_page_points_at_the_slow_file(fixture_site: FixtureSite) -> None:
+    html = httpx.get(fixture_site.url(Page.SLOW)).text
+
+    assert src_of(html, "video > source") == Page.SLOW_FILE
+
+
 def test_the_js_page_has_no_media_in_its_static_html(fixture_site: FixtureSite) -> None:
     html = httpx.get(fixture_site.url(Page.JS)).text
 
@@ -122,10 +157,12 @@ def test_the_session_cookie_unlocks_the_private_video(fixture_site: FixtureSite)
 
 def test_signing_in_sets_the_session_cookie(fixture_site: FixtureSite) -> None:
     with httpx.Client() as client:
-        client.get(fixture_site.url(Page.LOGIN))
+        response = client.get(fixture_site.url(Page.LOGIN))
 
         assert client.cookies.get(COOKIE_NAME) == COOKIE_VALUE
         assert client.get(fixture_site.url(Page.PRIVATE)).status_code == 200
+    # It outlives the browser session (a "remember me" login), so a browser profile keeps it.
+    assert "max-age=" in response.headers["set-cookie"].lower()
 
 
 def test_unknown_paths_are_not_found(fixture_site: FixtureSite) -> None:
