@@ -40,7 +40,7 @@ Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task
 
 - [ ] **Phase 2: Downloader plugins**
   - [x] 2.1 `Downloader` ABC, per-plugin `Options` model, `ProbeResult` / `DownloadResult` models + **contract test suite**; add the `udl.downloaders` `PluginKind` to `PLUGIN_KINDS`
-  - [ ] 2.2 Error taxonomy mapping (table-driven tests per tool: `AuthRequired`, `Unsupported`, `RateLimited`, …)
+  - [x] 2.2 Error taxonomy mapping (table-driven tests per tool: `AuthRequired`, `Unsupported`, `RateLimited`, …)
   - [ ] 2.3 `yt-dlp` (in-process API, offline extractor match, `extract_info(download=False)`, progress hooks)
   - [ ] 2.4 `gallery-dl` (offline `extractor.find()`, in-process job)
   - [ ] 2.5 `http` direct-file downloader: `httpx` by default, `curl` / `wget` backends when installed, resume support
