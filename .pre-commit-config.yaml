@@ -1,7 +1,7 @@
 # Install once with `uv tool install pre-commit && pre-commit install`.
 repos:
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.12.24
+    rev: 0.13.5
     hooks:
       - id: uv-lock
 
