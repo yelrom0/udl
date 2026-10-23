@@ -37,21 +37,24 @@ from udl.errors import AuthRequired, DatabaseError, NetworkError
 from udl.plugins.databases.base import DatabasePlugin
 from udl.plugins.registry import DATABASES, PluginRegistry
 
-# How to connect each plugin to a fresh, empty database in a temporary directory.
-CONNECTIONS: dict[str, Callable[[Path], DBConnectionConfig]] = {
-    "memory": lambda _: DBConnectionConfig(name="contract", plugin="memory", url="memory://"),
-    "sqlite": lambda tmp: DBConnectionConfig(
-        name="contract", plugin="sqlite", url=f"sqlite+aiosqlite:///{tmp / 'udl.db'}"
-    ),
+# The URL of a fresh, empty database for each plugin. Those that need a server get one from its
+# fixture (tests/conftest.py), which skips them when there is no server to use.
+CONNECTIONS: dict[str, Callable[[pytest.FixtureRequest], str]] = {
+    "memory": lambda _: "memory://",
+    "sqlite": lambda request: f"sqlite+aiosqlite:///{request.getfixturevalue('tmp_path')}/udl.db",
+    "postgres": lambda request: request.getfixturevalue("postgres_url"),
 }
 
 T0 = datetime(2026, 1, 2, 3, 4, 5, 678901, tzinfo=UTC)
 
 
 @pytest.fixture(params=sorted(CONNECTIONS))
-async def db(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncIterator[DatabasePlugin]:
+async def db(request: pytest.FixtureRequest) -> AsyncIterator[DatabasePlugin]:
     """A connected database of each plugin, found the way udl finds it (by entry point)."""
-    connection = CONNECTIONS[request.param](tmp_path)
+    plugin_name: str = request.param
+    connection = DBConnectionConfig(
+        name="contract", plugin=plugin_name, url=CONNECTIONS[plugin_name](request)
+    )
     plugin = PluginRegistry.discover().get(DATABASES, connection.plugin)
     async with plugin(connection) as database:
         yield database

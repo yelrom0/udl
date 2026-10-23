@@ -29,6 +29,9 @@ browser = [
 postgres = [
     "psycopg[binary]>=3.3.6",
 ]
+mongodb = [
+    "pymongo>=4.19.0",
+]
 
 [project.scripts]
 udl = "udl.interfaces.cli.app:main"
@@ -36,6 +39,7 @@ udl = "udl.interfaces.cli.app:main"
 # Built-in plugins are registered the same way third-party plugins are.
 [project.entry-points."udl.databases"]
 memory = "udl.plugins.databases.memory:MemoryDatabase"
+postgres = "udl.plugins.databases.postgres:PostgresPlugin"
 sqlite = "udl.plugins.databases.sqlite:SQLitePlugin"
 
 [project.entry-points."udl.downloaders"]
@@ -64,7 +68,7 @@ dev = [
     "ruff>=0.17.0",
     "types-pyyaml>=6.0.12.20260906",
     "types-yt-dlp>=2026.8.19.20261008",
-    "udl[browser]",
+    "udl[browser,postgres,mongodb]",
 ]
 
 # ---------------------------------------------------------------------------------------------

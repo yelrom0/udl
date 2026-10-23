@@ -39,7 +39,7 @@ from sqlalchemy import (
     or_,
 )
 from sqlalchemy.engine import URL, make_url
-from sqlalchemy.exc import ArgumentError, SQLAlchemyError
+from sqlalchemy.exc import ArgumentError, IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.orm import declared_attr, registry
 from sqlmodel import Field, SQLModel, col, delete, select, update
@@ -253,6 +253,7 @@ class SQLAlchemyDatabase(DatabasePlugin):
 
     def _migrate(self, conn: Connection) -> None:
         name = self.connection.name
+        self._lock_schema(conn)
         versions = _registry.metadata.tables[SchemaVersionTable.__tablename__]
         versions.create(conn, checkfirst=True)
         stored: int | None = conn.execute(select(versions.c.version)).scalar_one_or_none()
@@ -275,6 +276,11 @@ class SQLAlchemyDatabase(DatabasePlugin):
                     f"Could not migrate the {name!r} database to schema version {version}: {e}"
                 ) from e
             conn.execute(update(versions).values(version=version))
+
+    def _lock_schema(self, conn: Connection) -> None:
+        """Keep other udls from migrating the database until `conn`'s transaction ends, so
+        udls that connect to a new database at once do not each create its tables. Databases
+        that take one writer at a time (SQLite) need nothing."""
 
     async def health(self) -> bool:
         if self._engine is None:
@@ -319,13 +325,19 @@ class SQLAlchemyDatabase(DatabasePlugin):
 
     async def upsert_site(self, site: Site) -> Site:
         async with self._transaction() as s:
-            row = (await s.exec(select(SiteTable).where(SiteTable.key == site.key))).first()
+            found = select(SiteTable).where(SiteTable.key == site.key)
+            row = (await s.exec(found)).first()
             if row is None:
-                row = SiteTable.model_validate(site.model_dump())
-                s.add(row)
-            else:
-                changes = site.model_dump(exclude={"id", "created_at", "updated_at"})
-                row.sqlmodel_update(changes, update={"updated_at": utcnow()})
+                try:
+                    async with s.begin_nested():
+                        row = SiteTable.model_validate(site.model_dump())
+                        s.add(row)
+                    return _site(row)
+                except IntegrityError:
+                    # Another writer stored the site since it was looked for: update theirs.
+                    row = (await s.exec(found)).one()
+            changes = site.model_dump(exclude={"id", "created_at", "updated_at"})
+            row.sqlmodel_update(changes, update={"updated_at": utcnow()})
             return _site(row)
 
     async def delete_site(self, key: str) -> bool:

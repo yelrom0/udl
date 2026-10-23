@@ -11,12 +11,21 @@ import logging
 import os
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
 
 # Package Imports
+import psycopg
+import pymongo
 import pytest
+from psycopg import sql
+from pymongo.errors import PyMongoError
+from sqlalchemy.engine import make_url
 
 # Local Imports
 from support.fixture_site import FixtureSite
+from support.servers import MONGODB, POSTGRES, serving
 
 TESTS_DIR = Path(__file__).parent
 
@@ -84,3 +93,62 @@ def fixture_site() -> Iterator[FixtureSite]:
     """The local fixture site (tests/support/fixture_site.py), served for the whole run."""
     with FixtureSite.serve() as site:
         yield site
+
+
+# ---------------------------------------------------------------------------------------------
+# Database servers (tests/support/servers.py): started the first time a test needs one
+# ---------------------------------------------------------------------------------------------
+
+
+def _mongo(url: str, **options: Any) -> pymongo.MongoClient[dict[str, Any]]:
+    return pymongo.MongoClient(url, **options)
+
+
+def _postgres_answers(url: str) -> bool:
+    try:
+        psycopg.connect(url, connect_timeout=2).close()
+    except psycopg.OperationalError:
+        return False
+    return True
+
+
+def _mongodb_answers(url: str) -> bool:
+    with _mongo(url, serverSelectionTimeoutMS=1000) as client:
+        try:
+            client.admin.command("ping")
+        except PyMongoError:
+            return False
+    return True
+
+
+@pytest.fixture(scope="session")
+def postgres_server() -> Iterator[str]:
+    """A PostgreSQL server's URL (UDL_TEST_POSTGRES_URL's, else a Docker container's)."""
+    with serving(POSTGRES, "UDL_TEST_POSTGRES_URL", _postgres_answers) as url:
+        yield url
+
+
+@pytest.fixture
+def postgres_url(postgres_server: str) -> Iterator[str]:
+    """The URL of a new, empty PostgreSQL database, dropped after the test."""
+    name = f"udl_test_{uuid4().hex}"
+    with psycopg.connect(postgres_server, autocommit=True) as admin:
+        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+        yield make_url(postgres_server).set(database=name).render_as_string(hide_password=False)
+        admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
+
+
+@pytest.fixture(scope="session")
+def mongodb_server() -> Iterator[str]:
+    """A MongoDB server's URL (UDL_TEST_MONGODB_URL's, else a Docker container's)."""
+    with serving(MONGODB, "UDL_TEST_MONGODB_URL", _mongodb_answers) as url:
+        yield url
+
+
+@pytest.fixture
+def mongodb_url(mongodb_server: str) -> Iterator[str]:
+    """The URL of a new, empty MongoDB database, dropped after the test."""
+    name = f"udl_test_{uuid4().hex}"
+    yield urlunsplit(urlsplit(mongodb_server)._replace(path=f"/{name}"))
+    with _mongo(mongodb_server) as client:
+        client.drop_database(name)
