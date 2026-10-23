@@ -48,17 +48,17 @@ Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task
   - [x] 2.7 `browser` (Playwright): network sniffing for media/manifest URLs + cookie capture, then hand off
   - [x] 2.8 Auth (401/403): `cookies_from_browser`, persistent browser profile, `udl browser login`
 
-- [ ] **Phase 3: Resolution engine & service layer**
-  - [ ] 3.1 URL normalisation + site key (registrable domain via `tldextract`), with property-based tests
-  - [ ] 3.2 Resolver precedence: request override, then site plugin, then stored strategy (all DBs), then probe
-  - [ ] 3.3 Probe chain: offline matches first, then network checks, then scraper, then browser
-  - [ ] 3.4 Execute with fallback: try candidates until a download **actually succeeds** (`AuthRequired`: retry with `AuthCookies`, then the `browser` downloader)
-  - [ ] 3.5 Record winning strategy + download history through `DBManager`; update success/failure counters; `requires_auth` when it needed cookies
-  - [ ] 3.6 Self-healing: a stored strategy that fails N times in a row gets re-probed and replaced
-  - [ ] 3.7 Output dir resolution (request, then site, then config) + filename templates
-  - [ ] 3.8 Multi-URL batches: async concurrency with global + per-site limits
-  - [ ] 3.9 Job manager: progress events, cancellation, persisted as `DownloadRecord`
-  - [ ] 3.10 `UDLService` façade + operations registry (the only thing interfaces call)
+- [x] **Phase 3: Resolution engine & service layer**
+  - [x] 3.1 URL normalisation + site key (registrable domain via `tldextract`), with property-based tests
+  - [x] 3.2 Resolver precedence: request override, then site plugin, then stored strategy (all DBs), then probe
+  - [x] 3.3 Probe chain: offline matches first, then network checks, then scraper, then browser
+  - [x] 3.4 Execute with fallback: try candidates until a download **actually succeeds** (`AuthRequired`: retry with `AuthCookies`, then the `browser` downloader)
+  - [x] 3.5 Record winning strategy + download history through `DBManager`; update success/failure counters; `requires_auth` when it needed cookies
+  - [x] 3.6 Self-healing: a stored strategy that fails N times in a row gets re-probed and replaced
+  - [x] 3.7 Output dir resolution (request, then site, then config) + filename templates
+  - [x] 3.8 Multi-URL batches: async concurrency with global + per-site limits
+  - [x] 3.9 Job manager: progress events, cancellation, persisted as `DownloadRecord`
+  - [x] 3.10 `UDLService` façade + operations registry (the only thing interfaces call)
 
 - [ ] **Phase 4: Interfaces (CLI, API, MCP)**
   - [ ] 4.1 🔴 **Parity test first**: every registered operation must have a CLI command, an API route and an MCP tool
@@ -206,11 +206,13 @@ src/udl/
   log.py                    # configure_logging() (stderr; Rich on a terminal)
   core/
     service.py              # UDLService + @operation registry
-    resolver.py             # strategy selection + probe chain
-    executor.py             # run candidates with fallback, record outcome
-    jobs.py                 # JobManager, progress events
+    resolver.py             # candidates: request, site plugin, stored strategies, probe chain
+    executor.py             # try candidates with fallback, sign in, retry, record and heal
+    jobs.py                 # JobManager, job events, concurrency limits, crash recovery
+    tools.py                # Toolbox: configured downloaders
+    output.py               # output dir precedence, {site} in filename templates
     urls.py                 # normalisation, site keys
-    models.py               # request/response DTOs
+    models.py               # jobs, request/response DTOs
   db/
     models.py               # Site / Strategy / DownloadRecord, Outcome, SiteQuery / DownloadQuery
     manager.py              # DBManager
@@ -564,44 +566,50 @@ Plugins implement `_probe` / `_download`; the public methods add the checks ever
 
 ```
 udl URL...
- └─ for each URL (concurrently, ≤ max_concurrent, ≤ max_per_site per site):
-     1. normalise URL, site_key = registrable domain (tldextract, offline suffix-list snapshot)
-     2. site plugin matches?  → may rewrite URL(s) and supply strategy / options / output dir
-     3. request.tool set?     → use it, skip lookup
-     4. DBManager.strategies_for(site_key) → filter by url_pattern → order by
-        (pattern specificity, priority, success rate)
-     5. none, or all disabled → probe chain → ordered candidates
-     6. try candidates until a download succeeds (file exists, size > 0)
-     7. success → upsert Strategy (source=probe) + DownloadRecord; failure → record_outcome
-     8. all failed → NoStrategyFound with a hint to suggest/define a tag chain (Phase 5)
+ └─ for each URL (a job; ≤ max_concurrent at once, ≤ max_per_site per site, across batches):
+     1. normalise the URL; site_key = registrable domain (tldextract's bundled suffix list)
+     2. output dir: request → site plugin → Site.default_output_dir → download_dir; {site} filled in
+     3. candidates, best first (Resolver.candidates):
+          request.tool        → the only candidate
+          site plugin         → its strategy
+          stored strategies   → every DB (read policy); enabled, url_pattern found in the path; ranked
+          probe chain         → probe_order: offline matches first, then the rest
+     4. try each until a download actually succeeds (real, non-empty files in the output dir):
+          unsupported / extraction failed → next · AuthRequired → same tool with cookies, then browser
+          RateLimited / NetworkError → wait and retry the same tool · NotFound / Cancelled → stop
+     5. remember (unless --no-record): the winner, the stored strategies' successes and failures,
+        requires_auth; heal_threshold failures in a row disable a learned strategy
+     6. all failed → the most useful error (login, rate limit, network), else NoStrategyFound
 ```
 
 ### Probe chain (order configurable via `probe_order`)
-1. **Offline** (no network): specific yt-dlp extractors, gallery-dl extractors.
-2. **`http` HEAD**: is the URL itself a file?
-3. **yt-dlp Generic extractor.**
-4. **`scraper` heuristics.**
-5. **`browser`**: the most expensive step, so it runs last.
+1. **Offline** (no network): the tools whose `match()` recognises the URL (a site's yt-dlp or gallery-dl
+   extractor, a media file's extension), in `probe_order`.
+2. The other tools, in `probe_order`. By default: **`http`** (is the URL itself a file?), **yt-dlp**'s generic
+   extractor, **gallery-dl**, the **`scraper`**, and the **`browser`**, the most expensive, last.
 
-Stop at the first **successful download**, not the first successful probe. `udl probe <url> --all` reports
-every tool's result for debugging.
+A candidate is tried by downloading with it: each downloader's `download()` makes the checks its `probe()`
+would and fails as fast, so the chain stops at the first **successful download**. `udl probe <url> --all`
+(`probe_url`) runs `probe()` on every tool for debugging.
 
 ### Recording rules
 - Strategies are recorded **site-wide** by default. Use `sites set --pattern '^/shorts/'` when one site needs
   different tools for different sections.
-- Self-healing: when `consecutive_failures >= heal_threshold` (default 3), the strategy is disabled, the URL is
-  re-probed and the new winner is recorded. `manual` strategies only warn.
+- Only failures that are the strategy's fault (`counts_against_strategy`) are counted against it.
+- Self-healing: when `consecutive_failures >= heal_threshold` (default 3), the strategy is disabled, the rest
+  of the chain re-probes the URL and the new winner is recorded. `manual` strategies only warn.
 
 ### Output paths
 Precedence: request `output_dir` (`-o/--output`) → site plugin → `Site.default_output_dir` → config
 `download_dir` (default: `platformdirs.user_downloads_dir()/udl`). `filename_template` (e.g.
-`{site}/{title}.{ext}`) is translated per tool: yt-dlp `outtmpl`, gallery-dl `directory`/`filename`, or
-derived for `http`.
+`{site}/{title}.{ext}`, the request's or the config's) gets `{site}` filled in, then is translated per tool:
+yt-dlp `outtmpl`, gallery-dl `directory`/`filename`, or derived for `http`.
 
 ### Jobs & progress
-- `JobManager` runs one asyncio task per URL; a batch shares a group id.
-- `ProgressEvent` models go onto an asyncio queue. The CLI renders rich progress bars, the API streams SSE and
-  MCP sends progress notifications.
+- `JobManager` runs one asyncio task per URL; a batch (one request) shares a batch id.
+- `JobEvent`s (`queued → started → progress* → finished|failed|cancelled`, each carrying the job's `JobInfo`)
+  go to every subscriber of the job or batch (`UDLService.events()`): the CLI renders progress bars, the API
+  streams SSE and MCP sends progress notifications. Progress is sent at most every 0.25 s per job.
 - Threaded tools report via `loop.call_soon_threadsafe`; cancellation uses a `CancelToken` checked in
   yt-dlp/gallery-dl hooks.
 
@@ -610,14 +618,73 @@ derived for `http`.
 ```python
 class UDLService:
     @operation("download")
-    async def download(self, req: DownloadRequest) -> DownloadBatch: ...
-    @operation("probe")
-    async def probe(self, req: ProbeRequest) -> ProbeReport: ...
+    async def download(self, request: DownloadRequest) -> DownloadBatch: ...
+    @operation("probe_url")
+    async def probe(self, request: ProbeRequest) -> ProbeReport: ...
+    # get_download, list_downloads, cancel_download, list_sites, get_site, set_site_strategy,
+    # delete_site, list_databases, list_plugins, get_config
+
+operations()                  # name -> Operation(name, request, response, summary, description, method)
+await service.call(name, request_model_or_plain_data)
+service.events(job_or_batch_id)   # a stream, not an operation
 ```
 
 Every operation takes and returns Pydantic models, so the CLI, API and MCP share validation and serialisation.
 Each adapter registers which operation it implements, and the parity test compares those sets against the
-registry.
+registry. Operation names are the Feature Matrix's MCP tool names.
+
+### Decisions made while building Phase 3
+
+- **Candidates are tried by downloading, not probed first.** A downloader's `download()` makes the same
+  checks its `probe()` would (a HEAD request, fetching the page, extraction) and fails as fast with
+  `UnsupportedURL`, so probing first would only double the work for the tool that wins.
+- **`probe_order` now defaults to `http, yt-dlp, gallery-dl, scraper, browser`**, as the chain above needs:
+  http's HEAD request is cheap and certain, so it goes before yt-dlp's generic extractor, and a direct media
+  link goes to http before gallery-dl's direct-link extractor. Offline matches go first in `probe_order` (not
+  by confidence), so `probe_order` is the one setting that orders the chain.
+- **The probe chain also follows failed stored strategies**, not only a site with none: a download works on
+  the first run even when the stored strategy has just broken. A tool is never offered twice with the same
+  options.
+- **Ranking stored strategies:** a matching `url_pattern` before a site-wide strategy, then `priority`, a
+  manual strategy before a learned one, fewer consecutive failures, the better success rate (smoothed: an
+  untried strategy counts as half), then the id. Among patterns, `priority` decides.
+- **URL normalisation** lowercases the scheme and host, drops default ports, tracking parameters (`utm_*`,
+  `fbclid`, …) and text fragments, and adds `https://` to a URL written without a scheme. Everything else stays
+  as written: `www.`/`m.` (a site may not answer without them), the query's encoding and order (a signed URL's
+  signature covers it) and fragments (pages that route in JavaScript). **Site keys** include the suffix
+  list's private domains (`someone.github.io` is its own site); a host with no registrable domain (localhost,
+  an IP address, an intranet name) is its own key, without its port.
+- **Signing in:** a URL's cookies are read once, at its first `AuthRequired` (or up front for a
+  `requires_auth` strategy); after a login failure every later candidate is signed in. The `browser` comes in
+  straight after the failure, once, but never for a tool the request named, whose own failure is the error.
+- **Retries** (`RetryPolicy`, not in the config): 2 more tries after a network error or rate limit, waiting
+  the site's `Retry-After` or a backoff from 1 s that doubles, at most 60 s; a longer `Retry-After` moves on.
+- **What is remembered:** the probe's winner (site-wide, `source=probe`), or its success on the site's
+  strategy for that tool and options (enabling it again). A requested tool or a site plugin's strategy is
+  chosen, not learned, so neither is stored. A strategy stored only in a database udl does not write to (a
+  read-only shared one) is copied into one it does when counted. A database that cannot be written is
+  logged and never fails a download.
+- **The executor learns strategies; the job manager writes the history.** A `DownloadRecord` is saved when
+  its job is queued, starts and ends (`started_at` is the queue time until it starts); `--no-record` saves
+  neither strategies nor history.
+- **Concurrency:** a job waits for its site's turn before a global one, so jobs queued behind a busy site
+  leave room for other sites. The limits hold across batches. `-j/--jobs` (4.2) sets the CLI's
+  `max_concurrent` (each CLI run makes its own service) rather than being a request field; `--db` is
+  `DownloadRequest.databases`, a `DBManager.only()` view that reads from and writes to the named connections.
+- **Cancelling** a running job cancels its `CancelToken`, so the downloader stops as designed and the try ends
+  as cancelled; its task is cancelled only if it has not stopped 5 s later. A job waiting for its turn has its
+  task cancelled at once.
+- **Recovering after a crash:** a starting udl marks records left `queued`/`running` as `failed:
+  interrupted` only when no other udl is running: every udl holds a shared `flock` on `udl.lock` in the data
+  dir, and one that can take it exclusively is alone (it keeps it exclusively while it cleans up). This is
+  POSIX-only. A udl on another machine that shares a database can still have a record marked interrupted;
+  its final update puts it right.
+- **Site plugins (Phase 6)** are asked through the `SiteBehaviour` protocol (`matches`, `strategy`,
+  `output_dir`); `transform_urls`, `prepare` and `post_process` arrive with 6.2.
+- **Smaller pieces:** `Toolbox` gives configured downloaders (the `[browser]` table first for the browser);
+  a downloader's offline `match()` that raises counts as no match. `DatabasePlugin.get_download(id)` joined
+  the contract, and errors gained `Interrupted` and `DoesNotExist`. The config's `filename_template` is
+  validated when the config loads. A request's URLs are deduplicated after normalising.
 
 ---
 
@@ -666,8 +733,9 @@ headed browser on the user's machine).
 
   app = typer.Typer(cls=DefaultGetGroup)
   ```
-- `get` options: `-o/--output DIR`, `--tool NAME`, `--db NAME` (restrict lookup/writes), `--reprobe`,
-  `--no-record`, `-i/--input FILE` (`-` = stdin), `-j/--jobs N`, `--json`.
+- `get` options: `-o/--output DIR`, `--tool NAME`, `--db NAME` (restrict lookup/writes:
+  `DownloadRequest.databases`), `--reprobe`, `--no-record`, `-i/--input FILE` (`-` = stdin), `-j/--jobs N`
+  (the CLI's `max_concurrent`, see [Phase 3 decisions](#decisions-made-while-building-phase-3)), `--json`.
 - Global options: `--config PATH`, `-v/--verbose`, `-q/--quiet`. Exit codes: `0` all OK, `1` some failed,
   `2` usage error.
 
