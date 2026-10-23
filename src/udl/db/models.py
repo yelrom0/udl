@@ -11,18 +11,15 @@ Strategies and downloads refer to their site by its key, which is the same in ev
 """
 
 # System Imports
-import re
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated
 
 # Package Imports
 import pydantic
 from pydantic import (
-    AfterValidator,
     AwareDatetime,
     BaseModel,
     ConfigDict,
@@ -33,6 +30,7 @@ from pydantic import (
 from sqlmodel import Field, SQLModel
 
 # Local Imports
+from udl.chains.models import Regex, TagChain
 from udl.core.urls import SiteKey
 from udl.errors import ErrorInfo
 
@@ -67,19 +65,6 @@ class JobStatus(StrEnum):
         return self not in (JobStatus.QUEUED, JobStatus.RUNNING)
 
 
-def _check_regex(pattern: str) -> str:
-    try:
-        re.compile(pattern)
-    except re.error as e:
-        raise ValueError(f"{pattern!r} is not a valid regular expression: {e}") from e
-    return pattern
-
-
-# A valid regular expression. (A plain alias, not a `type` statement: SQLModel reads the fields'
-# types to make the SQL plugins' columns, and does not see through `type` aliases.)
-Regex = Annotated[str, AfterValidator(_check_regex)]
-
-
 class Site(SQLModel):
     """A website, identified by its key: the registrable domain (eTLD+1), e.g. `example.co.uk`."""
 
@@ -105,6 +90,8 @@ class Strategy(SQLModel):
     tool: str = Field(min_length=1)
     # Validated by the tool's own Options model.
     options: JsonObject = Field(default_factory=dict)
+    # The tag chain the tool (the scraper, or the browser) follows to the media.
+    chain: TagChain | None = None
     requires_auth: bool = False
     source: StrategySource
     # Lower is tried first.

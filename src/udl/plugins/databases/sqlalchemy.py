@@ -47,6 +47,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel.sql.sqltypes import AutoString
 
 # Local Imports
+from udl.chains.models import TagChain
 from udl.config import DBConnectionConfig
 from udl.db.models import (
     DownloadQuery,
@@ -147,6 +148,7 @@ class StrategyTable(Strategy, _Table, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     site_key: str = Field(min_length=1, foreign_key="site.key", index=True)
     options: JsonObject = Field(default_factory=dict, sa_type=PydanticJSON(JsonObject))
+    chain: TagChain | None = Field(default=None, sa_type=PydanticJSON(TagChain))
     source: StrategySource = Field(sa_type=AutoString)
     last_success_at: AwareDatetime | None = Field(default=None, sa_type=UTCDateTime)
     last_error: ErrorInfo | None = Field(default=None, sa_type=PydanticJSON(ErrorInfo))
@@ -169,6 +171,16 @@ class SchemaVersionTable(_Table, table=True):
 
     id: int = Field(default=1, primary_key=True)
     version: int
+
+
+# ---------------------------------------------------------------------------------------------
+# Migrations: migrations[n] upgrades the schema from version n + 1 to n + 2
+# ---------------------------------------------------------------------------------------------
+
+
+def _add_strategy_chains(conn: Connection) -> None:
+    """Version 2: strategies get a tag chain (a JSON column)."""
+    conn.exec_driver_sql(f"ALTER TABLE strategy ADD COLUMN chain {JSON().compile(conn.dialect)}")
 
 
 def _site(row: SiteTable) -> Site:
@@ -195,7 +207,7 @@ class SQLAlchemyDatabase(DatabasePlugin):
     """
 
     # migrations[n] upgrades the schema from version n + 1 to n + 2.
-    migrations: ClassVar[Sequence[Migration]] = ()
+    migrations: ClassVar[Sequence[Migration]] = (_add_strategy_chains,)
 
     def __init__(self, connection: DBConnectionConfig) -> None:
         super().__init__(connection)

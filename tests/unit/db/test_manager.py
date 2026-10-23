@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 import pytest
 
 # Local Imports
+from udl.chains.models import TagChain
 from udl.config import DBConnectionConfig, DBSettings, ReadPolicy, WritePolicy
 from udl.db.manager import DBManager
 from udl.db.models import (
@@ -218,6 +219,23 @@ async def test_merge_combines_strategies_keeping_the_highest_priority_copy_of_ea
         merged = await manager.strategies_for("example.com")
 
         assert merged == sorted([local_ytdlp, *shared[1:]], key=strategy_order)
+
+
+async def test_merge_keeps_a_site_s_chain_apart_from_its_strategy_for_the_same_tool(
+    registry: PluginRegistry,
+) -> None:
+    chain = TagChain.model_validate({"steps": [{"select": "video", "attr": "src"}]})
+    async with make_manager(
+        registry, conn("local"), conn("shared", priority=10), read_policy=ReadPolicy.MERGE
+    ) as manager:
+        local = await store(manager.database("local"), make_strategy(tool="scraper"))
+        shared = await store(
+            manager.database("shared"), make_strategy(tool="scraper", chain=chain, priority=1)
+        )
+
+        merged = await manager.strategies_for("example.com")
+
+        assert merged == [*local, *shared]
 
 
 @pytest.mark.parametrize("policy", list(ReadPolicy))

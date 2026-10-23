@@ -19,6 +19,7 @@ from uuid import uuid4
 import pytest
 
 # Local Imports
+from udl.chains.models import TagChain
 from udl.config import DBConnectionConfig
 from udl.db.models import (
     DownloadQuery,
@@ -222,6 +223,27 @@ async def test_a_stored_strategy_round_trips(db: DatabasePlugin) -> None:
 
     assert await db.upsert_strategy(strategy) == strategy
     assert await db.strategies_for("example.com") == [strategy]
+
+
+async def test_a_strategy_s_tag_chain_comes_back_as_a_tag_chain(db: DatabasePlugin) -> None:
+    await db.upsert_site(make_site())
+    chain = TagChain.model_validate(
+        {
+            "headers": {"Referer": "{url}"},
+            "steps": [
+                {"select": "iframe#player", "attr": "src"},
+                {"select": "script#data", "text": True},
+                {"json": "video.sources.*.url", "pick": "best"},
+            ],
+            "handoff": "yt-dlp",
+        }
+    )
+    strategy = make_strategy(tool="scraper", chain=chain, source=StrategySource.MANUAL)
+
+    assert await db.upsert_strategy(strategy) == strategy
+    [stored] = await db.strategies_for("example.com")
+    assert stored.chain == chain
+    assert make_strategy().chain is None
 
 
 async def test_a_strategy_for_a_site_that_is_not_stored_is_rejected(db: DatabasePlugin) -> None:

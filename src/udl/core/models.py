@@ -19,10 +19,12 @@ from uuid import UUID
 # Package Imports
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, NonNegativeInt, PositiveFloat
 
+from udl.chains.models import Regex
+
 # Local Imports
 from udl.config import Settings
 from udl.core.urls import RequestURL, SiteKey
-from udl.db.models import DownloadRecord, JobStatus, JsonObject, Regex, Site, Strategy
+from udl.db.models import DownloadRecord, JobStatus, JsonObject, Site, Strategy
 from udl.errors import ErrorInfo
 from udl.plugins.downloaders.base import (
     DownloadProgress,

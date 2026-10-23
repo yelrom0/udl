@@ -52,7 +52,7 @@ class DBManager:
     - get_site: the highest-priority connection that has the site.
     - strategies_for, by read policy. `first`: the highest-priority connection that has any for
       the site. `merge`: every connection's, keeping the highest-priority copy of each
-      (site, url_pattern, tool).
+      (site, url_pattern, tool), a tag chain's apart from a plain strategy's.
     - list_sites / list_downloads: every connection's, keeping the highest-priority copy of each.
 
     Writes go to the write policy's connections, never to a read-only one; the primary (or the
@@ -210,7 +210,8 @@ class DBManager:
             return found[0] if found else []
         answers = await self._read(read)
         strategies = _first_of_each(
-            chain.from_iterable(answers), key=lambda s: (s.site_key, s.url_pattern, s.tool)
+            chain.from_iterable(answers),
+            key=lambda s: (s.site_key, s.url_pattern, s.tool, s.chain is not None),
         )
         return sorted(strategies, key=strategy_order)
 
