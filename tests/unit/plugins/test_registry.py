@@ -424,7 +424,7 @@ def test_a_site_plugin_with_a_domain_that_is_not_a_host_is_reported(plugin_dir: 
 
     registry = PluginRegistry.discover([plugin_dir])
 
-    assert registry.plugins(SITES) == []
+    assert "mysite" not in [info.name for info in registry.plugins(SITES)]
     [problem] = registry.problems
     assert problem.origin == str(path)
     assert "MySite.domains: 'https://example.com/' is not a host" in problem.error

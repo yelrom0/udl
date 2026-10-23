@@ -28,6 +28,7 @@ from udl.db.models import Strategy, StrategySource
 from udl.plugins.downloaders.base import DownloadContext, DownloadResult
 from udl.plugins.registry import PluginRegistry
 from udl.plugins.sites.base import SitePlugin, on_domains
+from udl.plugins.sites.youtube import YouTubePlugin
 
 # Hosts no plugin should take for its own: lookalikes of each domain are added to them.
 FOREIGN: Final[tuple[str, ...]] = ("example.net", "localhost", "203.0.113.7", "udl.invalid")
@@ -68,10 +69,23 @@ def fake() -> Case:
     return Case(plugin, (watch, URL.parse("https://cdn.media.example.org/v.mp4")))
 
 
+def youtube() -> Case:
+    links = [
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "https://youtu.be/dQw4w9WgXcQ?si=x",
+        "https://m.youtube.com/shorts/dQw4w9WgXcQ",
+        "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+        "https://www.youtube.com/@udl",
+        "https://music.youtube.com/watch?v=dQw4w9WgXcQ",
+    ]
+    return Case(YouTubePlugin(), tuple(URL.parse(link) for link in links))
+
+
 # How to get each plugin, and the URLs it handles.
 CASES: dict[str, Callable[[], Case]] = {
     "bare": bare,
     "fake": fake,
+    "youtube": youtube,
 }
 
 
