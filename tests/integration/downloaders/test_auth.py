@@ -12,6 +12,7 @@ needed a login succeed
 import asyncio
 import os
 import signal
+import stat
 import time
 from pathlib import Path
 
@@ -147,3 +148,29 @@ async def test_signing_in_to_a_site_that_cannot_be_reached_is_a_network_error(
 async def test_an_unused_profile_has_no_cookies(tmp_path: Path) -> None:
     # No Chromium is started for a profile that does not exist.
     assert await profile_cookies("https://example.com/", profile_dir=tmp_path / "none") == []
+
+
+@pytest.mark.parametrize("mode", [0o755, 0o750, 0o701])
+async def test_a_profile_others_can_get_into_is_warned_about(
+    fixture_site: FixtureSite, profile: Path, caplog: pytest.LogCaptureFixture, mode: int
+) -> None:
+    # It holds the user's logins. (Chromium makes a new one for its owner alone.)
+    await sign_in(fixture_site, profile)
+    await asyncio.to_thread(profile.chmod, mode)
+
+    await profile_cookies(fixture_site.url(Page.PRIVATE), profile_dir=profile)
+
+    [warning] = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert f"Other users of this machine can get into the browser profile {profile}" in warning
+    assert f"chmod 700 {profile}" in warning
+
+
+async def test_a_new_profile_is_its_owner_s_alone_and_not_warned_about(
+    fixture_site: FixtureSite, profile: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    await sign_in(fixture_site, profile)
+
+    await profile_cookies(fixture_site.url(Page.PRIVATE), profile_dir=profile)
+
+    assert stat.S_IMODE((await asyncio.to_thread(profile.stat)).st_mode) == 0o700
+    assert [r for r in caplog.records if r.levelname == "WARNING"] == []

@@ -20,7 +20,9 @@ profile_dir option is None. One Chromium at a time uses a profile: others wait t
 # System Imports
 import asyncio
 import contextlib
+import logging
 import re
+import stat
 import threading
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -75,6 +77,8 @@ from udl.plugins.downloaders.errors import chromium_error, http_status_error
 from udl.plugins.downloaders.http import PAGE_TYPES
 from udl.plugins.downloaders.media import Find, stream_kind, unique, url_name
 from udl.plugins.requirements import Requirement
+
+log = logging.getLogger(__name__)
 
 TOOL: Final[str] = "browser"
 
@@ -199,6 +203,18 @@ def _launch_error(error: PlaywrightError) -> DownloadError:
     return DownloadError(f"Chromium could not start: {error.message}", tool=TOOL)
 
 
+def _check_private(profile_dir: Path) -> None:
+    """Warn when other users can get into the profile, which holds the user's logins."""
+    with contextlib.suppress(FileNotFoundError):  # (Chromium makes it, for its owner alone)
+        if stat.S_IMODE(profile_dir.stat().st_mode) & 0o077:
+            log.warning(
+                "Other users of this machine can get into the browser profile %s, which holds "
+                "your logins: `chmod 700 %s` keeps them out",
+                profile_dir,
+                profile_dir,
+            )
+
+
 @asynccontextmanager
 async def chromium(
     *,
@@ -215,6 +231,7 @@ async def chromium(
     args = ["--disable-gpu", "--disable-software-rasterizer"] if headless else []
     async with AsyncExitStack() as stack:
         if profile_dir is not None:
+            await asyncio.to_thread(_check_private, profile_dir)
             await stack.enter_async_context(_profile(profile_dir, cancel))
         playwright = await stack.enter_async_context(async_playwright())
         try:

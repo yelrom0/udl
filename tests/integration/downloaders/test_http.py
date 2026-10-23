@@ -11,6 +11,7 @@ headers and cookies
 # System Imports
 import asyncio
 import gzip
+import logging
 from collections.abc import Callable
 from pathlib import Path
 
@@ -22,7 +23,14 @@ from werkzeug import Request, Response
 
 # Local Imports
 from support.fixture_site import FixtureSite, Page
-from udl.errors import Cancelled, ErrorCode, ExtractionFailed, NetworkError, NotFound
+from udl.errors import (
+    Cancelled,
+    DownloadError,
+    ErrorCode,
+    ExtractionFailed,
+    NetworkError,
+    NotFound,
+)
 from udl.plugins.downloaders.base import CancelToken, Cookie, DownloadContext, ProbeContext
 from udl.plugins.downloaders.http import USER_AGENT, HttpBackend, HttpDownloader, HttpOptions
 
@@ -515,6 +523,51 @@ async def test_the_user_agent_can_be_set(
     await http.download(DownloadContext(url=httpserver.url_for("/clip.mp4"), output_dir=tmp_path))
 
     assert user_agents(httpserver) == {("Configured/2",)}
+
+
+@pytest.mark.parametrize("backend", [HttpBackend.CURL, HttpBackend.WGET])
+async def test_headers_and_cookies_are_kept_off_the_command_line(
+    backend: HttpBackend,
+    httpserver: HTTPServer,
+    sample: bytes,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Anyone on the machine can read a command line (`ps`), and a site plugin's header can be
+    # a token.
+    caplog.set_level(logging.DEBUG, logger="udl")
+    httpserver.expect_request(
+        "/clip.mp4", headers={"Authorization": "Bearer hunter2", "Cookie": "session=s3cret"}
+    ).respond_with_handler(serve(sample))
+    ctx = DownloadContext(
+        url=httpserver.url_for("/clip.mp4"),
+        output_dir=tmp_path,
+        headers={"Authorization": "Bearer hunter2"},
+        cookies=[Cookie(name="session", value=SecretStr("s3cret"), domain="localhost")],
+    )
+
+    result = await HttpDownloader(HttpOptions(backend=backend)).download(ctx)
+
+    assert [file.read_bytes() for file in result.files] == [sample]
+    commands = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Running")]
+    assert commands
+    assert not [c for c in commands if "hunter2" in c or "s3cret" in c]
+
+
+@pytest.mark.parametrize("backend", [HttpBackend.CURL, HttpBackend.WGET])
+async def test_a_header_with_a_line_break_is_refused(
+    backend: HttpBackend, httpserver: HTTPServer, sample: bytes, tmp_path: Path
+) -> None:
+    # (It would be another header, or another line of wget's config.)
+    httpserver.expect_request("/clip.mp4").respond_with_handler(serve(sample))
+    ctx = DownloadContext(
+        url=httpserver.url_for("/clip.mp4"), output_dir=tmp_path, headers={"X-A": "a\nexecute = b"}
+    )
+
+    with pytest.raises(DownloadError, match="'X-A' header has a line break"):
+        await HttpDownloader(HttpOptions(backend=backend)).download(ctx)
+
+    assert httpserver.log == []
 
 
 async def test_cookies_are_sent_only_to_their_site(

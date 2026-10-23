@@ -17,6 +17,7 @@ import asyncio
 import functools
 import http.cookiejar
 import logging
+import os
 import string
 import threading
 from abc import ABC, abstractmethod
@@ -663,7 +664,8 @@ class Downloader[O: DownloaderOptions = DownloaderOptions](ABC):
         files: list[Path] = []
         size = 0
         for file in result.files:
-            path = (output_dir / file).absolute()
+            # (`..` taken away first, so it cannot lead out unnoticed.)
+            path = Path(os.path.normpath(output_dir / file))
             if path in files:
                 continue
             if not path.is_relative_to(output_dir):

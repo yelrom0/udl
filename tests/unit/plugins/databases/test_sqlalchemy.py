@@ -125,3 +125,20 @@ async def test_database_errors_are_raised_as_database_error(
 def test_an_invalid_url_raises_config_error_naming_the_connection() -> None:
     with pytest.raises(ConfigError, match=re.escape("'test'")):
         SQLAlchemyDatabase(connection("not a url"))
+
+
+async def test_a_database_error_does_not_show_the_statement_or_its_values(
+    make_db: MakeDB, tmp_path: Path
+) -> None:
+    # Its message reaches API clients; the values could be anything stored (e.g. options).
+    async with make_db("udl.db"):
+        pass
+    with closing(sqlite3.connect(tmp_path / "udl.db")) as raw, raw:
+        raw.execute("ALTER TABLE site DROP COLUMN notes")
+
+    async with make_db("udl.db") as db:
+        with pytest.raises(DatabaseError, match=r"'test' database failed: .*notes") as caught:
+            await db.upsert_site(Site(key="hunter2.example"))
+
+    assert "hunter2" not in caught.value.message
+    assert "SELECT" not in caught.value.message

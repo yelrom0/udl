@@ -8,6 +8,8 @@ The default database: one SQLite file
 
 # System Imports
 import asyncio
+import contextlib
+import os
 from pathlib import Path
 from typing import Any
 
@@ -72,7 +74,15 @@ class SQLitePlugin(SQLAlchemyDatabase):
         return engine
 
     async def connect(self) -> None:
-        # SQLite creates the database file, but not the directory it lives in.
         if self._file is not None:
-            await asyncio.to_thread(self._file.parent.mkdir, parents=True, exist_ok=True)
+            await asyncio.to_thread(_create, self._file)
         await super().connect()
+
+
+def _create(path: Path) -> None:
+    """Create the database file at `path` (and its directory) unless it exists. SQLite would
+    create the file, but not the directory, and both readable by everyone: they are the owner's
+    alone, as the file holds the download history (SQLite gives its journals the same mode)."""
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with contextlib.suppress(FileExistsError):  # (kept as it is: its owner may share it)
+        os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))

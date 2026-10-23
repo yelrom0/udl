@@ -359,6 +359,8 @@ async def test_a_relative_output_dir_is_made_absolute(
         ({"empty.mp4": b""}, None, "empty"),
         ({"a.mp4": b"x"}, ["{out}/missing.mp4"], "missing"),
         ({"a.mp4": b"x"}, ["{tmp}/elsewhere.mp4"], "outside"),
+        ({"a.mp4": b"x"}, ["{out}/../elsewhere.mp4"], "outside"),
+        ({"a.mp4": b"x"}, ["../elsewhere.mp4"], "outside"),
     ],
 )
 async def test_a_download_only_succeeds_with_real_files_inside_output_dir(

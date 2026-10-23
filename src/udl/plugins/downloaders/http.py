@@ -33,7 +33,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, NonNegativeInt, PositiveFloat, TypeAdapter
 
 # Local Imports
-from udl.errors import ExtractionFailed, NetworkError, UnsupportedURL
+from udl.errors import DownloadError, ExtractionFailed, NetworkError, UnsupportedURL
 from udl.plugins.downloaders.base import (
     CancelToken,
     Confidence,
@@ -206,6 +206,15 @@ def _file(response: _Response) -> _File:
     )
 
 
+def _header_lines(headers: Mapping[str, str], form: str) -> str:
+    """`headers` as lines of `form` (with {name} and {value}), for curl's and wget's files.
+    Headers go in files: a command line can be read by anyone on the machine."""
+    for name, value in headers.items():
+        if "\n" in name + value or "\r" in name + value:
+            raise DownloadError(f"The {name!r} header has a line break in it", tool=TOOL)
+    return "".join(form.format(name=name, value=value) + "\n" for name, value in headers.items())
+
+
 def _cookie_file(cookies: list[Cookie], folder: Path) -> Path:
     """The cookies as a Netscape cookies.txt file in `folder`, for curl and wget."""
     lines = ["# Netscape HTTP Cookie File"]
@@ -358,8 +367,9 @@ class _Curl(_Backend):
         args += ["--connect-timeout", str(timeout), "--retry", str(self.options.retries)]
         # Give up when nothing arrives for `timeout` seconds.
         args += ["--speed-limit", "1", "--speed-time", str(max(int(timeout), 1))]
-        for name, value in request.headers.items():
-            args += ["--header", f"{name}: {value}"]
+        headers = folder / "headers.txt"
+        headers.write_text(_header_lines(request.headers, "{name}: {value}"))
+        args += ["--header", f"@{headers}"]
         if request.cookies:
             args += ["--cookie", str(_cookie_file(request.cookies, folder))]
         return args
@@ -429,11 +439,11 @@ class _Wget(_Backend):
     requires = (Requirement.binary("wget", hint="Install wget, e.g. `sudo pacman -S wget`."),)
 
     def _args(self, request: _Request, folder: Path) -> list[str]:
-        # No ~/.wgetrc, and no ~/.wget-hsts written.
-        args = ["wget", "--no-config", "--no-hsts", "--no-verbose", "--compression=auto"]
+        # Only udl's config (with the headers), not ~/.wgetrc, and no ~/.wget-hsts written.
+        config = folder / "wgetrc"
+        config.write_text(_header_lines(request.headers, "header = {name}: {value}"))
+        args = ["wget", f"--config={config}", "--no-hsts", "--no-verbose", "--compression=auto"]
         args += [f"--timeout={self.options.timeout}", f"--tries={self.options.retries + 1}"]
-        for name, value in request.headers.items():
-            args += ["--header", f"{name}: {value}"]
         if request.cookies:
             args += [f"--load-cookies={_cookie_file(request.cookies, folder)}"]
         return args

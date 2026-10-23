@@ -39,7 +39,7 @@ from sqlalchemy import (
     or_,
 )
 from sqlalchemy.engine import URL, make_url
-from sqlalchemy.exc import ArgumentError, IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import ArgumentError, DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.orm import declared_attr, registry
 from sqlmodel import Field, SQLModel, col, delete, select, update
@@ -293,7 +293,11 @@ class SQLAlchemyDatabase(DatabasePlugin):
         return True
 
     def _error(self, e: SQLAlchemyError) -> DatabaseError:
-        return DatabaseError(f"The {self.connection.name!r} database failed: {e}")
+        # The driver's own message: SQLAlchemy's adds the statement and the values in it, which
+        # are only logged, since the message reaches API clients.
+        log.debug("The %r database failed", self.connection.name, exc_info=e)
+        cause = e.orig if isinstance(e, DBAPIError) else e
+        return DatabaseError(f"The {self.connection.name!r} database failed: {cause}")
 
     @asynccontextmanager
     async def _transaction(self) -> AsyncGenerator[AsyncSession]:

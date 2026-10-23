@@ -8,6 +8,7 @@ that keeps a page in a browser from reaching a udl on localhost (DNS rebinding),
 """
 
 # System Imports
+import json
 from pathlib import Path
 
 # Package Imports
@@ -18,8 +19,9 @@ from starlette.types import Message, Receive, Scope, Send
 
 # Local Imports
 from support.api import client_for
-from support.interfaces import Harness
+from support.interfaces import A, Harness
 from udl.config import APISettings
+from udl.core.models import DownloadList
 from udl.core.service import operations
 from udl.errors import ErrorCode, ErrorInfo
 from udl.interfaces.api.app import LocalHostsOnly
@@ -69,6 +71,34 @@ async def test_on_localhost_requests_for_another_host_are_refused(
 
     assert response.status_code == 421
     assert ErrorInfo.model_validate(response.json()).code is ErrorCode.NOT_ALLOWED
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    ["text/plain", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x", None],
+)
+async def test_a_page_in_a_browser_cannot_start_downloads(
+    client: httpx.AsyncClient, content_type: str | None
+) -> None:
+    # Any page can make a browser POST these to localhost without asking it first (no CORS
+    # preflight), but not JSON, which is all the API takes.
+    headers = {"Origin": "https://evil.example"}
+    if content_type:
+        headers["Content-Type"] = content_type
+    body = json.dumps({"urls": [A]})
+
+    sent = await client.post("/downloads?wait=true", content=body, headers=headers)
+    asked = await client.options(
+        "/downloads",
+        headers={**headers, "Access-Control-Request-Method": "POST"},
+    )
+    listed = DownloadList.model_validate((await client.get("/downloads")).json())
+
+    assert sent.status_code == 422
+    assert listed.downloads == []
+    # Nor may a page read what udl answers, or send JSON after asking.
+    for answer in (sent, asked):
+        assert "access-control-allow-origin" not in answer.headers
 
 
 async def test_served_beyond_localhost_any_host_is_answered(tmp_path: Path) -> None:
