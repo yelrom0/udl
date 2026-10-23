@@ -7,8 +7,9 @@ DBManager: the configured database connections ([db] in the config), used as one
 """
 
 # System Imports
+import copy
 import logging
-from collections.abc import Awaitable, Callable, Hashable, Iterable
+from collections.abc import Awaitable, Callable, Collection, Hashable, Iterable
 from itertools import chain
 from types import TracebackType
 from typing import NoReturn, Self
@@ -85,6 +86,38 @@ class DBManager:
     def connections(self) -> list[DBConnectionConfig]:
         """The configured connections, in priority order."""
         return list(self._connections)
+
+    @property
+    def primary(self) -> str:
+        """The primary connection's name."""
+        return self._primary
+
+    def is_connected(self, name: str) -> bool:
+        """Whether the connection called `name` is connected (and has not failed to)."""
+        return name in self._live
+
+    def only(self, names: Collection[str]) -> Self:
+        """A view that reads from, and writes to, only the connections called `names`: writes
+        go to the writable ones among them, whatever the write policy. Its primary is this
+        manager's if named, else the highest-priority writable one. It shares this manager's
+        databases, so connect and close this manager, not the view. Raises DatabaseError when a
+        name is not a connection's."""
+        unknown = sorted(set(names) - set(self._databases))
+        if unknown or not names:
+            what = f"named {', '.join(unknown)}" if unknown else "was named"
+            known = ", ".join(c.name for c in self._connections)
+            raise DatabaseError(
+                f"No database connection {what}", hint=f"The connections are: {known}."
+            )
+        view = copy.copy(self)
+        view._connections = [c for c in self._connections if c.name in names]
+        listed = [c.name for c in view._connections]
+        writable = [c.name for c in view._connections if not c.read_only]
+        view._primary = self._primary if self._primary in names else (writable or listed)[0]
+        view._writers = sorted(
+            writable, key=lambda name: (name != view._primary, listed.index(name))
+        )
+        return view
 
     def database(self, name: str) -> DatabasePlugin:
         """The database of the connection called `name`."""
@@ -180,6 +213,12 @@ class DBManager:
             chain.from_iterable(answers), key=lambda s: (s.site_key, s.url_pattern, s.tool)
         )
         return sorted(strategies, key=strategy_order)
+
+    async def get_download(self, download_id: UUID) -> DownloadRecord | None:
+        answers = await self._read(
+            lambda db: db.get_download(download_id), until=lambda r: r is not None
+        )
+        return next((record for record in answers if record is not None), None)
 
     async def list_downloads(self, query: DownloadQuery) -> list[DownloadRecord]:
         answers = await self._read(lambda db: db.list_downloads(_from_start(query)))

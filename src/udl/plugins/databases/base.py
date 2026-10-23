@@ -98,6 +98,9 @@ class DatabasePlugin(ABC):
         """Store a new download. Raises DatabaseError when its id is already stored."""
 
     @abstractmethod
+    async def get_download(self, download_id: UUID) -> DownloadRecord | None: ...
+
+    @abstractmethod
     async def update_download(self, record: DownloadRecord) -> None:
         """Replace a stored download. Raises DatabaseError when its id is not stored."""
 

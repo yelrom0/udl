@@ -117,6 +117,10 @@ class MemoryDatabase(DatabasePlugin):
             raise DatabaseError(f"Download {record.id} is already stored")
         self._downloads[record.id] = _copy(DownloadRecord, record)
 
+    async def get_download(self, download_id: UUID) -> DownloadRecord | None:
+        record = self._downloads.get(download_id)
+        return _copy(DownloadRecord, record) if record else None
+
     async def update_download(self, record: DownloadRecord) -> None:
         if record.id not in self._downloads:
             raise DatabaseError(f"Download {record.id} is not stored")

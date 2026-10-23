@@ -10,7 +10,7 @@ DBManager: several database connections used as one (read policy, write policy, 
 import logging
 import re
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 # Package Imports
 import pytest
@@ -282,6 +282,24 @@ async def test_downloads_are_listed_from_every_connection(
         assert filtered == [r for r in newest_first if r.site_key == "example.com"]
 
 
+async def test_a_download_comes_from_the_highest_priority_connection_that_has_it(
+    registry: PluginRegistry,
+) -> None:
+    async with make_manager(registry, conn("local"), conn("shared", priority=10)) as manager:
+        record = DownloadRecord(url="https://example.com/v", site_key="example.com")
+        await manager.database("shared").add_download(record)
+        await manager.database("local").add_download(record.model_copy(update={"tool": "http"}))
+        only_shared = DownloadRecord(url="https://example.com/w", site_key="example.com")
+        await manager.database("shared").add_download(only_shared)
+
+        found = await manager.get_download(record.id)
+
+        assert found is not None
+        assert found.tool == "http"
+        assert await manager.get_download(only_shared.id) == only_shared
+        assert await manager.get_download(uuid4()) is None
+
+
 # ---------------------------------------------------------------------------------------------
 # Writes
 # ---------------------------------------------------------------------------------------------
@@ -508,3 +526,87 @@ async def test_a_database_error_from_the_primary_is_raised_unchanged(
 
         with pytest.raises(DatabaseError, match=f"^Download {record.id} is already stored$"):
             await manager.add_download(record)
+
+
+# ---------------------------------------------------------------------------------------------
+# A view of some of the connections, and what is known about them
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_the_primary_and_which_connections_are_connected(registry: PluginRegistry) -> None:
+    manager = make_manager(
+        registry, conn("local", primary=True), conn("shared", url="broken://connect", priority=1)
+    )
+    assert manager.primary == "local"
+    assert not manager.is_connected("local")
+
+    async with manager:
+        assert manager.is_connected("local")
+        assert not manager.is_connected("shared")
+
+    assert not manager.is_connected("local")
+
+
+async def test_a_view_reads_only_from_the_connections_it_names(registry: PluginRegistry) -> None:
+    async with make_manager(
+        registry, conn("local", primary=True), conn("shared", priority=10)
+    ) as manager:
+        await store(manager.database("local"), make_strategy(tool="http"))
+        await store(manager.database("shared"), make_strategy(tool="scraper"))
+
+        view = manager.only(["shared"])
+
+        assert [s.tool for s in await view.strategies_for("example.com")] == ["scraper"]
+        assert [c.name for c in view.connections] == ["shared"]
+        assert view.primary == "shared"
+
+
+async def test_a_view_writes_to_the_writable_connections_it_names_whatever_the_policy(
+    registry: PluginRegistry,
+) -> None:
+    async with make_manager(
+        registry,
+        conn("local", primary=True),
+        conn("shared", priority=10),
+        conn("archive", priority=20, read_only=True),
+    ) as manager:
+        view = manager.only(["shared", "archive"])
+
+        await view.upsert_site(Site(key="example.com"))
+
+        assert await site_keys(manager.database("shared")) == ["example.com"]
+        assert await site_keys(manager.database("local")) == []
+        assert await site_keys(manager.database("archive")) == []
+
+
+async def test_a_view_keeps_the_primary_when_it_names_it(registry: PluginRegistry) -> None:
+    async with make_manager(
+        registry, conn("other", priority=-1), conn("local", primary=True)
+    ) as manager:
+        view = manager.only(["other", "local"])
+
+        await view.upsert_site(Site(key="example.com"))
+
+        assert view.primary == "local"
+        assert await site_keys(manager.database("local")) == ["example.com"]
+        assert await site_keys(manager.database("other")) == ["example.com"]
+
+
+async def test_a_view_of_read_only_connections_cannot_be_written(
+    registry: PluginRegistry,
+) -> None:
+    async with make_manager(
+        registry, conn("local", primary=True), conn("archive", read_only=True, priority=1)
+    ) as manager:
+        view = manager.only(["archive"])
+
+        with pytest.raises(DatabaseError, match="No database connection to write to"):
+            await view.upsert_site(Site(key="example.com"))
+
+
+@pytest.mark.parametrize("names", [["nope"], ["local", "nope"], []])
+def test_a_view_must_name_known_connections(registry: PluginRegistry, names: list[str]) -> None:
+    manager = make_manager(registry, conn("local", primary=True))
+
+    with pytest.raises(DatabaseError, match="connection"):
+        manager.only(names)

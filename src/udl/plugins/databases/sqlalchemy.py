@@ -374,6 +374,11 @@ class SQLAlchemyDatabase(DatabasePlugin):
                 raise DatabaseError(f"Download {record.id} is already stored")
             s.add(DownloadRecordTable.model_validate(record.model_dump()))
 
+    async def get_download(self, download_id: UUID) -> DownloadRecord | None:
+        async with self._transaction() as s:
+            row = await s.get(DownloadRecordTable, download_id)
+            return _download(row) if row else None
+
     async def update_download(self, record: DownloadRecord) -> None:
         async with self._transaction() as s:
             if await s.get(DownloadRecordTable, record.id) is None:

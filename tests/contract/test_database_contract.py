@@ -319,6 +319,20 @@ async def test_a_stored_download_round_trips(db: DatabasePlugin) -> None:
     assert await db.list_downloads(DownloadQuery()) == [record]
 
 
+async def test_a_download_is_found_by_its_id(db: DatabasePlugin) -> None:
+    wanted, other = make_download(), make_download()
+    await db.add_download(wanted)
+    await db.add_download(other)
+
+    assert await db.get_download(wanted.id) == wanted
+
+
+async def test_an_unknown_download_is_none(db: DatabasePlugin) -> None:
+    await db.add_download(make_download())
+
+    assert await db.get_download(uuid4()) is None
+
+
 async def test_adding_a_download_twice_is_rejected(db: DatabasePlugin) -> None:
     record = make_download()
     await db.add_download(record)
