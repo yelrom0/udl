@@ -434,6 +434,24 @@ def render_template(template: str, fields: Mapping[str, str]) -> str:
     )
 
 
+def _escaped(text: str) -> str:
+    return text.replace("{", "{{").replace("}", "}}")
+
+
+def fill_fields(template: str, fields: Mapping[str, str]) -> str:
+    """A filename template with some of its fields filled in (as render_template would fill
+    them) and the others left for the tool, e.g. `{site}` before a downloader sees it."""
+
+    def part(text: str, field: str | None) -> str:
+        if field is None:
+            return _escaped(text)
+        if field in fields:
+            return _escaped(text) + _escaped(_safe_field(fields[field]))
+        return f"{_escaped(text)}{{{field}}}"
+
+    return "".join(part(text, field) for text, field in template_parts(template))
+
+
 class _Context(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
 

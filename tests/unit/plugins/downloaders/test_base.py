@@ -55,6 +55,7 @@ from udl.plugins.downloaders.base import (
     cancellable,
     cookie_header,
     default_downloader_for,
+    fill_fields,
     render_template,
     run_blocking,
     template_parts,
@@ -856,3 +857,14 @@ def test_a_rendered_template_never_leaves_the_output_dir(fields: dict[str, str])
     assert not rendered.is_absolute()
     assert ".." not in rendered.parts
     assert len(rendered.parts) == 2
+
+
+def test_filling_some_fields_leaves_the_others_for_the_tool() -> None:
+    assert fill_fields("{site}/{title} [{id}].{ext}", {"site": "a.com", "id": "x/y"}) == (
+        "a.com/{title} [x_y].{ext}"
+    )
+
+
+def test_filled_values_and_literal_braces_stay_text() -> None:
+    assert fill_fields("{{x}} {site}.{ext}", {"site": "{title}"}) == "{{x}} {{title}}.{ext}"
+    assert fill_fields("{site}/clip {{1}}.mp4", {"site": "a.com"}) == "a.com/clip {{1}}.mp4"
