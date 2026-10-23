@@ -62,6 +62,7 @@ class Harness:
         progress_interval: float = 0.0,
         keep: int = 1000,
         runner: Any = None,
+        grace: float = 5.0,
     ) -> None:
         toolbox = Toolbox(config, registry())
         executor = Executor(
@@ -78,6 +79,7 @@ class Harness:
             max_per_site=config.max_per_site,
             progress_interval=progress_interval,
             keep=keep,
+            grace=grace,
         )
 
     async def __aenter__(self) -> Self:
@@ -482,6 +484,24 @@ async def test_several_subscribers_each_hear_every_event(tmp_path: Path) -> None
 # ---------------------------------------------------------------------------------------------
 
 
+async def test_a_job_that_ignores_its_token_is_stopped_after_a_grace_period(
+    tmp_path: Path,
+) -> None:
+    class Stubborn:
+        async def run(self, job: JobSpec, **_: Any) -> Execution:
+            await asyncio.sleep(60)  # (never looks at its token)
+            raise AssertionError
+
+    async with Harness(settings(tmp_path), runner=Stubborn(), grace=0.1) as harness:
+        [job_id] = await harness.submit(A)
+        await started(harness, job_id)
+
+        async with asyncio.timeout(5):
+            [cancelled] = await harness.jobs.cancel(job_id)
+
+    assert cancelled.status is JobStatus.CANCELLED
+
+
 async def test_a_running_job_can_be_cancelled(tmp_path: Path) -> None:
     async with Harness(slow_settings(tmp_path)) as harness:
         [job_id] = await harness.submit(A)
@@ -494,6 +514,10 @@ async def test_a_running_job_can_be_cancelled(tmp_path: Path) -> None:
     assert cancelled.finished_at is not None
     assert cancelled.error is not None
     assert cancelled.error.code is ErrorCode.CANCELLED
+    # It stopped through its token: the try it was making ends as cancelled.
+    assert [(a.tool, a.error and a.error.code) for a in cancelled.attempts] == [
+        ("http", ErrorCode.CANCELLED)
+    ]
     assert without_progress(events) == [
         JobEventType.QUEUED,
         JobEventType.STARTED,

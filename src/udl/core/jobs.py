@@ -136,6 +136,10 @@ class JobManager:
     Progress events are sent at most every `progress_interval` seconds per job (a job's
     JobInfo always has the latest progress). Ended jobs are kept, for get() and events(), until
     `keep` more have ended; their history stays in the databases.
+
+    A running job is cancelled through its CancelToken, which downloaders stop on (so the try
+    it was making ends as cancelled); one that has not stopped `grace` seconds later has its
+    task cancelled. A job waiting for its turn has its task cancelled at once.
     """
 
     def __init__(
@@ -146,8 +150,10 @@ class JobManager:
         max_per_site: int,
         progress_interval: float = 0.25,
         keep: int = 1000,
+        grace: float = 5.0,
     ) -> None:
         self._runner = runner
+        self._grace = grace
         self._turns = asyncio.Semaphore(max_concurrent)
         self._max_per_site = max_per_site
         self._site_turns: dict[str, asyncio.Semaphore] = {}
@@ -222,9 +228,14 @@ class JobManager:
         stopping = [(job, job.task) for job in jobs if not job.ended and job.task is not None]
         for job, task in stopping:
             job.cancel.cancel()
-            task.cancel()
+            if job.status is JobStatus.QUEUED:  # (nothing looks at its token while it waits)
+                task.cancel()
         if stopping:
-            await asyncio.wait([task for _, task in stopping])
+            _, late = await asyncio.wait([task for _, task in stopping], timeout=self._grace)
+            for task in late:
+                task.cancel()
+            if late:
+                await asyncio.wait(late)
         for job, _ in stopping:
             if not job.ended:  # its task was cancelled before it ran at all
                 await self._end(job, JobStatus.CANCELLED, Cancelled("The download was cancelled"))
