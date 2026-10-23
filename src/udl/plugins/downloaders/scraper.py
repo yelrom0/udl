@@ -23,7 +23,8 @@ the pages over HTTP as they are served.
 # System Imports
 import logging
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
+from contextlib import AbstractAsyncContextManager
 from typing import ClassVar, Final
 from urllib.parse import urljoin
 
@@ -54,6 +55,7 @@ from udl.chains.executor import (
     run_chain,
 )
 from udl.chains.models import FetchMode, StepTrace, TagChain
+from udl.chains.suggest import ChainSuggestion, suggest
 from udl.errors import ConfigError, DownloadError, UnsupportedURL
 from udl.plugins.downloaders.base import (
     Cookie,
@@ -304,13 +306,7 @@ class ScraperDownloader(Downloader[ScraperOptions]):
         the site set on the way)."""
 
         async def follow() -> tuple[ChainRun, list[Handoff]]:
-            async with http_client(
-                headers={**ctx.headers, **chain_headers(chain, ctx.url)},
-                cookies=ctx.cookies,
-                seconds=self.options.timeout,
-                retries=self.options.retries,
-                tool=TOOL,
-            ) as client:
+            async with self._client(ctx, chain_headers(chain, ctx.url)) as client:
                 reader = _ChainReader(client, self.options.max_page_bytes)
                 run = await run_chain(chain, ctx.url, reader, trace=trace)
                 cookies = [Cookie.from_http_cookie(cookie) for cookie in client.cookies.jar]
@@ -318,18 +314,42 @@ class ScraperDownloader(Downloader[ScraperOptions]):
 
         return await cancellable(follow(), ctx.cancel)
 
+    async def suggest_chains(self, ctx: ProbeContext) -> list[ChainSuggestion]:
+        """Chains to the media on ctx.url's page as it is served, and its iframes' pages (see
+        udl.chains.suggest). Raises UnsupportedURL when it is not a web page."""
+
+        async def read() -> dict[str, Document]:
+            async with self._client(ctx) as client:
+                url, html = await self._fetch(client, ctx.url)
+                pages: dict[str, Document] = {ctx.url: StaticDocument(url, html)}
+                frames = _Finder(LexborHTMLParser(html), url).iframes()
+                for frame in frames[: self.options.max_iframes]:
+                    try:
+                        pages[frame] = StaticDocument(*await self._fetch(client, frame))
+                    except DownloadError as e:
+                        log.debug("Skipped the iframe %s: %s", frame, e)
+            return pages
+
+        pages = await cancellable(read(), ctx.cancel)
+        return await suggest(ctx.url, pages, fetch=FetchMode.STATIC)
+
+    def _client(
+        self, ctx: ProbeContext, headers: Mapping[str, str] | None = None
+    ) -> AbstractAsyncContextManager[httpx.AsyncClient]:
+        return http_client(
+            headers={**ctx.headers, **(headers or {})},
+            cookies=ctx.cookies,
+            seconds=self.options.timeout,
+            retries=self.options.retries,
+            tool=TOOL,
+        )
+
     async def _scrape(self, ctx: ProbeContext) -> _Scraped:
         """The media on ctx.url's page (on its iframes' pages if none is on the page itself).
         Raises UnsupportedURL when there is none."""
 
         async def scrape() -> _Scraped:
-            async with http_client(
-                headers=ctx.headers,
-                cookies=ctx.cookies,
-                seconds=self.options.timeout,
-                retries=self.options.retries,
-                tool=TOOL,
-            ) as client:
+            async with self._client(ctx) as client:
                 page = await self._page(client, ctx.url)
                 finds = page.find()
                 for url in [] if finds else page.iframes()[: self.options.max_iframes]:
@@ -352,6 +372,12 @@ class ScraperDownloader(Downloader[ScraperOptions]):
 
     async def _page(self, client: httpx.AsyncClient, url: str) -> _Finder:
         """The page at `url`, parsed. Raises UnsupportedURL when it is not a web page."""
+        url, html = await self._fetch(client, url)
+        return _Finder(LexborHTMLParser(html), url)
+
+    async def _fetch(self, client: httpx.AsyncClient, url: str) -> tuple[str, str]:
+        """The web page at `url`: where it is (after redirects), and its HTML. Raises
+        UnsupportedURL when it is not a web page."""
         async with client.stream("GET", url) as response:
             status = response.status_code
             if error := http_status_error(
@@ -365,5 +391,4 @@ class ScraperDownloader(Downloader[ScraperOptions]):
                     tool=TOOL,
                     hint="If it is a file, http downloads it.",
                 )
-            html = await _body(response, self.options.max_page_bytes)
-            return _Finder(LexborHTMLParser(html), str(response.url))
+            return str(response.url), await _body(response, self.options.max_page_bytes)

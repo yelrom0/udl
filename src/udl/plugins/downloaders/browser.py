@@ -22,7 +22,7 @@ import asyncio
 import contextlib
 import re
 import threading
-from collections.abc import AsyncGenerator, Awaitable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -47,12 +47,14 @@ from udl.chains.executor import (
     ChainRun,
     Document,
     Reader,
+    StaticDocument,
     chain_handoffs,
     chain_headers,
     probe_result,
     run_chain,
 )
-from udl.chains.models import StepTrace, TagChain
+from udl.chains.models import FetchMode, StepTrace, TagChain
+from udl.chains.suggest import ChainSuggestion, suggest
 from udl.config import ExpandedPath, browser_profile_dir
 from udl.errors import ConfigError, DownloadError, ExtractionFailed, ToolUnavailable, UnsupportedURL
 from udl.plugins.downloaders.base import (
@@ -498,33 +500,41 @@ class BrowserDownloader(Downloader[BrowserOptions]):
     ) -> tuple[ChainRun, list[Handoff]]:
         """Where `chain` leads from ctx.url, and the downloads of its finds (with the browser's
         cookies and User-Agent)."""
-        options = self.options
+        headers = {**ctx.headers, **chain_headers(chain, ctx.url)}
 
-        async def follow() -> tuple[ChainRun, list[Handoff]]:
-            async with chromium(
-                profile_dir=options.profile_dir,
-                headless=options.headless,
-                user_agent=options.user_agent,
-                cancel=ctx.cancel,
-            ) as context:
-                await add_cookies(context, ctx.cookies)
-                headers = {**ctx.headers, **chain_headers(chain, ctx.url)}
-                await context.set_extra_http_headers(headers)
-                referer = not any(name.lower() == "referer" for name in headers)
-                reader = _ChainReader(context, timeout=options.timeout, referer=referer)
-                run = await run_chain(chain, ctx.url, reader, trace=trace)
-                urls = [ctx.url, *(find.media.url for find in run.finds)]
-                cookies = from_playwright(await context.cookies(urls))
-                agent = {"User-Agent": await reader.user_agent()}
+        async def follow(context: BrowserContext) -> tuple[ChainRun, list[Handoff]]:
+            referer = not any(name.lower() == "referer" for name in headers)
+            reader = _ChainReader(context, timeout=self.options.timeout, referer=referer)
+            run = await run_chain(chain, ctx.url, reader, trace=trace)
+            urls = [ctx.url, *(find.media.url for find in run.finds)]
+            cookies = from_playwright(await context.cookies(urls))
+            agent = {"User-Agent": await reader.user_agent()}
             return run, chain_handoffs(chain, run, url=ctx.url, cookies=cookies, headers=agent)
 
-        return await cancellable(follow(), ctx.cancel)
+        return await self._in_chromium(ctx.model_copy(update={"headers": headers}), follow)
 
-    async def _visit(self, ctx: ProbeContext) -> _Visit:
-        """Load ctx.url and see what media it has. Raises UnsupportedURL when it has none."""
+    async def suggest_chains(self, ctx: ProbeContext) -> list[ChainSuggestion]:
+        """Chains to the media on ctx.url's page as Chromium renders it, its frames' pages and
+        what it requests (see udl.chains.suggest)."""
+
+        async def read(context: BrowserContext) -> tuple[dict[str, Document], list[str]]:
+            page, requested = await self._load(context, ctx)
+            pages: dict[str, Document] = {ctx.url: StaticDocument(page.url, await page.content())}
+            for frame in page.frames[1:]:
+                with contextlib.suppress(PlaywrightError):  # (a frame that went away)
+                    pages[frame.url] = StaticDocument(frame.url, await frame.content())
+            return pages, [find.media.url for find in requested]
+
+        pages, requested = await self._in_chromium(ctx, read)
+        return await suggest(ctx.url, pages, fetch=FetchMode.BROWSER, requested=requested)
+
+    async def _in_chromium[T](
+        self, ctx: ProbeContext, work: Callable[[BrowserContext], Awaitable[T]]
+    ) -> T:
+        """Do `work` in Chromium, with ctx's cookies and headers (stopped when ctx.cancel is)."""
         options = self.options
 
-        async def visit() -> _Visit:
+        async def run() -> T:
             async with chromium(
                 profile_dir=options.profile_dir,
                 headless=options.headless,
@@ -533,38 +543,51 @@ class BrowserDownloader(Downloader[BrowserOptions]):
             ) as context:
                 await add_cookies(context, ctx.cookies)
                 await context.set_extra_http_headers(ctx.headers)
-                page = await context.new_page()
-                requested: list[Find] = []
-                found = asyncio.Event()
+                return await work(context)
 
-                def on_response(response: Response) -> None:
-                    if find := _requested(response, ctx.url):
-                        requested.append(find)
-                        found.set()
+        return await cancellable(run(), ctx.cancel)
 
-                page.on("response", on_response)
-                try:
-                    response = await page.goto(ctx.url, timeout=options.timeout * 1000)
-                except PlaywrightError as e:
-                    raise chromium_error(e.message) from e
-                status = response.status if response else 200
-                retry_after = response.headers.get("retry-after") if response else None
-                if error := http_status_error(status, ctx.url, tool=TOOL, retry_after=retry_after):
-                    raise error
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(found.wait(), timeout=options.wait)
-                streams = [find for find in requested if find.media.kind is not MediaKind.FILE]
-                files = [find for find in requested if find.media.kind is MediaKind.FILE]
-                finds = unique([*streams, *await _element_finds(page), *files])
-                urls = [ctx.url, *(find.media.url for find in finds)]
-                return _Visit(
-                    title=(await page.title()).strip() or None,
-                    finds=finds,
-                    cookies=from_playwright(await context.cookies(urls)),
-                    user_agent=await page.evaluate(_USER_AGENT),
-                )
+    async def _load(self, context: BrowserContext, ctx: ProbeContext) -> tuple[Page, list[Find]]:
+        """A page with ctx.url loaded, and the media it requested (waiting a little for some)."""
+        page = await context.new_page()
+        requested: list[Find] = []
+        found = asyncio.Event()
 
-        result = await cancellable(visit(), ctx.cancel)
+        def on_response(response: Response) -> None:
+            if find := _requested(response, ctx.url):
+                requested.append(find)
+                found.set()
+
+        page.on("response", on_response)
+        try:
+            response = await page.goto(ctx.url, timeout=self.options.timeout * 1000)
+        except PlaywrightError as e:
+            raise chromium_error(e.message) from e
+        status = response.status if response else 200
+        retry_after = response.headers.get("retry-after") if response else None
+        if error := http_status_error(status, ctx.url, tool=TOOL, retry_after=retry_after):
+            raise error
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(found.wait(), timeout=self.options.wait)
+        return page, requested
+
+    async def _visit(self, ctx: ProbeContext) -> _Visit:
+        """Load ctx.url and see what media it has. Raises UnsupportedURL when it has none."""
+
+        async def visit(context: BrowserContext) -> _Visit:
+            page, requested = await self._load(context, ctx)
+            streams = [find for find in requested if find.media.kind is not MediaKind.FILE]
+            files = [find for find in requested if find.media.kind is MediaKind.FILE]
+            finds = unique([*streams, *await _element_finds(page), *files])
+            urls = [ctx.url, *(find.media.url for find in finds)]
+            return _Visit(
+                title=(await page.title()).strip() or None,
+                finds=finds,
+                cookies=from_playwright(await context.cookies(urls)),
+                user_agent=await page.evaluate(_USER_AGENT),
+            )
+
+        result = await self._in_chromium(ctx, visit)
         if not result.finds:
             raise UnsupportedURL(f"Found no media on {ctx.url}", tool=TOOL)
         return result
