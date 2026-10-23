@@ -80,12 +80,12 @@ Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task
   - [x] 5.8 Expose suggest / test / set / import / export via CLI, API and MCP
   - [x] 5.9 "All tools failed" returns an actionable hint pointing at chain definition
 
-- [ ] **Phase 6: Site behaviour plugins**
-  - [ ] 6.1 `SitePlugin` ABC (`matches`, `transform_urls`, `strategy`, `prepare`, `output_dir`, `post_process`) + contract tests; add the `udl.sites` `PluginKind`
-  - [ ] 6.2 Hook site plugins into resolver/executor with documented precedence
-  - [ ] 6.3 Example built-in site plugin
-  - [ ] 6.4 Local single-file plugins in `~/.config/udl/plugins/` (no packaging needed)
-  - [ ] 6.5 `plugins list` shows type, source and availability (e.g. a missing binary)
+- [x] **Phase 6: Site behaviour plugins**
+  - [x] 6.1 `SitePlugin` base class (`matches`, `transform_urls`, `strategy`, `prepare`, `output_dir`, `post_process`) + contract tests; add the `udl.sites` `PluginKind`
+  - [x] 6.2 Hook site plugins into resolver/executor with documented precedence
+  - [x] 6.3 Example built-in site plugin (`youtube`)
+  - [x] 6.4 Local single-file plugins in `~/.config/udl/plugins/` (no packaging needed)
+  - [x] 6.5 `plugins list` shows type, source and availability (e.g. a missing binary)
 
 - [ ] **Phase 7: Hardening & docs**
   - [ ] 7.1 `postgres` plugin (SQLAlchemy base) passing the DB contract suite
@@ -208,6 +208,7 @@ src/udl/
     service.py              # UDLService + @operation registry
     resolver.py             # candidates: request, site plugin, stored strategies, probe chain
     executor.py             # try candidates with fallback, sign in, retry, record and heal
+    sites.py                # site plugins: which ones udl uses, how the engine calls them (SiteHooks)
     jobs.py                 # JobManager, job events, concurrency limits, crash recovery
     tools.py                # Toolbox: configured downloaders
     output.py               # output dir precedence, {site} in filename templates
@@ -217,10 +218,11 @@ src/udl/
     models.py               # Site / Strategy / DownloadRecord, Outcome, SiteQuery / DownloadQuery
     manager.py              # DBManager
   plugins/
-    registry.py             # PluginRegistry, PluginKind (DATABASES, …)
+    registry.py             # PluginRegistry, PluginKind (DATABASES, DOWNLOADERS, SITES)
+    requirements.py         # Requirement: what a plugin needs installed
     databases/   base.py  memory.py  sqlalchemy.py (+ table variants)  sqlite.py
     downloaders/ base.py  errors.py  process.py  media.py  ytdlp.py  gallerydl.py  http.py  scraper.py  browser.py  auth.py
-    sites/       base.py  <examples>.py
+    sites/       base.py  youtube.py
   chains/        models.py  shorthand.py  executor.py  suggest.py  files.py
   interfaces/
     security.py             # allowed output roots, the API key (the API and MCP)
@@ -974,15 +976,16 @@ Steps are a Pydantic **discriminated union** told apart by their key (`Discrimin
 ### Interface
 
 ```python
-class SitePlugin(ABC):
+class SitePlugin:                                                     # every hook optional: the base does nothing
     name: ClassVar[str]
-    domains: ClassVar[tuple[str, ...]] = ()
-    priority: ClassVar[int] = 0
-    def matches(self, url: URL) -> bool: ...                          # default: site key in domains
-    def transform_urls(self, url: URL) -> list[URL]: ...              # expand lists, normalise short/mobile links
+    domains: ClassVar[tuple[str, ...]] = ()                           # hosts, e.g. "youtube.com" (checked)
+    priority: ClassVar[int] = 0                                       # lower is asked first
+    requires: ClassVar[tuple[Requirement, ...]] = ()                  # e.g. a program post_process runs
+    def matches(self, url: URL) -> bool: ...                          # default: url's host is on domains
+    async def transform_urls(self, url: URL) -> list[URL]: ...        # expand lists, normalise short/mobile links
     def strategy(self, url: URL) -> Strategy | None: ...              # force tool / options / chain
-    def prepare(self, ctx: DownloadContext) -> DownloadContext: ...   # headers, cookies, tool options
-    def output_dir(self, url: URL, meta: MediaMeta) -> Path | None: ...
+    async def prepare(self, ctx: DownloadContext) -> DownloadContext: ...  # headers, cookies
+    def output_dir(self, url: URL) -> Path | None: ...
     async def post_process(self, result: DownloadResult) -> DownloadResult: ...  # rename / move / tag
 ```
 
@@ -991,6 +994,58 @@ encode deliberate behaviour; the DB holds learned behaviour.
 
 **When to use which:** use a strategy or tag chain (data) for *how to find the file*. Use a site plugin (code)
 for *behaviour*: auth flows, URL rewriting, per-site folders, post-processing, API-based extraction.
+
+### Decisions made while building Phase 6
+
+- **`SitePlugin` is a plain class, not an ABC**: every hook is optional, so the base class is a plugin
+  that does nothing (and an ABC without abstract methods is what ruff's B024 flags). `domains` are hosts,
+  checked when the class is made (a `PluginError`, so a local file with a bad one is one of the registry's
+  problems). By default a plugin matches its domains and their subdomains, by host rather than site key,
+  so a plugin can take a single subdomain (`music.example.com`); it may match fewer URLs, never others
+  (the contract suite checks lookalike hosts).
+- **The sketch's signatures changed:** `transform_urls` and `prepare` are async (expanding a list or
+  fetching a token needs the network). `output_dir(url)` has no `MediaMeta`: candidates are tried by
+  downloading (Phase 3), so nothing is known about the media before a download, and placing files by
+  their metadata is `post_process`'s job. Site plugins declare `requires` like downloaders. There is no
+  `[sites.<name>]` options table yet.
+- **`udl.core.sites` documents where each hook comes in** and `SiteHooks` is how the engine calls them:
+  1. `transform_urls` in `UDLService.download`, before any job: each URL it gives is a job of its own
+     (deduplicated, with its own site plugin, not transformed again);
+  2. `output_dir` after the request's;
+  3. `strategy` as the first candidate after the request's tool (never remembered);
+  4. `prepare` before every try, whichever downloader makes it (the request's tool too);
+  5. `post_process` once a download has worked and been remembered.
+
+  A hook that only advises (`matches`, `transform_urls`, `strategy`, `output_dir`) and fails, or gives the
+  wrong type, is logged and udl goes on as if the plugin had nothing to say; a `transform_urls` that fails
+  or gives no URLs downloads the URL as it was given. `prepare` and `post_process` take part in the
+  download: a `UDLError` they raise on purpose is the download's (a `prepare` that raises `AuthRequired`
+  is tried again with the site's cookies, which it then sees), and anything else is `PluginFailed` (a new
+  error code, `plugin_failed`) naming the plugin, which stops the executor (every other try would fail
+  the same way).
+- **`prepare` gives only headers and cookies:** what is downloaded and where stay udl's, and the request's
+  filename template beats anything a plugin could set. **`post_process`** may move files anywhere (a plugin
+  is code the user installed), but they must exist, as absolute paths, and are measured again. When it
+  fails the job fails, though the download's success has already been counted for its strategy.
+- **Which plugins:** `UDLService` uses an instance of each registered site plugin (`load_site_plugins`),
+  ordered by `priority`, then by name; one missing a requirement, or that cannot start, is left out with
+  a warning. A local plugin named like a built-in one replaces it, even when it cannot run itself. The
+  `Resolver` takes `SitePlugin`s (Phase 3's `SiteBehaviour` protocol is gone), and `FakeSitePlugin`
+  (tests/support/sites.py, `fake_site()`) is a real, scripted `SitePlugin` that passes the contract suite.
+  `probe_url`, `suggest_chain` and `test_chain` do not use site plugins.
+- **`youtube`**, the example built-in plugin, turns a video's links (youtu.be, shorts, live, embeds,
+  youtube-nocookie.com, the mobile site, share and tracking parameters) into its watch URL, keeping the
+  playlist it was linked from, so a video is downloaded once however it was linked; channels, playlists
+  and YouTube Music are left as they are. Its strategy is yt-dlp for all of YouTube. A learned yt-dlp
+  strategy with no options is the same candidate, so it is no longer offered (or counted) after it.
+- **Local plugins needed no new code**: Phase 1's registry already imports every `*.py` in `plugin_dirs`;
+  the `udl.sites` kind makes their `SitePlugin`s count. An end-to-end test drops a plugin file into
+  `~/.config/udl/plugins` and downloads from the fixture site with it.
+- **`plugins list`:** `Requirement` moved to `udl.plugins.requirements`; database plugins declare
+  `requires` too (sqlite: aiosqlite; postgres will need its driver), so `available` is a bool for every
+  plugin. Site plugins list their domains, a plugin that replaced another says which (`overrides`, kept by
+  the registry), and the list says where local plugins are read from. The CLI shows each plugin's type
+  (database, downloader, site).
 
 ---
 
