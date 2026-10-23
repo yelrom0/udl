@@ -39,6 +39,7 @@ udl = "udl.interfaces.cli.app:main"
 # Built-in plugins are registered the same way third-party plugins are.
 [project.entry-points."udl.databases"]
 memory = "udl.plugins.databases.memory:MemoryDatabase"
+mongodb = "udl.plugins.databases.mongodb:MongoDBPlugin"
 postgres = "udl.plugins.databases.postgres:PostgresPlugin"
 sqlite = "udl.plugins.databases.sqlite:SQLitePlugin"
 

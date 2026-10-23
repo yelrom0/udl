@@ -47,7 +47,16 @@ def test_any_postgres_url_is_used_through_async_psycopg(url: str) -> None:
 def test_the_url_s_query_is_kept() -> None:
     plugin = PostgresPlugin(connection("postgresql://nas/udl?options=-csearch_path%3Dudl"))
 
-    assert dict(plugin.url.query) == {"options": "-csearch_path=udl"}
+    assert plugin.url.query["options"] == "-csearch_path=udl"
+
+
+def test_udl_waits_for_the_server_for_its_connect_timeout_unless_the_url_says() -> None:
+    assert PostgresPlugin.connect_timeout == 10
+    assert PostgresPlugin(connection("postgresql://nas/udl")).url.query["connect_timeout"] == "10"
+
+    plugin = PostgresPlugin(connection("postgresql://nas/udl?connect_timeout=3"))
+
+    assert plugin.url.query["connect_timeout"] == "3"
 
 
 @pytest.mark.parametrize(

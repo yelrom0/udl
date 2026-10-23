@@ -6,6 +6,9 @@
 PostgreSQL, through psycopg (udl's `postgres` extra): a database several machines can share
 """
 
+# System Imports
+from typing import ClassVar
+
 # Package Imports
 from sqlalchemy import Connection, func, select
 
@@ -42,6 +45,10 @@ class PostgresPlugin(SQLAlchemyDatabase):
         ),
     )
 
+    # How long to wait for the server, in seconds, unless the URL says (connect_timeout):
+    # libpq waits for as long as the system does, which can be minutes.
+    connect_timeout: ClassVar[float] = 10
+
     def __init__(self, connection: DBConnectionConfig) -> None:
         super().__init__(connection)
         if self.url.get_backend_name() not in _BACKENDS:
@@ -50,6 +57,9 @@ class PostgresPlugin(SQLAlchemyDatabase):
                 f"{self.url.render_as_string()}"
             )
         self.url = self.url.set(drivername=_DRIVER)
+        if "connect_timeout" not in self.url.query:
+            timeout = str(round(self.connect_timeout))
+            self.url = self.url.update_query_dict({"connect_timeout": timeout})
 
     def _lock_schema(self, conn: Connection) -> None:
         conn.execute(select(func.pg_advisory_xact_lock(_SCHEMA_LOCK)))

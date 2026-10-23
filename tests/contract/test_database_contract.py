@@ -43,6 +43,7 @@ CONNECTIONS: dict[str, Callable[[pytest.FixtureRequest], str]] = {
     "memory": lambda _: "memory://",
     "sqlite": lambda request: f"sqlite+aiosqlite:///{request.getfixturevalue('tmp_path')}/udl.db",
     "postgres": lambda request: request.getfixturevalue("postgres_url"),
+    "mongodb": lambda request: request.getfixturevalue("mongodb_url"),
 }
 
 T0 = datetime(2026, 1, 2, 3, 4, 5, 678901, tzinfo=UTC)
@@ -397,6 +398,24 @@ async def test_downloads_are_listed_newest_first(db: DatabasePlugin) -> None:
     listed = await db.list_downloads(DownloadQuery())
 
     assert listed == sorted(records, key=lambda r: r.started_at, reverse=True)
+
+
+async def test_downloads_are_listed_newest_first_to_the_microsecond(db: DatabasePlugin) -> None:
+    second = T0.replace(microsecond=0)
+    times = [
+        second,
+        second + timedelta(microseconds=1),
+        second + timedelta(milliseconds=500),
+        # The same instant whatever the timezone.
+        (second + timedelta(seconds=1)).astimezone(timezone(timedelta(hours=-5))),
+    ]
+    records = [make_download(started_at=at) for at in times]
+    for record in reversed(records):
+        await db.add_download(record)
+
+    listed = await db.list_downloads(DownloadQuery())
+
+    assert listed == records[::-1]
 
 
 async def test_downloads_started_at_the_same_time_are_listed_by_id(db: DatabasePlugin) -> None:
