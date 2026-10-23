@@ -93,6 +93,16 @@ class CookieSource(Protocol):
     async def for_url(self, url: str) -> list[Cookie]: ...
 
 
+async def site_cookies(source: CookieSource, url: str) -> list[Cookie]:
+    """The cookies that sign in to url's site. A source that fails gives none (signing in is a
+    bonus, never a crash), with a warning."""
+    try:
+        return await source.for_url(url)
+    except Exception:  # (logged with its traceback)
+        log.warning("Could not read the cookies for %s", url, exc_info=True)
+        return []
+
+
 type ToolProgress = Callable[[str, DownloadProgress], None]
 """Receives a download's progress, with the tool downloading."""
 
@@ -441,11 +451,7 @@ class _Run:
         """The cookies that sign in to the URL's site (read once). A source that fails gives
         none."""
         if self._cookies is None:
-            try:
-                self._cookies = await self.x.cookies.for_url(self.url.value)
-            except Exception:  # signing in is a bonus, never a crash (logged with its traceback)
-                log.warning("Could not read the cookies for %s", self.url, exc_info=True)
-                self._cookies = []
+            self._cookies = await site_cookies(self.x.cookies, self.url.value)
         return self._cookies
 
     async def _output_dir(self) -> Path:

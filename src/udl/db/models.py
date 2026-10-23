@@ -69,6 +69,11 @@ def _check_regex(pattern: str) -> str:
     return pattern
 
 
+# A valid regular expression. (A plain alias, not a `type` statement: SQLModel reads the fields'
+# types to make the SQL plugins' columns, and does not see through `type` aliases.)
+Regex = Annotated[str, AfterValidator(_check_regex)]
+
+
 class Site(SQLModel):
     """A website, identified by its key: the registrable domain (eTLD+1), e.g. `example.co.uk`."""
 
@@ -90,7 +95,7 @@ class Strategy(SQLModel):
     id: uuid.UUID = Field(default_factory=uuid.uuid4)
     site_key: str = Field(min_length=1)
     # A regex matched against the URL's path; None means the whole site.
-    url_pattern: Annotated[str, AfterValidator(_check_regex)] | None = None
+    url_pattern: Regex | None = None
     tool: str = Field(min_length=1)
     # Validated by the tool's own Options model.
     options: JsonObject = Field(default_factory=dict)

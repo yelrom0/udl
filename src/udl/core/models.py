@@ -10,16 +10,24 @@ their events, and each operation's request and response
 # System Imports
 from enum import StrEnum
 from pathlib import Path
-from typing import Self
+from typing import Annotated, Self
 from uuid import UUID
 
 # Package Imports
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, NonNegativeInt
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, NonNegativeInt, PositiveFloat
 
 # Local Imports
-from udl.db.models import DownloadRecord, JobStatus
+from udl.config import Settings
+from udl.core.urls import RequestURL, SiteKey
+from udl.db.models import DownloadRecord, JobStatus, JsonObject, Regex, Site, Strategy
 from udl.errors import ErrorInfo
-from udl.plugins.downloaders.base import DownloadProgress
+from udl.plugins.downloaders.base import (
+    DownloadProgress,
+    FilenameTemplate,
+    ProbeResult,
+    Requirement,
+)
+from udl.plugins.registry import PluginProblem, PluginSource
 
 
 class _Frozen(BaseModel):
@@ -114,3 +122,123 @@ class DownloadBatch(_Frozen):
 
     id: UUID
     jobs: list[JobInfo]
+
+
+# ---------------------------------------------------------------------------------------------
+# The operations' requests and responses
+# ---------------------------------------------------------------------------------------------
+
+
+class DownloadRequest(_Frozen):
+    """Download one or more URLs (`udl <url>...`)."""
+
+    urls: Annotated[list[RequestURL], Field(min_length=1)]
+    output_dir: Path | None = None  # else the site plugin's, the site's, or download_dir
+    tool: str | None = None  # the only downloader to try
+    filename_template: FilenameTemplate | None = None  # else the config's
+    reprobe: bool = False  # ignore the stored strategies, and probe again
+    record: bool = True  # remember what worked, and keep the downloads in the history
+    databases: Annotated[list[str], Field(min_length=1)] | None = None  # only these connections
+    wait: bool = True  # return once every download has ended
+    timeout: PositiveFloat | None = None  # seconds to wait, at most (the downloads go on)
+
+
+class JobRequest(_Frozen):
+    """A download job, or a batch of them, by id."""
+
+    id: UUID
+
+
+class DownloadList(_Frozen):
+    downloads: list[JobInfo]
+
+
+class ProbeRequest(_Frozen):
+    """Find out which downloaders can download a URL, without downloading it."""
+
+    url: RequestURL
+    tool: str | None = None  # probe only this downloader
+    all_tools: bool = False  # probe every downloader, not just until one can
+
+
+class ProbeReport(_Frozen):
+    url: str  # normalised
+    site_key: str
+    results: list[ProbeResult]  # in the order they were probed
+    signed_in: bool = False  # whether the site's cookies were sent (it wanted a login)
+
+
+class SiteRequest(_Frozen):
+    """A site, given as its key, a host or a URL."""
+
+    site: SiteKey
+
+
+class SiteList(_Frozen):
+    sites: list[Site]
+
+
+class SiteInfo(_Frozen):
+    site: Site
+    strategies: list[Strategy]  # in the order databases keep them, disabled ones too
+
+
+class SetStrategyRequest(_Frozen):
+    """Tell udl which downloader to use for a site (or a part of it)."""
+
+    site: SiteKey
+    tool: Annotated[str, Field(min_length=1)]
+    pattern: Regex | None = None  # a regex searched for in the URL's path; None: the whole site
+    options: JsonObject = Field(default_factory=dict)  # the downloader's options
+    priority: int = 0  # lower is tried first
+    requires_auth: bool = False  # send the site's cookies from the start
+
+
+class Deleted(_Frozen):
+    deleted: bool  # False when there was nothing to delete
+
+
+class ListDatabasesRequest(_Frozen):
+    """List the configured database connections."""
+
+
+class DatabaseInfo(_Frozen):
+    name: str
+    plugin: str
+    url: str  # any password hidden
+    primary: bool
+    priority: int
+    read_only: bool
+    connected: bool
+    healthy: bool
+
+
+class DatabaseList(_Frozen):
+    databases: list[DatabaseInfo]
+
+
+class ListPluginsRequest(_Frozen):
+    """List the plugins (databases, downloaders) and whether each can run."""
+
+
+class PluginStatus(_Frozen):
+    kind: str  # e.g. "udl.downloaders"
+    name: str
+    source: PluginSource
+    origin: str
+    available: bool | None = None  # (downloaders) whether it can run; None for other plugins
+    missing: list[Requirement] = Field(default_factory=list[Requirement])  # what to install
+    problem: str | None = None  # why it cannot run, when it is not something to install
+
+
+class PluginList(_Frozen):
+    plugins: list[PluginStatus]
+    problems: list[PluginProblem]  # plugins that could not be loaded
+
+
+class GetConfigRequest(_Frozen):
+    """Show the settings udl runs with."""
+
+
+class ConfigInfo(_Frozen):
+    settings: Settings  # secrets hidden
