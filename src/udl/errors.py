@@ -31,6 +31,8 @@ class ErrorCode(StrEnum):
     TOOL_UNAVAILABLE = "tool_unavailable"
     NO_STRATEGY_FOUND = "no_strategy_found"
     CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"
+    DOES_NOT_EXIST = "does_not_exist"
 
 
 class ErrorInfo(BaseModel):
@@ -172,6 +174,18 @@ class Cancelled(UDLError):
     """
 
     code = ErrorCode.CANCELLED
+
+
+class Interrupted(UDLError):
+    """udl stopped (e.g. it was killed) before a download it had queued or started ended."""
+
+    code = ErrorCode.INTERRUPTED
+
+
+class DoesNotExist(UDLError):
+    """What was asked for (a download job, a site) does not exist."""
+
+    code = ErrorCode.DOES_NOT_EXIST
 
 
 def _classes(cls: type[UDLError]) -> list[type[UDLError]]:

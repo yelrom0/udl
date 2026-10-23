@@ -18,10 +18,12 @@ from udl.errors import (
     Cancelled,
     ConfigError,
     DatabaseError,
+    DoesNotExist,
     DownloadError,
     ErrorCode,
     ErrorInfo,
     ExtractionFailed,
+    Interrupted,
     NetworkError,
     NoStrategyFound,
     NotFound,
@@ -72,7 +74,17 @@ def test_download_errors_tell_the_resolver_how_to_react(
 
 
 @pytest.mark.parametrize(
-    "error", [ConfigError, PluginError, DatabaseError, DownloadError, NoStrategyFound, Cancelled]
+    "error",
+    [
+        ConfigError,
+        PluginError,
+        DatabaseError,
+        DownloadError,
+        NoStrategyFound,
+        Cancelled,
+        Interrupted,
+        DoesNotExist,
+    ],
 )
 def test_every_error_can_be_caught_as_a_udl_error(error: type[UDLError]) -> None:
     with pytest.raises(UDLError, match="went wrong"):
