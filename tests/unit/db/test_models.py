@@ -213,3 +213,8 @@ def test_query_bounds_are_checked(fields: dict[str, int]) -> None:
         SiteQuery.model_validate(fields)
     with pytest.raises(ValidationError):
         DownloadQuery.model_validate(fields)
+
+
+@pytest.mark.parametrize("site", ["example.com", "www.example.com", "https://m.example.com/watch"])
+def test_a_download_query_takes_a_site_as_a_key_a_host_or_a_url(site: str) -> None:
+    assert DownloadQuery(site_key=site).site_key == "example.com"

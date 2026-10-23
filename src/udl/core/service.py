@@ -59,7 +59,7 @@ from udl.core.resolver import Resolver, SiteBehaviour
 from udl.core.tools import Toolbox
 from udl.core.urls import URL
 from udl.db.manager import DBManager
-from udl.db.models import DownloadQuery, Site, SiteQuery, Strategy, StrategySource
+from udl.db.models import DownloadQuery, JobStatus, Site, SiteQuery, Strategy, StrategySource
 from udl.errors import AuthRequired, DoesNotExist, UDLError
 from udl.plugins.downloaders.auth import AuthCookies
 from udl.plugins.downloaders.base import Cookie, ProbeContext, ProbeResult
@@ -94,12 +94,13 @@ class Operation:
 _registered: list[tuple[str, Callable[..., Awaitable[BaseModel]]]] = []
 
 
-def operation[S, Q: BaseModel, R: BaseModel](
+def operation[**P, R: BaseModel](
     name: str,
-) -> Callable[[Callable[[S, Q], Awaitable[R]]], Callable[[S, Q], Awaitable[R]]]:
-    """Register a UDLService method as the operation called `name`."""
+) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]:
+    """Register a UDLService method as the operation called `name`: it takes its request as its
+    only positional argument (others are keyword-only, for callers in Python)."""
 
-    def register(method: Callable[[S, Q], Awaitable[R]]) -> Callable[[S, Q], Awaitable[R]]:
+    def register(method: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
         if any(registered == name for registered, _ in _registered):
             raise ValueError(f"There already is an operation called {name!r}")
         _registered.append((name, method))
@@ -233,7 +234,12 @@ class UDLService:
     # -- downloads -----------------------------------------------------------------------------
 
     @operation("download")
-    async def download(self, request: DownloadRequest) -> DownloadBatch:
+    async def download(
+        self,
+        request: DownloadRequest,
+        *,
+        on_event: Callable[[JobEvent], Awaitable[None]] | None = None,
+    ) -> DownloadBatch:
         """Download one or more URLs.
 
         For each URL, udl works out how to download it: the tool the request names, else the
@@ -243,6 +249,7 @@ class UDLService:
         user's cookies, then in a browser. Each URL is a job; this returns them once they have
         all ended, or at once (still queued) when `wait` is false, or after `timeout` seconds.
         """
+        # (`on_event` hears what happens to the jobs while this waits, e.g. to show progress.)
         if request.tool is not None:
             self.registry.get(DOWNLOADERS, request.tool)  # (raises PluginError)
         db = self.db.only(request.databases) if request.databases else self.db
@@ -261,6 +268,10 @@ class UDLService:
         if request.wait:
             with contextlib.suppress(TimeoutError):
                 async with asyncio.timeout(request.timeout):
+                    if on_event is not None:
+                        async with contextlib.aclosing(self.jobs.events(batch.id)) as events:
+                            async for event in events:
+                                await on_event(event)
                     await self.jobs.wait(batch.id)
         return self.jobs.batch(batch.id) or batch
 
@@ -292,7 +303,19 @@ class UDLService:
     async def cancel_download(self, request: JobRequest) -> DownloadList:
         """Cancel a download that this udl is running, or every download of a batch, and wait
         for them to stop. Downloads that have ended are left as they are."""
-        return DownloadList(downloads=await self.jobs.cancel(request.id))
+        try:
+            return DownloadList(downloads=await self.jobs.cancel(request.id))
+        except DoesNotExist:
+            record = await self.db.get_download(request.id)
+            if record is None:
+                raise
+        if record.status in (JobStatus.QUEUED, JobStatus.RUNNING):
+            raise DoesNotExist(
+                f"The download {request.id} is run by another udl, not this one",
+                hint="Cancel it in the udl that runs it (with Ctrl-C, or the cancel_download of "
+                "the API or MCP server running it).",
+            )
+        return DownloadList(downloads=[JobInfo.from_record(record)])
 
     # -- probing -------------------------------------------------------------------------------
 

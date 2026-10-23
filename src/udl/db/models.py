@@ -33,6 +33,7 @@ from pydantic import (
 from sqlmodel import Field, SQLModel
 
 # Local Imports
+from udl.core.urls import SiteKey
 from udl.errors import ErrorInfo
 
 type JsonObject = dict[str, JsonValue]
@@ -176,8 +177,14 @@ def counted(strategy: Strategy, outcome: Outcome) -> Strategy:
 
 
 class _Paged(_Frozen):
+    # The queries are operations' requests too, so their fields are described for the API and
+    # the MCP server (see udl.core.models).
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
+
     limit: PositiveInt | None = None
+    """List at most this many."""
     offset: NonNegativeInt = 0
+    """Skip this many first."""
 
     def page[T](self, items: Sequence[T]) -> list[T]:
         """The page of `items` (already filtered and in order) that this query asks for."""
@@ -188,12 +195,14 @@ class _Paged(_Frozen):
 class SiteQuery(_Paged):
     """Which sites to list. Sites are listed by key."""
 
-    # Case-insensitive text to find in the key or name.
     search: str | None = None
+    """Text to find in the site's key or name (ignoring case)."""
 
 
 class DownloadQuery(_Paged):
     """Which downloads to list. Downloads are listed newest first."""
 
-    site_key: str | None = None
+    site_key: SiteKey | None = None
+    """Only this site's downloads: its key (e.g. example.com), a host or a URL on it."""
     status: JobStatus | None = None
+    """Only the downloads with this status."""

@@ -33,6 +33,8 @@ class ErrorCode(StrEnum):
     CANCELLED = "cancelled"
     INTERRUPTED = "interrupted"
     DOES_NOT_EXIST = "does_not_exist"
+    NOT_ALLOWED = "not_allowed"
+    UNAUTHORIZED = "unauthorized"
 
 
 class ErrorInfo(BaseModel):
@@ -186,6 +188,19 @@ class DoesNotExist(UDLError):
     """What was asked for (a download job, a site) does not exist."""
 
     code = ErrorCode.DOES_NOT_EXIST
+
+
+class NotAllowed(UDLError):
+    """A server (the API, the MCP server) does not allow what was asked, e.g. an output dir
+    outside api.allowed_output_roots."""
+
+    code = ErrorCode.NOT_ALLOWED
+
+
+class Unauthorized(NotAllowed):
+    """A request to the API (or the MCP server it serves) without the API key it needs."""
+
+    code = ErrorCode.UNAUTHORIZED
 
 
 def _classes(cls: type[UDLError]) -> list[type[UDLError]]:

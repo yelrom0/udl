@@ -12,7 +12,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 # Local Imports
-from udl.core.models import Attempt, CandidateSource, JobInfo
+from udl.core.models import (
+    Attempt,
+    CandidateSource,
+    DownloadRequest,
+    DownloadSpec,
+    JobInfo,
+    SetStrategyRequest,
+    StrategySpec,
+)
 from udl.db.models import DownloadRecord, JobStatus
 from udl.errors import NetworkError
 
@@ -69,3 +77,15 @@ def test_a_download_record_is_a_job_from_the_history() -> None:
     assert job.batch_id is None  # not run by this udl
     assert job.record() == record
     assert job.attempts == []
+
+
+def test_a_download_request_is_what_to_download_and_how_long_to_wait() -> None:
+    # (The API takes what to download as the body, and the waiting as query parameters.)
+    assert issubclass(DownloadRequest, DownloadSpec)
+    assert set(DownloadRequest.model_fields) - set(DownloadSpec.model_fields) == {"wait", "timeout"}
+
+
+def test_setting_a_strategy_is_the_strategy_and_its_site() -> None:
+    # (The API takes the site from the path, and the strategy as the body.)
+    assert issubclass(SetStrategyRequest, StrategySpec)
+    assert set(SetStrategyRequest.model_fields) - set(StrategySpec.model_fields) == {"site"}

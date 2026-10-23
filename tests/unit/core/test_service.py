@@ -38,6 +38,7 @@ from udl.core.models import (
     DownloadBatch,
     DownloadRequest,
     GetConfigRequest,
+    JobEvent,
     JobEventType,
     JobRequest,
     ListDatabasesRequest,
@@ -154,6 +155,13 @@ def test_an_operation_name_can_be_registered_once() -> None:
     assert operations()["download"].method is UDLService.download
 
 
+def test_every_request_field_is_described() -> None:
+    # The descriptions are the API's docs and what an AI agent reads about each MCP tool argument.
+    for op in operations().values():
+        for name, field in op.request.model_fields.items():
+            assert field.description, f"{op.request.__name__}.{name} has no description"
+
+
 def test_the_download_operation_s_models() -> None:
     op = operations()["download"]
 
@@ -246,6 +254,59 @@ async def test_download_waits_no_longer_than_its_timeout(tmp_path: Path, make: M
     batch = await service.download(DownloadRequest(urls=[A], timeout=0.05))
 
     assert [job.status for job in batch.jobs] == [JobStatus.RUNNING]
+
+
+class Heard:
+    """An on_event that keeps the events it hears."""
+
+    def __init__(self) -> None:
+        self.events: list[JobEvent] = []
+
+    async def __call__(self, event: JobEvent) -> None:
+        self.events.append(event)
+
+
+async def test_download_tells_on_event_what_happens_while_it_waits(
+    tmp_path: Path, make: Make
+) -> None:
+    service = await make(media_settings(tmp_path))
+    heard = Heard()
+
+    batch = await service.download(DownloadRequest(urls=[A, B]), on_event=heard)
+
+    assert [job.status for job in batch.jobs] == [JobStatus.FINISHED] * 2
+    for url in (A, B):
+        assert [e.type for e in heard.events if e.job.url == url and e.type.ends] == [
+            JobEventType.FINISHED
+        ]
+    assert heard.events[0].type is JobEventType.QUEUED
+
+
+async def test_download_stops_telling_on_event_once_it_stops_waiting(
+    tmp_path: Path, make: Make
+) -> None:
+    service = await make(slow_settings(tmp_path))
+    heard = Heard()
+
+    batch = await service.download(DownloadRequest(urls=[A], timeout=0.05), on_event=heard)
+    told = len(heard.events)
+    await asyncio.sleep(0.1)
+
+    assert batch.jobs[0].status is JobStatus.RUNNING
+    assert told > 0
+    assert len(heard.events) == told
+
+
+async def test_download_tells_on_event_nothing_when_it_does_not_wait(
+    tmp_path: Path, make: Make
+) -> None:
+    service = await make(media_settings(tmp_path))
+    heard = Heard()
+
+    batch = await service.download(DownloadRequest(urls=[A], wait=False), on_event=heard)
+    await service.jobs.wait(batch.id)
+
+    assert heard.events == []
 
 
 async def test_download_passes_the_request_on(tmp_path: Path, make: Make) -> None:
@@ -345,6 +406,31 @@ async def test_cancel_download_cancels_a_running_download(tmp_path: Path, make: 
     cancelled = await service.cancel_download(JobRequest(id=batch.id))
 
     assert [job.status for job in cancelled.downloads] == [JobStatus.CANCELLED] * 2
+
+
+async def test_cancelling_a_download_that_has_ended_leaves_it_as_it_is(make: Make) -> None:
+    service = await make()
+    record = DownloadRecord(url=A, site_key="example.com", status=JobStatus.FINISHED)
+    await service.db.add_download(record)
+
+    cancelled = await service.cancel_download(JobRequest(id=record.id))
+
+    assert [(job.id, job.status) for job in cancelled.downloads] == [
+        (record.id, JobStatus.FINISHED)
+    ]
+
+
+async def test_cancelling_a_download_another_udl_runs_says_where_to_cancel_it(
+    make: Make,
+) -> None:
+    service = await make()
+    record = DownloadRecord(url=A, site_key="example.com", status=JobStatus.RUNNING)
+    await service.db.add_download(record)
+
+    with pytest.raises(DoesNotExist, match="another udl") as raised:
+        await service.cancel_download(JobRequest(id=record.id))
+
+    assert raised.value.hint is not None
 
 
 async def test_cancelling_an_unknown_download_does_not_exist(make: Make) -> None:
