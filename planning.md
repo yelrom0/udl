@@ -69,16 +69,16 @@ Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task
   - [x] 4.6 MCP: tools from the Feature Matrix (official `mcp` 2.x SDK, `MCPServer`)
   - [x] 4.7 MCP: `udl mcp` (stdio) + streamable HTTP mounted at `/mcp` in the API
 
-- [ ] **Phase 5: Tag chains (user-defined extraction)**
-  - [ ] 5.1 `TagChain` model with discriminated-union step types; add `Strategy.chain` (a schema migration, see [Phase 1 decisions](#decisions-made-while-building-phase-1))
-  - [ ] 5.2 One-line shorthand parser (`iframe#player@src >> video source@src`) with round-trip property tests
-  - [ ] 5.3 Static chain executor (`selectolax`)
-  - [ ] 5.4 Browser chain executor (Playwright: `wait_for`, `click`, `network` steps)
-  - [ ] 5.5 `suggest_chain`: scan a page, rank candidate media elements, generate stable selectors
-  - [ ] 5.6 `udl chain wizard <url>`: suggest, pick, test, save
-  - [ ] 5.7 Chain import/export (YAML files ↔ DB)
-  - [ ] 5.8 Expose suggest / test / set / import / export via CLI, API and MCP
-  - [ ] 5.9 "All tools failed" returns an actionable hint pointing at chain definition
+- [x] **Phase 5: Tag chains (user-defined extraction)**
+  - [x] 5.1 `TagChain` model with discriminated-union step types; add `Strategy.chain` (a schema migration, see [Phase 1 decisions](#decisions-made-while-building-phase-1))
+  - [x] 5.2 One-line shorthand parser (`iframe#player@src >> video source@src`) with round-trip property tests
+  - [x] 5.3 Static chain executor (`selectolax`)
+  - [x] 5.4 Browser chain executor (Playwright: `wait_for`, `click`, `network` steps)
+  - [x] 5.5 `suggest_chain`: scan a page, rank candidate media elements, generate stable selectors
+  - [x] 5.6 `udl chain wizard <url>`: suggest, pick, test, save
+  - [x] 5.7 Chain import/export (YAML files ↔ DB)
+  - [x] 5.8 Expose suggest / test / set / import / export via CLI, API and MCP
+  - [x] 5.9 "All tools failed" returns an actionable hint pointing at chain definition
 
 - [ ] **Phase 6: Site behaviour plugins**
   - [ ] 6.1 `SitePlugin` ABC (`matches`, `transform_urls`, `strategy`, `prepare`, `output_dir`, `post_process`) + contract tests; add the `udl.sites` `PluginKind`
@@ -221,11 +221,11 @@ src/udl/
     databases/   base.py  memory.py  sqlalchemy.py (+ table variants)  sqlite.py
     downloaders/ base.py  errors.py  process.py  media.py  ytdlp.py  gallerydl.py  http.py  scraper.py  browser.py  auth.py
     sites/       base.py  <examples>.py
-  chains/        models.py  shorthand.py  executor.py  suggest.py
+  chains/        models.py  shorthand.py  executor.py  suggest.py  files.py
   interfaces/
     security.py             # allowed output roots, the API key (the API and MCP)
-    cli/         app.py  common.py  render.py  commands/  (downloads probe sites system servers browser)
-    api/         app.py  deps.py  serve.py  routes/  (downloads sites system)
+    cli/         app.py  common.py  render.py  commands/  (downloads probe sites chains system servers browser)
+    api/         app.py  deps.py  serve.py  routes/  (downloads sites chains system)
     mcp/         server.py
 tests/
   conftest.py
@@ -268,7 +268,7 @@ requires-python = ">=3.14"
 dependencies = [                       # added via `uv add`, which writes the version bounds
   "typer", "rich", "fastapi", "granian", "mcp",
   "sqlmodel", "aiosqlite", "pydantic-settings", "platformdirs",
-  "tldextract", "httpx", "yt-dlp", "gallery-dl", "selectolax",
+  "tldextract", "httpx", "yt-dlp", "gallery-dl", "selectolax", "pyyaml",
 ]
 
 [project.optional-dependencies]
@@ -281,7 +281,7 @@ udl = "udl.interfaces.cli.app:main"
 [dependency-groups]
 dev = [
   "pytest", "pytest-asyncio", "pytest-cov", "pytest-httpserver", "respx",
-  "hypothesis", "pyright[nodejs]", "ruff", "types-yt-dlp",
+  "hypothesis", "pyright[nodejs]", "ruff", "types-yt-dlp", "types-pyyaml",
   "udl[browser]",                      # so pyright and the browser tests always have playwright
 ]
 
@@ -834,28 +834,38 @@ The "easy system" for sites no tool handles. A chain is stored on a `Strategy` (
 
 ### Formats
 
-One-liner shorthand (CLI-friendly): steps separated by `>>`, each a CSS selector plus `@attr` or `::text`.
-When a step yields a URL and another step follows, that URL is fetched next.
+One-liner shorthand (CLI-friendly): steps separated by `>>`. A select step is a CSS selector plus `@attr` or
+`::text`; the other steps are `regex:PATTERN`, `json:PATH`, `follow`, and (browser only) `wait_for:SELECTOR`,
+`click:SELECTOR` and `network:PATTERN`. A step that finds values may end with `| all` or `| best`. When a step
+yields a URL and a step that reads the document follows, that URL is fetched next.
 
 ```
 iframe#player@src >> video > source[type*=mp4]@src
+script#data::text >> json:video.sources.*.url | best
+click:button.play >> network:\.m3u8
 ```
 
-Full YAML (files in `~/.config/udl/sites/*.yaml`, or stored in the DB):
+An argument may be quoted (`"..."` or `'...'`, where a backslash before the quote or another backslash is the
+only escape), and must be when it starts with a quote, contains `>>` or `|`, or has spaces around it.
+
+Full YAML (chain files: `udl chain export` writes them, `udl chain import` reads them, by default from
+`~/.config/udl/sites/*.yaml`; the chains themselves are stored in the DB), a document per chain:
 
 ```yaml
 site: example.com
 pattern: "^/watch/"          # optional, defaults to the whole site
-fetch: static                # static | browser
+fetch: static                # static | browser (by default browser when a step needs it)
 headers: { Referer: "{url}" }
-steps:
+steps:                       # or the shorthand: "iframe#player@src >> video source[type='video/mp4']@src | best"
   - select: "iframe#player"
     attr: src
-    follow: true
+  - follow: true             # (written out by the model; implied before a select)
   - select: "video > source[type='video/mp4']"
     attr: src
     pick: best               # first | all | best
-handoff: http                # http | yt-dlp (for HLS/DASH)
+handoff: http                # optional: http | yt-dlp (by default by the media's kind)
+priority: 0                  # optional
+requires_auth: false         # optional
 ```
 
 | Step | Does | Mode |
@@ -863,12 +873,13 @@ handoff: http                # http | yt-dlp (for HLS/DASH)
 | `select` + `attr` / `text` | CSS select, extract attribute or text | both |
 | `follow` | Fetch the extracted URL and continue on that document | both |
 | `regex` | Apply a regex (group 1) to the current values | both |
-| `json` | Parse JSON (e.g. `<script type="application/json">`) and take a dotted path | both |
+| `json` | Parse JSON (e.g. `<script type="application/json">`) and take a dotted path (`*`: every item) | both |
 | `wait_for` | Wait for a selector | browser |
 | `click` | Click an element (e.g. a play button) | browser |
 | `network` | Capture request URLs matching a regex instead of reading the DOM | browser |
 
-Steps are a Pydantic **discriminated union** (`Annotated[SelectStep | FollowStep | …, Field(discriminator="type")]`).
+Steps are a Pydantic **discriminated union** told apart by their key (`Discriminator(callable)` over
+`Annotated[SelectStep, Tag("select")] | …`).
 
 ### Suggest & wizard
 - `suggest_chain(url)` renders the page (static first, browser if nothing is found) and collects candidates:
@@ -877,6 +888,78 @@ Steps are a Pydantic **discriminated union** (`Annotated[SelectStep | FollowStep
   `HEAD`), ranked by type and size.
 - `udl chain wizard <url>`: numbered table → pick → test → save to DB (optionally export YAML).
 - When every tool fails, the error includes the top suggestions and the exact `udl chain set …` command to run.
+
+### Decisions made while building Phase 5
+
+- **Steps are told apart by their key**, not a `type` field (`{"select": "video", "attr": "src"}`), with a
+  callable `Discriminator` whose error lists the step kinds, so chain files read naturally and dump as they
+  are written. `json` is the alias of `JsonStep.path` (a field called `json` would shadow `BaseModel.json`).
+  `select` takes `attr` or `text: true`, never both; selectors are checked with Lexbor, regexes compiled.
+- **One form per chain:** a step that reads the document (select, wait_for, click, network) right after one
+  that found values follows them, and the model writes that `follow` out. So `follow` is only written in the
+  shorthand before a regex or json step (to read the opened document's text), the shorthand never writes an
+  implied follow, and reading what `format_steps()` wrote gives the same chain (hypothesis, 5000 examples, and
+  through YAML too). A follow needs a URL before it; the last step must find the media's URLs. Without
+  `fetch`, a chain with browser-only steps is a browser chain; `fetch: static` with them is refused. A whole
+  chain, or its steps, can be given as the shorthand (`ChainInput` says "string or chain" in the JSON schema
+  the API and MCP publish). Shorthand errors give the step and the character.
+- **A chain is an option of the downloader that follows it** (`chain` in `ScraperOptions` and
+  `BrowserOptions`): `Strategy.chain` is its own JSON column (schema version 2, the first real migration),
+  carried on `Candidate.chain` (part of its key) and given by `Toolbox.get(…, chain=)`. So probing, testing
+  and downloading with a chain go through the downloaders' usual interface. The scraper refuses browser
+  chains; the browser follows static ones too (on the rendered page). `FetchMode.tool` names the downloader.
+  A probe winner is never counted on a chain strategy, `set_site_strategy` leaves chains alone, and
+  `DBManager`'s merge keeps a chain apart from a plain strategy for the same tool.
+- **Running a chain** (`udl.chains.executor`) goes through a `Reader` of `Document`s, so one executor serves
+  both: the scraper's reads pages over HTTP (with the chain's headers, `{url}` being the page, and the site's
+  cookies); the browser's opens each document in a tab of its own (so a follow of several URLs keeps every
+  page), records the requests each makes (with their Referer), reads a document served as text (an API's
+  JSON) as it was served, and waits up to the browser's `timeout` for `wait_for`, `click` and `network`.
+  Picks apply per document (select, network) or per value (regex, json): `best` keeps the value that names
+  the highest resolution (`res`/`label`/`size`/`quality`/`height`/`title` attributes or their `data-` forms,
+  or `720p` in the value), else the first. A follow opens at most ten URLs and skips one that is not found
+  when another opens (any other failure is the run's). The last step's values become URLs relative to their
+  document's `<base>`, with JSON's `\/` and `\uXXXX` and HTML's entities undone; a value with whitespace is
+  not a URL. A step that finds nothing is `ExtractionFailed`, naming the step, the pages it read and the
+  `udl chain test` command; a trace records each step's finds as it runs. The finds are handed off as the
+  chain says (its handoff tool, its headers over the find's Referer); a last step that keeps `all` downloads
+  every find (`Downloader.hand_off_all`, which skips a find that fails for its own media).
+- **Suggesting** (`udl.chains.suggest`): the scraper fetches the page and its iframes' pages, the browser
+  renders it (its frames too) and reports the media it requested; `suggest()` finds media tags and their
+  sources, og:video/og:audio (not a player's page), media URLs in JSON scripts (by their dotted path), media
+  links, absolute media URLs in scripts (a regex by the media's kind), media through an iframe and requested
+  media (a network step by its kind). Selectors find their element first: its id, a `data-` attribute or its
+  classes (ids and classes with four or more digits in a row look generated, and are skipped), then inside an
+  ancestor that has one, then its type, then `:nth-of-type` (a `<source>` is selected in its media element).
+  Lexbor's `==` compares markup, so identity is `mem_id`. Every suggested chain is run on the pages it came
+  from (`FetchedPages`), so a suggestion's media is what its chain finds, and each chain is suggested once.
+- **Previews go through the http downloader's probe** rather than raw HEADs, so they honour `[tools.http]`
+  and the tests' fakes; a stream playlist (which http leaves to yt-dlp) stays "unknown". Ranking: media that
+  answered as media, then unknown, then not; video and streams before audio; the largest; then by how it was
+  found (tags, meta, JSON, links, scripts, network).
+- **Operations:** `suggest_chain` and `test_chain` report a page that cannot be read (or a chain that finds
+  nothing) in their response, as `probe_url` does, and retry with the site's cookies when it wants a login.
+  `set_site_chain` saves a manual strategy (one chain per site and pattern: saving again replaces it, keeping
+  its counts when the chain is unchanged). `import_chains` checks every chain before saving any; imported
+  chains have source `import`, so they heal like learned strategies (as Phase 3 decided), except that an
+  unchanged chain imported again keeps its source (an exported manual chain stays manual). `export_chain` is
+  a 404 for a site without chains.
+- **CLI:** `udl chain suggest | test | set | import | export | wizard`. A chain's other fields are options
+  (`--browser`, `--handoff`, `-H 'Name: value'`). `suggest` exits with 1 when there are none, `test` when the
+  chain leads to no media. `import` with no files reads `~/.config/udl/sites/*.yaml` (and `*.yml`; `-` is
+  stdin), a file at a time (one with a problem stops the import, naming the file); `export` prints the file,
+  or writes `-o FILE`. The wizard runs each step on its own service (no prompt blocks the event loop), takes
+  a number or a chain written out (a browser chain when the page needed the browser), loops until a chain
+  works and is saved, and can write the site's chain file where `import` finds it.
+- **The hint when every tool fails** asks the scraper for the page's likeliest three chains and gives each as
+  the `udl chain set <site> '<chain>'` command (`command_arguments()` adds `--browser`/`--handoff`/`-H`), then
+  the wizard (and `test_chain`/`set_site_chain` for an agent); without suggestions it points at the wizard
+  and `suggest_chain`. A login, a rate limit or a network problem keeps its own error. The CLI indents every
+  line of a multi-line hint.
+- **YAML is PyYAML** (`types-pyyaml` for pyright). Non-ASCII text is escaped when written: PyYAML writes
+  U+0085 as it is and reads it back as a line break.
+- **Fixture site:** `json.html` (a relative video URL in JSON, which yt-dlp, gallery-dl and the scraper all
+  miss) and `click.html` (its video is made, and loads, when Play is clicked).
 
 ---
 
@@ -970,6 +1053,7 @@ format = "bv*+ba/b"
 | HTTP | `httpx` |
 | Tools | `yt-dlp`, `gallery-dl` |
 | Scraping | `selectolax` |
+| Chain files | `pyyaml` (`types-pyyaml` in the dev group) |
 | Browser (extra `udl[browser]`) | `playwright` (then `uv run playwright install chromium`) |
 | Dev (`dev` dependency group) | `pytest`, `pytest-asyncio`, `pytest-cov`, `pytest-httpserver`, `respx`, `hypothesis`, `pyright[nodejs]` (ships its own Node), `ruff`, `types-yt-dlp` |
 | Global tools (`uv tool install`) | `pre-commit`, and `udl` itself |
