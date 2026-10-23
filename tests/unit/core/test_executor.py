@@ -258,6 +258,77 @@ async def test_when_every_candidate_fails_no_strategy_is_found(
     assert f"udl probe {PAGE} --all" in error.hint
 
 
+async def test_when_every_candidate_fails_the_hint_suggests_tag_chains(
+    tmp_path: Path, db: DBManager
+) -> None:
+    suggested = {
+        "a.download@href": "https://cdn.example.com/a.mp3",
+        "video#clip > source@src": "https://cdn.example.com/v.mp4",
+        "regex:https://cdn\\S+?\\.mp4": "https://cdn.example.com/w.mp4",
+        "div p@data-src": "https://cdn.example.com/x.mp4",
+    }
+    config = settings(tmp_path, tools={"scraper": script(suggested={PAGE: suggested})})
+
+    error = await Run(config).failure(db)
+
+    assert isinstance(error, NoStrategyFound)
+    assert error.hint is not None
+    assert f"udl probe {PAGE} --all" in error.hint
+    lines = error.hint.splitlines()
+    assert [line.strip() for line in lines if line.startswith("  ")] == [
+        "udl chain set example.com 'video#clip > source@src'",
+        "udl chain set example.com 'regex:https://cdn\\S+?\\.mp4'",
+        "udl chain set example.com 'div p@data-src'",
+    ]
+    assert f"udl chain wizard {PAGE}" in error.hint
+    assert "set_site_chain" in error.hint
+
+
+async def test_without_suggestions_the_hint_points_at_the_chain_wizard(
+    tmp_path: Path, db: DBManager
+) -> None:
+    error = await Run(settings(tmp_path)).failure(db)
+
+    assert error.hint is not None
+    assert f"udl chain wizard {PAGE}" in error.hint
+    assert "suggest_chain" in error.hint
+    assert "udl chain set" not in error.hint
+
+
+@pytest.mark.parametrize(
+    "plugins",
+    [
+        registry("http", "yt-dlp"),  # (no scraper to suggest chains)
+        with_tools(fake_tool("scraper")),  # (one whose page cannot be read: see the config)
+    ],
+)
+async def test_when_chains_cannot_be_suggested_the_hint_points_at_the_wizard(
+    tmp_path: Path, db: DBManager, plugins: PluginRegistry
+) -> None:
+    config = settings(tmp_path, tools={"scraper": script(errors={PAGE: "unsupported_url"})})
+
+    error = await Run(config, plugins).failure(db)
+
+    assert isinstance(error, NoStrategyFound)
+    assert error.hint is not None
+    assert f"udl chain wizard {PAGE}" in error.hint
+
+
+async def test_a_site_that_wants_a_login_gets_no_chain_hint(tmp_path: Path, db: DBManager) -> None:
+    config = settings(
+        tmp_path,
+        tools={
+            "http": script(errors={PAGE: "auth_required"}),
+            "scraper": script(suggested={PAGE: {"video@src": "https://cdn.example.com/v.mp4"}}),
+        },
+    )
+
+    error = await Run(config).failure(db)
+
+    assert error.code is ErrorCode.AUTH_REQUIRED
+    assert "udl chain" not in (error.hint or "")
+
+
 async def test_with_no_downloader_to_try_no_strategy_is_found(
     tmp_path: Path, db: DBManager
 ) -> None:

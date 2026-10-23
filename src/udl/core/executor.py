@@ -19,7 +19,9 @@ How it reacts to a failed try (the error taxonomy in planning.md):
 
 A tool the request named is the only candidate: its own failure is the error, and it gets no
 browser fallback. When every candidate fails, the error is the most useful one seen (a login, a
-rate limit, a network problem), else NoStrategyFound.
+rate limit, a network problem), else NoStrategyFound, whose hint suggests tag chains for the page
+(the scraper's best few, each as the `udl chain set` command that saves it), or the chain
+wizard when it has none.
 
 What it remembers (unless the request says not to), through DBManager:
 
@@ -43,6 +45,7 @@ about: the user chose it.
 # System Imports
 import asyncio
 import logging
+import shlex
 from collections.abc import Callable
 from contextlib import aclosing
 from pathlib import Path
@@ -53,6 +56,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, NonNegativeFloat, NonNegativeInt
 
 # Local Imports
+from udl.chains.shorthand import command_arguments
+from udl.chains.suggest import ChainSuggester, ChainSuggestion, ranked
 from udl.config import Settings
 from udl.core.models import Attempt, CandidateSource
 from udl.core.output import filename_template, resolve_output_dir
@@ -79,12 +84,15 @@ from udl.plugins.downloaders.base import (
     DownloadProgress,
     DownloadResult,
     FilenameTemplate,
+    ProbeContext,
     cancellable,
 )
 
 log = logging.getLogger(__name__)
 
 _BROWSER = "browser"
+_SCRAPER = "scraper"  # (it suggests tag chains for the hint when every candidate failed)
+_HINTED = 3  # tag chains a hint suggests
 
 
 class CookieSource(Protocol):
@@ -226,7 +234,7 @@ class _Run:
                     return outcome
                 if isinstance(outcome, NotFound) or candidate.source is CandidateSource.REQUEST:
                     raise outcome
-        raise self._failure()
+        raise await self._failure()
 
     async def _candidate(self, candidate: Candidate) -> Execution | UDLError:
         """Try a candidate (with its retries). Returns how it went."""
@@ -346,7 +354,8 @@ class _Run:
         if strategy.source is StrategySource.MANUAL:
             log.warning(
                 "The %s strategy you set for %s has failed %d times in a row; udl keeps it "
-                "because you chose it (change it with `udl sites set`)",
+                "because you chose it (change it with `udl sites set`, or `udl chain set` for a "
+                "tag chain)",
                 strategy.tool,
                 strategy.site_key,
                 failures,
@@ -469,7 +478,7 @@ class _Run:
             default=self.x.settings.download_dir,
         )
 
-    def _failure(self) -> UDLError:
+    async def _failure(self) -> UDLError:
         """The error when every candidate failed."""
         for kind in (AuthRequired, RateLimited, NetworkError):
             if found := [error for error in self.errors if isinstance(error, kind)]:
@@ -482,5 +491,41 @@ class _Run:
             )
         return NoStrategyFound(
             f"No downloader could download {self.url} (tried {', '.join(tools)})",
-            hint=f"`udl probe {self.url} --all` shows what each downloader found.",
+            hint=self._chain_hint(await self._suggestions()),
+        )
+
+    async def _suggestions(self) -> list[ChainSuggestion]:
+        """The likeliest tag chains for the URL's page (none when they cannot be suggested)."""
+        try:
+            scraper = self.x.toolbox.get(_SCRAPER)
+        except UDLError:  # (not installed, or its options are invalid)
+            return []
+        if not isinstance(scraper, ChainSuggester):
+            return []
+        ctx = ProbeContext(url=self.url.value, cookies=self._cookies or [], cancel=self.cancel)
+        try:
+            return ranked(await scraper.suggest_chains(ctx))[:_HINTED]
+        except DownloadError as e:
+            log.debug("Could not suggest tag chains for %s: %s", self.url, e)
+            return []
+
+    def _chain_hint(self, suggestions: list[ChainSuggestion]) -> str:
+        """What to do when no downloader finds the media: teach udl the site with a tag
+        chain."""
+        page = shlex.quote(self.url.value)
+        probe = f"`udl probe {page} --all` shows what each downloader found."
+        if not suggestions:
+            return (
+                f"{probe} When none finds the media, teach udl the site with a tag chain: "
+                f"`udl chain wizard {page}` (an AI agent: suggest_chain)."
+            )
+        site = self.url.site_key
+        commands = "\n".join(
+            f"  udl chain set {site} {command_arguments(suggestion.chain)}"
+            for suggestion in suggestions
+        )
+        return (
+            f"{probe} Or teach udl the site with a tag chain; these look likely:\n{commands}\n"
+            f"`udl chain wizard {page}` tests them with you first (an AI agent: test_chain, "
+            "then set_site_chain)."
         )

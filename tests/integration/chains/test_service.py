@@ -108,7 +108,11 @@ async def test_a_page_no_downloader_handles_is_downloaded_by_its_chain(
     saved = await service.set_site_chain(SetChainRequest(site=url, chain=suggestion.chain))
     after = await service.download(DownloadRequest(urls=[url]))
 
-    assert before.jobs[0].status is JobStatus.FAILED
+    [failed] = before.jobs
+    assert failed.status is JobStatus.FAILED
+    assert failed.error is not None
+    assert failed.error.hint is not None
+    assert "udl chain set localhost 'script#data::text >> json:video.src'" in failed.error.hint
     assert report.ok
     assert [step.step for step in report.steps] == ["script#data::text", "json:video.src"]
     assert report.steps[1].found == ["/media/sample.mp4"]
