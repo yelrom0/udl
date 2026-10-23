@@ -29,6 +29,9 @@ postgres = [
     "psycopg[binary]>=3.3.6",
 ]
 
+[project.scripts]
+udl = "udl.interfaces.cli.app:main"
+
 # Built-in plugins are registered the same way third-party plugins are.
 [project.entry-points."udl.databases"]
 memory = "udl.plugins.databases.memory:MemoryDatabase"
@@ -81,6 +84,8 @@ asyncio_default_fixture_loop_scope = "function"
 [tool.coverage.run]
 branch = true
 source = ["udl"]
+# Measure the udl processes tests start too (`python -m udl`, `udl serve` and `udl mcp`).
+patch = ["subprocess"]
 
 [tool.coverage.report]
 # Ratchet upwards, never down.

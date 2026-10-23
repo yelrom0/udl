@@ -1,0 +1,363 @@
+"""
+-------------
+- render.py -
+-------------
+
+How the commands show their results to people (--json shows the response models instead):
+tables, a job's details, and progress bars while downloads run
+"""
+
+# System Imports
+from datetime import datetime
+from types import TracebackType
+from typing import Final, Self
+from uuid import UUID
+
+# Package Imports
+from rich.console import Console
+from rich.filesize import decimal
+from rich.markup import escape
+from rich.progress import (
+    BarColumn,
+    DownloadColumn,
+    Progress,
+    TaskID,
+    TextColumn,
+    TimeRemainingColumn,
+    TransferSpeedColumn,
+)
+from rich.table import Column, Table
+
+# Local Imports
+from udl.core.models import (
+    ConfigInfo,
+    DatabaseList,
+    DownloadBatch,
+    DownloadList,
+    JobEvent,
+    JobEventType,
+    JobInfo,
+    PluginList,
+    ProbeReport,
+    SiteInfo,
+    SiteList,
+)
+from udl.db.models import JobStatus, Strategy
+from udl.errors import ErrorInfo
+
+_STATUS: Final[dict[JobStatus, tuple[str, str]]] = {
+    JobStatus.QUEUED: ("…", "dim"),
+    JobStatus.RUNNING: ("↓", "blue"),
+    JobStatus.FINISHED: ("✓", "green"),
+    JobStatus.FAILED: ("✗", "red"),
+    JobStatus.CANCELLED: ("⊘", "yellow"),
+}
+
+
+def _folded(header: str) -> Column:
+    """A column whose long values (URLs, paths) wrap rather than being cut short."""
+    return Column(header, overflow="fold")
+
+
+def _when(at: datetime | None) -> str:
+    return at.astimezone().strftime("%Y-%m-%d %H:%M") if at else ""
+
+
+def _yes(flag: bool | None) -> str:
+    return {True: "[green]yes[/]", False: "[red]no[/]", None: "-"}[flag]
+
+
+def _status(status: JobStatus) -> str:
+    mark, style = _STATUS[status]
+    return f"[{style}]{mark} {status}[/]"
+
+
+def _error(error: ErrorInfo, *, hint: bool = True) -> str:
+    text = f"[red]{escape(error.message)}[/] [dim]({error.code})[/]"
+    if hint and error.hint:
+        text += f"\n  [dim]{escape(error.hint)}[/]"
+    return text
+
+
+# ---------------------------------------------------------------------------------------------
+# Downloads
+# ---------------------------------------------------------------------------------------------
+
+
+def batch(console: Console, downloaded: DownloadBatch) -> None:
+    """What came of each URL: its files, or why it failed."""
+    for job in downloaded.jobs:
+        mark, style = _STATUS[job.status]
+        line = f"[{style}]{mark}[/] {escape(job.url)}"
+        if job.status is JobStatus.FINISHED:
+            files = ", ".join(escape(str(path)) for path in job.files)
+            line += f" → {files} [dim]({decimal(job.size_bytes)}, {job.tool})[/]"
+        elif job.error is not None:
+            line += f": {_error(job.error)}"
+        else:
+            line += f" [dim]({job.status})[/]"
+        console.print(line, soft_wrap=True)
+
+
+def job(console: Console, shown: JobInfo) -> None:
+    """A download job in full: what it downloaded or why not, and every try."""
+    details = Table.grid(padding=(0, 2))
+    details.add_column(style="bold")
+    details.add_column()
+    details.add_row("Download", str(shown.id))
+    if shown.batch_id is not None:
+        details.add_row("Batch", str(shown.batch_id))
+    details.add_row("URL", escape(shown.url))
+    details.add_row("Status", _status(shown.status))
+    if shown.tool:
+        tool = shown.tool + (f" → {shown.handed_off_to}" if shown.handed_off_to else "")
+        details.add_row("Tool", tool)
+    if shown.title:
+        details.add_row("Title", escape(shown.title))
+    if shown.output_dir:
+        details.add_row("Folder", escape(str(shown.output_dir)))
+    for path in shown.files:
+        details.add_row("File", escape(str(path)))
+    if shown.size_bytes:
+        details.add_row("Size", decimal(shown.size_bytes))
+    if shown.progress is not None and shown.status is JobStatus.RUNNING:
+        done = decimal(shown.progress.downloaded_bytes)
+        total = decimal(shown.progress.total_bytes) if shown.progress.total_bytes else "?"
+        details.add_row("Progress", f"{done} of {total}")
+    details.add_row("Started", _when(shown.started_at))
+    if shown.finished_at:
+        details.add_row("Ended", _when(shown.finished_at))
+    if shown.error is not None:
+        details.add_row("Error", _error(shown.error))
+    console.print(details)
+    if shown.attempts:
+        tries = Table("Tool", "Why", "Signed in", "Result", title="Tries", title_justify="left")
+        for attempt in shown.attempts:
+            result = _error(attempt.error, hint=False) if attempt.error else "[green]worked[/]"
+            tries.add_row(attempt.tool, attempt.source, _yes(attempt.signed_in), result)
+        console.print(tries)
+
+
+def downloads(console: Console, listed: DownloadList) -> None:
+    """Downloads, one a row."""
+    if not listed.downloads:
+        console.print("No downloads.")
+        return
+    table = Table("Started", "Status", "Site", _folded("URL"), "Tool", "Files", "Id")
+    for shown in listed.downloads:
+        files = f"{len(shown.files)} ({decimal(shown.size_bytes)})" if shown.files else ""
+        status = _status(shown.status)
+        if shown.error is not None:
+            status += f"\n[dim]{shown.error.code}[/]"
+        table.add_row(
+            _when(shown.started_at),
+            status,
+            shown.site_key,
+            escape(shown.url),
+            shown.tool or "",
+            files,
+            str(shown.id),
+        )
+    console.print(table)
+
+
+class DownloadProgress:
+    """Progress bars for the jobs of a download, while it runs (only on a terminal, and only
+    when `enabled`)."""
+
+    def __init__(self, console: Console, *, enabled: bool = True) -> None:
+        self._enabled = enabled and console.is_terminal
+        self._progress = Progress(
+            TextColumn("{task.description}"),
+            BarColumn(),
+            DownloadColumn(),
+            TransferSpeedColumn(),
+            TimeRemainingColumn(),
+            console=console,
+            transient=True,
+        )
+        self._tasks: dict[UUID, TaskID] = {}
+
+    def __enter__(self) -> Self:
+        if self._enabled:
+            self._progress.start()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        if self._enabled:
+            self._progress.stop()
+
+    async def show(self, event: JobEvent) -> None:
+        """Show what happened to a job (DownloadRequest's on_event)."""
+        if not self._enabled:
+            return
+        shown = event.job
+        task = self._tasks.get(shown.id)
+        if task is None:
+            task = self._progress.add_task(escape(shown.url), total=None, start=False)
+            self._tasks[shown.id] = task
+        if event.type is JobEventType.STARTED:
+            self._progress.start_task(task)
+        elif event.type is JobEventType.PROGRESS and shown.progress is not None:
+            self._progress.update(
+                task,
+                completed=shown.progress.downloaded_bytes,
+                total=shown.progress.total_bytes,
+                description=escape(f"{shown.url} ({event.tool})"),
+            )
+        elif event.type.ends:
+            mark, style = _STATUS[shown.status]
+            self._progress.update(task, description=f"[{style}]{mark}[/] {escape(shown.url)}")
+            self._progress.stop_task(task)
+
+
+# ---------------------------------------------------------------------------------------------
+# Probing
+# ---------------------------------------------------------------------------------------------
+
+
+def probe(console: Console, report: ProbeReport) -> None:
+    """What each downloader found out about the URL."""
+    signed_in = " [dim](signed in)[/]" if report.signed_in else ""
+    console.print(f"[bold]{escape(report.url)}[/] [dim]({report.site_key})[/]{signed_in}")
+    table = Table("Tool", "Can download", "Confidence", _folded("Found"))
+    for result in report.results:
+        if result.error is not None:
+            found = _error(result.error, hint=False)
+        else:
+            media = [escape(str(item.url)) for item in result.media[:3]]
+            if len(result.media) > len(media):
+                media.append(f"[dim]and {len(result.media) - len(media)} more[/]")
+            if result.handoff is not None:
+                media.append(f"[dim](handed to {result.handoff.tool})[/]")
+            found = "\n".join([escape(result.title or ""), *media]).strip()
+        table.add_row(result.tool, _yes(result.ok), f"{result.confidence:.2f}", found)
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------------------------
+# Sites
+# ---------------------------------------------------------------------------------------------
+
+
+def sites(console: Console, listed: SiteList) -> None:
+    if not listed.sites:
+        console.print("udl knows no sites yet.")
+        return
+    table = Table("Site", "Name", _folded("Folder"), "Updated")
+    for site in listed.sites:
+        folder = str(site.default_output_dir) if site.default_output_dir else ""
+        table.add_row(site.key, escape(site.name or ""), escape(folder), _when(site.updated_at))
+    console.print(table)
+
+
+def site(console: Console, info: SiteInfo) -> None:
+    """A site, and its strategies."""
+    console.print(
+        f"[bold]{info.site.key}[/]" + (f" ({escape(info.site.name)})" if info.site.name else "")
+    )
+    if info.site.default_output_dir:
+        console.print(f"Downloads to {escape(str(info.site.default_output_dir))}")
+    if info.site.notes:
+        console.print(escape(info.site.notes), style="dim")
+    if not info.strategies:
+        console.print("No strategies.")
+        return
+    table = Table(
+        "Tool",
+        "Pattern",
+        "Source",
+        "Priority",
+        "Enabled",
+        "Worked",
+        "Failed",
+        "Sign in",
+        "Last error",
+    )
+    for strategy in info.strategies:
+        table.add_row(*_strategy_row(strategy))
+    console.print(table)
+
+
+def _strategy_row(strategy: Strategy) -> list[str]:
+    failed = str(strategy.failure_count)
+    if strategy.consecutive_failures:
+        failed += f" ({strategy.consecutive_failures} in a row)"
+    return [
+        strategy.tool,
+        escape(strategy.url_pattern or "(whole site)"),
+        strategy.source,
+        str(strategy.priority),
+        _yes(strategy.enabled),
+        str(strategy.success_count),
+        failed,
+        _yes(strategy.requires_auth),
+        _error(strategy.last_error, hint=False) if strategy.last_error else "",
+    ]
+
+
+def strategy(console: Console, stored: Strategy) -> None:
+    """A strategy that was just set."""
+    where = f"the URLs matching {stored.url_pattern!r} on" if stored.url_pattern else ""
+    console.print(
+        f"udl downloads {escape(where)} [bold]{stored.site_key}[/] with [bold]{stored.tool}[/]"
+        + (f" {escape(str(stored.options))}" if stored.options else "")
+        + (", signed in" if stored.requires_auth else "")
+        + "."
+    )
+
+
+# ---------------------------------------------------------------------------------------------
+# udl itself
+# ---------------------------------------------------------------------------------------------
+
+
+def databases(console: Console, listed: DatabaseList) -> None:
+    table = Table(
+        "Name", "Plugin", _folded("URL"), "Primary", "Priority", "Read-only", "Connected", "Healthy"
+    )
+    for db in listed.databases:
+        table.add_row(
+            db.name,
+            db.plugin,
+            escape(db.url),
+            _yes(db.primary),
+            str(db.priority),
+            _yes(db.read_only),
+            _yes(db.connected),
+            _yes(db.healthy),
+        )
+    console.print(table)
+
+
+def plugins(console: Console, listed: PluginList) -> None:
+    table = Table("Kind", "Name", "Source", "Available", "Needs", _folded("Origin"))
+    for plugin in listed.plugins:
+        needs = [
+            f"{requirement.name} ({requirement.kind})"
+            + (f": {requirement.hint}" if requirement.hint else "")
+            for requirement in plugin.missing
+        ]
+        if plugin.problem:
+            needs.append(plugin.problem)
+        table.add_row(
+            plugin.kind.removeprefix("udl."),
+            plugin.name,
+            plugin.source,
+            _yes(plugin.available),
+            escape("\n".join(needs)),
+            escape(plugin.origin),
+        )
+    console.print(table)
+    for problem in listed.problems:
+        console.print(f"[red]Could not load[/] {escape(problem.origin)}: {escape(problem.error)}")
+
+
+def config(console: Console, info: ConfigInfo) -> None:
+    """The settings, as JSON (secrets hidden)."""
+    console.print_json(info.settings.model_dump_json())
