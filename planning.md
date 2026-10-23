@@ -60,14 +60,14 @@ Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task
   - [x] 3.9 Job manager: progress events, cancellation, persisted as `DownloadRecord`
   - [x] 3.10 `UDLService` façade + operations registry (the only thing interfaces call)
 
-- [ ] **Phase 4: Interfaces (CLI, API, MCP)**
-  - [ ] 4.1 🔴 **Parity test first**: every registered operation must have a CLI command, an API route and an MCP tool
-  - [ ] 4.2 CLI: Typer app + default-command shim so `udl <url>...` == `udl get <url>...`; add `[project.scripts]` and install system-wide with `uv tool install --editable .`
-  - [ ] 4.3 CLI: all [Feature Matrix](#feature-matrix-source-of-truth-for-parity) commands + rich progress + `--json` output; `udl browser login` (`auth.browser_login()`, ending on Enter)
-  - [ ] 4.4 API: FastAPI routes from the Feature Matrix, job endpoints, SSE progress
-  - [ ] 4.5 API: `udl serve` runs Granian; localhost bind by default, optional API key, allowed output roots
-  - [ ] 4.6 MCP: tools from the Feature Matrix (official `mcp` 2.x SDK, `MCPServer`)
-  - [ ] 4.7 MCP: `udl mcp` (stdio) + streamable HTTP mounted at `/mcp` in the API
+- [x] **Phase 4: Interfaces (CLI, API, MCP)**
+  - [x] 4.1 🔴 **Parity test first**: every registered operation must have a CLI command, an API route and an MCP tool
+  - [x] 4.2 CLI: Typer app + default-command shim so `udl <url>...` == `udl get <url>...`; add `[project.scripts]` and install system-wide with `uv tool install --editable .`
+  - [x] 4.3 CLI: all [Feature Matrix](#feature-matrix-source-of-truth-for-parity) commands + rich progress + `--json` output; `udl browser login` (`auth.browser_login()`, ending on Enter)
+  - [x] 4.4 API: FastAPI routes from the Feature Matrix, job endpoints, SSE progress
+  - [x] 4.5 API: `udl serve` runs Granian; localhost bind by default, optional API key, allowed output roots
+  - [x] 4.6 MCP: tools from the Feature Matrix (official `mcp` 2.x SDK, `MCPServer`)
+  - [x] 4.7 MCP: `udl mcp` (stdio) + streamable HTTP mounted at `/mcp` in the API
 
 - [ ] **Phase 5: Tag chains (user-defined extraction)**
   - [ ] 5.1 `TagChain` model with discriminated-union step types; add `Strategy.chain` (a schema migration, see [Phase 1 decisions](#decisions-made-while-building-phase-1))
@@ -223,13 +223,15 @@ src/udl/
     sites/       base.py  <examples>.py
   chains/        models.py  shorthand.py  executor.py  suggest.py
   interfaces/
-    cli/         app.py  commands/…
-    api/         app.py  routes/…
+    security.py             # allowed output roots, the API key (the API and MCP)
+    cli/         app.py  common.py  render.py  commands/  (downloads probe sites system servers browser)
+    api/         app.py  deps.py  serve.py  routes/  (downloads sites system)
     mcp/         server.py
 tests/
   conftest.py
   fixtures/site/            # HTML pages + small media files served by the fixture server
-  support/                  # shared helpers imported as `support.*` (fixture_site.py: FixtureSite, Page)
+  support/                  # shared helpers imported as `support.*` (fixture_site.py: FixtureSite, Page;
+                            #   interfaces.py: Harness; cli.py, api.py, mcp.py: run each interface on it)
   unit/  contract/  integration/  interface/  smoke/
 ```
 
@@ -722,16 +724,17 @@ headed browser on the user's machine).
 - One end-to-end `probe` through all three adapters against the fixture site, asserting identical results.
 
 ### CLI
-- **Default-command shim:** prepend `get` unless a registered command name appears among the args.
+- **Default-command shim:** when the first argument after udl's own options (`-v`, `--config FILE`…)
+  is not a command's name, `get` goes in before it (`DefaultGetGroup.parse_args`), so
+  `udl --config x.toml <url>` and `udl -o history <url>` both work.
 
   ```python
   class DefaultGetGroup(TyperGroup):
-      def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
-          if not any(a in self.commands for a in args):
-              args = ["get", *args]
+      def parse_args(self, ctx: Any, args: list[str]) -> list[str]:
+          at = self._own_options_end(ctx, args)
+          if at < len(args) and args[at] not in self.commands:
+              args = [*args[:at], "get", *args[at:]]
           return super().parse_args(ctx, args)
-
-  app = typer.Typer(cls=DefaultGetGroup)
   ```
 - `get` options: `-o/--output DIR`, `--tool NAME`, `--db NAME` (restrict lookup/writes:
   `DownloadRequest.databases`), `--reprobe`, `--no-record`, `-i/--input FILE` (`-` = stdin), `-j/--jobs N`
@@ -760,6 +763,58 @@ headed browser on the user's machine).
 - Client config: `{"mcpServers": {"udl": {"command": "udl", "args": ["mcp"]}}}`. This works anywhere once
   `udl` is installed as a uv tool (4.2). Without that, use
   `"command": "uv", "args": ["run", "--project", "/path/to/udl", "udl", "mcp"]`.
+
+### Decisions made while building Phase 4
+
+- **The parity test holds the Feature Matrix** (operation → CLI command → API route; the MCP tool is
+  the operation's name). CLI commands are marked with `@runs("<operation>")`, API routes are read from
+  the OpenAPI schema's operationIds (FastAPI 0.143 includes routers lazily, so `app.routes` no longer
+  lists them) and MCP tools from `list_tools()`. Interface-only: `serve`, `mcp`, `browser login` and
+  `GET /downloads/{id}/events`. A new operation fails it until each interface has it, and the MCP
+  server refuses to start without the operation's tool annotations (`_HINTS`).
+- **The service grew what the interfaces needed, so they hold no logic:** `download(on_event=…)`
+  hears the jobs' events while it waits (the CLI's progress bars, MCP progress), `DownloadSpec` /
+  `StrategySpec` are the requests without `wait`/`timeout` and `site` (the API takes those from the
+  query and the path), and every request field is described with an attribute docstring
+  (`use_attribute_docstrings`), which becomes the API's docs and the MCP tools' argument descriptions.
+- **A udl cancels only the downloads it runs**, and each CLI run makes its own service, so
+  `udl jobs cancel` of a download in the history leaves one that has ended as it is, and says when
+  another udl runs it (Ctrl-C cancels `udl get`'s). `DBManager.only()` raises `DoesNotExist` for an
+  unknown connection: the request's fault, not a database's.
+- **CLI:** Typer 0.26+ vendors Click, so the CLI uses only Typer's API (`typer.Context`,
+  `typer.core.TyperGroup`). Exit codes `0` / `1` / `2` (a usage error, an invalid config or invalid
+  tool options) and `130` for Ctrl-C, which closes the service (cancelling and saving its downloads).
+  `get` also takes `-t/--template`, `sites set` takes `-O KEY=VALUE` (JSON values), and `history`
+  shows 20 by default. Progress bars go to stderr, only on a terminal; results to stdout. `udl browser
+  login` waits for Enter only on a terminal, through the event loop (a thread blocked on `input()`
+  would keep udl from exiting). `serve` and `mcp` import their servers only when run.
+- **API:** errors are `ErrorInfo` with a status by code: 404 does not exist, 400 a plugin or config
+  error (a tool or options that cannot work), 403 not allowed, 401 unauthorized, 503 a database,
+  500 a bug (whose details are only logged). `POST /downloads` answers 202, or 200 once every job has
+  ended. Events use FastAPI's own SSE (`EventSourceResponse`, with keep-alives); an unknown id is a
+  404 before the stream starts. The API key covers every route but the docs, and `/mcp`.
+- **Served on localhost, udl answers only requests for localhost** (`LocalHostsOnly`, 421), so a web
+  page that points its name at 127.0.0.1 (DNS rebinding) cannot drive it; the MCP SDK checks `/mcp`'s
+  Host and Origin too. Serving other machines without an `api_key` logs a warning.
+- **`udl serve`** gives Granian a pickled loader, `worker_app(settings, verbosity)`, so its worker
+  process makes the app from exactly the settings `udl serve` had (`--config`, `--host`, `--port`, `-v`),
+  with no environment variables to pass on. `-v` adds Granian's access log.
+- **MCP:** each tool's signature is built from its request model, so the arguments are the request's
+  fields, flat. `download` waits at most `DEFAULT_WAIT` (120 s) by default, its progress counting one
+  unit per URL; an output dir it is given must be in `api.allowed_output_roots` on both transports (an
+  agent picks paths, whoever runs it). Errors are tool errors reading `<code>: <message>` and the hint.
+  `/mcp` is a route (a mount would answer only `/mcp/…`), and the SDK's session manager runs in the
+  API's lifespan.
+- **Fixed on the way:** `JobManager.shutdown()` now waits for jobs that have just ended to be saved
+  (their final save could run after the databases closed).
+- **Tests:** a `Harness` (tests/support/interfaces.py) makes services on fakes whose in-memory
+  databases outlive each one (each CLI run makes its own). CLI tests are not async (the CLI runs
+  `asyncio.run`); API tests run the app's lifespan around httpx's `ASGITransport`; MCP tests use the
+  SDK's in-process `Client`. anyio task groups must be left in the task they were entered in, which
+  async fixtures do not do, so `support.tasks.held()` holds them in a task of their own. The MCP
+  client uses httpx2, so `/mcp` is tested against a real `udl serve`; a stdio client gets only a
+  default environment, so the tests pass theirs. Coverage follows the processes tests start
+  (`patch = ["subprocess"]`).
 
 ---
 
