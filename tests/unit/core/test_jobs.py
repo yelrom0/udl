@@ -11,6 +11,7 @@ interrupted, unless another udl is still running.
 
 # System Imports
 import asyncio
+import itertools
 import threading
 import uuid
 from collections.abc import AsyncIterator, Sequence
@@ -71,7 +72,13 @@ class Harness:
             retry=RetryPolicy(retries=0),
         )
         self.db = databases(config, registry())
-        self.jobs = JobManager(runner or executor, progress_interval=progress_interval, keep=keep)
+        self.jobs = JobManager(
+            runner or executor,
+            max_concurrent=config.max_concurrent,
+            max_per_site=config.max_per_site,
+            progress_interval=progress_interval,
+            keep=keep,
+        )
 
     async def __aenter__(self) -> Self:
         await self.db.connect()
@@ -233,6 +240,102 @@ async def test_waiting_for_a_job_that_has_ended_returns_at_once(tmp_path: Path) 
 
         async with asyncio.timeout(1):
             await harness.jobs.wait(job_id)
+
+
+# ---------------------------------------------------------------------------------------------
+# How many run at once
+# ---------------------------------------------------------------------------------------------
+
+
+def busy(
+    urls: Sequence[str], tmp_path: Path, *, max_concurrent: int = 4, max_per_site: int = 2
+) -> Settings:
+    """Settings in which each URL takes about 0.1 s to download."""
+    media = FakeMedia(content=b"x" * 50, delay=0.02)
+    return settings(
+        tmp_path,
+        probe_order=["http"],
+        tools={"http": {**script(dict.fromkeys(urls, media)), "chunk_size": 10}},
+        max_concurrent=max_concurrent,
+        max_per_site=max_per_site,
+    )
+
+
+def most_at_once(events: Sequence[JobEvent], site: str | None = None) -> int:
+    """The most jobs (of `site`, or of any site) that were running at once."""
+    running = most = 0
+    for event in events:
+        if site is not None and event.job.site_key != site:
+            continue
+        if event.type is JobEventType.STARTED:
+            running += 1
+            most = max(most, running)
+        elif event.type.ends:
+            running -= 1
+    return most
+
+
+async def run_all(harness: Harness, urls: Sequence[str]) -> list[JobEvent]:
+    batch = await harness.jobs.submit([JobSpec(url=URL.parse(url)) for url in urls], db=harness.db)
+    return await harness.events(batch.id)
+
+
+async def test_no_more_than_max_concurrent_jobs_run_at_once(tmp_path: Path) -> None:
+    urls = [f"https://site{n}.com/v" for n in range(6)]
+    async with Harness(busy(urls, tmp_path, max_concurrent=2, max_per_site=5)) as harness:
+        events = await run_all(harness, urls)
+
+    assert most_at_once(events) == 2
+    assert [e.type for e in events if e.type.ends] == [JobEventType.FINISHED] * 6
+
+
+async def test_no_more_than_max_per_site_jobs_run_at_once_for_one_site(tmp_path: Path) -> None:
+    urls = [f"https://example.com/{n}" for n in range(6)]
+    async with Harness(busy(urls, tmp_path, max_concurrent=5, max_per_site=2)) as harness:
+        events = await run_all(harness, urls)
+
+    assert most_at_once(events) == 2
+
+
+async def test_jobs_waiting_for_a_busy_site_leave_room_for_other_sites(tmp_path: Path) -> None:
+    urls = [*(f"https://busy.com/{n}" for n in range(4)), "https://a.com/v", "https://b.com/v"]
+    async with Harness(busy(urls, tmp_path, max_concurrent=4, max_per_site=2)) as harness:
+        events = await run_all(harness, urls)
+
+    assert most_at_once(events, "busy.com") == 2
+    assert most_at_once(events) == 4
+
+
+async def test_the_limits_hold_across_batches(tmp_path: Path) -> None:
+    urls = [f"https://site{n}.com/v" for n in range(4)]
+    async with Harness(busy(urls, tmp_path, max_concurrent=1)) as harness:
+        batches = [
+            await harness.jobs.submit([JobSpec(url=URL.parse(url))], db=harness.db) for url in urls
+        ]
+        for batch in batches:
+            await harness.jobs.wait(batch.id)
+        jobs = [job for batch in batches for job in (harness.jobs.batch(batch.id) or batch).jobs]
+
+    # One at a time: each started after the one before it finished.
+    jobs.sort(key=lambda job: job.started_at)
+    for before, after in itertools.pairwise(jobs):
+        assert before.finished_at is not None
+        assert before.finished_at <= after.started_at
+
+
+async def test_a_job_waiting_for_its_turn_can_be_cancelled(tmp_path: Path) -> None:
+    async with Harness(slow_settings(tmp_path, max_concurrent=1)) as harness:
+        first, second = await harness.submit(A, B)
+        await started(harness, first)
+
+        [cancelled] = await harness.jobs.cancel(second)
+        events = await harness.events(second)
+        await harness.jobs.cancel(first)
+        records = {r.id: r for r in await harness.records()}
+
+    assert cancelled.status is JobStatus.CANCELLED
+    assert types(events) == [JobEventType.QUEUED, JobEventType.CANCELLED]
+    assert records[second].status is JobStatus.CANCELLED
 
 
 # ---------------------------------------------------------------------------------------------

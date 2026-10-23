@@ -4,9 +4,12 @@
 -----------
 
 JobManager: runs downloads as jobs, one asyncio task per URL, the URLs of one request sharing a
-batch id. It tells subscribers what happens to each job (JobEvent: queued, started, progress,
-then finished, failed or cancelled), cancels jobs, and saves each one as a DownloadRecord (the
-download history) as it is queued, starts and ends, unless its request says not to.
+batch id. At most `max_concurrent` jobs run at once, and at most `max_per_site` of one site's; the
+others wait their turn (a job waits for its site's turn first, so jobs waiting for a busy site
+leave room for other sites). It tells subscribers what happens to each job (JobEvent: queued,
+started, progress, then finished, failed or cancelled), cancels jobs, and saves each one as a
+DownloadRecord (the download history) as it is queued, starts and ends, unless its request says
+not to.
 
 When udl stops without ending its jobs (it is killed, or the machine stops), their records stay
 queued or running. recover_interrupted() marks them failed (interrupted); a starting udl runs it
@@ -20,6 +23,7 @@ import itertools
 import logging
 from collections import deque
 from collections.abc import AsyncGenerator, Callable, Sequence
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import IO, Protocol
@@ -135,9 +139,18 @@ class JobManager:
     """
 
     def __init__(
-        self, runner: Runner, *, progress_interval: float = 0.25, keep: int = 1000
+        self,
+        runner: Runner,
+        *,
+        max_concurrent: int,
+        max_per_site: int,
+        progress_interval: float = 0.25,
+        keep: int = 1000,
     ) -> None:
         self._runner = runner
+        self._turns = asyncio.Semaphore(max_concurrent)
+        self._max_per_site = max_per_site
+        self._site_turns: dict[str, asyncio.Semaphore] = {}
         self._progress_interval = progress_interval
         self._keep = keep
         self._jobs: dict[UUID, _Job] = {}
@@ -216,19 +229,27 @@ class JobManager:
             if not job.ended:  # its task was cancelled before it ran at all
                 await self._end(job, JobStatus.CANCELLED, Cancelled("The download was cancelled"))
 
+    @asynccontextmanager
+    async def _turn(self, site_key: str) -> AsyncGenerator[None]:
+        """Wait for the site's turn, then for a turn."""
+        site = self._site_turns.setdefault(site_key, asyncio.Semaphore(self._max_per_site))
+        async with site, self._turns:
+            yield
+
     async def _run(self, job: _Job) -> None:
         try:
-            job.status = JobStatus.RUNNING
-            job.started_at = utcnow()
-            self._publish(job, JobEventType.STARTED)
-            await self._save(job)
-            job.execution = await self._runner.run(
-                job.spec,
-                db=job.db,
-                cancel=job.cancel,
-                progress=lambda tool, progress: self._progress(job, tool, progress),
-                on_attempt=job.attempts.append,
-            )
+            async with self._turn(job.spec.url.site_key):
+                job.status = JobStatus.RUNNING
+                job.started_at = utcnow()
+                self._publish(job, JobEventType.STARTED)
+                await self._save(job)
+                job.execution = await self._runner.run(
+                    job.spec,
+                    db=job.db,
+                    cancel=job.cancel,
+                    progress=lambda tool, progress: self._progress(job, tool, progress),
+                    on_attempt=job.attempts.append,
+                )
         except Cancelled as e:
             await self._end(job, JobStatus.CANCELLED, e)
         except asyncio.CancelledError:
