@@ -154,6 +154,22 @@ async def test_headers_are_sent(
     assert [file.read_bytes() for file in result.files] == [sample]
 
 
+async def test_a_probe_asks_for_the_file_as_a_browser(
+    httpserver: HTTPServer, fixture_site: FixtureSite, mode: GalleryDlMode
+) -> None:
+    # Many sites refuse other User-Agents (e.g. a library's).
+    sample = fixture_site.content(Page.DIRECT_FILE)
+    httpserver.expect_request("/clip.mp4").respond_with_data(sample, content_type="video/mp4")
+
+    await GalleryDlDownloader(GalleryDlOptions(mode=mode)).probe(
+        ProbeContext(url=httpserver.url_for("/clip.mp4"))
+    )
+
+    agents = [request.headers.get("User-Agent", "") for request, _ in httpserver.log]
+    assert agents
+    assert all(agent.startswith("Mozilla/5.0") for agent in agents), agents
+
+
 async def test_gallery_dl_logs_into_udls_log_only(
     fixture_site: FixtureSite, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

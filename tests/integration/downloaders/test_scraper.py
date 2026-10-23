@@ -21,6 +21,7 @@ from support.downloaders import Lookup
 from support.fixture_site import FixtureSite, Page
 from udl.errors import AuthRequired, ErrorCode, NetworkError, NotFound
 from udl.plugins.downloaders.base import DownloadContext, MediaKind, ProbeContext, ProbeResult
+from udl.plugins.downloaders.http import USER_AGENT
 from udl.plugins.downloaders.scraper import ScraperDownloader, ScraperOptions
 
 CDN = "https://cdn.example.com"
@@ -364,6 +365,18 @@ async def test_the_media_is_requested_with_the_page_as_referer_and_its_cookies(
     result = await ScraperDownloader().download(DownloadContext(url=page_url, output_dir=tmp_path))
 
     assert [file.read_bytes() for file in result.files] == [b"clip"]
+
+
+@pytest.mark.parametrize(
+    ("options", "agent"), [({}, USER_AGENT), ({"user_agent": "Configured/2"}, "Configured/2")]
+)
+async def test_pages_are_read_with_a_browser_s_user_agent_or_the_one_set(
+    httpserver: HTTPServer, options: dict[str, Any], agent: str
+) -> None:
+    # Many sites refuse other User-Agents (e.g. a library's).
+    await probe_html(httpserver, page('<iframe src="/frame.html"></iframe>'), **options)
+
+    assert {tuple(r.headers.getlist("User-Agent")) for r, _ in httpserver.log} == {(agent,)}
 
 
 async def test_an_unreachable_page_is_a_network_error(tmp_path: Path) -> None:

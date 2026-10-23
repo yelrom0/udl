@@ -76,6 +76,13 @@ _EXTENSION: Final = re.compile(r"\.[A-Za-z0-9]{1,8}")
 _HEAD_REFUSED: Final = frozenset({403, 405, 501})
 _CURL_CANNOT_RESUME: Final[int] = 33  # the server ignores Range
 
+# The User-Agent udl's own requests send (unless a download has one): a browser's, since many
+# sites refuse others (a library's, curl's, wget's), as yt-dlp and gallery-dl know.
+USER_AGENT: Final = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/141.0.0.0 Safari/537.36"
+)
+
 
 class HttpBackend(StrEnum):
     HTTPX = "httpx"  # in-process
@@ -89,6 +96,7 @@ class HttpOptions(DownloaderOptions):
     backend: HttpBackend = HttpBackend.HTTPX
     timeout: PositiveFloat = 30.0  # seconds to connect, or to wait for more data
     retries: NonNegativeInt = 3  # times to retry a failed connection
+    user_agent: str = USER_AGENT  # sent unless the download has one (e.g. the browser's)
 
 
 class _Model(BaseModel):
@@ -122,13 +130,22 @@ class _File(_Model):
     confidence: Confidence
 
 
-def _request(ctx: ProbeContext) -> _Request:
+def with_user_agent(headers: Mapping[str, str], user_agent: str) -> dict[str, str]:
+    """`headers`, with `user_agent` as the User-Agent unless they have one."""
+    if any(name.lower() == "user-agent" for name in headers):
+        return dict(headers)
+    return {"User-Agent": user_agent, **headers}
+
+
+def _request(ctx: ProbeContext, user_agent: str) -> _Request:
     # The file as it is stored: a compressed transfer would not match its Content-Length.
     headers = {
         name: value for name, value in ctx.headers.items() if name.lower() != "accept-encoding"
     }
     return _Request(
-        url=ctx.url, headers={**headers, "Accept-Encoding": "identity"}, cookies=ctx.cookies
+        url=ctx.url,
+        headers={**with_user_agent(headers, user_agent), "Accept-Encoding": "identity"},
+        cookies=ctx.cookies,
     )
 
 
@@ -543,7 +560,11 @@ class HttpDownloader(Downloader[HttpOptions]):
                     )
 
                 await self._backend.fetch(
-                    _request(ctx), part, offset=offset, report=report, cancel=ctx.cancel
+                    _request(ctx, self.options.user_agent),
+                    part,
+                    offset=offset,
+                    report=report,
+                    cancel=ctx.cancel,
                 )
             await asyncio.to_thread(_finish, part, path, file.size)
         size = (await asyncio.to_thread(path.stat)).st_size
@@ -552,7 +573,7 @@ class HttpDownloader(Downloader[HttpOptions]):
 
     async def _file(self, ctx: ProbeContext) -> _File:
         """The file at ctx.url. Raises the error the server's answer means."""
-        request = _request(ctx)
+        request = _request(ctx, self.options.user_agent)
         response = await self._backend.head(request, first_byte=False, cancel=ctx.cancel)
         if response.status in _HEAD_REFUSED:
             response = await self._backend.head(request, first_byte=True, cancel=ctx.cancel)

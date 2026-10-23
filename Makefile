@@ -3,7 +3,7 @@
 # installed with `uv sync --all-extras` (e.g. playwright) are kept between runs.
 export UV_LOCKED := 1
 
-.PHONY: check fmt test
+.PHONY: check fmt test smoke
 
 check:
 	uv lock --check
@@ -18,3 +18,7 @@ fmt:
 
 test:
 	uv run pytest
+
+# udl against real sites (tests/smoke): they need the internet, so they are never part of check.
+smoke:
+	uv run pytest -m network

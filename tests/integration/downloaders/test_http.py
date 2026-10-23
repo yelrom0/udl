@@ -24,7 +24,7 @@ from werkzeug import Request, Response
 from support.fixture_site import FixtureSite, Page
 from udl.errors import Cancelled, ErrorCode, ExtractionFailed, NetworkError, NotFound
 from udl.plugins.downloaders.base import CancelToken, Cookie, DownloadContext, ProbeContext
-from udl.plugins.downloaders.http import HttpBackend, HttpDownloader, HttpOptions
+from udl.plugins.downloaders.http import USER_AGENT, HttpBackend, HttpDownloader, HttpOptions
 
 type Handler = Callable[[Request], Response]
 
@@ -474,6 +474,47 @@ async def test_headers_are_sent(
     result = await http.download(ctx)
 
     assert result.files[0].read_bytes() == sample
+
+
+def user_agents(server: HTTPServer) -> set[tuple[str, ...]]:
+    """The User-Agents each request to `server` sent."""
+    return {tuple(request.headers.getlist("User-Agent")) for request, _ in server.log}
+
+
+async def test_a_browser_s_user_agent_is_sent(
+    http: HttpDownloader, httpserver: HTTPServer, sample: bytes, tmp_path: Path
+) -> None:
+    # Many sites refuse other User-Agents (a library's, curl's, wget's).
+    httpserver.expect_request("/clip.mp4").respond_with_handler(serve(sample))
+
+    await http.download(DownloadContext(url=httpserver.url_for("/clip.mp4"), output_dir=tmp_path))
+
+    assert user_agents(httpserver) == {(USER_AGENT,)}
+    assert USER_AGENT.startswith("Mozilla/5.0")
+
+
+@pytest.mark.parametrize("name", ["User-Agent", "user-agent"])
+async def test_a_download_s_own_user_agent_is_sent_instead(
+    http: HttpDownloader, httpserver: HTTPServer, sample: bytes, tmp_path: Path, name: str
+) -> None:
+    # e.g. the browser's, handing off media it found
+    httpserver.expect_request("/clip.mp4").respond_with_handler(serve(sample))
+    url = httpserver.url_for("/clip.mp4")
+
+    await http.download(DownloadContext(url=url, output_dir=tmp_path, headers={name: "Mine/1"}))
+
+    assert user_agents(httpserver) == {("Mine/1",)}
+
+
+async def test_the_user_agent_can_be_set(
+    backend: HttpBackend, httpserver: HTTPServer, sample: bytes, tmp_path: Path
+) -> None:
+    http = HttpDownloader(HttpOptions(backend=backend, user_agent="Configured/2"))
+    httpserver.expect_request("/clip.mp4").respond_with_handler(serve(sample))
+
+    await http.download(DownloadContext(url=httpserver.url_for("/clip.mp4"), output_dir=tmp_path))
+
+    assert user_agents(httpserver) == {("Configured/2",)}
 
 
 async def test_cookies_are_sent_only_to_their_site(

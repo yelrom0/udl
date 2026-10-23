@@ -656,13 +656,16 @@ class Downloader[O: DownloaderOptions = DownloaderOptions](ABC):
         return DownloadError(f"{type(error).__name__}: {error}", tool=self.name)
 
     def _checked(self, result: DownloadResult, output_dir: Path) -> DownloadResult:
-        """`result` with its files made absolute and measured, if they are real and in place."""
+        """`result` with its files made absolute (each listed once) and measured, if they are
+        real and in place."""
         if not result.files:
             raise ExtractionFailed(f"{self.name} downloaded no files", tool=self.name)
         files: list[Path] = []
         size = 0
         for file in result.files:
             path = (output_dir / file).absolute()
+            if path in files:
+                continue
             if not path.is_relative_to(output_dir):
                 raise ExtractionFailed(
                     f"{self.name} wrote {path}, outside the output dir {output_dir}",

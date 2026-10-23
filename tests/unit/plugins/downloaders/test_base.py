@@ -329,6 +329,16 @@ async def test_download_creates_the_output_dir_and_measures_the_files(tmp_path: 
     )
 
 
+async def test_a_file_reported_more_than_once_is_listed_and_measured_once(tmp_path: Path) -> None:
+    # e.g. gallery-dl, for each version of a Wikimedia file: it skips the ones with the same name
+    out = tmp_path / "out"
+    echo = Echo(writes={"a.jpg": b"1234"}, report=[f"{out}/a.jpg", "a.jpg", f"{out}/a.jpg"])
+
+    result = await echo.download(DownloadContext(url=URL, output_dir=out))
+
+    assert (result.files, result.size_bytes) == ([out / "a.jpg"], 4)
+
+
 async def test_a_relative_output_dir_is_made_absolute(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

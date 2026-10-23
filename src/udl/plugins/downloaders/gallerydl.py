@@ -52,6 +52,7 @@ from udl.plugins.downloaders.base import (
     threadsafe,
 )
 from udl.plugins.downloaders.errors import gallerydl_error, http_status_error, httpx_error
+from udl.plugins.downloaders.http import USER_AGENT, with_user_agent
 from udl.plugins.downloaders.process import run_process
 from udl.plugins.requirements import Requirement
 
@@ -342,7 +343,7 @@ def _cli_args(ctx: ProbeContext, settings: Mapping[str, JsonValue], folder: Path
 
 
 async def _cli_head(ctx: ProbeContext, url: str, options: GalleryDlOptions) -> int | None:
-    headers = dict(ctx.headers)
+    headers = with_user_agent(ctx.headers, USER_AGENT)
     if cookies := cookie_header(ctx.cookies, url):
         headers["Cookie"] = cookies
     try:
