@@ -26,8 +26,7 @@ reached, since matching offline asks every extractor of yt-dlp and gallery-dl.
 import json
 import logging
 import re
-from collections.abc import AsyncIterator, Iterable, Iterator, Sequence
-from enum import StrEnum
+from collections.abc import AsyncGenerator, Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import Protocol
 from uuid import UUID
@@ -37,6 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # Local Imports
 from udl.config import Settings
+from udl.core.models import CandidateSource
 from udl.core.tools import Toolbox
 from udl.core.urls import URL
 from udl.db.manager import DBManager
@@ -45,15 +45,6 @@ from udl.errors import DatabaseError, UDLError
 from udl.plugins.downloaders.base import MatchResult
 
 log = logging.getLogger(__name__)
-
-
-class CandidateSource(StrEnum):
-    """Why a downloader is a candidate."""
-
-    REQUEST = "request"  # the request named it
-    PLUGIN = "plugin"  # the site's plugin chose it
-    STORED = "stored"  # a stored strategy for the site
-    PROBE = "probe"  # the probe chain
 
 
 class Candidate(BaseModel):
@@ -141,7 +132,7 @@ class Resolver:
 
     async def candidates(
         self, url: URL, *, db: DBManager, tool: str | None = None, reprobe: bool = False
-    ) -> AsyncIterator[Candidate]:
+    ) -> AsyncGenerator[Candidate]:
         """The candidates for `url`, best first. `tool` (the request's) is the only one when
         given; `reprobe` skips the stored strategies."""
         if tool is not None:

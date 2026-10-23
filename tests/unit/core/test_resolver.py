@@ -28,7 +28,8 @@ from support.engine import (
     settings,
 )
 from udl.config import ReadPolicy, Settings
-from udl.core.resolver import Candidate, CandidateSource, Resolver, applicable, strategy_rank
+from udl.core.models import CandidateSource
+from udl.core.resolver import Candidate, Resolver, applicable, strategy_rank
 from udl.core.tools import Toolbox
 from udl.core.urls import URL
 from udl.db.manager import DBManager

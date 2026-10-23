@@ -96,6 +96,16 @@ def test_the_probe_chain_checks_whether_a_url_is_a_file_before_yt_dlp_guesses() 
     assert Settings().probe_order == ["http", "yt-dlp", "gallery-dl", "scraper", "browser"]
 
 
+@pytest.mark.parametrize("template", ["../{title}.{ext}", "/abs/{title}", "{title!r}", ""])
+def test_a_filename_template_that_could_leave_the_download_dir_is_a_config_error(
+    template: str,
+) -> None:
+    write_config(f"filename_template = {template!r}\n")
+
+    with pytest.raises(ConfigError, match="filename_template"):
+        Settings.load()
+
+
 def test_load_reads_the_config_file_in_the_user_config_dir() -> None:
     write_config("max_concurrent = 8\n")
 

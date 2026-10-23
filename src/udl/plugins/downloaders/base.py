@@ -417,6 +417,11 @@ def _check_template(template: str) -> str:
     return template
 
 
+type FilenameTemplate = Annotated[str, AfterValidator(_check_template)]
+"""A filename template, e.g. "{site}/{title}.{ext}": relative, with plain fields, never leaving
+the output dir."""
+
+
 def _safe_field(value: str | None) -> str:
     """A field's value as one path segment: it can never add a folder or leave one."""
     if not value:
@@ -490,7 +495,7 @@ class DownloadContext(ProbeContext):
 
     output_dir: Path  # where the files go
     # e.g. "{title}.{ext}"; None leaves the naming to the tool. Each tool translates it.
-    filename_template: Annotated[str, AfterValidator(_check_template)] | None = None
+    filename_template: FilenameTemplate | None = None
     progress: ProgressSink = _ignore_progress
     downloader_for: DownloaderLookup = default_downloader_for
 

@@ -37,6 +37,7 @@ from pydantic_settings import (
 
 # Local Imports
 from udl.errors import ConfigError
+from udl.plugins.downloaders.base import FilenameTemplate
 
 APP_NAME: Final[str] = "udl"
 
@@ -191,7 +192,7 @@ class Settings(BaseSettings):
     )
 
     download_dir: ExpandedPath = Field(default_factory=lambda: downloads_dir() / APP_NAME)
-    filename_template: str = "{site}/{title}.{ext}"
+    filename_template: FilenameTemplate = "{site}/{title}.{ext}"
     max_concurrent: PositiveInt = 4
     max_per_site: PositiveInt = 2
     # The order downloaders are tried in when nothing is known about a URL: those that match it
