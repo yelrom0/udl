@@ -15,6 +15,9 @@ is the browser downloader's job). It looks, in this order, for
 and, when a page has none of them, on the pages of its iframes (e.g. an embedded player). It
 downloads by handing a find off: a file to http, a stream playlist (HLS / DASH) to yt-dlp. When a
 find turns out not to be downloadable, the next one is tried.
+
+Given a site's tag chain (its `chain` option), it follows the chain to the media instead, reading
+the pages over HTTP as they are served.
 """
 
 # System Imports
@@ -35,11 +38,23 @@ from pydantic import (
     PositiveInt,
     TypeAdapter,
     ValidationError,
+    field_validator,
 )
 from selectolax.lexbor import LexborHTMLParser
 
 # Local Imports
-from udl.errors import DownloadError, UnsupportedURL
+from udl.chains.executor import (
+    ChainRun,
+    Document,
+    Reader,
+    StaticDocument,
+    chain_handoffs,
+    chain_headers,
+    probe_result,
+    run_chain,
+)
+from udl.chains.models import FetchMode, StepTrace, TagChain
+from udl.errors import ConfigError, DownloadError, UnsupportedURL
 from udl.plugins.downloaders.base import (
     Cookie,
     DownloadContext,
@@ -55,7 +70,7 @@ from udl.plugins.downloaders.base import (
 )
 from udl.plugins.downloaders.errors import http_status_error
 from udl.plugins.downloaders.http import PAGE_TYPES, http_client
-from udl.plugins.downloaders.media import Find, media_type, stream_kind, unique
+from udl.plugins.downloaders.media import Find, media_type, page_title, stream_kind, unique
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +94,15 @@ class ScraperOptions(DownloaderOptions):
     retries: NonNegativeInt = 3  # times to retry a failed connection
     max_iframes: NonNegativeInt = 3  # iframes searched when a page has no media itself
     max_page_bytes: PositiveInt = 10 * 1024 * 1024  # what is read of a page, at most
+    # The site's tag chain (`udl chain set`), followed to the media instead of looking for it.
+    chain: TagChain | None = None
+
+    @field_validator("chain")
+    @classmethod
+    def _static(cls, chain: TagChain | None) -> TagChain | None:
+        if chain is not None and chain.fetch is FetchMode.BROWSER:
+            raise ValueError("a browser chain runs in the browser downloader, not the scraper")
+        return chain
 
 
 class _Scraped(BaseModel):
@@ -174,11 +198,7 @@ class _Finder:
         return [url for url, kind in urls if kind.partition(";")[0].strip() not in PAGE_TYPES]
 
     def title(self) -> str | None:
-        og_title = self.tree.css_first('meta[property="og:title"]')
-        title = og_title.attributes.get("content") if og_title else None
-        if not title and (node := self.tree.css_first("title")):
-            title = node.text()
-        return (title.strip() or None) if title else None
+        return page_title(self.tree)
 
     def iframes(self) -> list[str]:
         sources = (node.attributes.get("src") for node in self.tree.css("iframe[src]"))
@@ -198,6 +218,35 @@ def _content_urls(data: JsonValue) -> Iterator[str]:
             yield from _content_urls(value)
 
 
+async def _body(response: httpx.Response, max_bytes: int) -> str:
+    """A response's body as text: its first `max_bytes` at most."""
+    body = bytearray()
+    async for chunk in response.aiter_bytes():
+        body += chunk
+        if len(body) >= max_bytes:
+            break
+    return bytes(body[:max_bytes]).decode(response.charset_encoding or "utf-8", errors="replace")
+
+
+class _ChainReader(Reader):
+    """Opens a chain's documents over HTTP, as they are served."""
+
+    def __init__(self, client: httpx.AsyncClient, max_bytes: int) -> None:
+        self._client = client
+        self._max_bytes = max_bytes
+
+    async def open(self, url: str, *, referer: str | None) -> Document:
+        # (The chain's own Referer, if it has one, is sent instead.)
+        headers = {"Referer": referer} if referer and "Referer" not in self._client.headers else {}
+        async with self._client.stream("GET", url, headers=headers) as response:
+            status = response.status_code
+            if error := http_status_error(
+                status, url, tool=TOOL, retry_after=response.headers.get("Retry-After")
+            ):
+                raise error
+            return StaticDocument(str(response.url), await _body(response, self._max_bytes))
+
+
 # ---------------------------------------------------------------------------------------------
 # The downloader
 # ---------------------------------------------------------------------------------------------
@@ -214,6 +263,9 @@ class ScraperDownloader(Downloader[ScraperOptions]):
     )
 
     async def _probe(self, ctx: ProbeContext) -> ProbeResult:
+        if (chain := self.options.chain) is not None:
+            run, cookies = await self._follow(chain, ctx)
+            return probe_result(TOOL, run, chain_handoffs(chain, run, url=ctx.url, cookies=cookies))
         page = await self._scrape(ctx)
         return ProbeResult(
             tool=TOOL,
@@ -225,10 +277,45 @@ class ScraperDownloader(Downloader[ScraperOptions]):
         )
 
     async def _download(self, ctx: DownloadContext) -> DownloadResult:
+        if (chain := self.options.chain) is not None:
+            run, cookies = await self._follow(chain, ctx)
+            handoffs = chain_handoffs(chain, run, url=ctx.url, cookies=cookies)
+            hand_off = self.hand_off_all if run.every else self.hand_off_best
+            result = await hand_off(handoffs, ctx)
+            return result.model_copy(update={"title": run.title or result.title})
         page = await self._scrape(ctx)
         handoffs = [find.handoff(cookies=page.cookies) for find in page.finds]
         result = await self.hand_off_best(handoffs, ctx)
         return result.model_copy(update={"title": page.title or result.title})
+
+    async def run_chain(
+        self, ctx: ProbeContext, *, trace: list[StepTrace] | None = None
+    ) -> ChainRun:
+        """Follow the chain in the options from ctx.url (see udl.chains.executor.ChainRunner).
+        Raises ConfigError when there is none."""
+        if self.options.chain is None:
+            raise ConfigError(f"The {TOOL} downloader has no tag chain to follow")
+        run, _ = await self._follow(self.options.chain, ctx, trace)
+        return run
+
+    async def _follow(
+        self, chain: TagChain, ctx: ProbeContext, trace: list[StepTrace] | None = None
+    ) -> tuple[ChainRun, list[Cookie]]:
+        """Where `chain` leads from ctx.url, and the cookies its site set on the way."""
+
+        async def follow() -> tuple[ChainRun, list[Cookie]]:
+            async with http_client(
+                headers={**ctx.headers, **chain_headers(chain, ctx.url)},
+                cookies=ctx.cookies,
+                seconds=self.options.timeout,
+                retries=self.options.retries,
+                tool=TOOL,
+            ) as client:
+                reader = _ChainReader(client, self.options.max_page_bytes)
+                run = await run_chain(chain, ctx.url, reader, trace=trace)
+                return run, [Cookie.from_http_cookie(cookie) for cookie in client.cookies.jar]
+
+        return await cancellable(follow(), ctx.cancel)
 
     async def _scrape(self, ctx: ProbeContext) -> _Scraped:
         """The media on ctx.url's page (on its iframes' pages if none is on the page itself).
@@ -277,12 +364,5 @@ class ScraperDownloader(Downloader[ScraperOptions]):
                     tool=TOOL,
                     hint="If it is a file, http downloads it.",
                 )
-            body = bytearray()
-            async for chunk in response.aiter_bytes():
-                body += chunk
-                if len(body) >= self.options.max_page_bytes:
-                    break
-            html = bytes(body[: self.options.max_page_bytes]).decode(
-                response.charset_encoding or "utf-8", errors="replace"
-            )
+            html = await _body(response, self.options.max_page_bytes)
             return _Finder(LexborHTMLParser(html), str(response.url))

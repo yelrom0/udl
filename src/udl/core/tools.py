@@ -5,7 +5,8 @@
 
 Toolbox: the registered downloaders, configured. A downloader's options are layered: the
 [browser] table (for the browser downloader, which runs as it says), its [tools.<name>] table,
-then the options of the strategy it runs for.
+then the options of the strategy it runs for, and the strategy's tag chain (its `chain` option:
+the scraper and the browser follow one).
 """
 
 # System Imports
@@ -16,6 +17,7 @@ from typing import Any
 from pydantic import JsonValue
 
 # Local Imports
+from udl.chains.models import TagChain
 from udl.config import Settings
 from udl.plugins.downloaders.base import Downloader
 from udl.plugins.registry import DOWNLOADERS, PluginRegistry
@@ -38,9 +40,16 @@ class Toolbox:
     def has(self, name: str) -> bool:
         return name in self.names
 
-    def get(self, name: str, options: Mapping[str, JsonValue] | None = None) -> Downloader[Any]:
-        """The downloader called `name`, with `options` (e.g. a strategy's) over the settings'.
-        Raises PluginError when there is none, ConfigError when the options are invalid."""
+    def get(
+        self,
+        name: str,
+        options: Mapping[str, JsonValue] | None = None,
+        *,
+        chain: TagChain | None = None,
+    ) -> Downloader[Any]:
+        """The downloader called `name`, with `options` (e.g. a strategy's) over the settings',
+        following `chain`. Raises PluginError when there is none, ConfigError when the options
+        are invalid (or it follows no chains)."""
         cls = self._registry.get(DOWNLOADERS, name)
         layers: list[Mapping[str, JsonValue]] = []
         if name == _BROWSER:
@@ -52,6 +61,8 @@ class Toolbox:
             }
             layers.append({key: value for key, value in settings.items() if key in fields})
         layers += [self._settings.tools.get(name, {}), options or {}]
+        if chain is not None:
+            layers.append({"chain": chain.model_dump(mode="json")})
         return cls.configure(*layers)
 
     def downloader_for(self, name: str) -> Downloader[Any]:

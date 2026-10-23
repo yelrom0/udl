@@ -26,7 +26,7 @@ from hypothesis import strategies as st
 from pydantic import JsonValue, SecretStr, ValidationError
 
 # Local Imports
-from support.downloaders import Lookup
+from support.downloaders import FakeDownloader, FakeMedia, FakeOptions, Lookup
 from udl.errors import (
     AuthRequired,
     Cancelled,
@@ -766,6 +766,54 @@ async def test_when_no_handoff_works_the_first_failure_is_raised(tmp_path: Path)
         await hand_off_best(lookup, tmp_path, tries=3)
 
     assert len(lookup.asked) == 3
+
+
+async def hand_off_all(
+    tmp_path: Path, *, errors: dict[str, ErrorCode] | None = None
+) -> DownloadResult:
+    """Hand off every candidate: each one's file is named after it, unless it fails."""
+    options = FakeOptions(
+        media={
+            url: FakeMedia(content=url.encode(), filename=f"{n}.mp4")
+            for n, url in enumerate(CANDIDATES)
+        },
+        errors=errors or {},
+    )
+    handoffs = [Handoff(tool="fake", url=url) for url in CANDIDATES]
+    ctx = DownloadContext(
+        url=URL, output_dir=tmp_path, downloader_for=lambda _: FakeDownloader(options)
+    )
+    return await Finder().hand_off_all(handoffs, ctx)
+
+
+async def test_handing_off_all_downloads_every_one(tmp_path: Path) -> None:
+    result = await hand_off_all(tmp_path)
+
+    assert result.files == [tmp_path / f"{n}.mp4" for n in range(len(CANDIDATES))]
+    assert result.size_bytes == sum(len(url) for url in CANDIDATES)
+    assert (result.tool, result.url, result.handed_off_to) == ("finder", URL, "fake")
+
+
+async def test_handing_off_all_skips_one_that_fails_for_its_media(tmp_path: Path) -> None:
+    result = await hand_off_all(tmp_path, errors={CANDIDATES[1]: ErrorCode.NOT_FOUND})
+
+    assert [file.name for file in result.files] == ["0.mp4", "2.mp4", "3.mp4"]
+
+
+async def test_handing_off_all_stops_at_a_failure_that_is_not_the_medias_own(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(AuthRequired):
+        await hand_off_all(tmp_path, errors={CANDIDATES[2]: ErrorCode.AUTH_REQUIRED})
+
+
+async def test_handing_off_all_when_none_works_raises_the_first_failure(tmp_path: Path) -> None:
+    errors = dict.fromkeys(CANDIDATES, ErrorCode.UNSUPPORTED_URL) | {
+        CANDIDATES[0]: ErrorCode.NOT_FOUND
+    }
+
+    with pytest.raises(NotFound):
+        await hand_off_all(tmp_path, errors=errors)
 
 
 def test_the_default_lookup_names_an_unknown_downloader() -> None:

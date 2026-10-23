@@ -5,7 +5,8 @@
 
 A small local website for integration tests: a direct file, a <video> page, an iframe embed,
 a JavaScript-rendered page, a cookie-gated (401) page, a page without media, a page with two
-videos, an image gallery and a file that downloads slowly (to cancel). The pages live in
+videos, an image gallery, a file that downloads slowly (to cancel), a page with its video in
+JSON and one whose video loads on a click (for tag chains). The pages live in
 tests/fixtures/site.
 """
 
@@ -51,6 +52,8 @@ class Page(StrEnum):
     VIDEOS = "/videos.html"  # two <video>s: DIRECT_FILE, then OTHER_FILE
     IMAGE = "/media/pixel.png"  # a small PNG
     GALLERY = "/gallery.html"  # two <img>s: IMAGE, and one that is not found
+    JSON = "/json.html"  # DIRECT_FILE's relative URL in <script id="data" type="application/json">
+    CLICK = "/click.html"  # clicking <button id="play"> makes a <video> of DIRECT_FILE, which loads
 
 
 # The file served for each page, and whether it needs the session cookie.
@@ -68,6 +71,8 @@ _FILES: Final[dict[Page, tuple[str, bool]]] = {
     Page.VIDEOS: ("videos.html", False),
     Page.IMAGE: ("media/pixel.png", False),
     Page.GALLERY: ("gallery.html", False),
+    Page.JSON: ("json.html", False),
+    Page.CLICK: ("click.html", False),
 }
 
 

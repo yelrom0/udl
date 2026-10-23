@@ -7,7 +7,8 @@ What kind of media a URL or a content type is: a media file (video, audio, image
 playlist (HLS, DASH). Guesses use mimetypes' built-in table only (not the system's), so they are
 the same on every system.
 
-Also Find: media found on a web page (by the scraper or the browser), and its handoff.
+Also Find: media found on a web page (by the scraper, the browser or a tag chain), and its
+handoff, and a web page's title.
 """
 
 # System Imports
@@ -19,6 +20,7 @@ from urllib.parse import unquote, urlsplit
 
 # Package Imports
 from pydantic import BaseModel, ConfigDict
+from selectolax.lexbor import LexborHTMLParser
 
 # Local Imports
 from udl.plugins.downloaders.base import Confidence, Cookie, Handoff, MediaCandidate, MediaKind
@@ -72,11 +74,16 @@ class Find(BaseModel):
     referer: str  # the page (or frame) it is on
 
     def handoff(
-        self, *, cookies: list[Cookie], headers: Mapping[str, str] | None = None
+        self,
+        *,
+        cookies: list[Cookie],
+        headers: Mapping[str, str] | None = None,
+        tool: str | None = None,
     ) -> Handoff:
-        """Its download as if from its page: a file by http, a stream playlist by yt-dlp."""
+        """Its download as if from its page: a file by http, a stream playlist by yt-dlp (or by
+        `tool`)."""
         return Handoff(
-            tool="http" if self.media.kind is MediaKind.FILE else "yt-dlp",
+            tool=tool or ("http" if self.media.kind is MediaKind.FILE else "yt-dlp"),
             url=self.media.url,
             headers={**(headers or {}), "Referer": self.referer},
             cookies=cookies,
@@ -92,3 +99,12 @@ def unique(finds: Iterable[Find]) -> list[Find]:
             seen.add(find.media.url)
             unique.append(find)
     return unique
+
+
+def page_title(page: LexborHTMLParser) -> str | None:
+    """A web page's title: its og:title, else its <title>."""
+    og_title = page.css_first('meta[property="og:title"]')
+    title = og_title.attributes.get("content") if og_title else None
+    if not title and (node := page.css_first("title")):
+        title = node.text()
+    return (title.strip() or None) if title else None

@@ -22,11 +22,13 @@ the document it opened. Reading what format_steps() wrote gives the same chain.
 
 # System Imports
 import re
+import shlex
 from collections.abc import Sequence
 from typing import Final
 
 # Local Imports
 from udl.chains.models import (
+    FetchMode,
     FollowStep,
     JsonStep,
     NetworkStep,
@@ -34,6 +36,7 @@ from udl.chains.models import (
     RegexStep,
     SelectStep,
     Step,
+    TagChain,
 )
 
 type RawStep = dict[str, str | bool]
@@ -295,3 +298,16 @@ def format_steps(steps: Sequence[Step]) -> str:
         if not (isinstance(step, FollowStep) and after is not None and after.reads_document)
     ]
     return f" {_SEPARATOR} ".join(written)
+
+
+def command_arguments(chain: TagChain) -> str:
+    """The chain as the `udl chain` commands take it: its shorthand (quoted for a shell), then
+    the options that say the rest (--browser, --handoff, -H)."""
+    words = [shlex.quote(format_steps(chain.steps))]
+    if chain.fetch is FetchMode.BROWSER and not any(step.browser_only for step in chain.steps):
+        words.append("--browser")
+    if chain.handoff is not None:
+        words += ["--handoff", shlex.quote(chain.handoff)]
+    for name, value in chain.headers.items():
+        words += ["-H", shlex.quote(f"{name}: {value}")]
+    return " ".join(words)

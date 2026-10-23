@@ -201,7 +201,7 @@ class _Run:
         self.on_attempt = on_attempt
         self.attempts: list[Attempt] = []
         self.errors: list[UDLError] = []
-        self.tried: set[tuple[str, str]] = set()
+        self.tried: set[tuple[str, str, str]] = set()
         self.needs_auth = False  # the site wanted a login
         self._cookies: list[Cookie] | None = None  # None until read
         self._site_stored = False
@@ -283,7 +283,7 @@ class _Run:
             return result, bool(cookies)
 
     async def _download(self, candidate: Candidate, cookies: list[Cookie]) -> DownloadResult:
-        downloader = self.x.toolbox.get(candidate.tool, candidate.options)
+        downloader = self.x.toolbox.get(candidate.tool, candidate.options, chain=candidate.chain)
         tool = candidate.tool
 
         def progress(update: DownloadProgress) -> None:
@@ -380,6 +380,7 @@ class _Run:
                 if strategy.url_pattern is None
                 and strategy.tool == candidate.tool
                 and strategy.options == candidate.options
+                and strategy.chain is None
             ),
             None,
         )

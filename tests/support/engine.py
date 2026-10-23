@@ -49,21 +49,28 @@ def registry(*tools: str) -> PluginRegistry:
     return plugins
 
 
+def _media(media: Mapping[str, FakeMedia | str] | None) -> dict[str, FakeMedia]:
+    return {
+        url: FakeMedia(content=item.encode()) if isinstance(item, str) else item
+        for url, item in (media or {}).items()
+    }
+
+
 def script(
     media: Mapping[str, FakeMedia | str] | None = None,
     *,
     errors: Mapping[str, str] | None = None,
     matches: Mapping[str, float] | None = None,
     confidence: float = 0.8,
+    chained: Mapping[str, FakeMedia | str] | None = None,
 ) -> dict[str, JsonValue]:
     """A fake tool's [tools.<name>] table: the media each URL gives (FakeMedia, or just its
-    content), the URLs that fail (with an ErrorCode) and the URLs it matches offline."""
+    content), the URLs that fail (with an ErrorCode), the URLs it matches offline and the media
+    each URL gives when the tool follows a tag chain."""
     options = FakeOptions.model_validate(
         {
-            "media": {
-                url: FakeMedia(content=item.encode()) if isinstance(item, str) else item
-                for url, item in (media or {}).items()
-            },
+            "media": _media(media),
+            "chained": _media(chained),
             "errors": dict(errors or {}),
             "matches": dict(matches or {}),
             "confidence": confidence,

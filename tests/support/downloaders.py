@@ -4,8 +4,9 @@
 ------------------
 
 FakeDownloader: a downloader that needs no network or tools. What each URL gives (media or an
-error) is scripted in its options, so tests of the code that picks and runs downloaders can say
-exactly what happens. It passes the downloader contract suite, like any real downloader.
+error) is scripted in its options (and what it gives when it follows a tag chain), so tests of the
+code that picks and runs downloaders can say exactly what happens. It passes the downloader
+contract suite, like any real downloader.
 """
 
 # System Imports
@@ -16,6 +17,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeFloat, PositiveInt
 
 # Local Imports
+from udl.chains.models import TagChain
 from udl.errors import (
     AuthRequired,
     DownloadError,
@@ -53,6 +55,8 @@ class FakeMedia(BaseModel):
 
 class FakeOptions(DownloaderOptions):
     media: dict[str, FakeMedia] = Field(default_factory=dict[str, FakeMedia])
+    chain: TagChain | None = None  # a tag chain to follow: then `chained` is the media
+    chained: dict[str, FakeMedia] = Field(default_factory=dict[str, FakeMedia])
     errors: dict[str, ErrorCode] = Field(default_factory=dict[str, ErrorCode])  # url -> error
     matches: dict[str, Confidence] = Field(default_factory=dict[str, Confidence])  # offline
     confidence: Confidence = 0.8  # of a successful probe
@@ -60,7 +64,8 @@ class FakeOptions(DownloaderOptions):
 
 
 class FakeDownloader(Downloader[FakeOptions]):
-    """Media and errors come from its options. Any other URL is unsupported."""
+    """Media and errors come from its options (`chained` when it has a chain). Any other URL is
+    unsupported."""
 
     name = "fake"
     options_model = FakeOptions
@@ -98,7 +103,8 @@ class FakeDownloader(Downloader[FakeOptions]):
             error = error_from_info(ErrorInfo(code=code, message=f"{code} for {ctx.url}"))
             assert isinstance(error, DownloadError), f"{code} is not a download error"
             raise error
-        media = self.options.media.get(ctx.url)
+        scripted = self.options.chained if self.options.chain else self.options.media
+        media = scripted.get(ctx.url)
         if media is None:
             raise UnsupportedURL(f"Nothing scripted for {ctx.url}")
         if media.cookie and media.cookie not in (cookie_header(ctx.cookies, ctx.url) or ""):

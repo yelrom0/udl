@@ -30,6 +30,7 @@ from support.engine import (
     script,
     settings,
 )
+from udl.chains.models import TagChain
 from udl.config import APISettings, Settings
 from udl.core.executor import RetryPolicy
 from udl.core.jobs import InstanceLock
@@ -55,6 +56,7 @@ from udl.db.models import (
     JobStatus,
     Site,
     SiteQuery,
+    Strategy,
     StrategySource,
 )
 from udl.errors import ConfigError, DoesNotExist, ErrorCode, PluginError
@@ -588,6 +590,27 @@ async def test_setting_a_strategy_takes_over_a_learned_one(tmp_path: Path, make:
         True,
         1,
     )
+
+
+async def test_setting_a_strategy_leaves_the_site_s_chain_for_that_tool(make: Make) -> None:
+    service = await make()
+    await service.db.upsert_site(Site(key="example.com"))
+    chained = await service.db.upsert_strategy(
+        Strategy(
+            site_key="example.com",
+            tool="scraper",
+            chain=TagChain.model_validate("video@src"),
+            source=StrategySource.MANUAL,
+        )
+    )
+
+    strategy = await service.set_site_strategy(
+        SetStrategyRequest(site="example.com", tool="scraper")
+    )
+
+    assert strategy.id != chained.id
+    assert strategy.chain is None
+    assert chained in (await service.get_site(SiteRequest(site="example.com"))).strategies
 
 
 async def test_setting_a_strategy_keeps_what_is_known_about_the_site(make: Make) -> None:

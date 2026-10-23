@@ -7,6 +7,7 @@ The local fixture site that the downloader integration tests run against
 """
 
 # System Imports
+import json
 import time
 from urllib.parse import urljoin
 
@@ -130,6 +131,16 @@ def test_the_slow_page_points_at_the_slow_file(fixture_site: FixtureSite) -> Non
     html = httpx.get(fixture_site.url(Page.SLOW)).text
 
     assert src_of(html, "video > source") == Page.SLOW_FILE
+
+
+def test_the_json_page_has_its_video_only_in_json(fixture_site: FixtureSite) -> None:
+    html = httpx.get(fixture_site.url(Page.JSON)).text
+    data = LexborHTMLParser(html).css_first('script#data[type="application/json"]')
+
+    assert data is not None
+    assert json.loads(data.text())["video"]["src"] == Page.DIRECT_FILE
+    assert "<video" not in html
+    assert "http" not in html.lower()
 
 
 def test_the_js_page_has_no_media_in_its_static_html(fixture_site: FixtureSite) -> None:

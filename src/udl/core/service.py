@@ -392,7 +392,9 @@ class UDLService:
             (
                 strategy
                 for strategy in await self.db.strategies_for(key)
-                if strategy.url_pattern == request.pattern and strategy.tool == request.tool
+                if strategy.url_pattern == request.pattern
+                and strategy.tool == request.tool
+                and strategy.chain is None
             ),
             None,
         )

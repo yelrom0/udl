@@ -29,6 +29,7 @@ from support.engine import (
     script,
     settings,
 )
+from udl.chains.models import TagChain
 from udl.config import ReadPolicy, Settings
 from udl.core.executor import Execution, Executor, JobSpec, RetryPolicy
 from udl.core.resolver import Resolver
@@ -40,6 +41,7 @@ from udl.errors import DatabaseError, ErrorCode, UDLError
 from udl.plugins.downloaders.base import CancelToken
 
 PAGE = "https://example.com/watch/1"
+CHAIN = TagChain.model_validate("iframe#player@src >> video source@src")
 SIGNED_IN = FakeMedia(content=b"members only", cookie="session=signed-in")
 
 
@@ -182,9 +184,38 @@ async def test_the_site_s_settings_are_kept_when_its_first_strategy_is_learned(
     assert (site.name, site.notes) == ("Example", "mine")
 
 
+async def test_a_probe_winner_is_learned_apart_from_the_site_s_chain_for_that_tool(
+    tmp_path: Path, db: DBManager
+) -> None:
+    [chained] = await stored(
+        db, strategy("scraper", chain=CHAIN, source=StrategySource.MANUAL, enabled=False)
+    )
+    config = settings(tmp_path, tools={"scraper": script({PAGE: "page"})})
+
+    execution = await execute(config, db)
+
+    learned = [s for s in await db.strategies_for("example.com") if s.id != chained.id]
+    assert [(s.tool, s.chain, s.id) for s in learned] == [("scraper", None, execution.strategy_id)]
+    assert (await db.strategies_for("example.com")).count(chained) == 1
+
+
 # ---------------------------------------------------------------------------------------------
 # Counting on stored strategies
 # ---------------------------------------------------------------------------------------------
+
+
+async def test_a_stored_chain_is_followed_and_counts_its_success(
+    tmp_path: Path, db: DBManager
+) -> None:
+    [chained] = await stored(db, strategy("scraper", chain=CHAIN, source=StrategySource.MANUAL))
+    config = settings(tmp_path, tools={"scraper": script(chained={PAGE: "found by the chain"})})
+
+    execution = await execute(config, db)
+
+    assert execution.strategy_id == chained.id
+    assert execution.result.files[0].read_bytes() == b"found by the chain"
+    [counted] = await db.strategies_for("example.com")
+    assert (counted.id, counted.success_count, counted.chain) == (chained.id, 1, CHAIN)
 
 
 async def test_a_stored_strategy_that_works_counts_a_success(tmp_path: Path, db: DBManager) -> None:

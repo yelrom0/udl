@@ -18,8 +18,8 @@ Precedence (highest first):
    file?), yt-dlp's generic extractor, gallery-dl, the scraper, and the browser, the most
    expensive, last.
 
-A tool is not offered twice with the same options. The probe chain is worked out only once it is
-reached, since matching offline asks every extractor of yt-dlp and gallery-dl.
+A tool is not offered twice with the same options (and tag chain). The probe chain is worked out
+only once it is reached, since matching offline asks every extractor of yt-dlp and gallery-dl.
 """
 
 # System Imports
@@ -35,6 +35,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 # Local Imports
+from udl.chains.models import TagChain
 from udl.config import Settings
 from udl.core.models import CandidateSource
 from udl.core.tools import Toolbox
@@ -55,14 +56,16 @@ class Candidate(BaseModel):
     tool: str
     source: CandidateSource
     options: JsonObject = Field(default_factory=dict)  # over the tool's [tools.<name>] table
+    chain: TagChain | None = None  # the tag chain the tool follows
     requires_auth: bool = False  # sign in (send the site's cookies) from the start
     strategy: Strategy | None = None  # the stored strategy (source STORED)
     match: MatchResult | None = None  # how it matched the URL offline (source PROBE)
 
     @property
-    def key(self) -> tuple[str, str]:
-        """What makes two candidates the same: the tool and its options."""
-        return (self.tool, json.dumps(self.options, sort_keys=True))
+    def key(self) -> tuple[str, str, str]:
+        """What makes two candidates the same: the tool, its options and its chain."""
+        chain = self.chain.model_dump_json() if self.chain else ""
+        return (self.tool, json.dumps(self.options, sort_keys=True), chain)
 
 
 class SiteBehaviour(Protocol):
@@ -139,7 +142,7 @@ class Resolver:
             yield Candidate(tool=tool, source=CandidateSource.REQUEST)
             return
         stored = [] if reprobe else applicable(await self._stored(url, db), url)
-        offered: set[tuple[str, str]] = set()
+        offered: set[tuple[str, str, str]] = set()
         for candidate in self._in_order(url, stored):
             if candidate.key not in offered:
                 offered.add(candidate.key)
@@ -163,6 +166,7 @@ class Resolver:
                 tool=chosen.tool,
                 source=CandidateSource.PLUGIN,
                 options=chosen.options,
+                chain=chosen.chain,
                 requires_auth=chosen.requires_auth,
             )
         for strategy in stored:
@@ -170,6 +174,7 @@ class Resolver:
                 tool=strategy.tool,
                 source=CandidateSource.STORED,
                 options=strategy.options,
+                chain=strategy.chain,
                 requires_auth=strategy.requires_auth,
                 strategy=strategy,
             )

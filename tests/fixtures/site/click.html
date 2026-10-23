@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>A page whose video plays on a click</title>
+</head>
+<body>
+  <h1>A page whose video plays on a click</h1>
+  <div id="player"><button id="play" type="button">Play</button></div>
+  <script>
+    // Nothing is requested until Play is clicked: then the video is made, and starts loading.
+    document.getElementById("play").addEventListener("click", () => {
+      const name = ["sam", "ple"].join("");
+      const video = document.createElement("video");
+      video.preload = "auto";
+      video.src = "/" + ["media", name].join("/") + "." + ["m", "p", "4"].join("");
+      document.getElementById("player").appendChild(video);
+    });
+  </script>
+</body>
+</html>

@@ -16,7 +16,6 @@ from pathlib import Path
 # Package Imports
 import pytest
 
-# Local Imports
 from support.engine import (
     TOOLS,
     FakeSitePlugin,
@@ -27,6 +26,9 @@ from support.engine import (
     script,
     settings,
 )
+
+# Local Imports
+from udl.chains.models import TagChain
 from udl.config import ReadPolicy, Settings
 from udl.core.models import CandidateSource
 from udl.core.resolver import Candidate, Resolver, applicable, strategy_rank
@@ -39,6 +41,7 @@ from udl.plugins.downloaders.base import MatchResult
 from udl.plugins.registry import DOWNLOADERS, PluginRegistry
 
 WATCH = URL.parse("https://example.com/watch/1")
+CHAIN = TagChain.model_validate("iframe#player@src >> video source@src")
 SHORT = URL.parse("https://example.com/shorts/2")
 
 
@@ -171,6 +174,37 @@ async def test_a_tool_is_not_offered_twice_with_the_same_options(
         ("scraper", CandidateSource.STORED),
         *probing("http", "yt-dlp", "gallery-dl", "browser"),
     ]
+
+
+async def test_a_stored_tag_chain_is_offered_with_its_chain(
+    config: Settings, db: DBManager
+) -> None:
+    chained = await db.upsert_strategy(
+        strategy("scraper", chain=CHAIN, source=StrategySource.MANUAL)
+    )
+    await db.upsert_strategy(strategy("scraper", success_count=3))
+
+    found = await candidates(resolver(config), WATCH, db)
+
+    assert found[0] == Candidate(
+        tool="scraper", source=CandidateSource.STORED, chain=CHAIN, strategy=chained
+    )
+    assert (found[1].tool, found[1].source, found[1].chain) == (
+        "scraper",
+        CandidateSource.STORED,
+        None,
+    )
+    assert found[0].key != found[1].key
+
+
+async def test_a_site_plugin_s_chain_is_offered(config: Settings, db: DBManager) -> None:
+    plugin = FakeSitePlugin(
+        "example.com", strategy=strategy("scraper", chain=CHAIN, source=StrategySource.PLUGIN)
+    )
+
+    found = await candidates(resolver(config, plugin), WATCH, db)
+
+    assert found[0] == Candidate(tool="scraper", source=CandidateSource.PLUGIN, chain=CHAIN)
 
 
 async def test_stored_strategies_come_from_every_database(tmp_path: Path) -> None:

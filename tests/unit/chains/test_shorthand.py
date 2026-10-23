@@ -33,7 +33,13 @@ from udl.chains.models import (
     TagChain,
     WaitForStep,
 )
-from udl.chains.shorthand import ShorthandError, format_step, format_steps, parse_steps
+from udl.chains.shorthand import (
+    ShorthandError,
+    command_arguments,
+    format_step,
+    format_steps,
+    parse_steps,
+)
 
 FOLLOW = FollowStep(follow=True)
 
@@ -104,6 +110,7 @@ def steps(text: str) -> list[Step]:
             [SelectStep(select="video   source", attr="src", pick=Pick.BEST)],
         ),
         ("follow@src", [SelectStep(select="follow", attr="src")]),
+        (r"div#a\:b@src", [SelectStep(select=r"div#a\:b", attr="src")]),
         (r"regex:a|b", [RegexStep(regex="a|b")]),
     ],
 )
@@ -212,6 +219,22 @@ def test_a_follow_before_a_step_that_reads_the_document_goes_unwritten() -> None
     chain = TagChain.model_validate("iframe@src >> a.api@href >> follow >> json:url")
 
     assert format_steps(chain.steps) == "iframe@src >> a.api@href >> follow >> json:url"
+
+
+@pytest.mark.parametrize(
+    ("chain", "arguments"),
+    [
+        ({"steps": "video@src"}, "video@src"),
+        ({"steps": "video source@src", "fetch": "browser"}, "'video source@src' --browser"),
+        ({"steps": "click:button >> video@src"}, "'click:button >> video@src'"),
+        (
+            {"steps": "a@href", "handoff": "yt-dlp", "headers": {"Referer": "{url}", "X": "1"}},
+            "a@href --handoff yt-dlp -H 'Referer: {url}' -H 'X: 1'",
+        ),
+    ],
+)
+def test_a_chain_as_the_chain_commands_take_it(chain: dict[str, object], arguments: str) -> None:
+    assert command_arguments(TagChain.model_validate(chain)) == arguments
 
 
 # ---------------------------------------------------------------------------------------------

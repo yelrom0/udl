@@ -15,10 +15,12 @@ import pytest
 # Local Imports
 from support.downloaders import FakeOptions
 from support.engine import registry, script, settings
+from udl.chains.models import TagChain
 from udl.config import BrowserSettings
 from udl.core.tools import Toolbox
 from udl.errors import ConfigError, PluginError
 from udl.plugins.downloaders.browser import BrowserDownloader, BrowserOptions
+from udl.plugins.downloaders.scraper import ScraperDownloader, ScraperOptions
 from udl.plugins.registry import DOWNLOADERS, PluginRegistry
 
 
@@ -40,6 +42,40 @@ def test_a_downloader_gets_its_config_table_then_the_strategy_s_options(tmp_path
     assert isinstance(downloader.options, FakeOptions)
     assert downloader.options.confidence == 0.9
     assert downloader.options.matches == {"https://a/": 1}
+
+
+def test_a_downloader_follows_the_tag_chain_it_is_given(tmp_path: Path) -> None:
+    chain = TagChain.model_validate("iframe@src >> video@src")
+    plugins = PluginRegistry()
+    plugins.register(DOWNLOADERS, ScraperDownloader)
+    config = settings(tmp_path, tools={"scraper": {"timeout": 5}})
+
+    options = Toolbox(config, plugins).get("scraper", {"retries": 1}, chain=chain).options
+
+    assert isinstance(options, ScraperOptions)
+    assert (options.chain, options.timeout, options.retries) == (chain, 5, 1)
+
+
+def test_a_downloader_without_a_chain_follows_none(tmp_path: Path) -> None:
+    plugins = PluginRegistry()
+    plugins.register(DOWNLOADERS, ScraperDownloader)
+
+    options = Toolbox(settings(tmp_path), plugins).get("scraper").options
+
+    assert isinstance(options, ScraperOptions)
+    assert options.chain is None
+
+
+def test_a_downloader_that_follows_no_chains_cannot_be_given_one(tmp_path: Path) -> None:
+    chain = TagChain.model_validate("video@src")
+    plugins = PluginRegistry()
+    plugins.register(DOWNLOADERS, BrowserDownloader)
+    plugins.register(DOWNLOADERS, ScraperDownloader)
+    toolbox = Toolbox(settings(tmp_path), plugins)
+
+    with pytest.raises(ConfigError, match="browser chain runs in the browser"):
+        toolbox.get("scraper", chain=TagChain.model_validate("click:a >> video@src"))
+    assert isinstance(toolbox.get("browser", chain=chain).options, BrowserOptions)
 
 
 def test_an_unknown_downloader_is_a_plugin_error(tmp_path: Path) -> None:

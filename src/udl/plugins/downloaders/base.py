@@ -63,6 +63,14 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# The failures of a find's own (its media, or its downloader is missing): the next find is tried.
+_MEDIA_FAILURES: tuple[type[DownloadError], ...] = (
+    UnsupportedURL,
+    ExtractionFailed,
+    NotFound,
+    ToolUnavailable,
+)
+
 
 def _check_http_url(url: str) -> str:
     parts = urlsplit(url)
@@ -650,10 +658,34 @@ class Downloader[O: DownloaderOptions = DownloaderOptions](ABC):
         for handoff in handoffs[:tries]:
             try:
                 return await self.hand_off(handoff, ctx)
-            except (UnsupportedURL, ExtractionFailed, NotFound, ToolUnavailable) as e:
+            except _MEDIA_FAILURES as e:
                 log.info("Could not download %s (%s); trying the next find", handoff.url, e)
                 failures.append(e)
         raise failures[0]
+
+    async def hand_off_all(
+        self, handoffs: Sequence[Handoff], ctx: DownloadContext
+    ) -> DownloadResult:
+        """Download every one of `handoffs` (e.g. a gallery's), each with the downloader it
+        names. One that fails because of its media (unsupported, not found, not media) or
+        whose downloader is missing is skipped; another failure (e.g. AuthRequired) is raised
+        at once. When none works, the first failure is raised."""
+        results: list[DownloadResult] = []
+        failures: list[DownloadError] = []
+        for handoff in handoffs:
+            try:
+                results.append(await self.hand_off(handoff, ctx))
+            except _MEDIA_FAILURES as e:
+                log.info("Could not download %s (%s); skipping it", handoff.url, e)
+                failures.append(e)
+        if not results:
+            raise failures[0]
+        return results[0].model_copy(
+            update={
+                "files": [file for result in results for file in result.files],
+                "size_bytes": sum(result.size_bytes for result in results),
+            }
+        )
 
     def _unexpected(self, error: Exception) -> DownloadError:
         return DownloadError(f"{type(error).__name__}: {error}", tool=self.name)

@@ -38,6 +38,7 @@ from pydantic import (
 )
 
 # Local Imports
+from udl.chains.models import TagChain
 from udl.config import ExpandedPath, browser_profile_dir
 from udl.errors import DownloadError, ToolUnavailable, UnsupportedURL
 from udl.plugins.downloaders.base import (
@@ -89,6 +90,8 @@ class BrowserOptions(DownloaderOptions):
     user_agent: str | None = None  # None: Chromium's own
     timeout: PositiveFloat = 30.0  # seconds for a page to load
     wait: NonNegativeFloat = 2.0  # seconds to wait, once it has, for it to request media
+    # The site's tag chain (`udl chain set`), followed to the media instead of looking for it.
+    chain: TagChain | None = None
 
 
 class _PlaywrightCookie(BaseModel):

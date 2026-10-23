@@ -37,6 +37,7 @@ from pydantic import (
     ConfigDict,
     Discriminator,
     Field,
+    NonNegativeInt,
     StringConstraints,
     Tag,
     field_validator,
@@ -383,3 +384,17 @@ class SiteChain(TagChain):
     def chain(self) -> TagChain:
         """The chain alone."""
         return TagChain.model_validate(self.model_dump(include=set(TagChain.model_fields)))
+
+
+class StepTrace(BaseModel):
+    """What one step of a chain found, when it ran."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
+
+    step: str
+    """The step, in the shorthand."""
+    found: list[str] = Field(default_factory=list[str])
+    """What it found: the values (as written in the page), or the URLs it opened. The first
+    ten."""
+    count: NonNegativeInt = 0
+    """How many it found in all."""
