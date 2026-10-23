@@ -87,13 +87,13 @@ Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task
   - [x] 6.4 Local single-file plugins in `~/.config/udl/plugins/` (no packaging needed)
   - [x] 6.5 `plugins list` shows type, source and availability (e.g. a missing binary)
 
-- [ ] **Phase 7: Hardening & docs**
-  - [ ] 7.1 `postgres` plugin (SQLAlchemy base) passing the DB contract suite
-  - [ ] 7.2 A non-SQL plugin (e.g. MongoDB) passing the same suite, which proves the abstraction
-  - [ ] 7.3 `db sync` between connected DBs (UUID keys make this collision-free)
-  - [ ] 7.4 Opt-in `network` smoke tests against real sites (never in the default run)
-  - [ ] 7.5 Plugin authoring guide (DB / downloader / site) + README usage docs
-  - [ ] 7.6 Security review: API exposure, output path restriction, cookie/profile storage permissions
+- [x] **Phase 7: Hardening & docs**
+  - [x] 7.1 `postgres` plugin (SQLAlchemy base) passing the DB contract suite
+  - [x] 7.2 A non-SQL plugin (e.g. MongoDB) passing the same suite, which proves the abstraction
+  - [x] 7.3 `db sync` between connected DBs (UUID keys make this collision-free)
+  - [x] 7.4 Opt-in `network` smoke tests against real sites (never in the default run)
+  - [x] 7.5 Plugin authoring guide (DB / downloader / site) + README usage docs
+  - [x] 7.6 Security review: API exposure, output path restriction, cookie/profile storage permissions
 
 ---
 
@@ -217,10 +217,11 @@ src/udl/
   db/
     models.py               # Site / Strategy / DownloadRecord, Outcome, SiteQuery / DownloadQuery
     manager.py              # DBManager
+    sync.py                 # sync(): copy what one database knows into another (`udl db sync`)
   plugins/
     registry.py             # PluginRegistry, PluginKind (DATABASES, DOWNLOADERS, SITES)
     requirements.py         # Requirement: what a plugin needs installed
-    databases/   base.py  memory.py  sqlalchemy.py (+ table variants)  sqlite.py
+    databases/   base.py  memory.py  sqlalchemy.py (+ table variants)  sqlite.py  postgres.py  mongodb.py
     downloaders/ base.py  errors.py  process.py  media.py  ytdlp.py  gallerydl.py  http.py  scraper.py  browser.py  auth.py
     sites/       base.py  youtube.py
   chains/        models.py  shorthand.py  executor.py  suggest.py  files.py
@@ -229,12 +230,14 @@ src/udl/
     cli/         app.py  common.py  render.py  commands/  (downloads probe sites chains system servers browser)
     api/         app.py  deps.py  serve.py  routes/  (downloads sites chains system)
     mcp/         server.py
+docs/plugins.md             # writing plugins (site / downloader / database)
 tests/
-  conftest.py
+  conftest.py               # (also the database servers' fixtures: postgres_url, mongodb_url)
   fixtures/site/            # HTML pages + small media files served by the fixture server
   support/                  # shared helpers imported as `support.*` (fixture_site.py: FixtureSite, Page;
-                            #   interfaces.py: Harness; cli.py, api.py, mcp.py: run each interface on it)
-  unit/  contract/  integration/  interface/  smoke/
+                            #   interfaces.py: Harness; cli.py, api.py, mcp.py: run each interface on it;
+                            #   servers.py: PostgreSQL and MongoDB in throwaway Docker containers)
+  unit/  contract/  integration/  interface/  smoke/  (smoke: real sites, `make smoke`)
 ```
 
 ## Package management (uv)
@@ -276,6 +279,7 @@ dependencies = [                       # added via `uv add`, which writes the ve
 [project.optional-dependencies]
 browser = ["playwright"]
 postgres = ["psycopg[binary]"]
+mongodb = ["pymongo"]
 
 [project.scripts]                      # added in 4.2, once the CLI exists
 udl = "udl.interfaces.cli.app:main"
@@ -284,7 +288,7 @@ udl = "udl.interfaces.cli.app:main"
 dev = [
   "pytest", "pytest-asyncio", "pytest-cov", "pytest-httpserver", "respx",
   "hypothesis", "pyright[nodejs]", "ruff", "types-yt-dlp", "types-pyyaml",
-  "udl[browser]",                      # so pyright and the browser tests always have playwright
+  "udl[browser,postgres,mongodb]",     # so pyright and every plugin's tests have their drivers
 ]
 
 [build-system]
@@ -296,7 +300,7 @@ build-backend = "uv_build"
 
 | Task | Command |
 |---|---|
-| Create or refresh the env from the lockfile | `uv sync` (`uv sync --all-extras` to include `browser`) |
+| Create or refresh the env from the lockfile | `uv sync` (`uv sync --all-extras` to include `browser`, `postgres` and `mongodb`) |
 | Add a dependency | `uv add httpx` · `uv add --dev pytest` · `uv add --optional browser playwright` |
 | Run anything in the project env | `uv run udl …` · `uv run pytest` |
 | Upgrade | `uv lock --upgrade`, or `uv lock --upgrade-package yt-dlp`. yt-dlp needs this often, because site extractors break |
@@ -304,6 +308,7 @@ build-backend = "uv_build"
 | Global dev tools | `uv tool install pre-commit` |
 | Browser binaries | `uv run playwright install chromium` |
 | Clear unused cache entries | `uv cache prune` |
+| udl against real sites (needs the internet) | `make smoke` (`uv run pytest -m network`; never part of `make check`) |
 
 ### `make check`
 
@@ -320,7 +325,9 @@ check:
 
 It deliberately avoids `uv sync --locked`: that sync is exact, so it would uninstall extras installed with
 `uv sync --all-extras` (e.g. playwright) on every run. `uv run` syncs inexactly. The coverage threshold lives
-in `pyproject.toml` so the ratchet has one home. `make fmt` applies ruff's formatting and fixes.
+in `pyproject.toml` so the ratchet has one home. `make fmt` applies ruff's formatting and fixes. The
+PostgreSQL and MongoDB tests start Docker containers (see [Phase 7](#phase-7-hardening--docs)), and skip
+without Docker.
 
 The pre-commit hooks are `astral-sh/uv-pre-commit` (`uv-lock`, which keeps `uv.lock` in sync) plus a local hook
 that runs `make check`.
@@ -1049,6 +1056,89 @@ for *behaviour*: auth flows, URL rewriting, per-site folders, post-processing, A
 
 ---
 
+## Phase 7: Hardening & docs
+
+### Decisions made while building Phase 7
+
+- **Database servers in the tests:** `tests/support/servers.py` starts a throwaway Docker container
+  (`postgres:18-alpine`, `mongo:8`) the first time a test needs a server, for the rest of the run, and each
+  test gets a new, empty database, dropped afterwards (the `postgres_url` and `mongodb_url` fixtures).
+  `UDL_TEST_POSTGRES_URL` / `UDL_TEST_MONGODB_URL` name a server instead; with neither, those tests skip.
+  The contract suite's `CONNECTIONS` give each plugin's URL from the test's request, so only the plugins
+  that need a server ask for one. The dev group installs every extra.
+- **`postgres` (7.1)** is the SQLAlchemy base with PostgreSQL URLs (whichever driver a URL names, async
+  psycopg; libpq's `postgres://` too) and psycopg as its requirement. A shared server showed two races
+  SQLite's one writer never hits, each now tested deterministically (a session waiting on a lock, seen in
+  `pg_stat_activity`):
+  1. udls connecting to a new database at once each created its tables. `SQLAlchemyDatabase._lock_schema()`
+     is a hook run first in the migration's transaction, and PostgreSQL's takes an advisory lock;
+  2. two writers storing the same new site: the second insert failed. A savepoint around the insert, then
+     the other writer's site is updated.
+- **`mongodb` (7.2)** uses pymongo's own async client (motor is deprecated). A record is its model's JSON
+  form, with its id (as text) for `_id`, in `sites` (unique `key`), `strategies` and `downloads`; times
+  are written in UTC at a fixed width (`isoformat(timespec="microseconds")`), because BSON dates keep
+  milliseconds and Pydantic's JSON leaves zero microseconds out, so it does not sort as text. A new
+  contract test (downloads a microsecond apart, across timezones) catches a plugin that sorts times
+  wrongly. `record_outcome` is one `$inc` update; `upsert_site` updates, else inserts, and on a
+  duplicate key updates the other writer's. The `schema_version` collection is stamped with
+  `$setOnInsert` (version 1, no migrations yet) and a newer version is refused. There are no
+  transactions (they need a replica set), so `delete_site` removes the strategies, then the site.
+- **Optional drivers:** both plugins' modules load without their driver (SQLAlchemy imports psycopg when
+  it makes the engine, `mongodb.py` imports pymongo where it uses it), so `plugins list` says what to
+  install instead of listing a broken plugin. Both give up on an unreachable server after
+  `connect_timeout` (10 s) unless their URL sets one (`connect_timeout`, `serverSelectionTimeoutMS`):
+  libpq waits as long as the system does and pymongo 30 s, and a secondary that is down would hold up
+  every udl command.
+- **`db sync` (7.3)** is the `sync_databases` operation (`udl db sync --from a --to b [--to c]
+  [--dry-run]`, `POST /databases/sync`, the `sync_databases` MCP tool, destructive and idempotent), built
+  on `udl.db.sync.sync()`. It copies one way, the source being taken to be right: what a target lacks is
+  added, what it has differently (a site with the same key, a strategy or download with the same id) is
+  replaced by the source's copy (a site keeps the target's id and times, which are not compared), and
+  nothing is deleted, so a second sync changes nothing. "Newest wins" was the alternative, but strategies
+  have no time of change (outcomes change them all the time), so it could only be half true. Only
+  downloads that have ended are copied, so a copy taken while one ran never replaces how it ended. They
+  are read a page at a time, newest first, so ones that start meanwhile push the rest back and are never
+  skipped (a repeat is recognised by its id). A read-only target is `NotAllowed` (403; `NotAllowed` now
+  means anything not allowed, not only the servers' rules), an unknown connection `DoesNotExist` and one
+  that did not connect a `DatabaseError`; naming the source as a target, or a target twice, is invalid
+  (exit 2, 422).
+- **Smoke tests (7.4)** are `tests/smoke/test_real_sites.py` (`make smoke`, i.e. `pytest -m network`):
+  a direct file (python.org), a YouTube share link (through the youtube plugin to yt-dlp), a Wikimedia
+  Commons image (gallery-dl), a page with a `<video>` (w3schools, with the scraper and the browser) and a
+  new site probed, downloaded and remembered. They found two bugs:
+  1. The http and scraper downloaders (and gallery-dl's probe on its command line) sent httpx's
+     User-Agent, which w3schools and Wikimedia refuse. udl's own requests now send a browser's
+     (`USER_AGENT`, as yt-dlp and gallery-dl do), unless the download has its own (e.g. the browser's
+     handoff); `[tools.http]` and `[tools.scraper]` take a `user_agent`, and `http_client()` sends it too.
+  2. gallery-dl reports a file once per version of a Wikimedia image, so a download listed it (and
+     counted its size) four times. `Downloader.download()` now lists each file once.
+- **The security review (7.6)** fixed:
+  - a `DatabaseError`'s message (which API clients get) held SQLAlchemy's statement and its values; it
+    now has the driver's message only, and the rest goes to the debug log;
+  - curl and wget got the request's headers on their command line, which every user can read (a site
+    plugin's header can be a token). They now go in files in the request's private temp dir, as cookies
+    did, and a header with a line break is refused;
+  - a new SQLite database (and the folder made for it) was readable by everyone: now `0600` / `0700`
+    (SQLite gives its journals the database's mode). Existing files keep theirs: the owner may share them;
+  - a downloader's file reported through `..` passed the check that files stay in the output dir: paths
+    are normalised first (lexically, so a link inside the output dir to another disk still works);
+  - a browser profile others can get into (it holds the user's logins) is warned about, with the `chmod`.
+
+  It confirmed, adding regression tests where there were none: the API answers only JSON bodies and grants
+  no cross-origin access, so a page in a browser cannot start downloads on a local udl (on top of the Host
+  check and the API key); output dirs are resolved before the allowed-roots check; filename templates
+  stay relative; request URLs are http(s) only; chain files are read with `yaml.safe_load_all`; cookie
+  values are `SecretStr`; temp dirs are the owner's; Chromium makes a new profile `0700` (its Cookies
+  `0600`). Left as they are, and documented in the README: anyone who can use the API can make udl fetch
+  any URL from its machine (that is what it is for); a regex pattern from an API client could be slow to
+  match (such a client already controls udl); plugin files are code the user installs.
+- **Docs (7.5):** the README covers installing, downloading, how udl picks a downloader, sites, logins,
+  tag chains, databases, plugins, the API, the MCP server, the configuration, security and development.
+  `docs/plugins.md` is the authoring guide for all three kinds; its example plugins were checked
+  (`pyright --strict`, loaded from a plugin dir, every hook run).
+
+---
+
 ## Configuration example
 
 Without a config file, udl uses a single SQLite connection named `local` in the user data dir.
@@ -1102,7 +1192,7 @@ format = "bv*+ba/b"
 | CLI | `typer`, `rich` |
 | API | `fastapi`, `granian` |
 | MCP | `mcp` 2.x (`MCPServer`; `FastMCP` was the v1 name) |
-| DB | `sqlmodel`, `aiosqlite` (`psycopg` for the postgres plugin) |
+| DB | `sqlmodel`, `aiosqlite` (`psycopg` for the postgres plugin, `pymongo` for the mongodb one) |
 | Config | `pydantic-settings`, `platformdirs` |
 | URLs | `tldextract` (use the bundled suffix list so it doesn't fetch on first run) |
 | HTTP | `httpx` |
@@ -1112,6 +1202,7 @@ format = "bv*+ba/b"
 | Browser (extra `udl[browser]`) | `playwright` (then `uv run playwright install chromium`) |
 | Dev (`dev` dependency group) | `pytest`, `pytest-asyncio`, `pytest-cov`, `pytest-httpserver`, `respx`, `hypothesis`, `pyright[nodejs]` (ships its own Node), `ruff`, `types-yt-dlp` |
 | Global tools (`uv tool install`) | `pre-commit`, and `udl` itself |
+| Tests' database servers | Docker: `postgres:18-alpine`, `mongo:8` (else `UDL_TEST_POSTGRES_URL` / `UDL_TEST_MONGODB_URL`) |
 
 ## Decisions (defaults that can be revisited)
 
