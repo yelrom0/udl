@@ -81,7 +81,8 @@ def _status(status: JobStatus) -> str:
 def _error(error: ErrorInfo, *, hint: bool = True) -> str:
     text = f"[red]{escape(error.message)}[/] [dim]({error.code})[/]"
     if hint and error.hint:
-        text += f"\n  [dim]{escape(error.hint)}[/]"
+        indented = error.hint.replace("\n", "\n  ")
+        text += f"\n  [dim]{escape(indented)}[/]"
     return text
 
 

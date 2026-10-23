@@ -272,6 +272,19 @@ def test_plugins_that_cannot_run_or_load() -> None:
     assert "Could not load broken.py: SyntaxError" in text
 
 
+def test_every_line_of_a_hint_is_indented() -> None:
+    error = NoStrategyFound(
+        "Nothing worked", hint="Try this:\n  udl chain set a.com 'x@src'\nOr that."
+    )
+    batch = DownloadBatch(
+        id=uuid.uuid4(), jobs=[job(status=JobStatus.FAILED, error=error.to_info())]
+    )
+
+    text = shown(render.batch, batch)
+
+    assert "\n  Try this:\n    udl chain set a.com 'x@src'\n  Or that." in text
+
+
 # ---------------------------------------------------------------------------------------------
 # Tag chains
 # ---------------------------------------------------------------------------------------------

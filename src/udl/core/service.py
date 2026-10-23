@@ -620,8 +620,9 @@ class UDLService:
         requires_auth: bool,
         source: StrategySource,
     ) -> Strategy:
-        """Store `chain` as the site's chain for `pattern`, replacing the chain there (whose
-        counts are kept when the chain is the same)."""
+        """Store `chain` as the site's chain for `pattern`, replacing the chain there. When the
+        chain is the same, its counts are kept, and so is its source when it is imported (an
+        exported chain imported again stays as the user set it)."""
         self.toolbox.get(chain.tool, chain=chain)  # (raises PluginError or ConfigError)
         await self.db.upsert_site(await self.db.get_site(site) or Site(key=site))
         same = next(
@@ -635,6 +636,8 @@ class UDLService:
         if same is None or same.chain != chain:
             fresh = Strategy(site_key=site, tool=chain.tool, source=source)
             same = fresh if same is None else fresh.model_copy(update={"id": same.id})
+        elif source is StrategySource.IMPORT:
+            source = same.source
         return await self.db.upsert_strategy(
             same.model_copy(
                 update={

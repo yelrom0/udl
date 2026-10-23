@@ -242,7 +242,7 @@ def test_chain_export_prints_or_writes_a_chain_file(cli: CLI, tmp_path: Path) ->
     assert printed.exit_code == 0, printed.output
     assert [chain.site for chain in read_chains(printed.stdout)] == ["example.com"]
     assert written.exit_code == 0, written.output
-    assert f"Wrote 1 chains for example.com to {output}" in written.stdout
+    assert f"Wrote 1 chain for example.com to {output}" in written.stdout
     assert read_chains(output.read_text()) == exported.chains
 
 

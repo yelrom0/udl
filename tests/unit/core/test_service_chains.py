@@ -444,6 +444,29 @@ async def test_importing_again_replaces_the_chains(make: Make) -> None:
     assert [s.id for s in again.strategies] == [s.id for s in first.strategies]
 
 
+async def test_importing_a_chain_that_is_already_saved_keeps_it_as_it_is(make: Make) -> None:
+    service = await make()
+    manual = await service.set_site_chain(
+        SetChainRequest.model_validate(
+            {"site": "example.com", "chain": "iframe#player@src >> video source@src | best"}
+        )
+    )
+    changed = FILE.replace("video source@src | best", "video@src").replace(
+        "pattern: ^/watch/\n", ""
+    )
+
+    kept = await service.import_chains(
+        ImportChainsRequest(yaml=FILE.replace("pattern: ^/watch/\n", ""))
+    )
+    replaced = await service.import_chains(ImportChainsRequest(yaml=changed))
+
+    assert (kept.strategies[0].id, kept.strategies[0].source) == (manual.id, StrategySource.MANUAL)
+    assert (replaced.strategies[0].id, replaced.strategies[0].source) == (
+        manual.id,
+        StrategySource.IMPORT,
+    )
+
+
 async def test_a_chain_file_with_a_problem_imports_nothing(make: Make) -> None:
     service = await make()
     broken = FILE + "---\nsite: third.net\nsteps: video source\n"

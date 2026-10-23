@@ -309,7 +309,9 @@ def export_chain(
         _write(output, exported)
 
     def wrote(console: Console, shown: ChainFile) -> None:
-        console.print(f"Wrote {len(shown.chains)} chains for {shown.site} to {output}.")
+        count = len(shown.chains)
+        chains = "chain" if count == 1 else "chains"
+        console.print(f"Wrote {count} {chains} for {shown.site} to {output}.")
 
     show(exported, as_json, wrote)
 
