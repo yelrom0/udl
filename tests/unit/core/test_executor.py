@@ -21,7 +21,6 @@ import pytest
 # Local Imports
 from support.downloaders import FakeDownloader, FakeMedia
 from support.engine import (
-    FakeSitePlugin,
     StaticCookies,
     cookie,
     databases,
@@ -30,6 +29,7 @@ from support.engine import (
     script,
     settings,
 )
+from support.sites import fake_site
 from udl.config import Settings
 from udl.core.executor import Execution, Executor, JobSpec, RetryPolicy
 from udl.core.models import Attempt, CandidateSource
@@ -60,6 +60,7 @@ from udl.plugins.downloaders.base import (
     render_template,
 )
 from udl.plugins.registry import DOWNLOADERS, PluginRegistry
+from udl.plugins.sites.base import SitePlugin
 
 PAGE = "https://example.com/watch/1"
 SIGNED_IN = FakeMedia(content=b"members only", cookie="session=signed-in")
@@ -99,7 +100,7 @@ class Run:
         *,
         cookies: StaticCookies | None = None,
         retry: RetryPolicy = NOW,
-        site_plugins: tuple[FakeSitePlugin, ...] = (),
+        site_plugins: tuple[SitePlugin, ...] = (),
     ) -> None:
         toolbox = Toolbox(config, plugins or registry())
         self.cookies = cookies or StaticCookies()
@@ -732,7 +733,7 @@ async def test_the_site_s_output_dir(tmp_path: Path, db: DBManager) -> None:
 
 async def test_the_site_plugin_s_output_dir_beats_the_site_s(tmp_path: Path, db: DBManager) -> None:
     await db.upsert_site(Site(key="example.com", default_output_dir=tmp_path / "site"))
-    plugin = FakeSitePlugin("example.com", output_dir=tmp_path / "plugin")
+    plugin = fake_site("example.com", output_dir=tmp_path / "plugin")
     run = Run(settings(tmp_path, tools={"http": script({PAGE: "x"})}), site_plugins=(plugin,))
 
     assert (await run(db)).output_dir == tmp_path / "plugin"

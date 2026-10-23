@@ -27,6 +27,7 @@ from udl.plugins.databases.sqlite import SQLitePlugin
 from udl.plugins.registry import (
     DATABASES,
     DOWNLOADERS,
+    SITES,
     PluginInfo,
     PluginRegistry,
     PluginSource,
@@ -387,3 +388,43 @@ def test_downloader_plugins_are_found(plugin_dir: Path) -> None:
     registry = PluginRegistry.discover([plugin_dir])
 
     assert registry.get(DOWNLOADERS, "mine").__name__ == "Mine"
+
+
+def test_site_plugins_are_found(plugin_dir: Path) -> None:
+    write_plugin(
+        plugin_dir,
+        "mysite.py",
+        """
+        from udl.plugins.sites.base import SitePlugin
+
+        class MySite(SitePlugin):
+            name = "mysite"
+            domains = ("example.com",)
+        """,
+    )
+
+    registry = PluginRegistry.discover([plugin_dir])
+
+    assert registry.get(SITES, "mysite").domains == ("example.com",)
+    assert registry.problems == []
+
+
+def test_a_site_plugin_with_a_domain_that_is_not_a_host_is_reported(plugin_dir: Path) -> None:
+    path = write_plugin(
+        plugin_dir,
+        "mysite.py",
+        """
+        from udl.plugins.sites.base import SitePlugin
+
+        class MySite(SitePlugin):
+            name = "mysite"
+            domains = ("https://example.com/",)
+        """,
+    )
+
+    registry = PluginRegistry.discover([plugin_dir])
+
+    assert registry.plugins(SITES) == []
+    [problem] = registry.problems
+    assert problem.origin == str(path)
+    assert "MySite.domains: 'https://example.com/' is not a host" in problem.error

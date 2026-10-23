@@ -20,7 +20,6 @@ import pytest
 # Local Imports
 from support.downloaders import FakeMedia
 from support.engine import (
-    FakeSitePlugin,
     StaticCookies,
     connection,
     cookie,
@@ -29,6 +28,7 @@ from support.engine import (
     script,
     settings,
 )
+from support.sites import fake_site
 from udl.chains.models import TagChain
 from udl.config import ReadPolicy, Settings
 from udl.core.executor import Execution, Executor, JobSpec, RetryPolicy
@@ -39,6 +39,7 @@ from udl.db.manager import DBManager
 from udl.db.models import Site, Strategy, StrategySource
 from udl.errors import DatabaseError, ErrorCode, UDLError
 from udl.plugins.downloaders.base import CancelToken
+from udl.plugins.sites.base import SitePlugin
 
 PAGE = "https://example.com/watch/1"
 CHAIN = TagChain.model_validate("iframe#player@src >> video source@src")
@@ -56,7 +57,7 @@ async def execute(
     db: DBManager,
     *,
     cookies: StaticCookies | None = None,
-    site_plugins: tuple[FakeSitePlugin, ...] = (),
+    site_plugins: tuple[SitePlugin, ...] = (),
     **spec: Any,
 ) -> Execution:
     toolbox = Toolbox(config, registry())
@@ -380,7 +381,7 @@ async def test_a_requested_tool_is_not_remembered(tmp_path: Path, db: DBManager)
 
 async def test_a_site_plugin_s_strategy_is_not_remembered(tmp_path: Path, db: DBManager) -> None:
     config = settings(tmp_path, tools={"http": script({PAGE: "file"})})
-    plugin = FakeSitePlugin("example.com", strategy=strategy("http", source="plugin"))
+    plugin = fake_site("example.com", strategy=strategy("http", source="plugin"))
 
     execution = await execute(config, db, site_plugins=(plugin,))
 

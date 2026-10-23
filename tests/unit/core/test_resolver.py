@@ -19,7 +19,6 @@ import pytest
 # Local Imports
 from support.engine import (
     TOOLS,
-    FakeSitePlugin,
     connection,
     databases,
     fake_tool,
@@ -27,6 +26,7 @@ from support.engine import (
     script,
     settings,
 )
+from support.sites import fake_site
 from udl.chains.models import TagChain
 from udl.config import ReadPolicy, Settings
 from udl.core.models import CandidateSource
@@ -38,6 +38,7 @@ from udl.db.models import Site, Strategy, StrategySource
 from udl.errors import DatabaseError
 from udl.plugins.downloaders.base import MatchResult
 from udl.plugins.registry import DOWNLOADERS, PluginRegistry
+from udl.plugins.sites.base import SitePlugin
 
 WATCH = URL.parse("https://example.com/watch/1")
 CHAIN = TagChain.model_validate("iframe#player@src >> video source@src")
@@ -62,7 +63,7 @@ async def db(config: Settings) -> AsyncIterator[DBManager]:
         yield manager
 
 
-def resolver(config: Settings, *plugins: FakeSitePlugin) -> Resolver:
+def resolver(config: Settings, *plugins: SitePlugin) -> Resolver:
     return Resolver(config, Toolbox(config, registry()), plugins)
 
 
@@ -109,7 +110,7 @@ async def test_a_site_plugin_s_strategy_beats_the_stored_strategies(
     config: Settings, db: DBManager
 ) -> None:
     await db.upsert_strategy(strategy("scraper"))
-    plugin = FakeSitePlugin(
+    plugin = fake_site(
         "example.com",
         strategy=strategy("gallery-dl", source=StrategySource.PLUGIN, requires_auth=True),
     )
@@ -126,7 +127,7 @@ async def test_the_request_s_tool_beats_everything_and_is_all_that_is_tried(
     config: Settings, db: DBManager
 ) -> None:
     await db.upsert_strategy(strategy("scraper"))
-    plugin = FakeSitePlugin("example.com", strategy=strategy("gallery-dl"))
+    plugin = fake_site("example.com", strategy=strategy("gallery-dl"))
 
     found = await candidates(resolver(config, plugin), WATCH, db, tool="http")
 
@@ -136,8 +137,8 @@ async def test_the_request_s_tool_beats_everything_and_is_all_that_is_tried(
 async def test_a_site_plugin_for_another_site_or_without_a_strategy_is_skipped(
     config: Settings, db: DBManager
 ) -> None:
-    other = FakeSitePlugin("other.com", strategy=strategy("gallery-dl"))
-    no_strategy = FakeSitePlugin("example.com")
+    other = fake_site("other.com", strategy=strategy("gallery-dl"))
+    no_strategy = fake_site("example.com")
 
     found = await candidates(resolver(config, other, no_strategy), WATCH, db)
 
@@ -145,10 +146,10 @@ async def test_a_site_plugin_for_another_site_or_without_a_strategy_is_skipped(
 
 
 async def test_the_first_site_plugin_that_matches_is_the_site_s_plugin(config: Settings) -> None:
-    first = FakeSitePlugin("example.com", strategy=strategy("http"))
-    second = FakeSitePlugin("example.com", strategy=strategy("scraper"))
+    first = fake_site("example.com", strategy=strategy("http"))
+    second = fake_site("example.com", strategy=strategy("scraper"))
 
-    assert resolver(config, FakeSitePlugin("o.com"), first, second).site_plugin(WATCH) is first
+    assert resolver(config, fake_site("o.com"), first, second).site_plugin(WATCH) is first
     assert resolver(config, second).site_plugin(URL.parse("https://o.com/")) is None
 
 
@@ -197,7 +198,7 @@ async def test_a_stored_tag_chain_is_offered_with_its_chain(
 
 
 async def test_a_site_plugin_s_chain_is_offered(config: Settings, db: DBManager) -> None:
-    plugin = FakeSitePlugin(
+    plugin = fake_site(
         "example.com", strategy=strategy("scraper", chain=CHAIN, source=StrategySource.PLUGIN)
     )
 

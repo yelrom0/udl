@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict
 from udl.errors import PluginError
 from udl.plugins.databases.base import DatabasePlugin
 from udl.plugins.downloaders.base import Downloader
+from udl.plugins.sites.base import SitePlugin
 
 log = logging.getLogger(__name__)
 
@@ -76,9 +77,10 @@ class PluginProblem(BaseModel):
 
 DATABASES: Final = PluginKind("udl.databases", DatabasePlugin)
 DOWNLOADERS: Final = PluginKind[Downloader[Any]]("udl.downloaders", Downloader)
+SITES: Final = PluginKind("udl.sites", SitePlugin)
 
 # Every kind of plugin udl uses.
-PLUGIN_KINDS: Final[tuple[PluginKind[Any], ...]] = (DATABASES, DOWNLOADERS)
+PLUGIN_KINDS: Final[tuple[PluginKind[Any], ...]] = (DATABASES, DOWNLOADERS, SITES)
 
 
 @dataclass(frozen=True)

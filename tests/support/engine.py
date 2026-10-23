@@ -19,9 +19,7 @@ from pydantic import JsonValue, SecretStr
 # Local Imports
 from support.downloaders import FakeDownloader, FakeMedia, FakeOptions
 from udl.config import DBConnectionConfig, DBSettings, ReadPolicy, Settings, WritePolicy
-from udl.core.urls import URL
 from udl.db.manager import DBManager
-from udl.db.models import Strategy
 from udl.plugins.databases.memory import MemoryDatabase
 from udl.plugins.downloaders.base import Cookie
 from udl.plugins.registry import DATABASES, DOWNLOADERS, PluginRegistry
@@ -128,26 +126,3 @@ class StaticCookies:
     async def for_url(self, url: str) -> list[Cookie]:
         self.asked += 1
         return [cookie for cookie in self.cookies if cookie.matches(url)]
-
-
-class FakeSitePlugin:
-    """A site plugin for the sites in `domains`, with a fixed strategy and output dir."""
-
-    def __init__(
-        self,
-        *domains: str,
-        strategy: Strategy | None = None,
-        output_dir: Path | None = None,
-    ) -> None:
-        self.domains = domains
-        self._strategy = strategy
-        self._output_dir = output_dir
-
-    def matches(self, url: URL) -> bool:
-        return url.site_key in self.domains
-
-    def strategy(self, url: URL) -> Strategy | None:
-        return self._strategy
-
-    def output_dir(self, url: URL) -> Path | None:
-        return self._output_dir
