@@ -29,11 +29,16 @@ from rich.progress import (
 from rich.table import Column, Table
 
 # Local Imports
+from udl.chains.models import FetchMode, TagChain
+from udl.chains.shorthand import format_steps
 from udl.core.models import (
+    ChainReport,
+    ChainSuggestions,
     ConfigInfo,
     DatabaseList,
     DownloadBatch,
     DownloadList,
+    ImportedChains,
     JobEvent,
     JobEventType,
     JobInfo,
@@ -44,6 +49,7 @@ from udl.core.models import (
 )
 from udl.db.models import JobStatus, Strategy
 from udl.errors import ErrorInfo
+from udl.plugins.downloaders.base import MediaCandidate, MediaKind
 
 _STATUS: Final[dict[JobStatus, tuple[str, str]]] = {
     JobStatus.QUEUED: ("…", "dim"),
@@ -297,8 +303,11 @@ def _strategy_row(strategy: Strategy) -> list[str]:
     failed = str(strategy.failure_count)
     if strategy.consecutive_failures:
         failed += f" ({strategy.consecutive_failures} in a row)"
+    tool = strategy.tool
+    if strategy.chain is not None:
+        tool += f"\n[dim]{escape(format_steps(strategy.chain.steps))}[/]"
     return [
-        strategy.tool,
+        tool,
         escape(strategy.url_pattern or "(whole site)"),
         strategy.source,
         str(strategy.priority),
@@ -319,6 +328,89 @@ def strategy(console: Console, stored: Strategy) -> None:
         + (", signed in" if stored.requires_auth else "")
         + "."
     )
+
+
+# ---------------------------------------------------------------------------------------------
+# Tag chains
+# ---------------------------------------------------------------------------------------------
+
+
+def _media(media: MediaCandidate) -> str:
+    """Media's type and size, as far as they are known."""
+    kind = media.content_type or (media.kind if media.kind is not MediaKind.FILE else "")
+    size = decimal(media.size_bytes) if media.size_bytes is not None else ""
+    return ", ".join(part for part in (kind, size) if part)
+
+
+def _chain(chain: TagChain) -> str:
+    browser = " [dim](in the browser)[/]" if chain.fetch is FetchMode.BROWSER else ""
+    return f"[bold]{escape(format_steps(chain.steps))}[/]{browser}"
+
+
+def suggestions(console: Console, found: ChainSuggestions) -> None:
+    """The suggested chains, numbered, best first."""
+    how = "as served" if found.fetch is FetchMode.STATIC else "rendered in the browser"
+    signed_in = ", signed in" if found.signed_in else ""
+    console.print(f"[bold]{escape(found.url)}[/] [dim]({how}{signed_in})[/]")
+    if found.error is not None:
+        console.print(_error(found.error))
+        return
+    if not found.suggestions:
+        console.print("No media found on the page.")
+        return
+    table = Table("#", _folded("Chain"), _folded("Media"), "Type, size", "Found by")
+    for number, suggestion in enumerate(found.suggestions, start=1):
+        media = suggestion.media
+        answer = " [red](no answer)[/]" if suggestion.reachable is False else ""
+        table.add_row(
+            str(number),
+            escape(suggestion.shorthand),
+            escape(media.url),
+            escape(_media(media)) + answer,
+            escape(media.found_by or ""),
+        )
+    console.print(table)
+
+
+def chain_report(console: Console, report: ChainReport) -> None:
+    """What each step of a chain found, and the media it led to."""
+    if report.steps:
+        table = Table("#", "Step", _folded("Found"), "Count", title="Steps", title_justify="left")
+        for number, step in enumerate(report.steps, start=1):
+            found = [escape(value) for value in step.found[:3]]
+            if step.count > len(found):
+                found.append(f"[dim]and {step.count - len(found)} more[/]")
+            table.add_row(str(number), escape(step.step), "\n".join(found), str(step.count))
+        console.print(table)
+    if report.error is not None:
+        console.print(f"[red]✗[/] {_error(report.error)}")
+        return
+    console.print(f"[green]✓[/] It leads to {len(report.media)} media:")
+    for media in report.media:
+        about = _media(media)
+        console.print(f"  {escape(media.url)}" + (f" [dim]({escape(about)})[/]" if about else ""))
+
+
+def chain_strategy(console: Console, stored: Strategy) -> None:
+    """A chain that was just saved."""
+    where = f"the URLs matching {stored.url_pattern!r} on " if stored.url_pattern else ""
+    chain = f" by following {_chain(stored.chain)}" if stored.chain else f" with {stored.tool}"
+    console.print(
+        f"udl downloads {escape(where)}[bold]{stored.site_key}[/]{chain}"
+        + (", signed in" if stored.requires_auth else "")
+        + "."
+    )
+
+
+def imported(console: Console, done: ImportedChains) -> None:
+    """The chains that were imported."""
+    if not done.strategies:
+        console.print("There were no chains to import.")
+        return
+    for stored in done.strategies:
+        where = f" (URLs matching {stored.url_pattern!r})" if stored.url_pattern else ""
+        chain = _chain(stored.chain) if stored.chain else stored.tool
+        console.print(f"Imported [bold]{stored.site_key}[/]{escape(where)}: {chain}")
 
 
 # ---------------------------------------------------------------------------------------------

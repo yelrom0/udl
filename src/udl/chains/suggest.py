@@ -22,19 +22,18 @@ element is selected by a selector that finds it first and that other pages of th
 likely to share: by its id, a data- attribute or its classes, then inside an ancestor that has
 one, then by its type, and only then by its place among its siblings (:nth-of-type).
 
-previewed() asks for each suggestion's media (a HEAD request) and ranked() orders them: media
-that answered as media first, video before audio, the largest first.
+with_preview() adds what the http downloader's probe of a suggestion's media found (the service
+probes them), and ranked() orders them: media that answered as media first, video before audio,
+the largest first.
 """
 
 # System Imports
-import asyncio
 import re
 from collections.abc import Iterator, Mapping, Sequence
-from typing import Final
+from typing import Final, Protocol, runtime_checkable
 from urllib.parse import urljoin, urlsplit
 
 # Package Imports
-import httpx
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 from selectolax.lexbor import LexborHTMLParser, LexborNode, SelectolaxError
 
@@ -42,9 +41,9 @@ from selectolax.lexbor import LexborHTMLParser, LexborNode, SelectolaxError
 from udl.chains.executor import Document, Reader, run_chain
 from udl.chains.models import FetchMode, TagChain
 from udl.chains.shorthand import RawStep, format_steps
-from udl.errors import DownloadError, NotFound
-from udl.plugins.downloaders.base import Cookie, MediaCandidate, MediaKind
-from udl.plugins.downloaders.http import PAGE_TYPES, http_client
+from udl.errors import DownloadError, ErrorCode, NotFound
+from udl.plugins.downloaders.base import MediaCandidate, MediaKind, ProbeContext, ProbeResult
+from udl.plugins.downloaders.http import PAGE_TYPES
 from udl.plugins.downloaders.media import media_type, stream_kind, url_name
 
 _JSON: Final = TypeAdapter[JsonValue](JsonValue)
@@ -53,7 +52,6 @@ _GENERATED: Final = re.compile(r"\d{4,}")  # e.g. a database id, which other pag
 _TYPE_ATTRS: Final = ("type", "property", "name", "itemprop")
 _URL_IN_SCRIPT: Final = re.compile(r"""https?://[^\s"'<>]+""")
 _JSON_TYPES: Final = ("application/json", "application/ld+json")
-_PREVIEW_TIMEOUT: Final = 10.0  # seconds a HEAD request has
 
 # How likely a find is to be the page's media, by how it was found (lower first).
 _FOUND_BY: Final[dict[str, int]] = {
@@ -82,7 +80,18 @@ class ChainSuggestion(BaseModel):
     found_on: str
     """The page the media is on (the page itself, or one of its iframes)."""
     reachable: bool | None = None
-    """Whether the media answered a HEAD request as media; None when it was not asked."""
+    """Whether the media answered as media (the http downloader probed it); None when that is
+    not known."""
+
+
+@runtime_checkable
+class ChainSuggester(Protocol):
+    """A downloader that suggests chains for a page (the scraper, the browser)."""
+
+    async def suggest_chains(self, ctx: ProbeContext) -> list[ChainSuggestion]:
+        """Chains to the media on ctx.url's page (see suggest()). Raises a DownloadError when
+        the page cannot be read, or Cancelled."""
+        ...
 
 
 def _is_media(url: str) -> bool:
@@ -200,6 +209,10 @@ class _Spot(BaseModel):
     found_by: str
 
 
+def _value(node: LexborNode, attr: str) -> str:
+    return (node.attributes.get(attr) or "").strip()
+
+
 def _json_paths(data: JsonValue, path: tuple[str, ...] = ()) -> Iterator[tuple[str, str]]:
     """The (dotted path, value) of every text in JSON that is a media file's or a stream's URL."""
     if isinstance(data, str):
@@ -228,26 +241,22 @@ class _Finder:
         base = page.css_first("base[href]")
         self.base = urljoin(url, (base.attributes.get("href") if base else None) or "")
 
-    def spot(self, node: LexborNode, attr: str, found_by: str) -> _Spot | None:
-        """The media an element's attribute is the URL of."""
-        value = (node.attributes.get(attr) or "").strip()
-        if not value:
-            return None
+    def spot(self, node: LexborNode, attr: str, url: str, found_by: str) -> _Spot:
+        """The media at `url`, the value of an element's attribute."""
         steps: list[RawStep] = [{"select": selector_for(node, self.page), "attr": attr}]
-        return _Spot(steps=steps, url=urljoin(self.base, value), found_by=found_by)
+        return _Spot(steps=steps, url=urljoin(self.base, url), found_by=found_by)
 
     def spots(self) -> Iterator[_Spot]:
         page = self.page
         for node in page.css("video[src], audio[src], video source[src], audio source[src]"):
-            media = node if node.tag != "source" else node.parent
-            if media is not None and (found := self.spot(node, "src", f"<{media.tag}>")):
-                yield found
+            media = (node.parent or node) if node.tag == "source" else node
+            if src := _value(node, "src"):
+                yield self.spot(node, "src", src, f"<{media.tag}>")
         yield from self.open_graph()
         yield from self.json()
         for node in page.css("a[href]"):
-            href = urljoin(self.base, node.attributes.get("href") or "")
-            if _is_media(href) and (found := self.spot(node, "href", "<a>")):
-                yield found
+            if (href := _value(node, "href")) and _is_media(urljoin(self.base, href)):
+                yield self.spot(node, "href", href, "<a>")
         for node in page.css("script:not([src])"):
             if node.attributes.get("type") in _JSON_TYPES:  # (their media is found as JSON)
                 continue
@@ -263,9 +272,10 @@ class _Finder:
         for node in self.page.css('meta[property^="og:video"], meta[property^="og:audio"]'):
             prop = node.attributes.get("property") or ""
             medium = prop.removeprefix("og:").partition(":")[0]
+            content = _value(node, "content")
             if prop in (f"og:{medium}", f"og:{medium}:url", f"og:{medium}:secure_url"):
-                if made := self.spot(node, "content", f"og:{medium}"):
-                    found.append((made, ""))
+                if content:
+                    found.append((self.spot(node, "content", content, f"og:{medium}"), ""))
             elif prop == f"og:{medium}:type" and found:
                 found[-1] = (found[-1][0], node.attributes.get("content") or "")
         for made, kind in found:
@@ -290,10 +300,10 @@ class _Finder:
 
 def _iframes(page: LexborHTMLParser, url: str) -> Iterator[tuple[RawStep, str]]:
     """The step that selects each iframe's URL, and that URL."""
+    base = _Finder(page, url).base
     for node in page.css("iframe[src]"):
-        src = (node.attributes.get("src") or "").strip()
-        if src:
-            yield {"select": selector_for(node, page), "attr": "src"}, urljoin(url, src)
+        if src := _value(node, "src"):
+            yield {"select": selector_for(node, page), "attr": "src"}, urljoin(base, src)
 
 
 def _requested_pattern(url: str) -> str:
@@ -310,8 +320,9 @@ def _requested_pattern(url: str) -> str:
 # ---------------------------------------------------------------------------------------------
 
 
-class _Pages(Reader):
-    """The pages a suggestion was made from, for checking its chain."""
+class FetchedPages(Reader):
+    """Opens pages that were fetched already (by the URLs they were opened at): to check a
+    chain on them."""
 
     def __init__(self, pages: Mapping[str, Document]) -> None:
         self._pages = pages
@@ -373,7 +384,7 @@ async def _checked(
     """The spot's suggestion, with the media its chain finds (None when it finds none)."""
     try:
         chain = TagChain.model_validate({"fetch": fetch, "steps": spot.steps})
-        run = await run_chain(chain, url, _Pages(pages))
+        run = await run_chain(chain, url, FetchedPages(pages))
     except ValidationError, DownloadError:
         return None
     first = run.finds[0]
@@ -381,43 +392,31 @@ async def _checked(
 
 
 # ---------------------------------------------------------------------------------------------
-# Asking for the media, and ranking
+# What the media's server says, and ranking
 # ---------------------------------------------------------------------------------------------
 
 
-def _size(response: httpx.Response) -> int | None:
-    total = response.headers.get("content-range", "").rpartition("/")[2]
-    length = total if total.isdigit() else response.headers.get("content-length", "")
-    return int(length) if length.isdigit() else None
-
-
-async def _previewed(client: httpx.AsyncClient, suggestion: ChainSuggestion) -> ChainSuggestion:
-    url, headers = suggestion.media.url, {"Referer": suggestion.found_on}
-    try:
-        response = await client.head(url, headers=headers)
-        if response.status_code in (403, 405, 501):  # (some servers answer only GET)
-            async with client.stream("GET", url, headers={**headers, "Range": "bytes=0-0"}) as got:
-                response = got
-    except httpx.HTTPError:
-        return suggestion.model_copy(update={"reachable": False})
-    content_type = response.headers.get("content-type") or None
-    kind = (content_type or "").partition(";")[0].strip().lower()
-    media = suggestion.media.model_copy(
-        update={"content_type": content_type, "size_bytes": _size(response)}
+def preview_media(media: MediaCandidate, probe: ProbeResult) -> MediaCandidate:
+    """Media with the type and size that the http downloader's probe of it found (if it
+    did)."""
+    if not probe.ok:
+        return media
+    found = probe.media[0]
+    return media.model_copy(
+        update={"content_type": found.content_type, "size_bytes": found.size_bytes}
     )
-    reachable = response.status_code < 400 and kind not in PAGE_TYPES
-    return suggestion.model_copy(update={"media": media, "reachable": reachable})
 
 
-async def previewed(
-    suggestions: Sequence[ChainSuggestion], *, cookies: list[Cookie]
-) -> list[ChainSuggestion]:
-    """The suggestions, each with what its media's server says of it (a HEAD request, sent from
-    the page it is on): its type, its size and whether it answered as media."""
-    async with http_client(
-        headers={}, cookies=cookies, seconds=_PREVIEW_TIMEOUT, retries=0, tool="http"
-    ) as client:
-        return list(await asyncio.gather(*(_previewed(client, s) for s in suggestions)))
+def with_preview(suggestion: ChainSuggestion, probe: ProbeResult) -> ChainSuggestion:
+    """A suggestion with what the http downloader's probe of its media (from the page it is
+    on) found: its type and size, and whether it answered as media. A stream playlist, which
+    http leaves to yt-dlp, stays unknown."""
+    if probe.ok:
+        media = preview_media(suggestion.media, probe)
+        return suggestion.model_copy(update={"media": media, "reachable": True})
+    stream = suggestion.media.kind is not MediaKind.FILE
+    unsupported = probe.error is not None and probe.error.code is ErrorCode.UNSUPPORTED_URL
+    return suggestion.model_copy(update={"reachable": None if stream and unsupported else False})
 
 
 def _type_rank(media: MediaCandidate) -> int:

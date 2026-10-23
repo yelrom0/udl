@@ -48,6 +48,11 @@ when it returns can be followed with `get_download`, or stopped with `cancel_dow
 - `probe_url` tells which downloaders can download a URL, without downloading it.
 - `get_site` shows what udl knows about a site; `set_site_strategy` tells it which downloader \
 (and options) to use there, when it keeps failing or picks the wrong one.
+- When no downloader finds the media on a site, teach udl the site with a tag chain: the steps \
+from a page to its media, e.g. `iframe#player@src >> video source@src`. `suggest_chain` scans a \
+page and suggests chains (best first), `test_chain` tries one (showing what each step found), \
+and `set_site_chain` saves it, so `download` follows it from then on. `export_chain` and \
+`import_chains` move chains as YAML files.
 - A site that needs a login: the user signs in once on their machine, with \
 `udl browser login <url>`; udl then sends the site's cookies.
 """
@@ -81,6 +86,11 @@ _HINTS: Final[dict[str, ToolAnnotations]] = {
     "get_site": _hints("Show a site", read_only=True),
     "set_site_strategy": _hints("Set a site's downloader", idempotent=True),
     "delete_site": _hints("Forget a site", destructive=True, idempotent=True),
+    "suggest_chain": _hints("Suggest tag chains", read_only=True, open_world=True),
+    "test_chain": _hints("Test a tag chain", read_only=True, open_world=True),
+    "set_site_chain": _hints("Save a site's tag chain", idempotent=True),
+    "import_chains": _hints("Import tag chains", idempotent=True),
+    "export_chain": _hints("Export a site's tag chains", read_only=True),
     "list_databases": _hints("List the databases", read_only=True),
     "list_plugins": _hints("List the plugins", read_only=True),
     "get_config": _hints("Show the settings", read_only=True),

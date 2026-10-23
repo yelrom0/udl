@@ -34,6 +34,7 @@ from typing import Annotated, Any, ClassVar, Literal, Self, cast
 from pydantic import (
     AfterValidator,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Discriminator,
     Field,
@@ -103,6 +104,11 @@ class FetchMode(StrEnum):
 
     STATIC = "static"  # the HTML as served (the scraper)
     BROWSER = "browser"  # rendered in Chromium (the browser), which can click and see requests
+
+    @property
+    def tool(self) -> str:
+        """The downloader that reads pages so: the scraper, or the browser."""
+        return "browser" if self is FetchMode.BROWSER else "scraper"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -364,7 +370,18 @@ class TagChain(BaseModel):
     @property
     def tool(self) -> str:
         """The downloader that runs the chain: the scraper, or the browser."""
-        return "browser" if self.fetch is FetchMode.BROWSER else "scraper"
+        return self.fetch.tool
+
+
+def _as_given(value: Any) -> Any:
+    return value
+
+
+type ChainInput = Annotated[
+    TagChain, BeforeValidator(_as_given, json_schema_input_type=str | TagChain)
+]
+"""A tag chain in a request: a chain, or its one-line shorthand (TagChain reads both; this says
+so in the JSON schema that the API and the MCP server publish)."""
 
 
 class SiteChain(TagChain):

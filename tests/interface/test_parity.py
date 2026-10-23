@@ -32,14 +32,19 @@ MATRIX: dict[str, tuple[str, str]] = {
     "get_site": ("sites show", "GET /sites/{key}"),
     "set_site_strategy": ("sites set", "PUT /sites/{key}/strategies"),
     "delete_site": ("sites rm", "DELETE /sites/{key}"),
+    "suggest_chain": ("chain suggest", "POST /chains/suggest"),
+    "test_chain": ("chain test", "POST /chains/test"),
+    "set_site_chain": ("chain set", "PUT /sites/{key}/chain"),
+    "import_chains": ("chain import", "POST /chains/import"),
+    "export_chain": ("chain export", "GET /sites/{key}/chain"),
     "list_databases": ("db list", "GET /databases"),
     "list_plugins": ("plugins list", "GET /plugins"),
     "get_config": ("config show", "GET /config"),
 }
 
-# Interface-only, so exempt: they run the other interfaces, or need a browser on the user's
-# machine.
-CLI_ONLY = {"serve", "mcp", "browser login"}
+# Interface-only, so exempt: they run the other interfaces, need a browser on the user's
+# machine, or ask the user (the wizard, which runs suggest_chain, test_chain and set_site_chain).
+CLI_ONLY = {"serve", "mcp", "browser login", "chain wizard"}
 # A job's events as they happen (SSE): UDLService.events() is a stream, not an operation.
 API_ONLY = {"GET /downloads/{id}/events": "download_events"}
 

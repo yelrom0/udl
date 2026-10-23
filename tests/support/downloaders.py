@@ -4,9 +4,9 @@
 ------------------
 
 FakeDownloader: a downloader that needs no network or tools. What each URL gives (media or an
-error) is scripted in its options (and what it gives when it follows a tag chain), so tests of the
-code that picks and runs downloaders can say exactly what happens. It passes the downloader
-contract suite, like any real downloader.
+error) is scripted in its options (and what it gives when it follows a tag chain, and the chains
+it suggests for a page), so tests of the code that picks and runs downloaders can say exactly
+what happens. It passes the downloader contract suite, like any real downloader.
 """
 
 # System Imports
@@ -17,9 +17,13 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeFloat, PositiveInt
 
 # Local Imports
-from udl.chains.models import TagChain
+from udl.chains.executor import ChainRun
+from udl.chains.models import FetchMode, StepTrace, TagChain
+from udl.chains.shorthand import format_step
+from udl.chains.suggest import ChainSuggestion
 from udl.errors import (
     AuthRequired,
+    ConfigError,
     DownloadError,
     ErrorCode,
     ErrorInfo,
@@ -39,6 +43,7 @@ from udl.plugins.downloaders.base import (
     ProbeResult,
     cookie_header,
 )
+from udl.plugins.downloaders.media import Find
 
 
 class FakeMedia(BaseModel):
@@ -57,6 +62,8 @@ class FakeOptions(DownloaderOptions):
     media: dict[str, FakeMedia] = Field(default_factory=dict[str, FakeMedia])
     chain: TagChain | None = None  # a tag chain to follow: then `chained` is the media
     chained: dict[str, FakeMedia] = Field(default_factory=dict[str, FakeMedia])
+    # The chains it suggests for a page: page URL -> {the chain's shorthand: its media's URL}.
+    suggested: dict[str, dict[str, str]] = Field(default_factory=dict[str, dict[str, str]])
     errors: dict[str, ErrorCode] = Field(default_factory=dict[str, ErrorCode])  # url -> error
     matches: dict[str, Confidence] = Field(default_factory=dict[str, Confidence])  # offline
     confidence: Confidence = 0.8  # of a successful probe
@@ -98,11 +105,44 @@ class FakeDownloader(Downloader[FakeOptions]):
                 ctx.progress(DownloadProgress(downloaded_bytes=done, total_bytes=total, file=path))
         return DownloadResult(tool=self.name, url=ctx.url, files=[path], title=media.title)
 
-    def _media_for(self, ctx: ProbeContext) -> FakeMedia:
+    async def run_chain(
+        self, ctx: ProbeContext, *, trace: list[StepTrace] | None = None
+    ) -> ChainRun:
+        """Its chain finds the page itself (when `chained` has media for it), in a step each."""
+        if self.options.chain is None:
+            raise ConfigError(f"The {self.name} downloader has no tag chain to follow")
+        media = self._media_for(ctx)
+        if trace is not None:
+            trace += [
+                StepTrace(step=format_step(step), found=[ctx.url], count=1)
+                for step in self.options.chain.steps
+            ]
+        found = MediaCandidate(url=ctx.url, title=media.title, found_by="tag chain")
+        find = Find(media=found, confidence=0.9, referer=ctx.url)
+        return ChainRun(title=media.title, finds=[find], every=False)
+
+    async def suggest_chains(self, ctx: ProbeContext) -> list[ChainSuggestion]:
+        """The chains `suggested` has for the page (errors as scripted)."""
+        self._check_errors(ctx)
+        fetch = FetchMode.BROWSER if self.name == "browser" else FetchMode.STATIC
+        return [
+            ChainSuggestion(
+                chain=TagChain.model_validate({"steps": chain, "fetch": fetch}),
+                shorthand=chain,
+                media=MediaCandidate(url=url, found_by="<video>"),
+                found_on=ctx.url,
+            )
+            for chain, url in self.options.suggested.get(ctx.url, {}).items()
+        ]
+
+    def _check_errors(self, ctx: ProbeContext) -> None:
         if code := self.options.errors.get(ctx.url):
             error = error_from_info(ErrorInfo(code=code, message=f"{code} for {ctx.url}"))
             assert isinstance(error, DownloadError), f"{code} is not a download error"
             raise error
+
+    def _media_for(self, ctx: ProbeContext) -> FakeMedia:
+        self._check_errors(ctx)
         scripted = self.options.chained if self.options.chain else self.options.media
         media = scripted.get(ctx.url)
         if media is None:

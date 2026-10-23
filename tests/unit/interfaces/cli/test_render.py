@@ -19,11 +19,16 @@ from pathlib import Path
 from rich.console import Console
 
 # Local Imports
+from udl.chains.models import FetchMode, StepTrace, TagChain
+from udl.chains.suggest import ChainSuggestion
 from udl.core.models import (
     Attempt,
     CandidateSource,
+    ChainReport,
+    ChainSuggestions,
     DownloadBatch,
     DownloadList,
+    ImportedChains,
     JobEvent,
     JobEventType,
     JobInfo,
@@ -40,6 +45,7 @@ from udl.plugins.downloaders.base import (
     DownloadProgress,
     Handoff,
     MediaCandidate,
+    MediaKind,
     ProbeResult,
     Requirement,
 )
@@ -264,3 +270,84 @@ def test_plugins_that_cannot_run_or_load() -> None:
     assert "curl (binary): pacman -S curl" in text
     assert "Invalid options" in text
     assert "Could not load broken.py: SyntaxError" in text
+
+
+# ---------------------------------------------------------------------------------------------
+# Tag chains
+# ---------------------------------------------------------------------------------------------
+
+
+def test_a_chain_report_shows_three_of_a_step_s_values_and_counts_the_rest() -> None:
+    report = ChainReport(
+        url=URL,
+        site_key="example.com",
+        chain=TagChain.model_validate("a@href | all"),
+        ok=True,
+        steps=[StepTrace(step="a@href | all", found=[f"/{n}.mp4" for n in range(10)], count=12)],
+        media=[MediaCandidate(url=f"{URL}/0.mp4")],
+    )
+
+    text = shown(render.chain_report, report)
+
+    assert "/2.mp4" in text
+    assert "/3.mp4" not in text
+    assert "and 9 more" in text
+    assert f"{URL}/0.mp4\n" in text  # (nothing known about it)
+
+
+def test_suggestions_show_what_did_not_answer_and_streams() -> None:
+    def suggestion(url: str, kind: MediaKind, reachable: bool | None) -> ChainSuggestion:
+        return ChainSuggestion(
+            chain=TagChain.model_validate("video@src"),
+            shorthand="video@src",
+            media=MediaCandidate(url=url, kind=kind),
+            found_on=URL,
+            reachable=reachable,
+        )
+
+    found = ChainSuggestions(
+        url=URL,
+        site_key="example.com",
+        fetch=FetchMode.BROWSER,
+        suggestions=[
+            suggestion("https://cdn.example.com/a.m3u8", MediaKind.HLS, None),
+            suggestion("https://cdn.example.com/b.mp4", MediaKind.FILE, False),
+        ],
+        signed_in=True,
+    )
+
+    text = shown(render.suggestions, found)
+
+    assert "rendered in the browser, signed in" in text
+    assert "hls" in text
+    assert "(no answer)" in text
+
+
+def test_suggestions_for_a_page_that_could_not_be_read() -> None:
+    found = ChainSuggestions(
+        url=URL,
+        site_key="example.com",
+        fetch=FetchMode.STATIC,
+        suggestions=[],
+        error=AuthRequired("Sign in", tool="scraper").to_info(),
+    )
+
+    assert "Sign in" in shown(render.suggestions, found)
+
+
+def test_saved_and_imported_chains() -> None:
+    plain = Strategy(site_key="example.com", tool="http", source=StrategySource.MANUAL)
+    chained = plain.model_copy(
+        update={
+            "tool": "browser",
+            "chain": TagChain.model_validate("click:a >> video@src"),
+            "url_pattern": "^/watch/",
+        }
+    )
+
+    assert "with http" in shown(render.chain_strategy, plain)
+    assert "There were no chains" in shown(render.imported, ImportedChains(strategies=[]))
+    imported = shown(render.imported, ImportedChains(strategies=[chained, plain]))
+    assert "(URLs matching '^/watch/')" in imported
+    assert "click:a >> video@src (in the browser)" in imported
+    assert "example.com: http" in imported

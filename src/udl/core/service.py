@@ -29,10 +29,24 @@ from uuid import UUID
 from pydantic import BaseModel, JsonValue
 
 # Local Imports
+from udl.chains.executor import ChainRun, ChainRunner
+from udl.chains.files import read_chains, write_chains
+from udl.chains.models import FetchMode, SiteChain, StepTrace, TagChain
+from udl.chains.suggest import (
+    ChainSuggester,
+    ChainSuggestion,
+    preview_media,
+    ranked,
+    with_preview,
+)
 from udl.config import DBConnectionConfig, Settings, data_dir
 from udl.core.executor import CookieSource, Executor, JobSpec, RetryPolicy, site_cookies
 from udl.core.jobs import InstanceLock, JobManager, recover_interrupted
 from udl.core.models import (
+    ChainFile,
+    ChainReport,
+    ChainSuggestions,
+    ChainTestRequest,
     ConfigInfo,
     DatabaseInfo,
     DatabaseList,
@@ -41,6 +55,8 @@ from udl.core.models import (
     DownloadList,
     DownloadRequest,
     GetConfigRequest,
+    ImportChainsRequest,
+    ImportedChains,
     JobEvent,
     JobInfo,
     JobRequest,
@@ -50,17 +66,19 @@ from udl.core.models import (
     PluginStatus,
     ProbeReport,
     ProbeRequest,
+    SetChainRequest,
     SetStrategyRequest,
     SiteInfo,
     SiteList,
     SiteRequest,
+    SuggestChainRequest,
 )
 from udl.core.resolver import Resolver, SiteBehaviour
 from udl.core.tools import Toolbox
 from udl.core.urls import URL
 from udl.db.manager import DBManager
 from udl.db.models import DownloadQuery, Site, SiteQuery, Strategy, StrategySource
-from udl.errors import AuthRequired, DoesNotExist, UDLError
+from udl.errors import AuthRequired, DoesNotExist, DownloadError, ErrorInfo, PluginError, UDLError
 from udl.plugins.downloaders.auth import AuthCookies
 from udl.plugins.downloaders.base import Cookie, ProbeContext, ProbeResult
 from udl.plugins.registry import DOWNLOADERS, PluginInfo, PluginRegistry
@@ -72,6 +90,7 @@ _SECRET_KEY: Final = re.compile(
     r"pass(word|wd)?|secret|token|cookie|credential|authori[sz]ation|api_?key", re.IGNORECASE
 )
 _HIDDEN: Final[str] = "***"
+_PREVIEWS: Final[int] = 5  # media of a tested chain whose type and size are asked for
 
 
 # ---------------------------------------------------------------------------------------------
@@ -417,6 +436,248 @@ class UDLService:
         """Forget a site and its strategies (its download history is kept)."""
         return Deleted(deleted=await self.db.delete_site(request.site))
 
+    # -- tag chains ----------------------------------------------------------------------------
+
+    @operation("suggest_chain")
+    async def suggest_chain(self, request: SuggestChainRequest) -> ChainSuggestions:
+        """Suggest tag chains for a page's media: for a site that no downloader handles.
+
+        A tag chain is the steps from a page to its media, e.g. "iframe#player@src >> video
+        source@src": select the player's iframe and take its src, open that page, select the
+        video's source and take its src. udl reads the page (as served, then rendered in a
+        browser when that finds nothing), makes a chain to each piece of media on it, and asks
+        each media's server for its type and size; the best come first. Try one with
+        test_chain, then save it for the site with set_site_chain.
+        """
+        url = URL.parse(request.url)
+        modes = [request.fetch] if request.fetch is not None else list(FetchMode)
+        read = modes[0]
+        suggestions: list[ChainSuggestion] = []
+        cookies: list[Cookie] = []
+        error: ErrorInfo | None = None
+        for mode in modes:
+            if request.fetch is None and not self.toolbox.has(mode.tool):
+                continue
+            suggester = self.toolbox.get(mode.tool)
+            if not isinstance(suggester, ChainSuggester):
+                raise PluginError(f"The {mode.tool} downloader cannot suggest tag chains")
+            read = mode
+            try:
+                suggestions, cookies = await self._signed_in(
+                    url, functools.partial(_suggestions, suggester, url)
+                )
+            except DownloadError as e:
+                error = _with_tool(e, mode.tool)
+                break
+            if suggestions:
+                break
+        previewed = await asyncio.gather(
+            *(
+                self._probe_media(
+                    s.media.url, s.found_on, cookies, then=functools.partial(with_preview, s)
+                )
+                for s in suggestions
+            )
+        )
+        return ChainSuggestions(
+            url=url.value,
+            site_key=url.site_key,
+            fetch=read,
+            suggestions=ranked(previewed)[: request.limit],
+            signed_in=bool(cookies),
+            error=error,
+        )
+
+    @operation("test_chain")
+    async def test_chain(self, request: ChainTestRequest) -> ChainReport:
+        """Try a tag chain on a page, without downloading anything: what each step found, and
+        the media it led to (with its type and size).
+
+        A chain's one-line shorthand is its steps separated by >>. A select step is a CSS
+        selector and what to take from the elements: @attr (an attribute, e.g. @src) or ::text.
+        A select after a step that found a URL opens it first. The other steps: regex:PATTERN
+        (its first group), json:PATH (a dotted path, * for every item), follow (open the URL,
+        for a regex or json step to read), and, in a browser, click:SELECTOR, wait_for:SELECTOR
+        and network:PATTERN (the URLs the page requested). A step that finds values may end
+        with "| all" or "| best". E.g. "iframe#player@src >> video source@src", or
+        "script#data::text >> json:video.url".
+        """
+        url = URL.parse(request.url)
+        chain = request.chain
+        runner = self.toolbox.get(chain.tool, chain=chain)  # (raises PluginError, ConfigError)
+        if not isinstance(runner, ChainRunner):
+            raise PluginError(f"The {chain.tool} downloader cannot follow tag chains")
+        trace: list[StepTrace] = []
+
+        async def run(signed_in: list[Cookie]) -> ChainRun:
+            trace.clear()
+            ctx = ProbeContext(url=url.value, cookies=signed_in)
+            return await runner.run_chain(ctx, trace=trace)
+
+        report = ChainReport(url=url.value, site_key=url.site_key, chain=chain, ok=False, steps=[])
+        try:
+            ran, cookies = await self._signed_in(url, run)
+        except DownloadError as e:
+            return report.model_copy(
+                update={"steps": list(trace), "error": _with_tool(e, chain.tool)}
+            )
+        media = await asyncio.gather(
+            *(
+                self._probe_media(
+                    find.media.url,
+                    find.referer,
+                    cookies,
+                    then=functools.partial(preview_media, find.media),
+                )
+                for find in ran.finds[:_PREVIEWS]
+            )
+        )
+        return report.model_copy(
+            update={
+                "ok": True,
+                "steps": list(trace),
+                "media": [*media, *(find.media for find in ran.finds[_PREVIEWS:])],
+                "title": ran.title,
+                "signed_in": bool(cookies),
+            }
+        )
+
+    @operation("set_site_chain")
+    async def set_site_chain(self, request: SetChainRequest) -> Strategy:
+        """Save a tag chain for a site, or only for its URLs whose path matches `pattern`:
+        downloads from it then follow the chain (test it first with test_chain).
+
+        The chain is a manual strategy of the downloader that runs it (the scraper, or the
+        browser for a chain that needs one): udl tries it before what it has learned, and never
+        replaces it when it fails. Saving a chain for the same pattern again replaces it.
+        """
+        return await self._save_chain(
+            request.site,
+            request.chain,
+            pattern=request.pattern,
+            priority=request.priority,
+            requires_auth=request.requires_auth,
+            source=StrategySource.MANUAL,
+        )
+
+    @operation("import_chains")
+    async def import_chains(self, request: ImportChainsRequest) -> ImportedChains:
+        """Save the tag chains in a chain file (YAML, as export_chain gives them), each for its
+        site (and pattern), replacing the chain there.
+
+        Imported chains are tried before what udl has learned. Unlike a chain set by hand, one
+        that keeps failing is disabled (and udl finds another way), until it is imported or set
+        again. A file with a problem imports nothing.
+        """
+        chains = read_chains(request.yaml)  # (raises ConfigError)
+        for found in chains:
+            self.toolbox.get(found.tool, chain=found.chain())  # (raises PluginError, ConfigError)
+        return ImportedChains(
+            strategies=[
+                await self._save_chain(
+                    found.site,
+                    found.chain(),
+                    pattern=found.pattern,
+                    priority=found.priority,
+                    requires_auth=found.requires_auth,
+                    source=StrategySource.IMPORT,
+                )
+                for found in chains
+            ]
+        )
+
+    @operation("export_chain")
+    async def export_chain(self, request: SiteRequest) -> ChainFile:
+        """Give a site's tag chains as a chain file (YAML), which import_chains (and `udl chain
+        import`) reads: to keep them, share them or move them to another udl."""
+        chains = [
+            SiteChain.model_validate(
+                {
+                    **strategy.chain.model_dump(),
+                    "site": strategy.site_key,
+                    "pattern": strategy.url_pattern,
+                    "priority": strategy.priority,
+                    "requires_auth": strategy.requires_auth,
+                }
+            )
+            for strategy in await self.db.strategies_for(request.site)
+            if strategy.chain is not None
+        ]
+        if not chains:
+            raise DoesNotExist(
+                f"{request.site} has no tag chains",
+                hint="`udl chain suggest <url>` (suggest_chain) suggests chains for a page of it.",
+            )
+        return ChainFile(site=request.site, chains=chains, yaml=write_chains(chains))
+
+    async def _save_chain(
+        self,
+        site: str,
+        chain: TagChain,
+        *,
+        pattern: str | None,
+        priority: int,
+        requires_auth: bool,
+        source: StrategySource,
+    ) -> Strategy:
+        """Store `chain` as the site's chain for `pattern`, replacing the chain there (whose
+        counts are kept when the chain is the same)."""
+        self.toolbox.get(chain.tool, chain=chain)  # (raises PluginError or ConfigError)
+        await self.db.upsert_site(await self.db.get_site(site) or Site(key=site))
+        same = next(
+            (
+                strategy
+                for strategy in await self.db.strategies_for(site)
+                if strategy.chain is not None and strategy.url_pattern == pattern
+            ),
+            None,
+        )
+        if same is None or same.chain != chain:
+            fresh = Strategy(site_key=site, tool=chain.tool, source=source)
+            same = fresh if same is None else fresh.model_copy(update={"id": same.id})
+        return await self.db.upsert_strategy(
+            same.model_copy(
+                update={
+                    "tool": chain.tool,
+                    "chain": chain,
+                    "url_pattern": pattern,
+                    "priority": priority,
+                    "requires_auth": requires_auth,
+                    "source": source,
+                    "enabled": True,
+                }
+            )
+        )
+
+    async def _signed_in[T](
+        self, url: URL, work: Callable[[list[Cookie]], Awaitable[T]]
+    ) -> tuple[T, list[Cookie]]:
+        """Do `work` without cookies, then, when the site wants a login (and there are cookies
+        for it), with the site's cookies. Returns what it gave, and the cookies it was given."""
+        try:
+            return await work([]), []
+        except AuthRequired:
+            cookies = await site_cookies(self.cookies, url.value)
+            if not cookies:
+                raise
+            return await work(cookies), cookies
+
+    async def _probe_media[T](
+        self,
+        url: str,
+        referer: str,
+        cookies: list[Cookie],
+        *,
+        then: Callable[[ProbeResult], T],
+    ) -> T:
+        """`then` of the http downloader's probe of media found on the page `referer`."""
+        try:
+            http = self.toolbox.get("http")
+        except UDLError as e:  # (not installed, or its options are invalid)
+            return then(ProbeResult.failed("http", e))
+        ctx = ProbeContext(url=url, headers={"Referer": referer}, cookies=cookies)
+        return then(await http.probe(ctx))
+
     # -- udl itself ----------------------------------------------------------------------------
 
     @operation("list_databases")
@@ -474,6 +735,17 @@ class UDLService:
         """Show the settings udl runs with (from its config file, UDL_* environment variables
         and the defaults), with secrets hidden."""
         return ConfigInfo(settings=_without_secrets(self.settings))
+
+
+async def _suggestions(
+    suggester: ChainSuggester, url: URL, cookies: list[Cookie]
+) -> list[ChainSuggestion]:
+    return await suggester.suggest_chains(ProbeContext(url=url.value, cookies=cookies))
+
+
+def _with_tool(error: DownloadError, tool: str) -> ErrorInfo:
+    info = error.to_info()
+    return info if info.tool is not None else info.model_copy(update={"tool": tool})
 
 
 def _wants_login(result: ProbeResult) -> bool:

@@ -118,6 +118,17 @@ def test_unusual_characters_read_back_as_they_were() -> None:
     assert read_chains(write_chains([chain])) == [chain]
 
 
+def test_a_chain_s_priority_and_login_are_written() -> None:
+    chain = SiteChain.model_validate(
+        {"site": "example.com", "steps": "video@src", "priority": -1, "requires_auth": True}
+    )
+
+    written = write_chains([chain])
+
+    assert written.endswith("priority: -1\nrequires_auth: true\n")
+    assert read_chains(written) == [chain]
+
+
 def test_writing_no_chains_writes_nothing() -> None:
     assert write_chains([]) == ""
 

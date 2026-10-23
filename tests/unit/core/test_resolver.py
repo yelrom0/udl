@@ -16,6 +16,7 @@ from pathlib import Path
 # Package Imports
 import pytest
 
+# Local Imports
 from support.engine import (
     TOOLS,
     FakeSitePlugin,
@@ -26,8 +27,6 @@ from support.engine import (
     script,
     settings,
 )
-
-# Local Imports
 from udl.chains.models import TagChain
 from udl.config import ReadPolicy, Settings
 from udl.core.models import CandidateSource

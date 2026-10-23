@@ -122,7 +122,7 @@ def slow_settings(tmp_path: Path) -> Settings:
 
 
 def test_the_operations_are_the_feature_matrix_s() -> None:
-    # planning.md's Feature Matrix (chains come in Phase 5, syncing databases in Phase 7).
+    # planning.md's Feature Matrix (syncing databases comes in Phase 7).
     assert set(operations()) == {
         "download",
         "get_download",
@@ -133,6 +133,11 @@ def test_the_operations_are_the_feature_matrix_s() -> None:
         "get_site",
         "set_site_strategy",
         "delete_site",
+        "suggest_chain",
+        "test_chain",
+        "set_site_chain",
+        "import_chains",
+        "export_chain",
         "list_databases",
         "list_plugins",
         "get_config",

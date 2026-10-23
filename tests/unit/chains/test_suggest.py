@@ -17,8 +17,16 @@ from selectolax.lexbor import LexborHTMLParser
 # Local Imports
 from udl.chains.executor import StaticDocument
 from udl.chains.models import FetchMode
-from udl.chains.suggest import ChainSuggestion, ranked, selector_for, suggest
-from udl.plugins.downloaders.base import MediaCandidate, MediaKind
+from udl.chains.suggest import (
+    ChainSuggestion,
+    FetchedPages,
+    ranked,
+    selector_for,
+    suggest,
+    with_preview,
+)
+from udl.errors import NotFound, UnsupportedURL
+from udl.plugins.downloaders.base import MediaCandidate, MediaKind, ProbeResult
 
 SITE = "https://example.com"
 PAGE = f"{SITE}/watch/1"
@@ -126,6 +134,55 @@ async def test_media_urls_in_scripts_are_found_by_their_kind() -> None:
     assert (suggestion.media.kind, suggestion.media.found_by) == (MediaKind.HLS, "<script>")
 
 
+async def test_what_is_not_media_or_empty_is_not_suggested() -> None:
+    page = html(
+        '<video src=""></video><video src="  "></video><a href="">x</a><iframe src=""></iframe>'
+        "<script>var page = 'https://example.com/about';</script>"
+        '<script type="application/json">{not json</script>'
+        '<script type="application/json">{"a.b": "/x.mp4", "*": "/y.mp4", "n": [1, true, null]}'
+        "</script>",
+        head='<meta property="og:video:width" content="640">'
+        '<meta property="og:video" content="">'
+        '<meta property="og:video:type" content="video/mp4">',
+    )
+
+    assert await suggested({PAGE: page}) == []
+
+
+async def test_relative_urls_are_relative_to_the_page_s_base() -> None:
+    pages = {
+        PAGE: html(
+            '<a href="v.mp4">v</a><iframe src="embed"></iframe>',
+            head='<base href="https://cdn.example.com/x/">',
+        ),
+        "https://cdn.example.com/x/embed": html('<video src="clip.mp4"></video>'),
+    }
+
+    assert [s.media.url for s in await suggested(pages)] == [
+        "https://cdn.example.com/x/v.mp4",
+        "https://cdn.example.com/x/clip.mp4",
+    ]
+
+
+async def test_markup_that_no_selector_can_find_is_left_out() -> None:
+    # (A tag with a colon cannot be written in CSS without escaping it: its selector fails, so
+    # its chain is not suggested; the media elsewhere still is.)
+    page = html(
+        '<x:box><video><source src="/a.mp4"></video></x:box>'
+        '<x:box><video><source src="/b.mp4"></video></x:box>'
+    )
+
+    assert [s.media.url for s in await suggested({PAGE: page})] == [f"{SITE}/a.mp4"]
+
+
+async def test_fetched_pages_open_only_what_was_fetched() -> None:
+    pages = FetchedPages({PAGE: StaticDocument(PAGE, html(""))})
+
+    assert (await pages.open(PAGE, referer=None)).url == PAGE
+    with pytest.raises(NotFound, match="not fetched"):
+        await pages.open(f"{SITE}/other", referer=PAGE)
+
+
 async def test_a_page_without_media_has_no_suggestions() -> None:
     page = html('<p>Nothing</p><img src="/logo.png"><a href="/next">Next</a>')
 
@@ -209,6 +266,27 @@ async def test_each_chain_is_suggested_once() -> None:
             "div:nth-of-type(2) video",
             "div:nth-of-type(2) > video",
         ),
+        ('<video id="v"></video><video id="v" class="x"></video>', "video.x", "video.x"),
+        (
+            '<div id="p"><video></video><video></video></div>',
+            "video:nth-of-type(2)",
+            "video:nth-of-type(2)",
+        ),
+        (
+            "<section><div><video></video></div><div><video></video></div></section>",
+            "div:nth-of-type(2) video",
+            "div:nth-of-type(2) > video",
+        ),
+        (
+            "<section><div><video></video></div></section><div><video></video></div>",
+            "body > div video",
+            "body > div > video",
+        ),
+        (
+            '<video><source type="video/webm"><source type="video/mp4"></video>',
+            "[type='video/mp4']",
+            'video > source[type="video/mp4"]',
+        ),
         (
             '<source type="video/webm"><source type="video/mp4">',
             "[type='video/mp4']",
@@ -279,3 +357,43 @@ def test_ranking_puts_media_that_answered_first_then_video_then_the_largest() ->
         "unknown",
         "gone",
     ]
+
+
+# ---------------------------------------------------------------------------------------------
+# What the media's server says
+# ---------------------------------------------------------------------------------------------
+
+
+def test_a_probe_that_found_the_media_gives_its_type_and_size() -> None:
+    probe = ProbeResult(
+        tool="http",
+        ok=True,
+        media=[MediaCandidate(url=f"{SITE}/a", content_type="video/mp4", size_bytes=1234)],
+    )
+
+    previewed = with_preview(suggestion("a", reachable=None, content_type=None), probe)
+
+    assert previewed.reachable is True
+    assert (previewed.media.content_type, previewed.media.size_bytes) == ("video/mp4", 1234)
+    assert previewed.media.url == f"{SITE}/a"
+
+
+@pytest.mark.parametrize(
+    ("kind", "error", "reachable"),
+    [
+        (MediaKind.FILE, NotFound("gone"), False),
+        (MediaKind.FILE, UnsupportedURL("a web page"), False),
+        (MediaKind.HLS, UnsupportedURL("a stream playlist: yt-dlp downloads it"), None),
+        (MediaKind.HLS, NotFound("gone"), False),
+    ],
+)
+def test_a_probe_that_failed_says_whether_the_media_answered(
+    kind: MediaKind, error: Exception, reachable: bool | None
+) -> None:
+    assert isinstance(error, NotFound | UnsupportedURL)
+    found = suggestion("a", reachable=None)
+    found = found.model_copy(update={"media": found.media.model_copy(update={"kind": kind})})
+
+    previewed = with_preview(found, ProbeResult.failed("http", error))
+
+    assert previewed.reachable is reachable

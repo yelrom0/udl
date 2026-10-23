@@ -19,9 +19,9 @@ from uuid import UUID
 # Package Imports
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, NonNegativeInt, PositiveFloat
 
-from udl.chains.models import Regex
-
 # Local Imports
+from udl.chains.models import ChainInput, FetchMode, Regex, SiteChain, StepTrace, TagChain
+from udl.chains.suggest import ChainSuggestion
 from udl.config import Settings
 from udl.core.urls import RequestURL, SiteKey
 from udl.db.models import DownloadRecord, JobStatus, JsonObject, Site, Strategy
@@ -29,6 +29,7 @@ from udl.errors import ErrorInfo
 from udl.plugins.downloaders.base import (
     DownloadProgress,
     FilenameTemplate,
+    MediaCandidate,
     ProbeResult,
     Requirement,
 )
@@ -253,6 +254,114 @@ class SetStrategyRequest(StrategySpec):
 class Deleted(_Frozen):
     deleted: bool
     """False when there was nothing to delete."""
+
+
+# ---------------------------------------------------------------------------------------------
+# Tag chains
+# ---------------------------------------------------------------------------------------------
+
+
+class SuggestChainRequest(_Frozen):
+    """Suggest tag chains for a page's media."""
+
+    url: RequestURL
+    """The page."""
+    fetch: FetchMode | None = None
+    """How to read the page: static (its HTML as served) or browser (rendered in Chromium, with
+    the media it requests). By default static, then the browser when that finds nothing."""
+    limit: Annotated[int, Field(ge=1, le=50)] = 10
+    """Suggest at most this many."""
+
+
+class ChainSuggestions(_Frozen):
+    url: str
+    """The page, normalised."""
+    site_key: str
+    fetch: FetchMode
+    """How the page was read."""
+    suggestions: list[ChainSuggestion]
+    """Best first: media that answered as media, video before audio, the largest first."""
+    signed_in: bool = False
+    """Whether the site's cookies were sent (it wanted a login)."""
+    error: ErrorInfo | None = None
+    """Why the page could not be read, when it could not."""
+
+
+class ChainTestRequest(_Frozen):
+    """Try a tag chain on a page."""
+
+    url: RequestURL
+    """The page."""
+    chain: ChainInput
+    """The tag chain: its one-line shorthand, e.g. "iframe#player@src >> video source@src", or
+    a chain (fetch, headers, steps, handoff)."""
+
+
+class ChainReport(_Frozen):
+    url: str
+    """The page, normalised."""
+    site_key: str
+    chain: TagChain
+    ok: bool
+    """Whether the chain led to media."""
+    steps: list[StepTrace]
+    """What each step found, as far as the chain got."""
+    media: list[MediaCandidate] = Field(default_factory=list[MediaCandidate])
+    """The media it led to (with its type and size, when its server said)."""
+    title: str | None = None
+    """The page's title."""
+    signed_in: bool = False
+    """Whether the site's cookies were sent (it wanted a login)."""
+    error: ErrorInfo | None = None
+    """Why the chain did not lead to media, when it did not."""
+
+
+class ChainSpec(_Frozen):
+    """A tag chain to use for a site, or for a part of it."""
+
+    chain: ChainInput
+    """The tag chain: its one-line shorthand, e.g. "iframe#player@src >> video source@src", or
+    a chain (fetch, headers, steps, handoff)."""
+    pattern: Regex | None = None
+    """Use it only for the site's URLs whose path this regex is found in (e.g. "^/watch/");
+    by default for the whole site."""
+    priority: int = 0
+    """Lower is tried first, among the site's strategies."""
+    requires_auth: bool = False
+    """Send the site's cookies from the first try."""
+
+
+class SetChainRequest(ChainSpec):
+    """Save a tag chain for a site (or a part of it)."""
+
+    site: SiteKey
+    """The site: its key (e.g. example.com), a host (www.example.com) or a URL on it."""
+
+
+class ImportChainsRequest(_Frozen):
+    """Save the tag chains in a chain file."""
+
+    yaml: str
+    """A chain file's text (YAML): a chain a document (`---` between them), each with its site,
+    as export_chain gives them."""
+
+
+class ImportedChains(_Frozen):
+    strategies: list[Strategy]
+    """The strategies the chains were saved as, in the file's order."""
+
+
+class ChainFile(_Frozen):
+    site: str
+    chains: list[SiteChain]
+    """The site's chains, in the order the databases keep them (by priority)."""
+    yaml: str
+    """The same as a chain file (YAML), which import_chains (and `udl chain import`) reads."""
+
+
+# ---------------------------------------------------------------------------------------------
+# udl itself
+# ---------------------------------------------------------------------------------------------
 
 
 class ListDatabasesRequest(_Frozen):

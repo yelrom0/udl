@@ -63,14 +63,17 @@ def script(
     matches: Mapping[str, float] | None = None,
     confidence: float = 0.8,
     chained: Mapping[str, FakeMedia | str] | None = None,
+    suggested: Mapping[str, Mapping[str, str]] | None = None,
 ) -> dict[str, JsonValue]:
     """A fake tool's [tools.<name>] table: the media each URL gives (FakeMedia, or just its
-    content), the URLs that fail (with an ErrorCode), the URLs it matches offline and the media
-    each URL gives when the tool follows a tag chain."""
+    content), the URLs that fail (with an ErrorCode), the URLs it matches offline, the media
+    each URL gives when the tool follows a tag chain and the chains it suggests for a page
+    ({chain: its media's URL})."""
     options = FakeOptions.model_validate(
         {
             "media": _media(media),
             "chained": _media(chained),
+            "suggested": {url: dict(chains) for url, chains in (suggested or {}).items()},
             "errors": dict(errors or {}),
             "matches": dict(matches or {}),
             "confidence": confidence,

@@ -35,7 +35,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from udl.config import Settings
 from udl.core.service import ServiceFactory, UDLService
 from udl.errors import ErrorCode, ErrorInfo, UDLError, Unauthorized
-from udl.interfaces.api.routes import downloads, sites, system
+from udl.interfaces.api.routes import chains, downloads, sites, system
 from udl.interfaces.mcp.server import create_server
 from udl.interfaces.security import API_KEY_HEADER, check_api_key
 
@@ -92,7 +92,7 @@ def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService)
         dependencies=[Security(require_api_key)],
     )
     app.state.settings = settings
-    for router in (downloads.router, sites.router, system.router):
+    for router in (downloads.router, sites.router, chains.router, system.router):
         app.include_router(router)
     # (A route rather than a mount, which would answer only /mcp/...)
     app.router.routes.append(Route(MCP_PATH, KeyRequired(mcp_app, settings)))
