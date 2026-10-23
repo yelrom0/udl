@@ -561,6 +561,30 @@ async def test_shutting_down_cancels_the_jobs_and_saves_them(tmp_path: Path) -> 
         assert record.status is JobStatus.CANCELLED
 
 
+async def test_shutting_down_waits_for_the_jobs_that_have_ended_to_be_saved(
+    tmp_path: Path,
+) -> None:
+    config = settings(tmp_path, tools={"http": script({A: "a"})})
+
+    class Slow(DBManager):
+        async def update_download(self, record: DownloadRecord) -> None:
+            if record.status is JobStatus.FINISHED:
+                await asyncio.sleep(0.05)
+            await super().update_download(record)
+
+    async with Harness(config) as harness:
+        slow = Slow(config.db, registry())
+        await slow.connect()
+        batch = await harness.jobs.submit([JobSpec(url=URL.parse(A))], db=slow)
+        await harness.events(batch.id)  # (until its last event: it is still being saved)
+
+        await harness.jobs.shutdown()
+
+        [record] = await slow.list_downloads(DownloadQuery())
+        await slow.close()
+    assert record.status is JobStatus.FINISHED
+
+
 async def test_a_runner_that_raises_cancelled_cancels_the_job(tmp_path: Path) -> None:
     class Cancels:
         async def run(

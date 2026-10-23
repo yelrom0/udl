@@ -203,8 +203,12 @@ class JobManager:
         return [job.info() for job in jobs]
 
     async def shutdown(self) -> None:
-        """Cancel every job that has not ended, and wait for them to stop (and be saved)."""
+        """Cancel every job that has not ended, and wait for every job to stop and be saved
+        (a job that has just ended may still be saving)."""
         await self._stop(list(self._jobs.values()))
+        saving = [job.task for job in self._jobs.values() if job.task and not job.task.done()]
+        if saving:
+            await asyncio.wait(saving)
 
     def events(self, id_: UUID) -> AsyncGenerator[JobEvent]:
         """What happens to a job, or to every job of a batch: first what has happened (the
