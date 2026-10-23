@@ -1,0 +1,178 @@
+"""
+---------------
+- resolver.py -
+---------------
+
+The resolver: which downloaders to try on a URL, and in what order. Each is a Candidate; the
+executor tries them in turn until one downloads the URL.
+
+Precedence (highest first):
+
+1. the request's tool (`--tool`): it is the only candidate;
+2. the strategy of the site's plugin (Phase 6), which encodes deliberate behaviour;
+3. the site's stored strategies, from every database (DBManager's read policy): those that are
+   enabled and whose url_pattern matches the URL's path, best first (see strategy_rank);
+4. the probe chain: the tools in `probe_order`.
+
+A tool is not offered twice with the same options.
+"""
+
+# System Imports
+import json
+import logging
+import re
+from collections.abc import AsyncIterator, Iterable, Iterator, Sequence
+from enum import StrEnum
+from pathlib import Path
+from typing import Protocol
+from uuid import UUID
+
+# Package Imports
+from pydantic import BaseModel, ConfigDict, Field
+
+# Local Imports
+from udl.config import Settings
+from udl.core.tools import Toolbox
+from udl.core.urls import URL
+from udl.db.manager import DBManager
+from udl.db.models import JsonObject, Strategy, StrategySource
+from udl.errors import DatabaseError
+
+log = logging.getLogger(__name__)
+
+
+class CandidateSource(StrEnum):
+    """Why a downloader is a candidate."""
+
+    REQUEST = "request"  # the request named it
+    PLUGIN = "plugin"  # the site's plugin chose it
+    STORED = "stored"  # a stored strategy for the site
+    PROBE = "probe"  # the probe chain
+
+
+class Candidate(BaseModel):
+    """A downloader to try a URL with."""
+
+    model_config = ConfigDict(frozen=True)
+
+    tool: str
+    source: CandidateSource
+    options: JsonObject = Field(default_factory=dict)  # over the tool's [tools.<name>] table
+    requires_auth: bool = False  # sign in (send the site's cookies) from the start
+    strategy: Strategy | None = None  # the stored strategy (source STORED)
+
+    @property
+    def key(self) -> tuple[str, str]:
+        """What makes two candidates the same: the tool and its options."""
+        return (self.tool, json.dumps(self.options, sort_keys=True))
+
+
+class SiteBehaviour(Protocol):
+    """What the resolution engine asks of a site plugin (Phase 6's SitePlugin)."""
+
+    def matches(self, url: URL) -> bool:
+        """Whether this plugin handles the URL's site."""
+        ...
+
+    def strategy(self, url: URL) -> Strategy | None:
+        """The strategy to try first on the URL, if the plugin chooses one."""
+        ...
+
+    def output_dir(self, url: URL) -> Path | None:
+        """Where the URL's download goes, if the plugin says."""
+        ...
+
+
+def strategy_rank(strategy: Strategy) -> tuple[bool, int, bool, int, float, UUID]:
+    """The order stored strategies are tried in (lower first): one whose url_pattern matched
+    before a site-wide one, then by priority, a manual one before a learned one, one that did
+    not fail last time before one that did (fewest failures in a row first), the best success
+    rate (counting one success and one failure more, so an untried strategy sits at a half),
+    and finally the id, so the order is always the same."""
+    rate = (strategy.success_count + 1) / (strategy.success_count + strategy.failure_count + 2)
+    return (
+        strategy.url_pattern is None,
+        strategy.priority,
+        strategy.source is not StrategySource.MANUAL,
+        strategy.consecutive_failures,
+        -rate,
+        strategy.id,
+    )
+
+
+def applicable(strategies: Iterable[Strategy], url: URL) -> list[Strategy]:
+    """The strategies to try on `url`: the enabled ones whose url_pattern (if any) is found in
+    its path, in strategy_rank order."""
+    path = url.path
+    found = [
+        strategy
+        for strategy in strategies
+        if strategy.enabled
+        and (strategy.url_pattern is None or re.search(strategy.url_pattern, path))
+    ]
+    return sorted(found, key=strategy_rank)
+
+
+class Resolver:
+    """Works out which downloaders to try on a URL."""
+
+    def __init__(
+        self, settings: Settings, toolbox: Toolbox, site_plugins: Sequence[SiteBehaviour] = ()
+    ) -> None:
+        self._toolbox = toolbox
+        self._site_plugins = list(site_plugins)
+        self._probe_order: list[str] = []
+        for name in settings.probe_order:
+            if toolbox.has(name):
+                self._probe_order.append(name)
+            else:
+                log.warning("probe_order names %r, which is not an installed downloader", name)
+
+    def site_plugin(self, url: URL) -> SiteBehaviour | None:
+        """The site's plugin: the first that matches the URL."""
+        return next((plugin for plugin in self._site_plugins if plugin.matches(url)), None)
+
+    async def candidates(
+        self, url: URL, *, db: DBManager, tool: str | None = None, reprobe: bool = False
+    ) -> AsyncIterator[Candidate]:
+        """The candidates for `url`, best first. `tool` (the request's) is the only one when
+        given; `reprobe` skips the stored strategies."""
+        if tool is not None:
+            yield Candidate(tool=tool, source=CandidateSource.REQUEST)
+            return
+        stored = [] if reprobe else applicable(await self._stored(url, db), url)
+        offered: set[tuple[str, str]] = set()
+        for candidate in self._in_order(url, stored):
+            if candidate.key not in offered:
+                offered.add(candidate.key)
+                yield candidate
+
+    def probe_chain(self, url: URL) -> list[Candidate]:
+        """The probe chain's candidates for `url`."""
+        return [Candidate(tool=name, source=CandidateSource.PROBE) for name in self._probe_order]
+
+    def _in_order(self, url: URL, stored: list[Strategy]) -> Iterator[Candidate]:
+        plugin = self.site_plugin(url)
+        if plugin is not None and (chosen := plugin.strategy(url)) is not None:
+            yield Candidate(
+                tool=chosen.tool,
+                source=CandidateSource.PLUGIN,
+                options=chosen.options,
+                requires_auth=chosen.requires_auth,
+            )
+        for strategy in stored:
+            yield Candidate(
+                tool=strategy.tool,
+                source=CandidateSource.STORED,
+                options=strategy.options,
+                requires_auth=strategy.requires_auth,
+                strategy=strategy,
+            )
+        yield from self.probe_chain(url)  # (only worked out once it is reached)
+
+    async def _stored(self, url: URL, db: DBManager) -> list[Strategy]:
+        try:
+            return await db.strategies_for(url.site_key)
+        except DatabaseError as e:
+            log.warning("Could not read the strategies for %s, so probing: %s", url.site_key, e)
+            return []
