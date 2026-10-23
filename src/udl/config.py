@@ -194,8 +194,10 @@ class Settings(BaseSettings):
     filename_template: str = "{site}/{title}.{ext}"
     max_concurrent: PositiveInt = 4
     max_per_site: PositiveInt = 2
+    # The order downloaders are tried in when nothing is known about a URL: those that match it
+    # offline first, then the others (see udl.core.resolver).
     probe_order: list[str] = Field(
-        default_factory=lambda: ["yt-dlp", "gallery-dl", "http", "scraper", "browser"]
+        default_factory=lambda: ["http", "yt-dlp", "gallery-dl", "scraper", "browser"]
     )
     heal_threshold: PositiveInt = 3
     cookies_from_browser: str | None = None

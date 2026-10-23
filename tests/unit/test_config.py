@@ -25,7 +25,7 @@ download_dir = "~/Downloads/udl"
 filename_template = "{site}/{title}.{ext}"
 max_concurrent = 4
 max_per_site = 2
-probe_order = ["yt-dlp", "gallery-dl", "http", "scraper", "browser"]
+probe_order = ["http", "yt-dlp", "gallery-dl", "scraper", "browser"]
 heal_threshold = 3
 cookies_from_browser = "firefox"          # optional
 plugin_dirs = ["~/.config/udl/plugins"]
@@ -89,6 +89,11 @@ def test_defaults_come_from_the_user_dirs(isolated_user_dirs: Path) -> None:
             primary=True,
         )
     ]
+
+
+def test_the_probe_chain_checks_whether_a_url_is_a_file_before_yt_dlp_guesses() -> None:
+    # http's HEAD request is cheap and certain; yt-dlp's generic extractor is neither.
+    assert Settings().probe_order == ["http", "yt-dlp", "gallery-dl", "scraper", "browser"]
 
 
 def test_load_reads_the_config_file_in_the_user_config_dir() -> None:

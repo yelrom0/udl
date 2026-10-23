@@ -12,9 +12,14 @@ Precedence (highest first):
 2. the strategy of the site's plugin (Phase 6), which encodes deliberate behaviour;
 3. the site's stored strategies, from every database (DBManager's read policy): those that are
    enabled and whose url_pattern matches the URL's path, best first (see strategy_rank);
-4. the probe chain: the tools in `probe_order`.
+4. the probe chain: the tools in `probe_order`, those that match the URL offline (no network:
+   a site's yt-dlp or gallery-dl extractor, a media file's extension) first. The others are
+   checked over the network by trying them, in that order: by default http (is the URL itself a
+   file?), yt-dlp's generic extractor, gallery-dl, the scraper, and the browser, the most
+   expensive, last.
 
-A tool is not offered twice with the same options.
+A tool is not offered twice with the same options. The probe chain is worked out only once it is
+reached, since matching offline asks every extractor of yt-dlp and gallery-dl.
 """
 
 # System Imports
@@ -36,7 +41,8 @@ from udl.core.tools import Toolbox
 from udl.core.urls import URL
 from udl.db.manager import DBManager
 from udl.db.models import JsonObject, Strategy, StrategySource
-from udl.errors import DatabaseError
+from udl.errors import DatabaseError, UDLError
+from udl.plugins.downloaders.base import MatchResult
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +66,7 @@ class Candidate(BaseModel):
     options: JsonObject = Field(default_factory=dict)  # over the tool's [tools.<name>] table
     requires_auth: bool = False  # sign in (send the site's cookies) from the start
     strategy: Strategy | None = None  # the stored strategy (source STORED)
+    match: MatchResult | None = None  # how it matched the URL offline (source PROBE)
 
     @property
     def key(self) -> tuple[str, str]:
@@ -148,8 +155,15 @@ class Resolver:
                 yield candidate
 
     def probe_chain(self, url: URL) -> list[Candidate]:
-        """The probe chain's candidates for `url`."""
-        return [Candidate(tool=name, source=CandidateSource.PROBE) for name in self._probe_order]
+        """The probe chain's candidates for `url`: the tools that match it offline, then the
+        others, each in probe_order."""
+        matched: list[Candidate] = []
+        others: list[Candidate] = []
+        for name in self._probe_order:
+            match = self._match(name, url)
+            candidate = Candidate(tool=name, source=CandidateSource.PROBE, match=match)
+            (others if match is None else matched).append(candidate)
+        return [*matched, *others]
 
     def _in_order(self, url: URL, stored: list[Strategy]) -> Iterator[Candidate]:
         plugin = self.site_plugin(url)
@@ -169,6 +183,15 @@ class Resolver:
                 strategy=strategy,
             )
         yield from self.probe_chain(url)  # (only worked out once it is reached)
+
+    def _match(self, name: str, url: URL) -> MatchResult | None:
+        try:
+            return self._toolbox.get(name).match(url.value)
+        except UDLError as e:  # its options are invalid: trying it will say so
+            log.debug("Could not match %s offline with %s: %s", url, name, e)
+        except Exception:  # a plugin's bug must not stop the others (logged with its traceback)
+            log.warning("The %s downloader failed to match %s offline", name, url, exc_info=True)
+        return None
 
     async def _stored(self, url: URL, db: DBManager) -> list[Strategy]:
         try:

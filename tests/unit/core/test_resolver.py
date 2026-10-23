@@ -22,7 +22,9 @@ from support.engine import (
     FakeSitePlugin,
     connection,
     databases,
+    fake_tool,
     registry,
+    script,
     settings,
 )
 from udl.config import ReadPolicy, Settings
@@ -32,6 +34,8 @@ from udl.core.urls import URL
 from udl.db.manager import DBManager
 from udl.db.models import Site, Strategy, StrategySource
 from udl.errors import DatabaseError
+from udl.plugins.downloaders.base import MatchResult
+from udl.plugins.registry import DOWNLOADERS, PluginRegistry
 
 WATCH = URL.parse("https://example.com/watch/1")
 SHORT = URL.parse("https://example.com/shorts/2")
@@ -209,6 +213,97 @@ async def test_tools_in_probe_order_that_are_not_installed_are_skipped_with_a_wa
 
     assert tools(found) == probing("http", "scraper")
     assert "no-such-tool" in caplog.text
+
+
+# ---------------------------------------------------------------------------------------------
+# The probe chain: offline matches first, then the network checks, each in probe_order
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_tools_that_match_the_url_offline_go_first(tmp_path: Path, db: DBManager) -> None:
+    config = settings(
+        tmp_path,
+        tools={
+            "scraper": script(matches={WATCH.value: 0.4}),
+            "gallery-dl": script(matches={WATCH.value: 0.9}),
+        },
+    )
+
+    found = await candidates(resolver(config), WATCH, db)
+
+    assert tools(found) == probing("gallery-dl", "scraper", "http", "yt-dlp", "browser")
+    assert found[0].match == MatchResult(confidence=0.9)
+    assert found[2].match is None
+
+
+async def test_probe_order_orders_the_offline_matches_too(tmp_path: Path, db: DBManager) -> None:
+    config = settings(
+        tmp_path,
+        probe_order=["browser", "scraper", "http"],
+        tools={name: script(matches={WATCH.value: 0.5}) for name in ("http", "browser")},
+    )
+
+    found = await candidates(resolver(config), WATCH, db)
+
+    assert tools(found) == probing("browser", "http", "scraper")
+
+
+async def test_a_tool_whose_options_are_invalid_cannot_match_offline(
+    tmp_path: Path, db: DBManager
+) -> None:
+    config = settings(tmp_path, tools={"scraper": {"no_such_option": True}})
+
+    found = await candidates(resolver(config), WATCH, db)
+
+    # It stays in the chain: trying it reports the problem.
+    assert tools(found) == probing(*TOOLS)
+
+
+async def test_a_tool_that_fails_to_match_offline_is_treated_as_no_match(
+    tmp_path: Path, db: DBManager, caplog: pytest.LogCaptureFixture
+) -> None:
+    class Broken(fake_tool("scraper")):
+        def match(self, url: str) -> MatchResult | None:
+            raise RuntimeError("bug in the plugin")
+
+    plugins = registry()
+    plugins.register(DOWNLOADERS, Broken)
+    config = settings(tmp_path, tools={"http": script(matches={WATCH.value: 0.5})})
+
+    found = await candidates(Resolver(config, Toolbox(config, plugins)), WATCH, db)
+
+    assert tools(found) == probing("http", "yt-dlp", "gallery-dl", "scraper", "browser")
+    assert "bug in the plugin" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("url", "chain"),
+    [
+        # A video site yt-dlp has an extractor for.
+        (
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            ["yt-dlp", "http", "gallery-dl", "scraper", "browser"],
+        ),
+        # A direct link to a media file: http, then gallery-dl's direct link extractor.
+        (
+            "https://example.com/media/clip.mp4",
+            ["http", "gallery-dl", "yt-dlp", "scraper", "browser"],
+        ),
+        # A page nothing recognises: check whether it is a file, then yt-dlp's generic
+        # extractor, then the scraper, and the browser last.
+        (
+            "https://example.com/some/page",
+            ["http", "yt-dlp", "gallery-dl", "scraper", "browser"],
+        ),
+    ],
+)
+async def test_the_default_probe_chain_with_udl_s_own_downloaders(
+    url: str, chain: list[str], tmp_path: Path
+) -> None:
+    config = settings(tmp_path, probe_order=Settings().probe_order)
+    toolbox = Toolbox(config, PluginRegistry.discover())
+
+    assert [c.tool for c in Resolver(config, toolbox).probe_chain(URL.parse(url))] == chain
 
 
 # ---------------------------------------------------------------------------------------------
