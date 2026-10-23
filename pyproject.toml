@@ -13,6 +13,7 @@ dependencies = [
     "mcp>=2.3.0",
     "platformdirs>=4.12.4",
     "pydantic-settings>=2.15.0",
+    "pyyaml>=6.0.3",
     "rich>=15.0.0",
     "selectolax>=1.0.0",
     "sqlmodel>=0.0.48",
@@ -58,6 +59,7 @@ dev = [
     "pytest-httpserver>=1.2.0",
     "respx>=0.23.1",
     "ruff>=0.17.0",
+    "types-pyyaml>=6.0.12.20260906",
     "types-yt-dlp>=2026.8.19.20261008",
     "udl[browser]",
 ]
