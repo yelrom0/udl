@@ -23,6 +23,7 @@ from udl.core.urls import URL
 from udl.db.models import Strategy
 from udl.errors import PluginError
 from udl.plugins.downloaders.base import DownloadContext, DownloadResult
+from udl.plugins.requirements import Requirement
 
 
 def on_domains(url: URL, domains: Iterable[str]) -> bool:
@@ -60,6 +61,9 @@ class SitePlugin:
     domains: ClassVar[tuple[str, ...]] = ()
     # Lower is asked first, when several plugins match a URL.
     priority: ClassVar[int] = 0
+    # What it needs installed (e.g. a program its post_process runs): udl does without a plugin
+    # that is missing something, and `udl plugins list` says what.
+    requires: ClassVar[tuple[Requirement, ...]] = ()
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)

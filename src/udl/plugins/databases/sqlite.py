@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 # Local Imports
 from udl.config import DBConnectionConfig, expand_path
 from udl.errors import ConfigError
+from udl.plugins.requirements import Requirement
 
 from .sqlalchemy import SQLAlchemyDatabase
 
@@ -40,6 +41,7 @@ class SQLitePlugin(SQLAlchemyDatabase):
     """
 
     name = "sqlite"
+    requires = (Requirement.module("aiosqlite", hint="Install aiosqlite: `uv add aiosqlite`."),)
 
     def __init__(self, connection: DBConnectionConfig) -> None:
         super().__init__(connection)

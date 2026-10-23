@@ -50,6 +50,7 @@ from udl.core.models import (
 from udl.db.models import JobStatus, Strategy
 from udl.errors import ErrorInfo
 from udl.plugins.downloaders.base import MediaCandidate, MediaKind
+from udl.plugins.registry import DATABASES, DOWNLOADERS, SITES
 
 _STATUS: Final[dict[JobStatus, tuple[str, str]]] = {
     JobStatus.QUEUED: ("…", "dim"),
@@ -67,6 +68,13 @@ def _folded(header: str) -> Column:
 
 def _when(at: datetime | None) -> str:
     return at.astimezone().strftime("%Y-%m-%d %H:%M") if at else ""
+
+
+_PLUGIN_TYPES: Final[dict[str, str]] = {
+    DATABASES.group: "database",
+    DOWNLOADERS.group: "downloader",
+    SITES.group: "site",
+}
 
 
 def _yes(flag: bool | None) -> str:
@@ -438,7 +446,9 @@ def databases(console: Console, listed: DatabaseList) -> None:
 
 
 def plugins(console: Console, listed: PluginList) -> None:
-    table = Table("Kind", "Name", "Source", "Available", "Needs", _folded("Origin"))
+    """The plugins by type (a site plugin with the sites it handles), whether each can run, and
+    where local plugins are read from."""
+    table = Table("Type", "Name", "Source", "Available", "Needs", _folded("Origin"))
     for plugin in listed.plugins:
         needs = [
             f"{requirement.name} ({requirement.kind})"
@@ -447,17 +457,23 @@ def plugins(console: Console, listed: PluginList) -> None:
         ]
         if plugin.problem:
             needs.append(plugin.problem)
+        origin = escape(plugin.origin)
+        if plugin.overrides:
+            origin += f"\n[dim](overrides {escape(plugin.overrides)})[/]"
         table.add_row(
-            plugin.kind.removeprefix("udl."),
-            plugin.name,
+            _PLUGIN_TYPES.get(plugin.kind, plugin.kind),
+            "\n".join([plugin.name, *(f"[dim]{escape(d)}[/]" for d in plugin.domains)]),
             plugin.source,
             _yes(plugin.available),
             escape("\n".join(needs)),
-            escape(plugin.origin),
+            origin,
         )
     console.print(table)
     for problem in listed.problems:
         console.print(f"[red]Could not load[/] {escape(problem.origin)}: {escape(problem.error)}")
+    if listed.plugin_dirs:
+        dirs = ", ".join(escape(str(directory)) for directory in listed.plugin_dirs)
+        console.print(f"Local plugins (a single .py file each) are read from {dirs}.")
 
 
 def config(console: Console, info: ConfigInfo) -> None:

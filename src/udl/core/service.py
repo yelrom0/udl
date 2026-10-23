@@ -82,7 +82,8 @@ from udl.db.models import DownloadQuery, Site, SiteQuery, Strategy, StrategySour
 from udl.errors import AuthRequired, DoesNotExist, DownloadError, ErrorInfo, PluginError, UDLError
 from udl.plugins.downloaders.auth import AuthCookies
 from udl.plugins.downloaders.base import Cookie, ProbeContext, ProbeResult
-from udl.plugins.registry import DOWNLOADERS, PluginInfo, PluginRegistry
+from udl.plugins.registry import DATABASES, DOWNLOADERS, SITES, PluginInfo, PluginRegistry
+from udl.plugins.requirements import unmet
 from udl.plugins.sites.base import SitePlugin
 
 log = logging.getLogger(__name__)
@@ -728,24 +729,42 @@ class UDLService:
 
     @operation("list_plugins")
     async def list_plugins(self, request: ListPluginsRequest) -> PluginList:
-        """List udl's plugins (database engines and downloaders: built in, installed or local
-        files) and whether each downloader can run, with what to install for those that cannot.
-        Plugins that failed to load are listed as problems."""
+        """List udl's plugins (database engines, downloaders and site plugins: built in,
+        installed, or local files in the plugin dirs), whether each can run (with what to install
+        for one that cannot), and the sites each site plugin handles. Plugins that failed to load
+        are listed as problems."""
         return PluginList(
             plugins=[self._plugin(info) for info in self.registry.plugins()],
             problems=self.registry.problems,
+            plugin_dirs=self.settings.plugin_dirs,
         )
 
     def _plugin(self, info: PluginInfo) -> PluginStatus:
-        status = PluginStatus.model_validate(info.model_dump())
-        if info.kind != DOWNLOADERS.group:
-            return status
-        try:
-            downloader = self.toolbox.get(info.name)
-        except UDLError as e:  # its options are invalid
-            return status.model_copy(update={"available": False, "problem": e.message})
-        missing = downloader.missing()
-        return status.model_copy(update={"available": not missing, "missing": missing})
+        """A plugin, and whether it can run: what it needs is installed and, for a downloader,
+        its options are valid, or, for a site plugin, it starts."""
+        domains: list[str] = []
+        problem: str | None = None
+        if info.kind == DOWNLOADERS.group:
+            try:
+                missing = self.toolbox.get(info.name).missing()
+            except UDLError as e:  # its options are invalid
+                missing, problem = [], e.message
+        elif info.kind == SITES.group:
+            site = self.registry.get(SITES, info.name)
+            domains = list(site.domains)
+            missing = unmet(site.requires)
+            problem = None if missing else _cannot_start(site)
+        else:  # a database
+            missing = unmet(self.registry.get(DATABASES, info.name).requires)
+        return PluginStatus.model_validate(
+            {
+                **info.model_dump(),
+                "available": not (missing or problem),
+                "missing": missing,
+                "problem": problem,
+                "domains": domains,
+            }
+        )
 
     @operation("get_config")
     async def get_config(self, request: GetConfigRequest) -> ConfigInfo:
@@ -758,6 +777,15 @@ async def _suggestions(
     suggester: ChainSuggester, url: URL, cookies: list[Cookie]
 ) -> list[ChainSuggestion]:
     return await suggester.suggest_chains(ProbeContext(url=url.value, cookies=cookies))
+
+
+def _cannot_start(plugin: type[SitePlugin]) -> str | None:
+    """Why a site plugin cannot start, or None when it can."""
+    try:
+        plugin()
+    except Exception as e:  # noqa: BLE001 - whatever it raises is why
+        return f"{type(e).__name__}: {e}"
+    return None
 
 
 def _with_tool(error: DownloadError, tool: str) -> ErrorInfo:

@@ -69,12 +69,12 @@ from udl.plugins.downloaders.base import (
     MediaKind,
     ProbeContext,
     ProbeResult,
-    Requirement,
     cancellable,
 )
 from udl.plugins.downloaders.errors import chromium_error, http_status_error
 from udl.plugins.downloaders.http import PAGE_TYPES
 from udl.plugins.downloaders.media import Find, stream_kind, unique, url_name
+from udl.plugins.requirements import Requirement
 
 TOOL: Final[str] = "browser"
 

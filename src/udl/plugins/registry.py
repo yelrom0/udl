@@ -63,6 +63,7 @@ class PluginInfo(BaseModel):
     name: str
     source: PluginSource
     origin: str  # "module:attribute" for entry points and code, the file for plugin dirs
+    overrides: str | None = None  # the origin of the plugin of the same name it replaced
 
 
 class PluginProblem(BaseModel):
@@ -148,14 +149,16 @@ class PluginRegistry:
         name = getattr(cls, "name", None)
         if not isinstance(name, str) or not name:
             raise PluginError(f"{cls.__qualname__} has no name")
+        plugins = self._plugins[kind.group]
+        old = plugins.get(name)
         info = PluginInfo(
             kind=kind.group,
             name=name,
             source=source,
             origin=origin or f"{cls.__module__}:{cls.__qualname__}",
+            overrides=old.info.origin if old else None,
         )
-        plugins = self._plugins[kind.group]
-        if old := plugins.get(name):
+        if old:
             log.warning(
                 "The %s plugin %r from %s overrides the one from %s",
                 kind.group,

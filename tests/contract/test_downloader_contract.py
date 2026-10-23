@@ -45,9 +45,9 @@ from udl.plugins.downloaders.base import (
     MatchResult,
     ProbeContext,
     ProbeResult,
-    Requirement,
 )
 from udl.plugins.registry import DOWNLOADERS, PluginRegistry
+from udl.plugins.requirements import Requirement
 
 # A cancelled download must stop this soon (the slow file takes far longer to download).
 CANCEL_WITHIN: Final[float] = 3.0

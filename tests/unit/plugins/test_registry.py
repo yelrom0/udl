@@ -209,7 +209,8 @@ def test_a_local_plugin_overrides_an_installed_one_and_logs_a_warning(
     registry = PluginRegistry.discover([plugin_dir], kinds=[WIDGETS])
 
     assert registry.get(WIDGETS, "gear")().spin() == "local"
-    assert [info.source for info in registry.plugins()] == [PluginSource.LOCAL]
+    [info] = registry.plugins()
+    assert (info.source, info.overrides) == (PluginSource.LOCAL, f"{module}:Gear")
     [record] = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert f"{module}:Gear" in record.getMessage()
     assert str(path) in record.getMessage()
@@ -225,6 +226,8 @@ def test_later_plugin_dirs_override_earlier_ones(tmp_path: Path) -> None:
     registry = PluginRegistry.discover([first, second], kinds=[WIDGETS])
 
     assert registry.get(WIDGETS, "gear")().spin() == "second"
+    [info] = registry.plugins()
+    assert info.overrides == str(first / "gears.py")  # (the one it replaced, not the first)
 
 
 def test_a_missing_plugin_dir_is_skipped(tmp_path: Path) -> None:

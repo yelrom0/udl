@@ -16,9 +16,7 @@ cancelled token stops both.
 import asyncio
 import functools
 import http.cookiejar
-import importlib.util
 import logging
-import shutil
 import string
 import threading
 from abc import ABC, abstractmethod
@@ -57,6 +55,7 @@ from udl.errors import (
     UDLError,
     UnsupportedURL,
 )
+from udl.plugins.requirements import Requirement, unmet
 
 if TYPE_CHECKING:
     from udl.plugins.registry import PluginRegistry
@@ -93,40 +92,6 @@ class _Frozen(BaseModel):
 class DownloaderOptions(_Frozen):
     """The base of every downloader's options model ([tools.<name>] in the config, and a
     strategy's `options`). Unknown keys are rejected, so a typo is an error, not ignored."""
-
-
-# ---------------------------------------------------------------------------------------------
-# Requirements
-# ---------------------------------------------------------------------------------------------
-
-
-class RequirementKind(StrEnum):
-    BINARY = "binary"  # an executable on PATH
-    MODULE = "module"  # an importable Python module
-
-
-class Requirement(_Frozen):
-    """Something a downloader needs installed."""
-
-    kind: RequirementKind
-    name: str
-    hint: str | None = None  # how to install it
-
-    @classmethod
-    def binary(cls, name: str, *, hint: str | None = None) -> Self:
-        return cls(kind=RequirementKind.BINARY, name=name, hint=hint)
-
-    @classmethod
-    def module(cls, name: str, *, hint: str | None = None) -> Self:
-        return cls(kind=RequirementKind.MODULE, name=name, hint=hint)
-
-    def met(self) -> bool:
-        if self.kind is RequirementKind.BINARY:
-            return shutil.which(self.name) is not None
-        try:
-            return importlib.util.find_spec(self.name) is not None
-        except ModuleNotFoundError:  # a parent package is missing
-            return False
 
 
 # ---------------------------------------------------------------------------------------------
@@ -562,7 +527,7 @@ class Downloader[O: DownloaderOptions = DownloaderOptions](ABC):
         return self.requires
 
     def missing(self) -> list[Requirement]:
-        return [requirement for requirement in self.requirements() if not requirement.met()]
+        return unmet(self.requirements())
 
     def available(self) -> bool:
         """Whether everything this downloader needs is installed."""

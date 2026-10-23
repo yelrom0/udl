@@ -31,9 +31,9 @@ from udl.plugins.downloaders.base import (
     FilenameTemplate,
     MediaCandidate,
     ProbeResult,
-    Requirement,
 )
 from udl.plugins.registry import PluginProblem, PluginSource
+from udl.plugins.requirements import Requirement
 
 
 class _Frozen(BaseModel):
@@ -386,27 +386,36 @@ class DatabaseList(_Frozen):
 
 
 class ListPluginsRequest(_Frozen):
-    """List the plugins (databases, downloaders) and whether each can run."""
+    """List the plugins (databases, downloaders, sites) and whether each can run."""
 
 
 class PluginStatus(_Frozen):
     kind: str
-    """The plugin's kind (its entry point group), e.g. "udl.downloaders"."""
+    """The plugin's kind (its entry point group): "udl.databases", "udl.downloaders" or
+    "udl.sites"."""
     name: str
     source: PluginSource
+    """builtin (udl's own), installed (another package's) or local (a file in a plugin dir)."""
     origin: str
-    available: bool | None = None
-    """(Downloaders) Whether it can run; None for other plugins."""
+    """Where it is: its module and class, or its file."""
+    overrides: str | None = None
+    """The origin of the plugin of the same name it replaced, if any."""
+    available: bool
+    """Whether it can run: what it needs is installed (and it is configured and starts)."""
     missing: list[Requirement] = Field(default_factory=list[Requirement])
     """What to install for it to run."""
     problem: str | None = None
     """Why it cannot run, when it is not something to install."""
+    domains: list[str] = Field(default_factory=list[str])
+    """(Site plugins) The sites it handles, and their subdomains."""
 
 
 class PluginList(_Frozen):
     plugins: list[PluginStatus]
     problems: list[PluginProblem]
     """The plugins that could not be loaded."""
+    plugin_dirs: list[Path]
+    """The folders local plugins are read from: each is a single .py file there."""
 
 
 class GetConfigRequest(_Frozen):

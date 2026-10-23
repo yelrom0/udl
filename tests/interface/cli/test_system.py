@@ -17,7 +17,7 @@ from pydantic import SecretStr
 from support.cli import CLI
 from support.engine import connection
 from support.interfaces import Harness
-from udl.config import APISettings
+from udl.config import APISettings, config_dir
 from udl.core.models import ConfigInfo, DatabaseList, PluginList
 
 
@@ -54,6 +54,8 @@ def test_plugins_list_lists_the_plugins_and_whether_they_can_run(cli: CLI) -> No
     for name in ("memory", "http", "yt-dlp"):
         assert name in result.stdout
     assert {plugin.name for plugin in listed.plugins} >= {"memory", "http", "browser"}
+    assert listed.plugin_dirs == [config_dir() / "plugins"]
+    assert "Local plugins (a single .py file each) are read from" in result.stdout
 
 
 def test_config_show_shows_the_settings_with_secrets_hidden(tmp_path: Path) -> None:

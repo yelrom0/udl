@@ -46,7 +46,6 @@ from udl.plugins.downloaders.base import (
     ProbeContext,
     ProbeResult,
     ProgressSink,
-    Requirement,
     cookie_header,
     run_blocking,
     template_parts,
@@ -54,6 +53,7 @@ from udl.plugins.downloaders.base import (
 )
 from udl.plugins.downloaders.errors import gallerydl_error, http_status_error, httpx_error
 from udl.plugins.downloaders.process import run_process
+from udl.plugins.requirements import Requirement
 
 log = logging.getLogger(__name__)
 

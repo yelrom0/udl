@@ -68,12 +68,12 @@ from udl.plugins.downloaders.base import (
     MediaKind,
     ProbeContext,
     ProbeResult,
-    Requirement,
     cancellable,
 )
 from udl.plugins.downloaders.errors import http_status_error
 from udl.plugins.downloaders.http import PAGE_TYPES, http_client
 from udl.plugins.downloaders.media import Find, media_type, page_title, stream_kind, unique
+from udl.plugins.requirements import Requirement
 
 log = logging.getLogger(__name__)
 

@@ -50,8 +50,6 @@ from udl.plugins.downloaders.base import (
     MediaCandidate,
     ProbeContext,
     ProbeResult,
-    Requirement,
-    RequirementKind,
     cancellable,
     cookie_header,
     default_downloader_for,
@@ -61,6 +59,7 @@ from udl.plugins.downloaders.base import (
     template_parts,
     threadsafe,
 )
+from udl.plugins.requirements import Requirement, RequirementKind
 
 URL = "https://example.com/watch/1"
 

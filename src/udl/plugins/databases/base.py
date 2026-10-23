@@ -18,6 +18,7 @@ from uuid import UUID
 # Local Imports
 from udl.config import DBConnectionConfig
 from udl.db.models import DownloadQuery, DownloadRecord, Outcome, Site, SiteQuery, Strategy
+from udl.plugins.requirements import Requirement
 
 
 class DatabasePlugin(ABC):
@@ -28,6 +29,8 @@ class DatabasePlugin(ABC):
     """
 
     name: ClassVar[str]  # what config uses to pick the plugin, e.g. "sqlite"
+    # What it needs installed, e.g. its driver (`udl plugins list` says what is missing).
+    requires: ClassVar[tuple[Requirement, ...]] = ()
 
     def __init__(self, connection: DBConnectionConfig) -> None:
         self.connection = connection

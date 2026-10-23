@@ -47,7 +47,6 @@ from udl.plugins.downloaders.base import (
     MediaCandidate,
     ProbeContext,
     ProbeResult,
-    Requirement,
     cancellable,
     render_template,
 )
@@ -60,6 +59,7 @@ from udl.plugins.downloaders.media import (
     url_name,
 )
 from udl.plugins.downloaders.process import run_process
+from udl.plugins.requirements import Requirement
 
 TOOL: Final[str] = "http"
 _DEFAULT_TEMPLATE: Final[str] = "{title}.{ext}"  # the name the server gives the file

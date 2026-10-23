@@ -47,9 +47,9 @@ from udl.plugins.downloaders.base import (
     MediaCandidate,
     MediaKind,
     ProbeResult,
-    Requirement,
 )
 from udl.plugins.registry import PluginProblem, PluginSource
+from udl.plugins.requirements import Requirement
 
 URL = "https://example.com/watch"
 NOW = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
@@ -263,6 +263,7 @@ def test_plugins_that_cannot_run_or_load() -> None:
             ),
         ],
         problems=[PluginProblem(kind=None, origin="broken.py", error="SyntaxError")],
+        plugin_dirs=[],
     )
 
     text = shown(render.plugins, listed)
@@ -270,6 +271,50 @@ def test_plugins_that_cannot_run_or_load() -> None:
     assert "curl (binary): pacman -S curl" in text
     assert "Invalid options" in text
     assert "Could not load broken.py: SyntaxError" in text
+    assert "read from" not in text  # (there are no plugin dirs)
+
+
+def test_plugins_by_type_with_the_sites_site_plugins_handle_and_what_they_override() -> None:
+    listed = PluginList(
+        plugins=[
+            PluginStatus(
+                kind="udl.databases",
+                name="sqlite",
+                source=PluginSource.BUILTIN,
+                origin="udl.plugins.databases.sqlite:SQLitePlugin",
+                available=True,
+            ),
+            PluginStatus(
+                kind="udl.sites",
+                name="youtube",
+                source=PluginSource.LOCAL,
+                origin="/home/me/.config/udl/plugins/youtube.py",
+                overrides="udl.plugins.sites.youtube:YouTubePlugin",
+                available=True,
+                domains=["youtube.com", "youtu.be"],
+            ),
+        ],
+        problems=[],
+        plugin_dirs=[Path("/home/me/.config/udl/plugins"), Path("/srv/udl/plugins")],
+    )
+
+    text = shown(render.plugins, listed)
+    rows = [
+        line.split("│") for line in text.splitlines() if "sqlite:" in line or "youtube.py" in line
+    ]
+
+    assert "Type" in text
+    assert [(row[1].strip(), row[2].strip()) for row in rows] == [
+        ("database", "sqlite"),
+        ("site", "youtube"),
+    ]
+    assert "youtube.com" in text
+    assert "youtu.be" in text
+    assert "overrides udl.plugins.sites.youtube:YouTubePlugin" in text
+    assert (
+        "Local plugins (a single .py file each) are read from /home/me/.config/udl/plugins, "
+        "/srv/udl/plugins." in text
+    )
 
 
 def test_every_line_of_a_hint_is_indented() -> None:

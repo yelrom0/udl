@@ -41,12 +41,12 @@ from udl.plugins.downloaders.base import (
     ProbeContext,
     ProbeResult,
     ProgressSink,
-    Requirement,
     run_blocking,
     template_parts,
     threadsafe,
 )
 from udl.plugins.downloaders.errors import ytdlp_error
+from udl.plugins.requirements import Requirement
 
 if TYPE_CHECKING:
     from yt_dlp import _YoutubeDLOptions  # pyright: ignore[reportPrivateUsage]

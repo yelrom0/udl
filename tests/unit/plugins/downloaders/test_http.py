@@ -10,8 +10,8 @@ The http downloader's offline parts: which URLs look like files, and what each b
 import pytest
 
 # Local Imports
-from udl.plugins.downloaders.base import Requirement
 from udl.plugins.downloaders.http import HttpBackend, HttpDownloader, HttpOptions
+from udl.plugins.requirements import Requirement
 
 
 @pytest.mark.parametrize(

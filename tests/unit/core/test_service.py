@@ -63,9 +63,10 @@ from udl.db.models import (
 )
 from udl.errors import ConfigError, DoesNotExist, ErrorCode, PluginError
 from udl.plugins.databases.memory import MemoryDatabase
-from udl.plugins.downloaders.base import Requirement
 from udl.plugins.registry import DATABASES, DOWNLOADERS, SITES, PluginRegistry
+from udl.plugins.requirements import Requirement
 from udl.plugins.sites.base import SitePlugin
+from udl.plugins.sites.youtube import YouTubePlugin
 
 A = "https://example.com/a"
 B = "https://example.com/b"
@@ -827,9 +828,82 @@ async def test_listing_the_plugins_says_which_downloaders_can_run(
     assert by_name["needs-a-binary"].missing == [
         Requirement.binary("udl-no-such-binary", hint="Install it")
     ]
-    assert by_name["memory"].available is None  # (only downloaders need anything installed)
-    assert by_name["memory"].kind == "udl.databases"
+    assert (by_name["memory"].kind, by_name["memory"].available) == ("udl.databases", True)
     assert [problem.origin for problem in found.problems] == [str(plugin_dir / "broken.py")]
+
+
+async def test_listing_the_plugins_says_which_databases_can_run(tmp_path: Path, make: Make) -> None:
+    class Remote(MemoryDatabase):
+        name = "remote"
+        requires: ClassVar[tuple[Requirement, ...]] = (
+            Requirement.module("udl_no_such_driver", hint="Install the driver"),
+        )
+
+    plugins = registry()
+    plugins.register(DATABASES, Remote)
+    service = await make(plugins=plugins)
+
+    found = {p.name: p for p in (await service.list_plugins(ListPluginsRequest())).plugins}
+
+    assert (found["remote"].available, found["remote"].missing) == (False, list(Remote.requires))
+    assert found["memory"].available is True
+
+
+class NeedsFfmpeg(FakeSitePlugin):
+    name = "needs-ffmpeg"
+    domains = ("example.org",)
+    requires: ClassVar[tuple[Requirement, ...]] = (
+        Requirement.binary("udl-no-such-ffmpeg", hint="Install ffmpeg"),
+    )
+
+
+class CannotStart(FakeSitePlugin):
+    name = "cannot-start"
+
+    def __init__(self) -> None:
+        raise RuntimeError("no API key")
+
+
+async def test_listing_the_plugins_shows_the_site_plugins_their_sites_and_whether_they_run(
+    tmp_path: Path, make: Make
+) -> None:
+    plugins = registry()
+    for plugin in (YouTubePlugin, NeedsFfmpeg, CannotStart):
+        plugins.register(SITES, plugin)
+    service = await make(plugins=plugins)
+
+    found = {p.name: p for p in (await service.list_plugins(ListPluginsRequest())).plugins}
+
+    youtube = found["youtube"]
+    assert (youtube.kind, youtube.available) == ("udl.sites", True)
+    assert youtube.domains == ["youtube.com", "youtu.be", "youtube-nocookie.com"]
+    assert (found["needs-ffmpeg"].available, found["needs-ffmpeg"].missing) == (
+        False,
+        list(NeedsFfmpeg.requires),
+    )
+    assert found["cannot-start"].available is False
+    assert found["cannot-start"].problem == "RuntimeError: no API key"
+    assert found["memory"].domains == []
+
+
+async def test_a_site_plugin_that_cannot_run_is_not_used(
+    tmp_path: Path, make: Make, caplog: pytest.LogCaptureFixture
+) -> None:
+    plugins = registry()
+    plugins.register(SITES, NeedsFfmpeg)
+    service = await make(plugins=plugins)
+
+    assert service.resolver.site_plugin(URL.parse("https://example.org/")) is None
+    assert "needs-ffmpeg site plugin needs udl-no-such-ffmpeg" in caplog.text
+
+
+async def test_listing_the_plugins_says_where_local_plugins_are_read_from(
+    tmp_path: Path, make: Make
+) -> None:
+    dirs = [tmp_path / "plugins", tmp_path / "more"]
+    service = await make(settings(tmp_path, plugin_dirs=dirs))
+
+    assert (await service.list_plugins(ListPluginsRequest())).plugin_dirs == dirs
 
 
 async def test_a_downloader_with_invalid_options_is_listed_as_unavailable(
@@ -952,9 +1026,10 @@ async def test_a_service_made_from_the_settings_alone_uses_udl_s_own_plugins() -
         plugins = await service.list_plugins(ListPluginsRequest())
         databases_ = await service.list_databases(ListDatabasesRequest())
 
-    assert {"http", "yt-dlp", "gallery-dl", "scraper", "browser", "sqlite"} <= {
+    assert {"http", "yt-dlp", "gallery-dl", "scraper", "browser", "sqlite", "youtube"} <= {
         p.name for p in plugins.plugins
     }
+    assert all(p.available for p in plugins.plugins)
     assert [(d.name, d.plugin, d.healthy) for d in databases_.databases] == [
         ("local", "sqlite", True)
     ]

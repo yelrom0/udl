@@ -39,6 +39,7 @@ from udl.db.models import Strategy
 from udl.errors import PluginFailed, UDLError
 from udl.plugins.downloaders.base import DownloadContext, DownloadResult
 from udl.plugins.registry import SITES, PluginRegistry
+from udl.plugins.requirements import unmet
 from udl.plugins.sites.base import SitePlugin
 
 log = logging.getLogger(__name__)
@@ -47,12 +48,20 @@ _FIX = "It is a bug in the plugin: fix it, or remove it (`udl plugins list` show
 
 
 def load_site_plugins(registry: PluginRegistry) -> list[SitePlugin]:
-    """An instance of each site plugin in `registry`, by name. One that cannot start is left
-    out, with a warning."""
+    """An instance of each site plugin in `registry`, by name. One that is missing something
+    it needs, or cannot start, is left out, with a warning."""
     plugins: list[SitePlugin] = []
     for info in registry.plugins(SITES):
+        cls = registry.get(SITES, info.name)
+        if missing := unmet(cls.requires):
+            log.warning(
+                "The %s site plugin needs %s, so udl does without it (`udl plugins list`)",
+                info.name,
+                ", ".join(f"{requirement.name} ({requirement.kind})" for requirement in missing),
+            )
+            continue
         try:
-            plugins.append(registry.get(SITES, info.name)())
+            plugins.append(cls())
         except Exception:  # (logged with its traceback)
             log.warning(
                 "Could not start the %s site plugin (%s)", info.name, info.origin, exc_info=True
