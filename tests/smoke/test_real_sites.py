@@ -12,6 +12,7 @@ the page in a browser first: a page that moved is fixed here, not in udl.
 """
 
 # System Imports
+import re
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Final
@@ -33,6 +34,8 @@ VIDEO_PAGE: Final = "https://www.w3schools.com/html/html5_video.asp"  # <video><
 VIDEO_FILE: Final = "mov_bbb.mp4"  # the video on VIDEO_PAGE
 YOUTUBE: Final = "https://youtu.be/jNQXAC9IVRw?si=udl"  # "Me at the zoo", 19 s, a share link
 WIKIMEDIA: Final = "https://commons.wikimedia.org/wiki/File:Example.jpg"  # one image, 4 versions
+# What YouTube says to a machine it has seen download a lot.
+BOT_CHECK: Final = re.compile(r"confirm you.re not a bot")
 
 
 @pytest.fixture
@@ -65,6 +68,11 @@ async def test_youtube_links_are_downloaded_once_with_yt_dlp(service: UDLService
     jobs = (await service.download(DownloadRequest(urls=[YOUTUBE, YOUTUBE.split("?")[0]]))).jobs
 
     [job] = jobs  # the youtube site plugin made both links the same video
+    if job.error and BOT_CHECK.search(job.error.message):
+        pytest.skip(
+            "YouTube wants this machine to sign in (its bot check, after many downloads): try "
+            "later, or sign in with `udl browser login https://www.youtube.com`"
+        )
     assert job.status is JobStatus.FINISHED, (job.error, job.attempts)
     assert (job.url, job.tool) == ("https://www.youtube.com/watch?v=jNQXAC9IVRw", "yt-dlp")
     assert job.size_bytes > 100_000
