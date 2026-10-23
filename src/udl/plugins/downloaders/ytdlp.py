@@ -89,11 +89,11 @@ class _Info(TypedDict, total=False):
     requested_downloads: list[_RequestedDownload]
 
 
-class _Logger:
+class YtDlpLogger:
     """Sends yt-dlp's output to udl's log: its warnings as info, the rest as debug (its errors
     are raised as well)."""
 
-    def __init__(self, ydl: yt_dlp.YoutubeDL | None = None) -> None:
+    def __init__(self, ydl: object = None) -> None:  # (the YoutubeDL it logs for)
         pass
 
     def debug(self, message: str) -> None:
@@ -253,7 +253,7 @@ class YtDlpDownloader(Downloader[YtDlpOptions]):
     def _params(self, ctx: ProbeContext, report: ProgressSink | None) -> _YoutubeDLOptions:
         options = self.options
         params: _YoutubeDLOptions = {
-            "logger": _Logger(),
+            "logger": YtDlpLogger(),
             "quiet": True,
             "noprogress": True,
             "color": {"stdout": "never", "stderr": "never"},

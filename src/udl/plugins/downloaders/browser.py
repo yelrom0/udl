@@ -17,7 +17,7 @@ profile_dir option is None. One Chromium at a time uses a profile: others wait t
 import asyncio
 import contextlib
 import threading
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -76,6 +76,8 @@ _ELEMENT_SOURCES: Final = """() => [...document.querySelectorAll("video, audio")
         .filter((src) => /^https?:/.test(src))
         .map((src) => [element.tagName.toLowerCase(), src]))"""
 _SOURCES: Final = TypeAdapter(list[tuple[str, str]])
+# How often a login in progress takes a copy of the browser's cookies.
+_LOGIN_POLL: Final[float] = 0.5
 
 
 class BrowserOptions(DownloaderOptions):
@@ -205,6 +207,47 @@ async def chromium(
             raise _launch_error(e) from e
         stack.push_async_callback(context.close)
         yield context
+
+
+async def profile_cookies(profile_dir: Path) -> list[Cookie]:
+    """Every cookie in the persistent profile at `profile_dir`."""
+    async with chromium(profile_dir=profile_dir, headless=True, cancel=CancelToken()) as context:
+        return from_playwright(await context.cookies())
+
+
+async def login(
+    url: str, *, profile_dir: Path, headless: bool, until: Awaitable[object] | None
+) -> list[Cookie]:
+    """Open `url` in Chromium on the profile at `profile_dir`, and wait until the browser is
+    closed, or `until` is done. Returns every cookie the profile has by then."""
+    cookies: list[Cookie] = []
+    async with chromium(
+        profile_dir=profile_dir, headless=headless, cancel=CancelToken()
+    ) as context:
+        closed = asyncio.Event()
+        context.on("close", lambda _: closed.set())
+        page = context.pages[0] if context.pages else await context.new_page()
+        try:
+            await page.goto(url)  # (a page that says "sign in" is what the user expects here)
+        except PlaywrightError as e:
+            raise chromium_error(e.message) from e
+        waits: list[asyncio.Task[object]] = [asyncio.ensure_future(closed.wait())]
+        if until is not None:
+            waits.append(asyncio.ensure_future(until))
+        try:
+            while True:
+                # A copy as it goes: once the browser has closed, they cannot be asked for.
+                with contextlib.suppress(PlaywrightError):
+                    cookies = from_playwright(await context.cookies())
+                done, _ = await asyncio.wait(
+                    waits, timeout=_LOGIN_POLL, return_when=asyncio.FIRST_COMPLETED
+                )
+                if done:
+                    break
+        finally:
+            for wait in waits:
+                wait.cancel()
+    return cookies
 
 
 # ---------------------------------------------------------------------------------------------

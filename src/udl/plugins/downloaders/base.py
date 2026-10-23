@@ -201,7 +201,7 @@ def cookie_header(cookies: list[Cookie], url: str) -> str | None:
     return "; ".join(pairs) or None
 
 
-def _merge_cookies(first: list[Cookie], then: list[Cookie]) -> list[Cookie]:
+def merge_cookies(first: list[Cookie], then: list[Cookie]) -> list[Cookie]:
     """Both lists; a cookie in `then` replaces one in `first` with the same name, domain, path."""
     merged = {(c.name, c.domain.lstrip("."), c.path): c for c in [*first, *then]}
     return list(merged.values())
@@ -606,7 +606,7 @@ class Downloader[O: DownloaderOptions = DownloaderOptions](ABC):
             update={
                 "url": handoff.url,
                 "headers": {**ctx.headers, **handoff.headers},
-                "cookies": _merge_cookies(ctx.cookies, handoff.cookies),
+                "cookies": merge_cookies(ctx.cookies, handoff.cookies),
             }
         )
         result = await downloader.download(child)

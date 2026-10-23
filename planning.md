@@ -46,7 +46,7 @@ Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task
   - [x] 2.5 `http` direct-file downloader: `httpx` by default, `curl` / `wget` backends when installed, resume support
   - [x] 2.6 `scraper` (static HTML, `selectolax`): heuristic media discovery, then hand off to `http` / `yt-dlp`
   - [x] 2.7 `browser` (Playwright): network sniffing for media/manifest URLs + cookie capture, then hand off
-  - [ ] 2.8 Auth (401/403): `cookies_from_browser`, persistent browser profile, `udl browser login`
+  - [x] 2.8 Auth (401/403): `cookies_from_browser`, persistent browser profile, `udl browser login`
 
 - [ ] **Phase 3: Resolution engine & service layer**
   - [ ] 3.1 URL normalisation + site key (registrable domain via `tldextract`), with property-based tests
