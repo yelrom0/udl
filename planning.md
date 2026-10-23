@@ -38,7 +38,7 @@ Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task
   - [x] 1.7 `DBManager`: multiple named connections, read policy (`first` / `merge`), write policy (`primary` / `all` / named)
   - [x] 1.8 Schema versioning (`schema_version` table + `migrate()` on connect)
 
-- [ ] **Phase 2: Downloader plugins**
+- [x] **Phase 2: Downloader plugins**
   - [x] 2.1 `Downloader` ABC, per-plugin `Options` model, `ProbeResult` / `DownloadResult` models + **contract test suite**; add the `udl.downloaders` `PluginKind` to `PLUGIN_KINDS`
   - [x] 2.2 Error taxonomy mapping (table-driven tests per tool: `AuthRequired`, `Unsupported`, `RateLimited`, …)
   - [x] 2.3 `yt-dlp` (in-process API, offline extractor match, `extract_info(download=False)`, progress hooks)
@@ -52,8 +52,8 @@ Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task
   - [ ] 3.1 URL normalisation + site key (registrable domain via `tldextract`), with property-based tests
   - [ ] 3.2 Resolver precedence: request override, then site plugin, then stored strategy (all DBs), then probe
   - [ ] 3.3 Probe chain: offline matches first, then network checks, then scraper, then browser
-  - [ ] 3.4 Execute with fallback: try candidates until a download **actually succeeds**
-  - [ ] 3.5 Record winning strategy + download history through `DBManager`; update success/failure counters
+  - [ ] 3.4 Execute with fallback: try candidates until a download **actually succeeds** (`AuthRequired`: retry with `AuthCookies`, then the `browser` downloader)
+  - [ ] 3.5 Record winning strategy + download history through `DBManager`; update success/failure counters; `requires_auth` when it needed cookies
   - [ ] 3.6 Self-healing: a stored strategy that fails N times in a row gets re-probed and replaced
   - [ ] 3.7 Output dir resolution (request, then site, then config) + filename templates
   - [ ] 3.8 Multi-URL batches: async concurrency with global + per-site limits
@@ -63,7 +63,7 @@ Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task
 - [ ] **Phase 4: Interfaces (CLI, API, MCP)**
   - [ ] 4.1 🔴 **Parity test first**: every registered operation must have a CLI command, an API route and an MCP tool
   - [ ] 4.2 CLI: Typer app + default-command shim so `udl <url>...` == `udl get <url>...`; add `[project.scripts]` and install system-wide with `uv tool install --editable .`
-  - [ ] 4.3 CLI: all [Feature Matrix](#feature-matrix-source-of-truth-for-parity) commands + rich progress + `--json` output
+  - [ ] 4.3 CLI: all [Feature Matrix](#feature-matrix-source-of-truth-for-parity) commands + rich progress + `--json` output; `udl browser login` (`auth.browser_login()`, ending on Enter)
   - [ ] 4.4 API: FastAPI routes from the Feature Matrix, job endpoints, SSE progress
   - [ ] 4.5 API: `udl serve` runs Granian; localhost bind by default, optional API key, allowed output roots
   - [ ] 4.6 MCP: tools from the Feature Matrix (official `mcp` 2.x SDK, `MCPServer`)
@@ -217,7 +217,7 @@ src/udl/
   plugins/
     registry.py             # PluginRegistry, PluginKind (DATABASES, …)
     databases/   base.py  memory.py  sqlalchemy.py (+ table variants)  sqlite.py
-    downloaders/ base.py  ytdlp.py  gallerydl.py  http.py  scraper.py  browser.py
+    downloaders/ base.py  errors.py  process.py  media.py  ytdlp.py  gallerydl.py  http.py  scraper.py  browser.py  auth.py
     sites/       base.py  <examples>.py
   chains/        models.py  shorthand.py  executor.py  suggest.py
   interfaces/
@@ -449,20 +449,29 @@ stopping udl.
 ### Interface
 
 ```python
-class Downloader(ABC):
+class Downloader[O: DownloaderOptions](ABC):
     name: ClassVar[str]
-    options_model: ClassVar[type[BaseModel]]              # e.g. YtDlpOptions(format="bv*+ba/b", …)
-    requires: ClassVar[tuple[str, ...]] = ()              # binaries / importable modules
+    options_model: ClassVar[type[DownloaderOptions]]      # e.g. YtDlpOptions(format="bv*+ba/b", …)
+    requires: ClassVar[tuple[Requirement, ...]] = ()      # Requirement.binary("curl"), .module("yt_dlp")
+    def __init__(self, options: O | None = None) -> None: ...
+    @classmethod
+    def configure(cls, *layers: Mapping[str, JsonValue]) -> Self: ...  # [tools.<name>], then a strategy's
+    def requirements(self) -> tuple[Requirement, ...]: ...  # may depend on the options (http's backend)
     def available(self) -> bool: ...
-    def match(self, url: URL) -> MatchResult | None: ...  # offline, no network (optional)
-    async def probe(self, ctx: ProbeContext) -> ProbeResult: ...
-    async def download(self, ctx: DownloadContext) -> DownloadResult: ...
+    def match(self, url: str) -> MatchResult | None: ...  # offline, no network (optional)
+    async def probe(self, ctx: ProbeContext) -> ProbeResult: ...  # raises only Cancelled
+    async def download(self, ctx: DownloadContext) -> DownloadResult: ...  # a DownloadError, or Cancelled
 ```
 
-- `ProbeResult`: `ok`, `confidence: float`, `title`, `media: list[MediaCandidate]`, `handoff: Handoff | None`
-  (scraper/browser return a concrete media URL + headers/cookies for another downloader), `error: UDLError | None`
-- `DownloadContext`: `url`, `output_dir`, `filename_template`, `options` (typed), `cookies`, `headers`,
-  `progress: ProgressSink`, `cancel: CancelToken`
+Plugins implement `_probe` / `_download`; the public methods add the checks every downloader must pass.
+`hand_off()` / `hand_off_best()` download media a plugin found with another downloader.
+
+- `ProbeResult`: `tool`, `ok`, `confidence`, `title`, `media: list[MediaCandidate]`, `handoff: Handoff | None`
+  (scraper/browser give a concrete media URL + headers/cookies for another downloader), `error: ErrorInfo | None`
+- `ProbeContext`: `url`, `headers`, `cookies: list[Cookie]`, `cancel: CancelToken`. `DownloadContext` adds
+  `output_dir`, `filename_template`, `progress: ProgressSink` and `downloader_for` (finds the handoff's tool)
+- `DownloadResult`: `tool`, `url`, `files` (absolute, real, not empty and inside `output_dir`: checked),
+  `size_bytes`, `title`, `handed_off_to`
 
 ### Per-tool notes
 
@@ -470,9 +479,9 @@ class Downloader(ABC):
 |---|---|---|---|---|
 | `yt-dlp` | Any extractor except `Generic` whose `suitable(url)` is true | `extract_info(download=False)` | `YoutubeDL` + progress hooks | A Generic-extractor hit gets low confidence. Use a new `YoutubeDL` per job. Cancel by raising from the progress hook |
 | `gallery-dl` | `gallery_dl.extractor.find(url)` | First item's metadata | In-process `DownloadJob` (subprocess fallback) | Untyped and less stable as a library, so keep it behind the plugin's typed façade |
-| `http` | URL has a media extension | `HEAD` (fallback: ranged `GET`), then media / `octet-stream` type or `Content-Disposition: attachment` | Streamed `httpx` with `Range` resume | `backend: httpx \| curl \| wget` option; the external binaries are optional |
-| `scraper` | n/a | Fetch HTML and look for `<video>/<audio>/<source>`, `og:video`, JSON-LD `contentUrl`, media `<a href>`, `.m3u8/.mpd` in scripts | Hand off to `http` (files) or `yt-dlp` (HLS/DASH) | `selectolax` (Lexbor) is typically an order of magnitude faster than BeautifulSoup. Add `lxml` only if XPath steps are needed |
-| `browser` | n/a | Headless Chromium: record responses with media content types or manifests; collect cookies | Hand off with cookies + `Referer`/UA | `udl[browser]` extra + `uv run playwright install chromium`; persistent profile |
+| `http` | URL path has a video/audio/image extension | `HEAD` (on 403/405/501: a `GET` of the first byte); anything but a web page or a stream playlist is a file | Into `<name>.part`, renamed once complete; a part left by an earlier try is resumed with `Range` | `backend: httpx \| curl \| wget` makes every request (curl/wget optional). Named from `Content-Disposition`, else the URL |
+| `scraper` | n/a | Fetch the HTML: `<video>/<audio>/<source>`, `og:video`/`og:audio`, JSON-LD `contentUrl`, media `<a href>`, media and playlist URLs in scripts; its iframes' pages when the page has none | Hand off the best find to `http` (files) or `yt-dlp` (HLS/DASH), the next one on a failure of its own | `selectolax` (Lexbor) is typically an order of magnitude faster than BeautifulSoup. Add `lxml` only if XPath steps are needed |
+| `browser` | n/a | Chromium: the media and playlists the page requests (any frame, not stream segments), then its media elements' sources | Hand off like the scraper, with the `Referer` the browser sent, its UA and its cookies | `udl[browser]` extra + `uv run playwright install chromium`; udl's persistent profile by default |
 
 ### Error taxonomy and how the resolver reacts
 
@@ -486,12 +495,51 @@ class Downloader(ABC):
 | `ToolUnavailable` | Skip the tool and note it in `plugins list` | no |
 
 ### Auth-gated sites (2.8)
-1. Retry the same tool with cookies, from `cookies_from_browser` (yt-dlp `cookiesfrombrowser`, gallery-dl
-   `cookies-from-browser`) or from the persistent udl browser profile.
-2. Fall back to the `browser` plugin, which loads the page with that profile, captures media URLs and cookies,
+1. Retry the same tool with the site's cookies from `AuthCookies.for_url()`: the user's own browser
+   (`cookies_from_browser`, read by udl with yt-dlp's cookie readers) and udl's persistent browser profile
+   (whose cookies win). Every downloader takes them as `ctx.cookies`.
+2. Fall back to the `browser` plugin, which loads the page on that profile, captures media URLs and cookies,
    and hands off.
-3. `udl browser login <url>` opens a **headed** browser on the persistent profile so the user logs in once.
-4. The winning strategy is saved with `requires_auth=True`, so cookies are attached upfront next time.
+3. `udl browser login <url>` (CLI in 4.3) calls `browser_login()`: a **headed** Chromium on the persistent
+   profile, until the user closes it (or presses Enter), so they log in once.
+4. The winning strategy is saved with `requires_auth=True`, so cookies are attached upfront next time (3.5).
+
+### Decisions made while building Phase 2
+
+- **Options live on the downloader**, not the context: `Downloader[O]` holds a validated `O`, and
+  `configure(*layers)` merges `[tools.<name>]` and then a strategy's `options` (a ConfigError names the tool).
+  One instance is one configured tool, so `requirements()` can depend on its options (http's backend).
+- **Probe results carry `ErrorInfo`**, not a `UDLError`, so they serialise for the API, MCP and `--json`;
+  `error_from_info()` turns one back into its exception. `probe()` reports failures and raises only
+  `Cancelled`; `download()` raises a `DownloadError` or `Cancelled`, and succeeds only with real, non-empty
+  files inside `output_dir`.
+- **`Cancelled` is not a `DownloadError`**, so code that tries the next tool after a failure stops instead.
+  Threaded tools run through `run_blocking()`, async work through `cancellable()` and programs through
+  `run_process()`; each stops soon after its `CancelToken` is cancelled and never outlives its task.
+- **The resolver fills in `{site}`** before a downloader sees the filename template (3.7). Each downloader
+  translates the rest: yt-dlp's `outtmpl`, gallery-dl's `directory`/`filename`, http's `{title}`/`{ext}` from
+  the file's name. `DownloadContext` checks templates (relative, plain `{field}`s), and a field's value can
+  never add a folder or leave one.
+- **Cookies are udl's own `Cookie` model** (the value a `SecretStr`), translated for each tool: standard
+  library cookie jars (yt-dlp, gallery-dl, httpx), Netscape cookie files in a private temp dir (curl, wget,
+  gallery-dl's CLI) and Playwright's. udl reads `cookies_from_browser` itself (`AuthCookies`) instead of
+  passing yt-dlp's `cookiesfrombrowser` / gallery-dl's `cookies-from-browser`, so every downloader gets the
+  same cookies.
+- **`http`'s backend makes every request**, HEAD too, so a site that blocks one client is not probed with
+  another. It asks for files uncompressed (and decodes them if a server compresses anyway), so sizes compare;
+  a size that disagrees with the server's is a `NetworkError` that keeps the `.part`. A file downloaded
+  before (same size) is kept. curl and wget ignore `~/.curlrc` / `~/.wgetrc` and write no `~/.wget-hsts`.
+- **Finds are handed off best first** (`hand_off_best()`): a failure of the find's own (unsupported, not
+  found, not media, its tool missing) tries the next, five at most; any other (auth, rate limit, network) is
+  raised at once, so a trailer never stands in for a film that needs a login. The scraper searches iframes'
+  pages only when the page itself has no media.
+- **The browser runs on udl's persistent profile by default** (`BrowserOptions.profile_dir` defaults to
+  `[browser] profile_dir`'s default); the resolver should pass `[browser]`'s `headless` and `profile_dir` as
+  the first layer of its options. One Chromium at a time uses a profile (others wait). Headless, it runs
+  without the GPU, whose drivers would write shader caches to the user's cache dir. Playwright is imported
+  only when the browser or the profile is used, so udl works without the `browser` extra.
+- **gallery-dl's in-process jobs take turns** (its config is global), and its command line takes over if its
+  Python API breaks (e.g. after an upgrade).
 
 ---
 
