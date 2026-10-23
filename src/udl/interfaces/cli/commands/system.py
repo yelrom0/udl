@@ -28,7 +28,7 @@ db = typer.Typer(
     rich_markup_mode="markdown",
 )
 plugins = typer.Typer(
-    help="udl's plugins: databases and downloaders.",
+    help="udl's plugins: databases, downloaders and site plugins.",
     no_args_is_help=True,
     rich_markup_mode="markdown",
 )
@@ -80,9 +80,10 @@ def sync_databases(
 @plugins.command("list")
 @runs("list_plugins")
 def list_plugins(ctx: typer.Context, as_json: JsonOption = False) -> None:
-    """List the plugins, and whether each downloader can run.
+    """List the plugins, and whether each can run.
 
-    A downloader that cannot run says what to install."""
+    One that cannot run says what to install. Local plugins are single .py files in the plugin
+    dirs."""
     request = ListPluginsRequest()
     show(run(ctx, lambda service: service.list_plugins(request)), as_json, render.plugins)
 

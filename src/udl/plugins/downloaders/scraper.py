@@ -71,7 +71,7 @@ from udl.plugins.downloaders.base import (
     cancellable,
 )
 from udl.plugins.downloaders.errors import http_status_error
-from udl.plugins.downloaders.http import PAGE_TYPES, USER_AGENT, http_client, with_user_agent
+from udl.plugins.downloaders.http import PAGE_TYPES, USER_AGENT, http_client
 from udl.plugins.downloaders.media import Find, media_type, page_title, stream_kind, unique
 from udl.plugins.requirements import Requirement
 
@@ -338,7 +338,8 @@ class ScraperDownloader(Downloader[ScraperOptions]):
         self, ctx: ProbeContext, headers: Mapping[str, str] | None = None
     ) -> AbstractAsyncContextManager[httpx.AsyncClient]:
         return http_client(
-            headers=with_user_agent({**ctx.headers, **(headers or {})}, self.options.user_agent),
+            headers={**ctx.headers, **(headers or {})},
+            user_agent=self.options.user_agent,
             cookies=ctx.cookies,
             seconds=self.options.timeout,
             retries=self.options.retries,

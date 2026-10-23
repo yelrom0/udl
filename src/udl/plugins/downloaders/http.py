@@ -270,16 +270,18 @@ async def http_client(
     seconds: float,
     retries: int,
     tool: str,
+    user_agent: str = USER_AGENT,
 ) -> AsyncGenerator[httpx.AsyncClient]:
-    """An httpx client that sends `headers`, and `cookies` to their sites, follows redirects,
-    waits `seconds` to connect or for more data, and retries a failed connection `retries`
-    times. httpx's errors are raised as the DownloadErrors they mean (from `tool`)."""
+    """An httpx client that sends `headers` (with `user_agent`, unless they have a User-Agent),
+    and `cookies` to their sites, follows redirects, waits `seconds` to connect or for more
+    data, and retries a failed connection `retries` times. httpx's errors are raised as the
+    DownloadErrors they mean (from `tool`)."""
     jar = http.cookiejar.CookieJar()
     for cookie in cookies:
         jar.set_cookie(cookie.to_http_cookie())
     try:
         async with httpx.AsyncClient(
-            headers=dict(headers),
+            headers=with_user_agent(headers, user_agent),
             cookies=jar,
             follow_redirects=True,
             timeout=seconds,

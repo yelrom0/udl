@@ -32,7 +32,13 @@ from udl.errors import (
     NotFound,
 )
 from udl.plugins.downloaders.base import CancelToken, Cookie, DownloadContext, ProbeContext
-from udl.plugins.downloaders.http import USER_AGENT, HttpBackend, HttpDownloader, HttpOptions
+from udl.plugins.downloaders.http import (
+    USER_AGENT,
+    HttpBackend,
+    HttpDownloader,
+    HttpOptions,
+    http_client,
+)
 
 type Handler = Callable[[Request], Response]
 
@@ -499,6 +505,25 @@ async def test_a_browser_s_user_agent_is_sent(
 
     assert user_agents(httpserver) == {(USER_AGENT,)}
     assert USER_AGENT.startswith("Mozilla/5.0")
+
+
+async def test_udl_s_http_client_sends_a_browser_s_user_agent_unless_told_another(
+    httpserver: HTTPServer,
+) -> None:
+    # (For plugins' own requests, too.)
+    httpserver.expect_request("/page").respond_with_data("ok")
+    url = httpserver.url_for("/page")
+
+    for headers in ({}, {"user-agent": "Mine/1"}):
+        async with http_client(
+            headers=headers, cookies=[], seconds=5, retries=0, tool="test"
+        ) as client:
+            await client.get(url)
+
+    assert [r.headers.getlist("User-Agent") for r, _ in httpserver.log] == [
+        [USER_AGENT],
+        ["Mine/1"],
+    ]
 
 
 @pytest.mark.parametrize("name", ["User-Agent", "user-agent"])
