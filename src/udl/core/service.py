@@ -72,6 +72,8 @@ from udl.core.models import (
     SiteList,
     SiteRequest,
     SuggestChainRequest,
+    SyncDatabasesRequest,
+    SyncReport,
 )
 from udl.core.resolver import Resolver
 from udl.core.sites import load_site_plugins
@@ -79,7 +81,17 @@ from udl.core.tools import Toolbox
 from udl.core.urls import URL
 from udl.db.manager import DBManager
 from udl.db.models import DownloadQuery, Site, SiteQuery, Strategy, StrategySource
-from udl.errors import AuthRequired, DoesNotExist, DownloadError, ErrorInfo, PluginError, UDLError
+from udl.db.sync import sync
+from udl.errors import (
+    AuthRequired,
+    DatabaseError,
+    DoesNotExist,
+    DownloadError,
+    ErrorInfo,
+    NotAllowed,
+    PluginError,
+    UDLError,
+)
 from udl.plugins.downloaders.auth import AuthCookies
 from udl.plugins.downloaders.base import Cookie, ProbeContext, ProbeResult
 from udl.plugins.registry import DATABASES, DOWNLOADERS, SITES, PluginInfo, PluginRegistry
@@ -704,6 +716,43 @@ class UDLService:
         consults them, and whether each is connected and answering."""
         return DatabaseList(
             databases=[await self._database(connection) for connection in self.db.connections]
+        )
+
+    @operation("sync_databases")
+    async def sync_databases(self, request: SyncDatabasesRequest) -> SyncReport:
+        """Copy what one database connection knows into others: its sites, their strategies
+        and its downloads that have ended, so the udls that use them know the same.
+
+        A record a target lacks is added; one it has (a site with the same key, or a strategy
+        or download with the same id) is replaced by the source's copy where they differ, so
+        sync from the database that is right. Nothing is deleted, and syncing again changes
+        nothing. With dry_run, only counts what would change. A read-only connection can be
+        synced from, not into.
+        """
+        names = [request.source, *request.targets]
+        connections = {c.name: c for c in self.db.only(names).connections}  # (or DoesNotExist)
+        for name in request.targets:
+            if connections[name].read_only:
+                raise NotAllowed(
+                    f"The {name!r} database is read-only",
+                    hint="udl only reads it: sync into another connection, or set "
+                    "read_only = false for it ([[db.connections]] in the config).",
+                )
+        for name in names:
+            if not self.db.is_connected(name):
+                raise DatabaseError(
+                    f"The {name!r} database is not connected",
+                    hint="`udl db list` shows the databases udl reached; its log says why "
+                    "this one failed.",
+                )
+        source = self.db.database(request.source)
+        return SyncReport(
+            source=request.source,
+            dry_run=request.dry_run,
+            targets=[
+                await sync(source, self.db.database(name), dry_run=request.dry_run)
+                for name in request.targets
+            ],
         )
 
     async def _database(self, connection: DBConnectionConfig) -> DatabaseInfo:

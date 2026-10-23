@@ -46,6 +46,7 @@ from udl.core.models import (
     ProbeReport,
     SiteInfo,
     SiteList,
+    SyncReport,
 )
 from udl.db.models import JobStatus, Strategy
 from udl.errors import ErrorInfo
@@ -443,6 +444,28 @@ def databases(console: Console, listed: DatabaseList) -> None:
             _yes(db.healthy),
         )
     console.print(table)
+
+
+def synced(console: Console, report: SyncReport) -> None:
+    """What a sync added, replaced and left as it was in each database, by kind of record."""
+    table = Table("Into", "Records", "Added", "Updated", "Unchanged")
+    for result in report.targets:
+        for kind, counts in (
+            ("sites", result.sites),
+            ("strategies", result.strategies),
+            ("downloads", result.downloads),
+        ):
+            table.add_row(
+                escape(result.target),
+                kind,
+                str(counts.added),
+                str(counts.updated),
+                str(counts.unchanged),
+            )
+    console.print(f"From [bold]{escape(report.source)}[/]:")
+    console.print(table)
+    if report.dry_run:
+        console.print("Dry run: nothing was changed. A sync would make these changes.")
 
 
 def plugins(console: Console, listed: PluginList) -> None:

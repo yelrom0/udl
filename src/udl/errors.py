@@ -199,8 +199,8 @@ class DoesNotExist(UDLError):
 
 
 class NotAllowed(UDLError):
-    """A server (the API, the MCP server) does not allow what was asked, e.g. an output dir
-    outside api.allowed_output_roots."""
+    """What was asked is not allowed: e.g. an output dir outside api.allowed_output_roots (the
+    API, the MCP server), or writing to a read-only database."""
 
     code = ErrorCode.NOT_ALLOWED
 

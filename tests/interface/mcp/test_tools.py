@@ -19,7 +19,7 @@ from mcp import Client
 from mcp_types import CallToolResult, TextContent
 
 # Local Imports
-from support.engine import script
+from support.engine import connection, script
 from support.interfaces import A, B, Harness
 from support.mcp import client_for
 from udl.core.models import (
@@ -33,9 +33,10 @@ from udl.core.models import (
     ProbeReport,
     SiteInfo,
     SiteList,
+    SyncReport,
 )
 from udl.core.service import operations
-from udl.db.models import JobStatus, Strategy, StrategySource
+from udl.db.models import JobStatus, Site, Strategy, StrategySource
 from udl.interfaces.mcp.server import DEFAULT_WAIT
 
 GONE = "https://example.com/gone"
@@ -248,6 +249,27 @@ async def test_a_strategy_that_cannot_work_is_a_tool_error(client: Client) -> No
 # ---------------------------------------------------------------------------------------------
 # udl itself
 # ---------------------------------------------------------------------------------------------
+
+
+async def test_syncing_the_databases(tmp_path: Path) -> None:
+    harness = Harness(
+        tmp_path,
+        connections=[connection("local", primary=True), connection("shared", priority=10)],
+    )
+    async with client_for(harness) as client:
+        await harness.db.database("local").upsert_site(Site(key="example.com"))
+
+        dry = SyncReport.model_validate(
+            await call(client, "sync_databases", source="local", targets=["shared"], dry_run=True)
+        )
+        report = SyncReport.model_validate(
+            await call(client, "sync_databases", source="local", targets=["shared"])
+        )
+        error = await failure(client, "sync_databases", source="local", targets=["nas"])
+
+    assert (dry.dry_run, dry.targets[0].sites.added) == (True, 1)
+    assert report.targets[0].sites.added == 1
+    assert "does_not_exist" in error
 
 
 async def test_udl_itself(client: Client) -> None:

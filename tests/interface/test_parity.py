@@ -38,6 +38,7 @@ MATRIX: dict[str, tuple[str, str]] = {
     "import_chains": ("chain import", "POST /chains/import"),
     "export_chain": ("chain export", "GET /sites/{key}/chain"),
     "list_databases": ("db list", "GET /databases"),
+    "sync_databases": ("db sync", "POST /databases/sync"),
     "list_plugins": ("plugins list", "GET /plugins"),
     "get_config": ("config show", "GET /config"),
 }

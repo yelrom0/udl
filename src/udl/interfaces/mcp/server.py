@@ -92,6 +92,7 @@ _HINTS: Final[dict[str, ToolAnnotations]] = {
     "import_chains": _hints("Import tag chains", idempotent=True),
     "export_chain": _hints("Export a site's tag chains", read_only=True),
     "list_databases": _hints("List the databases", read_only=True),
+    "sync_databases": _hints("Sync the databases", destructive=True, idempotent=True),
     "list_plugins": _hints("List the plugins", read_only=True),
     "get_config": _hints("Show the settings", read_only=True),
 }

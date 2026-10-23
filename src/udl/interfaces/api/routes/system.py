@@ -3,7 +3,7 @@
 - system.py -
 -------------
 
-/databases, /plugins and /config: udl itself
+/databases, /databases/sync, /plugins and /config: udl itself
 """
 
 # Package Imports
@@ -17,6 +17,8 @@ from udl.core.models import (
     ListDatabasesRequest,
     ListPluginsRequest,
     PluginList,
+    SyncDatabasesRequest,
+    SyncReport,
 )
 from udl.interfaces.api.deps import ServiceDep, documented
 
@@ -26,6 +28,11 @@ router = APIRouter(tags=["udl"])
 @router.get("/databases", **documented("list_databases"))
 async def list_databases(service: ServiceDep) -> DatabaseList:
     return await service.list_databases(ListDatabasesRequest())
+
+
+@router.post("/databases/sync", **documented("sync_databases", 403, 404, 503))
+async def sync_databases(request: SyncDatabasesRequest, service: ServiceDep) -> SyncReport:
+    return await service.sync_databases(request)
 
 
 @router.get("/plugins", **documented("list_plugins"))

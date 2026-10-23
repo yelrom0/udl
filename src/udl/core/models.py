@@ -17,7 +17,15 @@ from typing import Annotated, Self
 from uuid import UUID
 
 # Package Imports
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, NonNegativeInt, PositiveFloat
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    NonNegativeInt,
+    PositiveFloat,
+    model_validator,
+)
 
 # Local Imports
 from udl.chains.models import ChainInput, FetchMode, Regex, SiteChain, StepTrace, TagChain
@@ -25,6 +33,7 @@ from udl.chains.suggest import ChainSuggestion
 from udl.config import Settings
 from udl.core.urls import RequestURL, SiteKey
 from udl.db.models import DownloadRecord, JobStatus, JsonObject, Site, Strategy
+from udl.db.sync import SyncResult
 from udl.errors import ErrorInfo
 from udl.plugins.downloaders.base import (
     DownloadProgress,
@@ -383,6 +392,33 @@ class DatabaseInfo(_Frozen):
 
 class DatabaseList(_Frozen):
     databases: list[DatabaseInfo]
+
+
+class SyncDatabasesRequest(_Frozen):
+    """Copy what one database connection knows into others."""
+
+    source: str
+    """The connection to copy from: its name, as list_databases gives it."""
+    targets: Annotated[list[str], Field(min_length=1)]
+    """The connections to copy into (not read-only ones)."""
+    dry_run: bool = False
+    """Only count what would change, and change nothing."""
+
+    @model_validator(mode="after")
+    def _check_targets(self) -> Self:
+        if self.source in self.targets:
+            raise ValueError(f"{self.source!r} cannot be synced into itself")
+        if len(set(self.targets)) < len(self.targets):
+            raise ValueError("a connection is named more than once in targets")
+        return self
+
+
+class SyncReport(_Frozen):
+    source: str
+    dry_run: bool
+    """Whether the sync only counted what would change."""
+    targets: list[SyncResult]
+    """What changed (or would) in each connection synced into, in turn."""
 
 
 class ListPluginsRequest(_Frozen):

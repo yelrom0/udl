@@ -48,6 +48,7 @@ from udl.core.models import (
     ProbeRequest,
     SetStrategyRequest,
     SiteRequest,
+    SyncDatabasesRequest,
 )
 from udl.core.service import UDLService, operation, operations
 from udl.core.urls import URL
@@ -61,7 +62,14 @@ from udl.db.models import (
     Strategy,
     StrategySource,
 )
-from udl.errors import ConfigError, DoesNotExist, ErrorCode, PluginError
+from udl.errors import (
+    ConfigError,
+    DatabaseError,
+    DoesNotExist,
+    ErrorCode,
+    NotAllowed,
+    PluginError,
+)
 from udl.plugins.databases.memory import MemoryDatabase
 from udl.plugins.registry import DATABASES, DOWNLOADERS, SITES, PluginRegistry
 from udl.plugins.requirements import Requirement
@@ -146,6 +154,7 @@ def test_the_operations_are_the_feature_matrix_s() -> None:
         "import_chains",
         "export_chain",
         "list_databases",
+        "sync_databases",
         "list_plugins",
         "get_config",
     }
@@ -756,6 +765,101 @@ async def test_listing_the_databases_hides_passwords(tmp_path: Path, make: Make)
     [found] = (await service.list_databases(ListDatabasesRequest())).databases
 
     assert found.url == "memory://udl:***@nas/udl"
+
+
+def two_databases(tmp_path: Path, **shared: Any) -> Settings:
+    return settings(
+        tmp_path,
+        connections=[
+            connection("local", primary=True),
+            connection("shared", priority=10, **shared),
+        ],
+    )
+
+
+async def test_syncing_copies_what_one_database_knows_into_another(
+    tmp_path: Path, make: Make
+) -> None:
+    service = await make(two_databases(tmp_path))
+    local = service.db.database("local")
+    await local.upsert_site(Site(key="example.com"))
+    await local.add_download(
+        DownloadRecord(url=A, site_key="example.com", status=JobStatus.FINISHED)
+    )
+
+    report = await service.sync_databases(SyncDatabasesRequest(source="local", targets=["shared"]))
+
+    assert (report.source, report.dry_run) == ("local", False)
+    [synced] = report.targets
+    assert (synced.target, synced.sites.added, synced.downloads.added) == ("shared", 1, 1)
+    shared = service.db.database("shared")
+    assert await shared.get_site("example.com") == await local.get_site("example.com")
+
+
+async def test_a_dry_run_sync_changes_nothing(tmp_path: Path, make: Make) -> None:
+    service = await make(two_databases(tmp_path))
+    await service.db.database("local").upsert_site(Site(key="example.com"))
+
+    report = await service.sync_databases(
+        SyncDatabasesRequest(source="local", targets=["shared"], dry_run=True)
+    )
+
+    assert report.dry_run
+    assert report.targets[0].sites.added == 1
+    assert await service.db.database("shared").list_sites(SiteQuery()) == []
+
+
+async def test_syncing_with_a_connection_that_does_not_exist_is_refused(
+    tmp_path: Path, make: Make
+) -> None:
+    service = await make(two_databases(tmp_path))
+
+    with pytest.raises(DoesNotExist, match="nas") as caught:
+        await service.sync_databases(SyncDatabasesRequest(source="local", targets=["nas"]))
+
+    assert caught.value.hint is not None
+    assert "local, shared" in caught.value.hint
+
+
+async def test_syncing_into_a_read_only_connection_is_not_allowed(
+    tmp_path: Path, make: Make
+) -> None:
+    service = await make(two_databases(tmp_path, read_only=True))
+    await service.db.database("local").upsert_site(Site(key="example.com"))
+
+    with pytest.raises(NotAllowed, match="'shared' database is read-only"):
+        await service.sync_databases(SyncDatabasesRequest(source="local", targets=["shared"]))
+
+    assert await service.db.database("shared").list_sites(SiteQuery()) == []
+    # Reading from it is fine.
+    await service.sync_databases(SyncDatabasesRequest(source="shared", targets=["local"]))
+
+
+async def test_syncing_with_a_connection_that_is_not_connected_fails(
+    tmp_path: Path, make: Make
+) -> None:
+    plugins = registry()
+    plugins.register(DATABASES, Unreachable)
+    far = connection("far", priority=5).model_copy(update={"plugin": "unreachable"})
+    service = await make(
+        settings(tmp_path, connections=[connection(primary=True), far]), plugins=plugins
+    )
+
+    with pytest.raises(DatabaseError, match="'far' database is not connected"):
+        await service.sync_databases(SyncDatabasesRequest(source="far", targets=["local"]))
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"source": "local", "targets": []},
+        {"source": "local", "targets": ["local"]},
+        {"source": "local", "targets": ["shared", "shared"]},
+    ],
+)
+def test_a_sync_needs_other_connections_to_sync_into(fields: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        SyncDatabasesRequest.model_validate(fields)
 
 
 class Unreachable(MemoryDatabase):
