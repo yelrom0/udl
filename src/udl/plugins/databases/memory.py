@@ -21,6 +21,7 @@ from udl.db.models import (
     Site,
     SiteQuery,
     Strategy,
+    counted,
     download_order,
     strategy_order,
     utcnow,
@@ -108,19 +109,7 @@ class MemoryDatabase(DatabasePlugin):
         strategy = self._strategies.get(strategy_id)
         if strategy is None:
             return None
-        if outcome.ok:
-            update = {
-                "success_count": strategy.success_count + 1,
-                "consecutive_failures": 0,
-                "last_success_at": outcome.at,
-            }
-        else:
-            update = {
-                "failure_count": strategy.failure_count + 1,
-                "consecutive_failures": strategy.consecutive_failures + 1,
-                "last_error": outcome.error,
-            }
-        self._strategies[strategy_id] = _copy(Strategy, strategy.model_copy(update=update))
+        self._strategies[strategy_id] = _copy(Strategy, counted(strategy, outcome))
         return _copy(Strategy, self._strategies[strategy_id])
 
     async def add_download(self, record: DownloadRecord) -> None:

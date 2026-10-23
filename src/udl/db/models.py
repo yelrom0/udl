@@ -149,6 +149,27 @@ class Outcome(_Frozen):
     at: AwareDatetime = pydantic.Field(default_factory=utcnow)
 
 
+def counted(strategy: Strategy, outcome: Outcome) -> Strategy:
+    """A copy of `strategy` with `outcome` counted (DatabasePlugin.record_outcome's update).
+
+    Success: success_count += 1, consecutive_failures = 0, last_success_at = outcome.at.
+    Failure: failure_count += 1, consecutive_failures += 1, last_error = outcome.error.
+    """
+    if outcome.ok:
+        update = {
+            "success_count": strategy.success_count + 1,
+            "consecutive_failures": 0,
+            "last_success_at": outcome.at,
+        }
+    else:
+        update = {
+            "failure_count": strategy.failure_count + 1,
+            "consecutive_failures": strategy.consecutive_failures + 1,
+            "last_error": outcome.error,
+        }
+    return strategy.model_copy(update=update)
+
+
 class _Paged(_Frozen):
     limit: PositiveInt | None = None
     offset: NonNegativeInt = 0

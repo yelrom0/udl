@@ -20,6 +20,19 @@ How it reacts to a failed try (the error taxonomy in planning.md):
 A tool the request named is the only candidate: its own failure is the error, and it gets no
 browser fallback. When every candidate fails, the error is the most useful one seen (a login, a
 rate limit, a network problem), else NoStrategyFound.
+
+What it remembers (unless the request says not to), through DBManager:
+
+- the probe's winner becomes a site-wide strategy (source `probe`), or, when the site has one for
+  that tool already, its success is counted there (and the strategy is enabled again);
+- a stored strategy counts its success, or its failure when the failure is the strategy's fault
+  (DownloadError.counts_against_strategy); one stored only in a database udl does not write to is
+  copied into one it does;
+- a strategy that needed the site's cookies is marked requires_auth, so it is signed in from the
+  start next time.
+
+The request's tool and a site plugin's strategy are not remembered: they are chosen, not learned.
+A database that cannot be written is logged and never fails the download.
 """
 
 # System Imports
@@ -29,6 +42,7 @@ from collections.abc import Callable
 from contextlib import aclosing
 from pathlib import Path
 from typing import Protocol
+from uuid import UUID
 
 # Package Imports
 from pydantic import BaseModel, ConfigDict, NonNegativeFloat, NonNegativeInt
@@ -41,10 +55,12 @@ from udl.core.resolver import Candidate, Resolver
 from udl.core.tools import Toolbox
 from udl.core.urls import URL
 from udl.db.manager import DBManager
+from udl.db.models import Outcome, Site, Strategy, StrategySource, counted, utcnow
 from udl.errors import (
     AuthRequired,
     Cancelled,
     DatabaseError,
+    DownloadError,
     NetworkError,
     NoStrategyFound,
     NotFound,
@@ -96,6 +112,7 @@ class JobSpec(BaseModel):
     reprobe: bool = False  # ignore the stored strategies
     output_dir: Path | None = None
     filename_template: FilenameTemplate | None = None
+    record: bool = True  # remember what worked (and what failed)
 
 
 class Execution(BaseModel):
@@ -108,6 +125,7 @@ class Execution(BaseModel):
     signed_in: bool  # whether it took the site's cookies
     output_dir: Path
     attempts: list[Attempt]  # every try, the successful one last
+    strategy_id: UUID | None = None  # the stored strategy it used or learned
 
 
 def _ignore(*_: object) -> None:
@@ -171,6 +189,7 @@ class _Run:
         self.tried: set[tuple[str, str]] = set()
         self.needs_auth = False  # the site wanted a login
         self._cookies: list[Cookie] | None = None  # None until read
+        self._site_stored = False
 
     async def execute(self) -> Execution:
         self.output_dir = await self._output_dir()
@@ -199,6 +218,7 @@ class _Run:
         self.tried.add(candidate.key)
         outcome = await self._try(candidate)
         if isinstance(outcome, UDLError):
+            await self._failed(candidate, outcome)
             return outcome
         result, signed_in = outcome
         return Execution(
@@ -207,6 +227,7 @@ class _Run:
             signed_in=signed_in,
             output_dir=self.output_dir,
             attempts=list(self.attempts),
+            strategy_id=await self._worked(candidate, signed_in),
         )
 
     async def _try(self, candidate: Candidate) -> tuple[DownloadResult, bool] | UDLError:
@@ -263,6 +284,97 @@ class _Run:
             downloader_for=self.x.toolbox.downloader_for,
         )
         return await downloader.download(ctx)
+
+    # -- remembering ---------------------------------------------------------------------------
+
+    async def _worked(self, candidate: Candidate, signed_in: bool) -> UUID | None:
+        """Remember that `candidate` worked. Returns the stored strategy it used or learned."""
+        used = candidate.strategy
+        if not self.job.record:
+            return used.id if used else None
+        try:
+            if used is not None:
+                strategy = await self._count(used, Outcome(ok=True))
+                if signed_in and not strategy.requires_auth:
+                    strategy = await self.db.upsert_strategy(
+                        strategy.model_copy(update={"requires_auth": True})
+                    )
+                return strategy.id
+            if candidate.source is CandidateSource.PROBE:
+                return (await self._learn(candidate, signed_in)).id
+        except DatabaseError as e:
+            log.warning("Could not remember how %s was downloaded: %s", self.url, e)
+            return used.id if used else None
+        return None
+
+    async def _failed(self, candidate: Candidate, error: UDLError) -> None:
+        """Count a failure against the stored strategy it came from, if it is the strategy's
+        fault."""
+        used = candidate.strategy
+        if (
+            used is None
+            or not self.job.record
+            or not (isinstance(error, DownloadError) and error.counts_against_strategy)
+        ):
+            return
+        try:
+            await self._count(used, Outcome(ok=False, error=error.to_info()))
+        except DatabaseError as e:
+            log.warning("Could not count %s's failure on %s: %s", candidate.tool, self.url, e)
+
+    async def _count(self, strategy: Strategy, outcome: Outcome) -> Strategy:
+        """Count an outcome on a stored strategy. Returns it updated."""
+        updated = await self.db.record_outcome(strategy.id, outcome)
+        if updated is None:  # stored only where udl does not write: keep a copy where it does
+            await self._store_site()
+            updated = await self.db.upsert_strategy(counted(strategy, outcome))
+        return updated
+
+    async def _learn(self, candidate: Candidate, signed_in: bool) -> Strategy:
+        """Remember the probe's winner as a site-wide strategy (or count its success on the
+        site's strategy for that tool, enabling it again)."""
+        await self._store_site()
+        key = self.url.site_key
+        same = next(
+            (
+                strategy
+                for strategy in await self.db.strategies_for(key)
+                if strategy.url_pattern is None
+                and strategy.tool == candidate.tool
+                and strategy.options == candidate.options
+            ),
+            None,
+        )
+        if same is None:
+            return await self.db.upsert_strategy(
+                Strategy(
+                    site_key=key,
+                    tool=candidate.tool,
+                    options=candidate.options,
+                    requires_auth=signed_in,
+                    source=StrategySource.PROBE,
+                    success_count=1,
+                    last_success_at=utcnow(),
+                )
+            )
+        strategy = await self._count(same, Outcome(ok=True))
+        if not strategy.enabled or (signed_in and not strategy.requires_auth):
+            strategy = await self.db.upsert_strategy(
+                strategy.model_copy(
+                    update={"enabled": True, "requires_auth": strategy.requires_auth or signed_in}
+                )
+            )
+        return strategy
+
+    async def _store_site(self) -> None:
+        """Make sure the databases udl writes to have the site (its strategies need it), keeping
+        what is known about it."""
+        if not self._site_stored:
+            key = self.url.site_key
+            await self.db.upsert_site(await self.db.get_site(key) or Site(key=key))
+            self._site_stored = True
+
+    # -- helpers ---------------------------------------------------------------------------------
 
     def _attempt(self, candidate: Candidate, signed_in: bool, error: UDLError | None) -> None:
         attempt = Attempt(

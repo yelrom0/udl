@@ -26,6 +26,7 @@ from udl.db.models import (
     SiteQuery,
     Strategy,
     StrategySource,
+    counted,
     strategy_order,
 )
 from udl.errors import AuthRequired, ErrorCode
@@ -181,6 +182,24 @@ def test_a_failed_outcome_carries_the_error() -> None:
 
     assert Outcome(ok=False, error=error).error == error
     assert error.code is ErrorCode.AUTH_REQUIRED
+
+
+def test_a_success_counts_on_a_copy_of_the_strategy() -> None:
+    strategy = make_strategy(success_count=2, failure_count=1, consecutive_failures=1)
+
+    assert counted(strategy, Outcome(ok=True, at=NOW)) == strategy.model_copy(
+        update={"success_count": 3, "consecutive_failures": 0, "last_success_at": NOW}
+    )
+    assert strategy.success_count == 2
+
+
+def test_a_failure_counts_on_a_copy_of_the_strategy() -> None:
+    strategy = make_strategy(success_count=2, last_success_at=NOW)
+    error = AuthRequired("Sign in").to_info()
+
+    assert counted(strategy, Outcome(ok=False, error=error)) == strategy.model_copy(
+        update={"failure_count": 1, "consecutive_failures": 1, "last_error": error}
+    )
 
 
 def test_queries_default_to_everything() -> None:
