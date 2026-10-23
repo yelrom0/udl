@@ -23,6 +23,7 @@ import string
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Self, cast
@@ -173,6 +174,22 @@ class Cookie(_Frozen):
             comment=None,
             comment_url=None,
             rest={"HttpOnly": ""} if self.http_only else {},
+        )
+
+    @classmethod
+    def from_http_cookie(cls, cookie: http.cookiejar.Cookie) -> Self:
+        """A cookie from a standard library cookie jar (e.g. one a server set)."""
+        domain = cookie.domain
+        if "." not in (bare := domain.removesuffix(".local")):
+            domain = bare  # the jar's name for a dotless host (see to_http_cookie)
+        return cls(
+            name=cookie.name,
+            value=SecretStr(cookie.value or ""),
+            domain=domain,
+            path=cookie.path or "/",
+            secure=cookie.secure,
+            http_only=cookie.has_nonstandard_attr("HttpOnly"),
+            expires=None if cookie.expires is None else datetime.fromtimestamp(cookie.expires, UTC),
         )
 
 

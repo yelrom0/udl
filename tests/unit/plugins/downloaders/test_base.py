@@ -9,6 +9,8 @@ probe and download, cancellation, threads, cookies and handoffs
 
 # System Imports
 import asyncio
+import email
+import email.message
 import http.cookiejar
 import threading
 import time
@@ -607,6 +609,51 @@ def test_a_cookie_works_in_a_standard_cookie_jar(cookie: Cookie, url: str, sent:
 def test_an_http_only_cookie_stays_http_only() -> None:
     assert make_cookie(http_only=True).to_http_cookie().has_nonstandard_attr("HttpOnly")
     assert not make_cookie().to_http_cookie().has_nonstandard_attr("HttpOnly")
+
+
+@pytest.mark.parametrize(
+    "cookie",
+    [
+        make_cookie(),
+        make_cookie(domain=".example.com", path="/private", secure=True, http_only=True),
+        make_cookie(domain="localhost"),
+        make_cookie(domain="127.0.0.1"),
+        make_cookie(expires=datetime(2999, 1, 1, tzinfo=UTC)),
+    ],
+)
+def test_a_cookie_comes_back_from_a_cookie_jar_unchanged(cookie: Cookie) -> None:
+    assert Cookie.from_http_cookie(cookie.to_http_cookie()) == cookie
+
+
+@pytest.mark.parametrize(
+    ("url", "set_cookie", "domain"),
+    [
+        ("https://www.example.com/a", "s=v; Path=/", "www.example.com"),
+        ("https://www.example.com/a", "s=v; Domain=example.com; Path=/", ".example.com"),
+        ("http://localhost:8080/a", "s=v; Path=/", "localhost"),
+    ],
+)
+def test_a_cookie_a_server_set_works_for_its_site(url: str, set_cookie: str, domain: str) -> None:
+    jar = http.cookiejar.CookieJar()
+    request = urllib.request.Request(url)  # noqa: S310 - never opened, only for the jar
+    response = email.message_from_string(f"Set-Cookie: {set_cookie}\n\n")
+    jar.extract_cookies(FakeResponse(response), request)  # pyright: ignore[reportArgumentType]
+
+    [cookie] = [Cookie.from_http_cookie(c) for c in jar]
+
+    assert cookie.domain == domain
+    assert cookie.matches(url)
+    assert cookie.value.get_secret_value() == "v"
+
+
+class FakeResponse:
+    """What a cookie jar reads from a response: its headers."""
+
+    def __init__(self, headers: email.message.Message) -> None:
+        self._headers = headers
+
+    def info(self) -> email.message.Message:
+        return self._headers
 
 
 def test_the_cookie_header_has_the_cookies_for_the_url() -> None:

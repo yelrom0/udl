@@ -109,6 +109,10 @@ def http(backend: str) -> Callable[[FixtureSite], Case]:
     return case
 
 
+def scraper(site: FixtureSite) -> Case:
+    return Case(installed("scraper"), site, Page.VIDEO, Page.PRIVATE, Page.SLOW)
+
+
 # How to get each downloader, and the pages it is meant for.
 CASES: dict[str, Callable[[FixtureSite], Case]] = {
     "fake": fake,
@@ -117,6 +121,7 @@ CASES: dict[str, Callable[[FixtureSite], Case]] = {
     "http": http("httpx"),
     "http (curl)": http("curl"),
     "http (wget)": http("wget"),
+    "scraper": scraper,
     "yt-dlp": ytdlp,
 }
 

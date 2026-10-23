@@ -16,18 +16,17 @@ It talks to servers with httpx, or with curl or wget when the `backend` option p
 # System Imports
 import asyncio
 import http.cookiejar
-import mimetypes
 import os
 import re
 import tempfile
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, Callable
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Callable, Mapping
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from email.message import Message
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import ClassVar, Final
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import urljoin
 
 # Package Imports
 import httpx
@@ -53,6 +52,13 @@ from udl.plugins.downloaders.base import (
     render_template,
 )
 from udl.plugins.downloaders.errors import curl_error, http_status_error, httpx_error, wget_error
+from udl.plugins.downloaders.media import (
+    MEDIA_KINDS,
+    extension_for,
+    media_type,
+    stream_kind,
+    url_name,
+)
 from udl.plugins.downloaders.process import run_process
 
 TOOL: Final[str] = "http"
@@ -64,21 +70,7 @@ _MEDIA: Final[float] = 0.9  # a media type (video/audio/image), or a download (a
 _OTHER: Final[float] = 0.6  # some other file, e.g. application/octet-stream or a PDF
 _UNTYPED: Final[float] = 0.4  # the server did not say
 
-# mimetypes' built-in table only (not the system's), so guesses are the same everywhere.
-_MIME: Final = mimetypes.MimeTypes()
-_MIME.add_type("application/dash+xml", ".mpd")
-_MEDIA_KINDS: Final = frozenset({"video", "audio", "image"})
-_PAGE_TYPES: Final = frozenset({"text/html", "application/xhtml+xml"})
-_PLAYLIST_TYPES: Final = frozenset(
-    {
-        "application/vnd.apple.mpegurl",
-        "application/x-mpegurl",
-        "audio/mpegurl",
-        "audio/x-mpegurl",
-        "application/dash+xml",
-    }
-)
-_PLAYLIST_EXTENSIONS: Final = frozenset({".m3u8", ".mpd"})
+PAGE_TYPES: Final = frozenset({"text/html", "application/xhtml+xml"})
 _EXTENSION: Final = re.compile(r"\.[A-Za-z0-9]{1,8}")
 # Statuses a server may answer HEAD with although GET works (403: e.g. a URL signed for GET).
 _HEAD_REFUSED: Final = frozenset({403, 405, 501})
@@ -166,28 +158,27 @@ def _file(response: _Response) -> _File:
     url = response.url
     content_type = response.headers.get("content-type", "").partition(";")[0].strip().lower()
     attachment, filename = _disposition(response.headers.get("content-disposition"))
-    url_name = PurePosixPath(unquote(urlsplit(url).path)).name
-    if content_type in _PLAYLIST_TYPES or PurePosixPath(url_name).suffix in _PLAYLIST_EXTENSIONS:
+    if stream_kind(url, content_type):
         raise UnsupportedURL(
             f"{url} is a stream playlist", tool=TOOL, hint="yt-dlp downloads streams: try it."
         )
-    if content_type in _PAGE_TYPES and not attachment:
+    if content_type in PAGE_TYPES and not attachment:
         raise UnsupportedURL(
             f"{url} is a web page, not a file",
             tool=TOOL,
             hint="The scraper or browser downloader may find media on it.",
         )
-    name = PurePosixPath((filename or url_name).replace("\\", "/")).name or "download"
+    name = PurePosixPath((filename or url_name(url)).replace("\\", "/")).name or "download"
     title, ext = name, None
     if _EXTENSION.fullmatch(suffix := PurePosixPath(name).suffix):
         title, ext = name.removesuffix(suffix), suffix
-    ext = ext or (content_type and _MIME.guess_extension(content_type)) or ".bin"
-    if attachment or content_type.partition("/")[0] in _MEDIA_KINDS:
+    ext = ext or (content_type and extension_for(content_type)) or ".bin"
+    if attachment or content_type.partition("/")[0] in MEDIA_KINDS:
         confidence = _MEDIA
     elif content_type:
         confidence = _OTHER
     else:
-        confidence = _MATCH if _media_extension(url_name) else _UNTYPED
+        confidence = _MATCH if media_type(url) else _UNTYPED
     return _File(
         url=url,
         title=title,
@@ -196,14 +187,6 @@ def _file(response: _Response) -> _File:
         size=_size(response),
         confidence=confidence,
     )
-
-
-def _media_extension(name: str) -> str | None:
-    """`name`'s extension, if it is a media file's (video, audio or image)."""
-    kind, _ = _MIME.guess_file_type(name)
-    if kind and kind.partition("/")[0] in _MEDIA_KINDS:
-        return PurePosixPath(name).suffix.lower()
-    return None
 
 
 def _cookie_file(cookies: list[Cookie], folder: Path) -> Path:
@@ -253,25 +236,45 @@ class _Backend(ABC):
         DownloadError a failure means."""
 
 
+@asynccontextmanager
+async def http_client(
+    *,
+    headers: Mapping[str, str],
+    cookies: list[Cookie],
+    seconds: float,
+    retries: int,
+    tool: str,
+) -> AsyncGenerator[httpx.AsyncClient]:
+    """An httpx client that sends `headers`, and `cookies` to their sites, follows redirects,
+    waits `seconds` to connect or for more data, and retries a failed connection `retries`
+    times. httpx's errors are raised as the DownloadErrors they mean (from `tool`)."""
+    jar = http.cookiejar.CookieJar()
+    for cookie in cookies:
+        jar.set_cookie(cookie.to_http_cookie())
+    try:
+        async with httpx.AsyncClient(
+            headers=dict(headers),
+            cookies=jar,
+            follow_redirects=True,
+            timeout=seconds,
+            transport=httpx.AsyncHTTPTransport(retries=retries),
+        ) as client:
+            yield client
+    except httpx.HTTPError as e:
+        raise httpx_error(e, tool=tool) from e
+
+
 class _Httpx(_Backend):
     requires = (Requirement.module("httpx", hint="Install httpx: `uv add httpx`."),)
 
-    @asynccontextmanager
-    async def _client(self, request: _Request) -> AsyncGenerator[httpx.AsyncClient]:
-        jar = http.cookiejar.CookieJar()
-        for cookie in request.cookies:
-            jar.set_cookie(cookie.to_http_cookie())
-        try:
-            async with httpx.AsyncClient(
-                headers=request.headers,
-                cookies=jar,
-                follow_redirects=True,
-                timeout=self.options.timeout,
-                transport=httpx.AsyncHTTPTransport(retries=self.options.retries),
-            ) as client:
-                yield client
-        except httpx.HTTPError as e:
-            raise httpx_error(e, tool=TOOL) from e
+    def _client(self, request: _Request) -> AbstractAsyncContextManager[httpx.AsyncClient]:
+        return http_client(
+            headers=request.headers,
+            cookies=request.cookies,
+            seconds=self.options.timeout,
+            retries=self.options.retries,
+            tool=TOOL,
+        )
 
     async def head(self, request: _Request, *, first_byte: bool, cancel: CancelToken) -> _Response:
         async def ask() -> _Response:
@@ -501,9 +504,9 @@ class HttpDownloader(Downloader[HttpOptions]):
         return self._backend.requires
 
     def match(self, url: str) -> MatchResult | None:
-        name = PurePosixPath(unquote(urlsplit(url).path)).name
-        extension = _media_extension(name)
-        return MatchResult(confidence=_MATCH, detail=extension) if extension else None
+        if media_type(url) is None:
+            return None
+        return MatchResult(confidence=_MATCH, detail=PurePosixPath(url_name(url)).suffix.lower())
 
     async def _probe(self, ctx: ProbeContext) -> ProbeResult:
         file = await self._file(ctx)
