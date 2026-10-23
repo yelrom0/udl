@@ -90,8 +90,10 @@ def _needs_browser(step: str) -> UnsupportedURL:
 class Document(ABC):
     """A document a chain is on: its page, or a page a follow opened."""
 
-    def __init__(self, url: str) -> None:
-        self.url = url  # where it is (after any redirects)
+    @property
+    @abstractmethod
+    def url(self) -> str:
+        """Where it is (after any redirects)."""
 
     @abstractmethod
     async def text(self) -> str:
@@ -115,8 +117,12 @@ class StaticDocument(Document):
     """A document as it was served."""
 
     def __init__(self, url: str, text: str) -> None:
-        super().__init__(url)
+        self._url = url
         self._text = text
+
+    @property
+    def url(self) -> str:
+        return self._url
 
     async def text(self) -> str:
         return self._text

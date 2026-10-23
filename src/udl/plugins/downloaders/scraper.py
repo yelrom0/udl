@@ -61,6 +61,7 @@ from udl.plugins.downloaders.base import (
     Downloader,
     DownloaderOptions,
     DownloadResult,
+    Handoff,
     MediaCandidate,
     MediaKind,
     ProbeContext,
@@ -264,8 +265,7 @@ class ScraperDownloader(Downloader[ScraperOptions]):
 
     async def _probe(self, ctx: ProbeContext) -> ProbeResult:
         if (chain := self.options.chain) is not None:
-            run, cookies = await self._follow(chain, ctx)
-            return probe_result(TOOL, run, chain_handoffs(chain, run, url=ctx.url, cookies=cookies))
+            return probe_result(TOOL, *await self._follow(chain, ctx))
         page = await self._scrape(ctx)
         return ProbeResult(
             tool=TOOL,
@@ -278,8 +278,7 @@ class ScraperDownloader(Downloader[ScraperOptions]):
 
     async def _download(self, ctx: DownloadContext) -> DownloadResult:
         if (chain := self.options.chain) is not None:
-            run, cookies = await self._follow(chain, ctx)
-            handoffs = chain_handoffs(chain, run, url=ctx.url, cookies=cookies)
+            run, handoffs = await self._follow(chain, ctx)
             hand_off = self.hand_off_all if run.every else self.hand_off_best
             result = await hand_off(handoffs, ctx)
             return result.model_copy(update={"title": run.title or result.title})
@@ -300,10 +299,11 @@ class ScraperDownloader(Downloader[ScraperOptions]):
 
     async def _follow(
         self, chain: TagChain, ctx: ProbeContext, trace: list[StepTrace] | None = None
-    ) -> tuple[ChainRun, list[Cookie]]:
-        """Where `chain` leads from ctx.url, and the cookies its site set on the way."""
+    ) -> tuple[ChainRun, list[Handoff]]:
+        """Where `chain` leads from ctx.url, and the downloads of its finds (with the cookies
+        the site set on the way)."""
 
-        async def follow() -> tuple[ChainRun, list[Cookie]]:
+        async def follow() -> tuple[ChainRun, list[Handoff]]:
             async with http_client(
                 headers={**ctx.headers, **chain_headers(chain, ctx.url)},
                 cookies=ctx.cookies,
@@ -313,7 +313,8 @@ class ScraperDownloader(Downloader[ScraperOptions]):
             ) as client:
                 reader = _ChainReader(client, self.options.max_page_bytes)
                 run = await run_chain(chain, ctx.url, reader, trace=trace)
-                return run, [Cookie.from_http_cookie(cookie) for cookie in client.cookies.jar]
+                cookies = [Cookie.from_http_cookie(cookie) for cookie in client.cookies.jar]
+            return run, chain_handoffs(chain, run, url=ctx.url, cookies=cookies)
 
         return await cancellable(follow(), ctx.cancel)
 

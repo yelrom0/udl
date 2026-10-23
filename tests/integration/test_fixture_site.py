@@ -14,8 +14,8 @@ from urllib.parse import urljoin
 # Package Imports
 import httpx
 import pytest
+from playwright.sync_api import Browser, Playwright, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import sync_playwright
 from selectolax.lexbor import LexborHTMLParser
 
 # Local Imports
@@ -150,15 +150,19 @@ def test_the_js_page_has_no_media_in_its_static_html(fixture_site: FixtureSite) 
     assert ".mp4" not in html
 
 
+def chromium(playwright: Playwright) -> Browser:
+    try:
+        return playwright.chromium.launch()
+    except PlaywrightError as e:
+        if "Executable doesn't exist" in e.message:
+            pytest.skip("Chromium is not installed: uv run playwright install chromium")
+        raise
+
+
 def test_the_js_page_builds_its_video_in_a_browser(fixture_site: FixtureSite) -> None:
     url = fixture_site.url(Page.JS)
     with sync_playwright() as playwright:
-        try:
-            browser = playwright.chromium.launch()
-        except PlaywrightError as e:
-            if "Executable doesn't exist" in e.message:
-                pytest.skip("Chromium is not installed: uv run playwright install chromium")
-            raise
+        browser = chromium(playwright)
         try:
             page = browser.new_page()
             page.goto(url)
@@ -166,6 +170,25 @@ def test_the_js_page_builds_its_video_in_a_browser(fixture_site: FixtureSite) ->
         finally:
             browser.close()
 
+    assert src is not None
+    assert urljoin(url, src) == fixture_site.url(Page.DIRECT_FILE)
+
+
+def test_the_click_page_makes_its_video_when_play_is_clicked(fixture_site: FixtureSite) -> None:
+    url = fixture_site.url(Page.CLICK)
+    with sync_playwright() as playwright:
+        browser = chromium(playwright)
+        try:
+            page = browser.new_page()
+            page.goto(url)
+            videos_before = page.locator("video").count()
+            with page.expect_request(fixture_site.url(Page.DIRECT_FILE)):
+                page.click("#play")
+            src = page.locator("video").get_attribute("src")
+        finally:
+            browser.close()
+
+    assert videos_before == 0
     assert src is not None
     assert urljoin(url, src) == fixture_site.url(Page.DIRECT_FILE)
 

@@ -9,6 +9,10 @@ stream playlists the page requests (in any frame), reads its media elements' sou
 the best find off, a file to http and a stream playlist to yt-dlp, with the browser's cookies,
 its User-Agent and the Referer the browser sent.
 
+Given a site's tag chain (its `chain` option), it follows the chain to the media instead: each
+page it opens is a tab of its own, which can wait for elements, click them and report the
+requests it has made. The finds are handed off in the same way.
+
 Chromium runs on udl's persistent profile (where `udl browser login` keeps logins) unless the
 profile_dir option is None. One Chromium at a time uses a profile: others wait their turn.
 """
@@ -16,6 +20,7 @@ profile_dir option is None. One Chromium at a time uses a profile: others wait t
 # System Imports
 import asyncio
 import contextlib
+import re
 import threading
 from collections.abc import AsyncGenerator, Awaitable
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -24,7 +29,7 @@ from pathlib import Path
 from typing import ClassVar, Final
 
 # Package Imports
-from playwright.async_api import BrowserContext, Page, Response, async_playwright
+from playwright.async_api import BrowserContext, Page, Request, Response, async_playwright
 from playwright.async_api import Cookie as PlaywrightCookie
 from playwright.async_api import Error as PlaywrightError
 from pydantic import (
@@ -38,9 +43,18 @@ from pydantic import (
 )
 
 # Local Imports
-from udl.chains.models import TagChain
+from udl.chains.executor import (
+    ChainRun,
+    Document,
+    Reader,
+    chain_handoffs,
+    chain_headers,
+    probe_result,
+    run_chain,
+)
+from udl.chains.models import StepTrace, TagChain
 from udl.config import ExpandedPath, browser_profile_dir
-from udl.errors import DownloadError, ToolUnavailable, UnsupportedURL
+from udl.errors import ConfigError, DownloadError, ExtractionFailed, ToolUnavailable, UnsupportedURL
 from udl.plugins.downloaders.base import (
     CancelToken,
     Cookie,
@@ -57,6 +71,7 @@ from udl.plugins.downloaders.base import (
     cancellable,
 )
 from udl.plugins.downloaders.errors import chromium_error, http_status_error
+from udl.plugins.downloaders.http import PAGE_TYPES
 from udl.plugins.downloaders.media import Find, stream_kind, unique, url_name
 
 TOOL: Final[str] = "browser"
@@ -79,6 +94,9 @@ _ELEMENT_SOURCES: Final = """() => [...document.querySelectorAll("video, audio")
 _SOURCES: Final = TypeAdapter(list[tuple[str, str]])
 # How often a login in progress takes a copy of the browser's cookies.
 _LOGIN_POLL: Final[float] = 0.5
+_USER_AGENT: Final = "() => navigator.userAgent"
+# A document served as one of these is read as it was served (e.g. an API's JSON), not rendered.
+_TEXT_TYPES: Final = ("text/", "application/json", "application/javascript", "+json", "+xml")
 
 
 class BrowserOptions(DownloaderOptions):
@@ -313,6 +331,118 @@ class _Visit(BaseModel):
 
 
 # ---------------------------------------------------------------------------------------------
+# Following tag chains
+# ---------------------------------------------------------------------------------------------
+
+
+def _served_as_text(content_type: str) -> bool:
+    """Whether a document of this type is read as it was served (e.g. an API's JSON), rather
+    than as the page Chromium made of it."""
+    media_type = content_type.partition(";")[0].strip().lower()
+    return media_type not in PAGE_TYPES and (
+        media_type.startswith(_TEXT_TYPES) or media_type.endswith(_TEXT_TYPES)
+    )
+
+
+class _ChainPage(Document):
+    """A page a chain is on: a tab of its own, which records the requests it makes."""
+
+    def __init__(self, page: Page, *, timeout: float) -> None:
+        self._page = page
+        self._timeout = timeout
+        self._response: Response | None = None
+        self._requests: list[tuple[str, str]] = []  # (URL, Referer)
+        self._requested = asyncio.Event()
+        page.on("request", self._on_request)
+
+    def _on_request(self, request: Request) -> None:
+        self._requests.append((request.url, request.headers.get("referer") or self._page.url))
+        self._requested.set()
+
+    @property
+    def url(self) -> str:
+        return self._page.url
+
+    async def load(self, url: str, *, referer: str | None) -> None:
+        try:
+            self._response = await self._page.goto(
+                url, referer=referer, timeout=self._timeout * 1000
+            )
+        except PlaywrightError as e:
+            raise chromium_error(e.message) from e
+        if self._response is not None and (
+            error := http_status_error(
+                self._response.status,
+                url,
+                tool=TOOL,
+                retry_after=self._response.headers.get("retry-after"),
+            )
+        ):
+            raise error
+
+    async def text(self) -> str:
+        response = self._response
+        if response is not None and _served_as_text(response.headers.get("content-type", "")):
+            return await response.text()
+        return await self._page.content()
+
+    async def wait_for(self, selector: str) -> None:
+        try:
+            await self._page.wait_for_selector(
+                selector, state="attached", timeout=self._timeout * 1000
+            )
+        except PlaywrightError as e:
+            raise ExtractionFailed(
+                f"No element matching {selector!r} came on {self.url}", tool=TOOL
+            ) from e
+
+    async def click(self, selector: str) -> None:
+        try:
+            await self._page.click(selector, timeout=self._timeout * 1000)
+        except PlaywrightError as e:
+            problem = e.message.splitlines()[0]
+            raise ExtractionFailed(
+                f"Could not click {selector!r} on {self.url}: {problem}", tool=TOOL
+            ) from e
+
+    async def requested(self, pattern: re.Pattern[str]) -> list[tuple[str, str]]:
+        with contextlib.suppress(TimeoutError):
+            async with asyncio.timeout(self._timeout):
+                while True:
+                    self._requested.clear()
+                    if found := self._matching(pattern):
+                        return found
+                    await self._requested.wait()
+        return []
+
+    def _matching(self, pattern: re.Pattern[str]) -> list[tuple[str, str]]:
+        return [(url, referer) for url, referer in self._requests if pattern.search(url)]
+
+    async def user_agent(self) -> str:
+        return await self._page.evaluate(_USER_AGENT)
+
+
+class _ChainReader(Reader):
+    """Opens a chain's documents in Chromium, each in a tab of its own."""
+
+    def __init__(self, context: BrowserContext, *, timeout: float, referer: bool) -> None:
+        self._context = context
+        self._timeout = timeout
+        self._referer = referer  # send the Referer (else the chain sends its own)
+        self._pages: list[_ChainPage] = []
+
+    async def open(self, url: str, *, referer: str | None) -> Document:
+        page = _ChainPage(await self._context.new_page(), timeout=self._timeout)
+        self._pages.append(page)
+        await page.load(url, referer=referer if self._referer else None)
+        return page
+
+    async def user_agent(self) -> str:
+        """The browser's User-Agent (once a page is open)."""
+        return await self._pages[0].user_agent()
+
+
+# ---------------------------------------------------------------------------------------------
 # The downloader
 # ---------------------------------------------------------------------------------------------
 
@@ -331,6 +461,8 @@ class BrowserDownloader(Downloader[BrowserOptions]):
     )
 
     async def _probe(self, ctx: ProbeContext) -> ProbeResult:
+        if (chain := self.options.chain) is not None:
+            return probe_result(TOOL, *await self._follow(chain, ctx))
         visit = await self._visit(ctx)
         return ProbeResult(
             tool=TOOL,
@@ -342,9 +474,51 @@ class BrowserDownloader(Downloader[BrowserOptions]):
         )
 
     async def _download(self, ctx: DownloadContext) -> DownloadResult:
+        if (chain := self.options.chain) is not None:
+            run, handoffs = await self._follow(chain, ctx)
+            hand_off = self.hand_off_all if run.every else self.hand_off_best
+            result = await hand_off(handoffs, ctx)
+            return result.model_copy(update={"title": run.title or result.title})
         visit = await self._visit(ctx)
         result = await self.hand_off_best(visit.handoffs(), ctx)
         return result.model_copy(update={"title": visit.title or result.title})
+
+    async def run_chain(
+        self, ctx: ProbeContext, *, trace: list[StepTrace] | None = None
+    ) -> ChainRun:
+        """Follow the chain in the options from ctx.url (see udl.chains.executor.ChainRunner).
+        Raises ConfigError when there is none."""
+        if self.options.chain is None:
+            raise ConfigError(f"The {TOOL} downloader has no tag chain to follow")
+        run, _ = await self._follow(self.options.chain, ctx, trace)
+        return run
+
+    async def _follow(
+        self, chain: TagChain, ctx: ProbeContext, trace: list[StepTrace] | None = None
+    ) -> tuple[ChainRun, list[Handoff]]:
+        """Where `chain` leads from ctx.url, and the downloads of its finds (with the browser's
+        cookies and User-Agent)."""
+        options = self.options
+
+        async def follow() -> tuple[ChainRun, list[Handoff]]:
+            async with chromium(
+                profile_dir=options.profile_dir,
+                headless=options.headless,
+                user_agent=options.user_agent,
+                cancel=ctx.cancel,
+            ) as context:
+                await add_cookies(context, ctx.cookies)
+                headers = {**ctx.headers, **chain_headers(chain, ctx.url)}
+                await context.set_extra_http_headers(headers)
+                referer = not any(name.lower() == "referer" for name in headers)
+                reader = _ChainReader(context, timeout=options.timeout, referer=referer)
+                run = await run_chain(chain, ctx.url, reader, trace=trace)
+                urls = [ctx.url, *(find.media.url for find in run.finds)]
+                cookies = from_playwright(await context.cookies(urls))
+                agent = {"User-Agent": await reader.user_agent()}
+            return run, chain_handoffs(chain, run, url=ctx.url, cookies=cookies, headers=agent)
+
+        return await cancellable(follow(), ctx.cancel)
 
     async def _visit(self, ctx: ProbeContext) -> _Visit:
         """Load ctx.url and see what media it has. Raises UnsupportedURL when it has none."""
@@ -387,7 +561,7 @@ class BrowserDownloader(Downloader[BrowserOptions]):
                     title=(await page.title()).strip() or None,
                     finds=finds,
                     cookies=from_playwright(await context.cookies(urls)),
-                    user_agent=await page.evaluate("() => navigator.userAgent"),
+                    user_agent=await page.evaluate(_USER_AGENT),
                 )
 
         result = await cancellable(visit(), ctx.cancel)
