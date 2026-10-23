@@ -33,6 +33,11 @@ What it remembers (unless the request says not to), through DBManager:
 
 The request's tool and a site plugin's strategy are not remembered: they are chosen, not learned.
 A database that cannot be written is logged and never fails the download.
+
+Self-healing: a stored strategy that fails `heal_threshold` times in a row is disabled, and the
+rest of the candidates (the probe chain, without the broken strategy's tool and options) re-probe
+the URL; the winner is remembered as above. A manual strategy is never disabled, only warned
+about: the user chose it.
 """
 
 # System Imports
@@ -318,9 +323,32 @@ class _Run:
         ):
             return
         try:
-            await self._count(used, Outcome(ok=False, error=error.to_info()))
+            await self._heal(await self._count(used, Outcome(ok=False, error=error.to_info())))
         except DatabaseError as e:
             log.warning("Could not count %s's failure on %s: %s", candidate.tool, self.url, e)
+
+    async def _heal(self, strategy: Strategy) -> None:
+        """Disable a strategy that has failed heal_threshold times in a row (the candidates
+        after it re-probe the URL), unless the user chose it."""
+        failures = strategy.consecutive_failures
+        if failures < self.x.settings.heal_threshold or not strategy.enabled:
+            return
+        if strategy.source is StrategySource.MANUAL:
+            log.warning(
+                "The %s strategy you set for %s has failed %d times in a row; udl keeps it "
+                "because you chose it (change it with `udl sites set`)",
+                strategy.tool,
+                strategy.site_key,
+                failures,
+            )
+            return
+        log.info(
+            "Disabling the %s strategy for %s after %d failures in a row; re-probing",
+            strategy.tool,
+            strategy.site_key,
+            failures,
+        )
+        await self.db.upsert_strategy(strategy.model_copy(update={"enabled": False}))
 
     async def _count(self, strategy: Strategy, outcome: Outcome) -> Strategy:
         """Count an outcome on a stored strategy. Returns it updated."""
