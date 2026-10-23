@@ -11,7 +11,7 @@ model. The CLI, the API and the MCP server only call these (Phase 4).
 import asyncio
 import json
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -30,6 +30,7 @@ from support.engine import (
     script,
     settings,
 )
+from support.sites import FakeSitePlugin, fake_site
 from udl.chains.models import TagChain
 from udl.config import APISettings, Settings
 from udl.core.executor import RetryPolicy
@@ -49,6 +50,7 @@ from udl.core.models import (
     SiteRequest,
 )
 from udl.core.service import UDLService, operation, operations
+from udl.core.urls import URL
 from udl.db.manager import DBManager
 from udl.db.models import (
     DownloadQuery,
@@ -62,10 +64,12 @@ from udl.db.models import (
 from udl.errors import ConfigError, DoesNotExist, ErrorCode, PluginError
 from udl.plugins.databases.memory import MemoryDatabase
 from udl.plugins.downloaders.base import Requirement
-from udl.plugins.registry import DATABASES, DOWNLOADERS, PluginRegistry
+from udl.plugins.registry import DATABASES, DOWNLOADERS, SITES, PluginRegistry
+from udl.plugins.sites.base import SitePlugin
 
 A = "https://example.com/a"
 B = "https://example.com/b"
+LIST = "https://example.com/list"
 SLOW = FakeMedia(content=b"x" * 2000, delay=0.02)
 
 type Make = Callable[..., Awaitable[UDLService]]
@@ -83,6 +87,7 @@ async def make(tmp_path: Path) -> AsyncIterator[Make]:
         cookies: StaticCookies | None = None,
         db: DBManager | None = None,
         lock: InstanceLock | None = None,
+        site_plugins: Sequence[SitePlugin] | None = None,
     ) -> UDLService:
         config = config or settings(tmp_path)
         service = UDLService(
@@ -90,6 +95,7 @@ async def make(tmp_path: Path) -> AsyncIterator[Make]:
             registry=plugins or registry(),
             databases=db,
             cookies=cookies or StaticCookies(),
+            site_plugins=site_plugins,
             retry=RetryPolicy(retries=0),
             lock=lock or InstanceLock(tmp_path / "udl.lock"),
             progress_interval=0,
@@ -243,6 +249,47 @@ async def test_a_url_given_twice_is_downloaded_once(tmp_path: Path, make: Make) 
     batch = await service.download(DownloadRequest(urls=[A, f"{A}?utm_source=x", "example.com/a"]))
 
     assert [job.url for job in batch.jobs] == [A]
+
+
+async def test_a_site_plugin_turns_a_url_into_the_urls_to_download(
+    tmp_path: Path, make: Make
+) -> None:
+    plugin = fake_site(urls={LIST: [A, B]})
+    service = await make(media_settings(tmp_path), site_plugins=[plugin])
+
+    batch = await service.download(DownloadRequest(urls=[LIST]))
+
+    assert [(job.url, job.status) for job in batch.jobs] == [
+        (A, JobStatus.FINISHED),
+        (B, JobStatus.FINISHED),
+    ]
+
+
+async def test_urls_a_site_plugin_gives_twice_are_downloaded_once(
+    tmp_path: Path, make: Make
+) -> None:
+    plugin = fake_site(urls={LIST: [A, B], B: [A]})
+    service = await make(media_settings(tmp_path), site_plugins=[plugin])
+
+    batch = await service.download(DownloadRequest(urls=[B, LIST, A]))
+
+    assert [job.url for job in batch.jobs] == [A, B]
+
+
+async def test_the_registry_s_site_plugins_are_used(tmp_path: Path, make: Make) -> None:
+    class Lists(FakeSitePlugin):
+        name = "lists"
+
+        async def transform_urls(self, url: URL) -> list[URL]:
+            return [URL.parse(A), URL.parse(B)] if url.value == LIST else [url]
+
+    plugins = registry()
+    plugins.register(SITES, Lists)
+    service = await make(media_settings(tmp_path), plugins=plugins)
+
+    batch = await service.download(DownloadRequest(urls=[LIST]))
+
+    assert [job.url for job in batch.jobs] == [A, B]
 
 
 async def test_download_without_waiting_returns_the_queued_jobs(tmp_path: Path, make: Make) -> None:

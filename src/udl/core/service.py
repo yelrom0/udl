@@ -73,7 +73,8 @@ from udl.core.models import (
     SiteRequest,
     SuggestChainRequest,
 )
-from udl.core.resolver import Resolver, SiteBehaviour
+from udl.core.resolver import Resolver
+from udl.core.sites import load_site_plugins
 from udl.core.tools import Toolbox
 from udl.core.urls import URL
 from udl.db.manager import DBManager
@@ -82,6 +83,7 @@ from udl.errors import AuthRequired, DoesNotExist, DownloadError, ErrorInfo, Plu
 from udl.plugins.downloaders.auth import AuthCookies
 from udl.plugins.downloaders.base import Cookie, ProbeContext, ProbeResult
 from udl.plugins.registry import DOWNLOADERS, PluginInfo, PluginRegistry
+from udl.plugins.sites.base import SitePlugin
 
 log = logging.getLogger(__name__)
 
@@ -167,7 +169,7 @@ class UDLService:
         registry: PluginRegistry | None = None,
         databases: DBManager | None = None,
         cookies: CookieSource | None = None,
-        site_plugins: Sequence[SiteBehaviour] = (),
+        site_plugins: Sequence[SitePlugin] | None = None,
         retry: RetryPolicy | None = None,
         lock: InstanceLock | None = None,
         progress_interval: float = 0.25,
@@ -178,6 +180,8 @@ class UDLService:
         self.registry = registry
         self.db = databases if databases is not None else DBManager(settings.db, registry)
         self.toolbox = Toolbox(settings, registry)
+        if site_plugins is None:
+            site_plugins = load_site_plugins(registry)
         self.resolver = Resolver(settings, self.toolbox, site_plugins)
         self.cookies = cookies if cookies is not None else AuthCookies.from_settings(settings)
         self.executor = Executor(
@@ -265,23 +269,27 @@ class UDLService:
         site plugin's choice, else what worked on the site before, else it tries its downloaders
         in turn (those that recognise the URL first) until one actually downloads it, and
         remembers what worked for next time. A site that wants a login is retried with the
-        user's cookies, then in a browser. Each URL is a job; this returns them once they have
-        all ended, or at once (still queued) when `wait` is false, or after `timeout` seconds.
+        user's cookies, then in a browser. A site plugin may first turn a URL into others (e.g.
+        a list into its items). Each URL is a job; this returns them once they have all ended,
+        or at once (still queued) when `wait` is false, or after `timeout` seconds.
         """
         # (`on_event` hears what happens to the jobs while this waits, e.g. to show progress.)
         if request.tool is not None:
             self.registry.get(DOWNLOADERS, request.tool)  # (raises PluginError)
         db = self.db.only(request.databases) if request.databases else self.db
+        urls = [
+            found for url in dict.fromkeys(request.urls) for found in await self._transformed(url)
+        ]
         specs = [
             JobSpec(
-                url=URL.parse(url),
+                url=url,
                 tool=request.tool,
                 reprobe=request.reprobe,
                 output_dir=request.output_dir,
                 filename_template=request.filename_template,
                 record=request.record,
             )
-            for url in dict.fromkeys(request.urls)
+            for url in dict.fromkeys(urls)
         ]
         batch = await self.jobs.submit(specs, db=db)
         if request.wait:
@@ -293,6 +301,12 @@ class UDLService:
                                 await on_event(event)
                     await self.jobs.wait(batch.id)
         return self.jobs.batch(batch.id) or batch
+
+    async def _transformed(self, text: str) -> list[URL]:
+        """The URLs to download for a URL the request names: those its site plugin gives."""
+        url = URL.parse(text)
+        plugin = self.resolver.site_plugin(url)
+        return await plugin.transform_urls(url) if plugin else [url]
 
     @operation("get_download")
     async def get_download(self, request: JobRequest) -> JobInfo:

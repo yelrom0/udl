@@ -20,6 +20,7 @@ class ErrorCode(StrEnum):
     UDL_ERROR = "udl_error"
     CONFIG_ERROR = "config_error"
     PLUGIN_ERROR = "plugin_error"
+    PLUGIN_FAILED = "plugin_failed"
     DATABASE_ERROR = "database_error"
     DOWNLOAD_ERROR = "download_error"
     UNSUPPORTED_URL = "unsupported_url"
@@ -73,6 +74,13 @@ class PluginError(UDLError):
     """A plugin could not be loaded or is misconfigured."""
 
     code = ErrorCode.PLUGIN_ERROR
+
+
+class PluginFailed(PluginError):
+    """A plugin's own code failed while it was taking part in a download (a bug in it), so the
+    download stops: trying other downloaders would fail the same way."""
+
+    code = ErrorCode.PLUGIN_FAILED
 
 
 class DatabaseError(UDLError):

@@ -140,7 +140,8 @@ class DownloadBatch(_Frozen):
     id: UUID
     """The batch's id: get its jobs' events, or cancel them all, with it."""
     jobs: list[JobInfo]
-    """One per URL, in the request's order."""
+    """One per URL, in the request's order (a site plugin may have turned a URL into
+    several)."""
 
 
 # ---------------------------------------------------------------------------------------------

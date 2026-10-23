@@ -15,13 +15,14 @@ How it reacts to a failed try (the error taxonomy in planning.md):
 - RateLimited, NetworkError: the same candidate again after a wait (the Retry-After the site
   asked for, else a backoff that doubles), RetryPolicy.retries times; then the next candidate.
 - NotFound: stop. The content is gone, not the strategy.
-- Cancelled: stop.
+- Cancelled, PluginFailed (a bug in the site plugin, which would fail every try): stop.
 
-A tool the request named is the only candidate: its own failure is the error, and it gets no
-browser fallback. When every candidate fails, the error is the most useful one seen (a login, a
-rate limit, a network problem), else NoStrategyFound, whose hint suggests tag chains for the page
-(the scraper's best few, each as the `udl chain set` command that saves it), or the chain
-wizard when it has none.
+The URL's site plugin (udl.core.sites) prepares every try (its headers and cookies), whichever
+downloader makes it. A tool the request named is the only candidate: its own failure is the
+error, and it gets no browser fallback. When every candidate fails, the error is the most useful
+one seen (a login, a rate limit, a network problem), else NoStrategyFound, whose hint suggests
+tag chains for the page (the scraper's best few, each as the `udl chain set` command that saves
+it), or the chain wizard when it has none.
 
 What it remembers (unless the request says not to), through DBManager:
 
@@ -35,6 +36,9 @@ What it remembers (unless the request says not to), through DBManager:
 
 The request's tool and a site plugin's strategy are not remembered: they are chosen, not learned.
 A database that cannot be written is logged and never fails the download.
+
+Once a download has worked (and been remembered), the site plugin post-processes its files; when
+that fails, so does the download.
 
 Self-healing: a stored strategy that fails `heal_threshold` times in a row is disabled, and the
 rest of the candidates (the probe chain, without the broken strategy's tool and options) re-probe
@@ -62,6 +66,7 @@ from udl.config import Settings
 from udl.core.models import Attempt, CandidateSource
 from udl.core.output import filename_template, resolve_output_dir
 from udl.core.resolver import Candidate, Resolver
+from udl.core.sites import SiteHooks
 from udl.core.tools import Toolbox
 from udl.core.urls import URL
 from udl.db.manager import DBManager
@@ -74,6 +79,7 @@ from udl.errors import (
     NetworkError,
     NoStrategyFound,
     NotFound,
+    PluginFailed,
     RateLimited,
     UDLError,
 )
@@ -203,6 +209,7 @@ class _Run:
         self.x = executor
         self.job = job
         self.url = job.url
+        self.plugin: SiteHooks | None = executor.resolver.site_plugin(job.url)
         self.db = db
         self.cancel = cancel
         self.progress = progress
@@ -231,7 +238,7 @@ class _Run:
                 if isinstance(outcome, AuthRequired) and (fallback := self._browser(candidate)):
                     outcome = await self._candidate(fallback)
                 if isinstance(outcome, Execution):
-                    return outcome
+                    return await self._post_processed(outcome)
                 if isinstance(outcome, NotFound) or candidate.source is CandidateSource.REQUEST:
                     raise outcome
         raise await self._failure()
@@ -265,7 +272,7 @@ class _Run:
                 result = await self._download(candidate, cookies)
             except UDLError as e:
                 self._attempt(candidate, bool(cookies), e)
-                if isinstance(e, Cancelled):
+                if isinstance(e, Cancelled | PluginFailed):
                     raise
                 if isinstance(e, AuthRequired):
                     self.needs_auth = True
@@ -306,7 +313,16 @@ class _Run:
             progress=progress,
             downloader_for=self.x.toolbox.downloader_for,
         )
+        if self.plugin is not None:
+            ctx = await self.plugin.prepare(ctx)
         return await downloader.download(ctx)
+
+    async def _post_processed(self, execution: Execution) -> Execution:
+        """`execution` once the site plugin has post-processed what it downloaded."""
+        if self.plugin is None:
+            return execution
+        result = await self.plugin.post_process(execution.result)
+        return execution.model_copy(update={"result": result})
 
     # -- remembering ---------------------------------------------------------------------------
 
@@ -465,7 +481,7 @@ class _Run:
         return self._cookies
 
     async def _output_dir(self) -> Path:
-        plugin = self.x.resolver.site_plugin(self.url)
+        plugin = self.plugin
         try:
             site = await self.db.get_site(self.url.site_key)
         except DatabaseError as e:

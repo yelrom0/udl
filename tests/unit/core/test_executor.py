@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 # Local Imports
-from support.downloaders import FakeDownloader, FakeMedia
+from support.downloaders import FakeDownloader, FakeMedia, FakeOptions
 from support.engine import (
     StaticCookies,
     cookie,
@@ -29,7 +29,7 @@ from support.engine import (
     script,
     settings,
 )
-from support.sites import fake_site
+from support.sites import FakeSitePlugin, fake_site
 from udl.config import Settings
 from udl.core.executor import Execution, Executor, JobSpec, RetryPolicy
 from udl.core.models import Attempt, CandidateSource
@@ -48,15 +48,20 @@ from udl.errors import (
     NoStrategyFound,
     NotFound,
     PluginError,
+    PluginFailed,
     RateLimited,
     UDLError,
+    UnsupportedURL,
 )
 from udl.plugins.downloaders.base import (
     CancelToken,
     DownloadContext,
+    Downloader,
     DownloadProgress,
     DownloadResult,
     Handoff,
+    ProbeContext,
+    ProbeResult,
     render_template,
 )
 from udl.plugins.registry import DOWNLOADERS, PluginRegistry
@@ -83,7 +88,7 @@ def flaky(name: str, failures: list[DownloadError]) -> type[FakeDownloader]:
     return Flaky
 
 
-def with_tools(*tools: type[FakeDownloader]) -> PluginRegistry:
+def with_tools(*tools: type[Downloader[Any]]) -> PluginRegistry:
     plugins = registry()
     for tool in tools:
         plugins.register(DOWNLOADERS, tool)
@@ -296,11 +301,25 @@ async def test_without_suggestions_the_hint_points_at_the_chain_wizard(
     assert "udl chain set" not in error.hint
 
 
+class Unsuggesting(Downloader[FakeOptions]):
+    """A scraper that cannot suggest tag chains (and downloads nothing)."""
+
+    name = "scraper"
+    options_model = FakeOptions
+
+    async def _probe(self, ctx: ProbeContext) -> ProbeResult:
+        raise UnsupportedURL("nothing here")
+
+    async def _download(self, ctx: DownloadContext) -> DownloadResult:
+        raise UnsupportedURL("nothing here")
+
+
 @pytest.mark.parametrize(
     "plugins",
     [
         registry("http", "yt-dlp"),  # (no scraper to suggest chains)
         with_tools(fake_tool("scraper")),  # (one whose page cannot be read: see the config)
+        with_tools(Unsuggesting),  # (a scraper that suggests no chains at all)
     ],
 )
 async def test_when_chains_cannot_be_suggested_the_hint_points_at_the_wizard(
@@ -835,3 +854,135 @@ async def test_a_handoff_goes_to_the_configured_downloader(tmp_path: Path, db: D
 
     assert execution.result.handed_off_to == "http"
     assert [path.read_bytes() for path in execution.result.files] == [b"media"]
+
+
+# ---------------------------------------------------------------------------------------------
+# Site plugins: prepare and post_process
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_site_plugin_prepares_every_try_whichever_downloader_makes_it(
+    tmp_path: Path, db: DBManager
+) -> None:
+    plugin = fake_site(cookies=[cookie()])  # (the cookie SIGNED_IN needs)
+    run = Run(
+        settings(tmp_path, tools={"gallery-dl": script({PAGE: SIGNED_IN})}), site_plugins=(plugin,)
+    )
+
+    execution = await run(db)
+
+    assert tried(execution.attempts) == [
+        ("http", ErrorCode.UNSUPPORTED_URL),
+        ("yt-dlp", ErrorCode.UNSUPPORTED_URL),
+        ("gallery-dl", None),
+    ]
+    assert [ctx.url for ctx in plugin.prepared] == [PAGE] * 3
+    assert not execution.signed_in  # (the plugin's cookie is not the site's login)
+    assert run.cookies.asked == 0
+
+
+async def test_a_requested_tool_is_prepared_too(tmp_path: Path, db: DBManager) -> None:
+    plugin = fake_site(cookies=[cookie()])
+    run = Run(
+        settings(tmp_path, tools={"yt-dlp": script({PAGE: SIGNED_IN})}), site_plugins=(plugin,)
+    )
+
+    execution = await run(db, tool="yt-dlp")
+
+    assert execution.candidate.source is CandidateSource.REQUEST
+    assert len(plugin.prepared) == 1
+
+
+async def test_a_login_prepare_asks_for_is_signed_in_with_the_site_s_cookies(
+    tmp_path: Path, db: DBManager
+) -> None:
+    class Members(FakeSitePlugin):
+        async def prepare(self, ctx: DownloadContext) -> DownloadContext:
+            if not ctx.cookies:
+                raise AuthRequired("Members only")
+            return await super().prepare(ctx)
+
+    plugin = Members()
+    run = Run(
+        settings(tmp_path, tools={"http": script({PAGE: SIGNED_IN})}),
+        cookies=StaticCookies([cookie()]),
+        site_plugins=(plugin,),
+    )
+
+    execution = await run(db)
+
+    assert tried(execution.attempts) == [("http", ErrorCode.AUTH_REQUIRED), ("http", None)]
+    assert execution.signed_in
+    assert plugin.prepared[-1].cookies == [cookie()]
+
+
+async def test_a_site_plugin_that_fails_to_prepare_ends_the_download(
+    tmp_path: Path, db: DBManager
+) -> None:
+    class Broken(FakeSitePlugin):
+        name = "broken"
+
+        async def prepare(self, ctx: DownloadContext) -> DownloadContext:
+            raise KeyError("token")
+
+    run = Run(settings(tmp_path, tools={"yt-dlp": script({PAGE: "x"})}), site_plugins=(Broken(),))
+
+    error = await run.failure(db)
+
+    assert isinstance(error, PluginFailed)
+    assert "The broken site plugin failed to prepare the download of" in error.message
+    assert tried(run.attempts) == [("http", ErrorCode.PLUGIN_FAILED)]
+
+
+async def test_post_process_sees_the_final_files_and_gives_the_download_s(
+    tmp_path: Path, db: DBManager
+) -> None:
+    plugin = fake_site(move_to=tmp_path / "moved")
+    run = Run(settings(tmp_path, tools={"http": script({PAGE: "media"})}), site_plugins=(plugin,))
+
+    execution = await run(db)
+
+    [downloaded] = plugin.post_processed
+    assert downloaded.files == [tmp_path / "downloads" / "media.mp4"]
+    assert execution.result.files == [tmp_path / "moved" / "media.mp4"]
+    assert execution.result.size_bytes == len("media")
+
+
+async def test_a_failed_post_process_fails_the_download_but_what_worked_is_remembered(
+    tmp_path: Path, db: DBManager
+) -> None:
+    class Broken(FakeSitePlugin):
+        name = "broken"
+
+        async def post_process(self, result: DownloadResult) -> DownloadResult:
+            raise OSError("disk full")
+
+    run = Run(settings(tmp_path, tools={"http": script({PAGE: "media"})}), site_plugins=(Broken(),))
+
+    error = await run.failure(db)
+
+    assert isinstance(error, PluginFailed)
+    assert "The broken site plugin failed to post-process" in error.message
+    [learned] = await db.strategies_for("example.com")
+    assert (learned.tool, learned.success_count) == ("http", 1)
+
+
+async def test_nothing_is_post_processed_when_no_download_works(
+    tmp_path: Path, db: DBManager
+) -> None:
+    plugin = fake_site()
+
+    await Run(settings(tmp_path), site_plugins=(plugin,)).failure(db)
+
+    assert plugin.post_processed == []
+
+
+async def test_the_request_s_output_dir_beats_the_site_plugin_s(
+    tmp_path: Path, db: DBManager
+) -> None:
+    plugin = fake_site(output_dir=tmp_path / "plugin")
+    run = Run(settings(tmp_path, tools={"http": script({PAGE: "x"})}), site_plugins=(plugin,))
+
+    execution = await run(db, output_dir=tmp_path / "request")
+
+    assert execution.output_dir == tmp_path / "request"

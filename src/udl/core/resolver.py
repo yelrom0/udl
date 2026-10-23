@@ -9,7 +9,7 @@ executor tries them in turn until one downloads the URL.
 Precedence (highest first):
 
 1. the request's tool (`--tool`): it is the only candidate;
-2. the strategy of the site's plugin (Phase 6), which encodes deliberate behaviour;
+2. the strategy of the site's plugin (udl.core.sites), which encodes deliberate behaviour;
 3. the site's stored strategies, from every database (DBManager's read policy): those that are
    enabled and whose url_pattern matches the URL's path, best first (see strategy_rank);
 4. the probe chain: the tools in `probe_order`, those that match the URL offline (no network:
@@ -27,8 +27,6 @@ import json
 import logging
 import re
 from collections.abc import AsyncGenerator, Iterable, Iterator, Sequence
-from pathlib import Path
-from typing import Protocol
 from uuid import UUID
 
 # Package Imports
@@ -38,12 +36,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from udl.chains.models import TagChain
 from udl.config import Settings
 from udl.core.models import CandidateSource
+from udl.core.sites import SiteHooks
 from udl.core.tools import Toolbox
 from udl.core.urls import URL
 from udl.db.manager import DBManager
 from udl.db.models import JsonObject, Strategy, StrategySource
 from udl.errors import DatabaseError, UDLError
 from udl.plugins.downloaders.base import MatchResult
+from udl.plugins.sites.base import SitePlugin
 
 log = logging.getLogger(__name__)
 
@@ -66,22 +66,6 @@ class Candidate(BaseModel):
         """What makes two candidates the same: the tool, its options and its chain."""
         chain = self.chain.model_dump_json() if self.chain else ""
         return (self.tool, json.dumps(self.options, sort_keys=True), chain)
-
-
-class SiteBehaviour(Protocol):
-    """What the resolution engine asks of a site plugin (Phase 6's SitePlugin)."""
-
-    def matches(self, url: URL) -> bool:
-        """Whether this plugin handles the URL's site."""
-        ...
-
-    def strategy(self, url: URL) -> Strategy | None:
-        """The strategy to try first on the URL, if the plugin chooses one."""
-        ...
-
-    def output_dir(self, url: URL) -> Path | None:
-        """Where the URL's download goes, if the plugin says."""
-        ...
 
 
 def strategy_rank(strategy: Strategy) -> tuple[bool, int, bool, int, float, UUID]:
@@ -118,10 +102,11 @@ class Resolver:
     """Works out which downloaders to try on a URL."""
 
     def __init__(
-        self, settings: Settings, toolbox: Toolbox, site_plugins: Sequence[SiteBehaviour] = ()
+        self, settings: Settings, toolbox: Toolbox, site_plugins: Sequence[SitePlugin] = ()
     ) -> None:
         self._toolbox = toolbox
-        self._site_plugins = list(site_plugins)
+        by_priority = sorted(site_plugins, key=lambda plugin: plugin.priority)
+        self._site_plugins = [SiteHooks(plugin) for plugin in by_priority]
         self._probe_order: list[str] = []
         for name in settings.probe_order:
             if toolbox.has(name):
@@ -129,8 +114,9 @@ class Resolver:
             else:
                 log.warning("probe_order names %r, which is not an installed downloader", name)
 
-    def site_plugin(self, url: URL) -> SiteBehaviour | None:
-        """The site's plugin: the first that matches the URL."""
+    def site_plugin(self, url: URL) -> SiteHooks | None:
+        """The URL's site plugin: the first that matches it, lowest priority first (then in the
+        order they were given)."""
         return next((plugin for plugin in self._site_plugins if plugin.matches(url)), None)
 
     async def candidates(

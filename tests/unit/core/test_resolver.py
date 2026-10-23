@@ -26,7 +26,7 @@ from support.engine import (
     script,
     settings,
 )
-from support.sites import fake_site
+from support.sites import FakeSitePlugin, fake_site
 from udl.chains.models import TagChain
 from udl.config import ReadPolicy, Settings
 from udl.core.models import CandidateSource
@@ -149,8 +149,52 @@ async def test_the_first_site_plugin_that_matches_is_the_site_s_plugin(config: S
     first = fake_site("example.com", strategy=strategy("http"))
     second = fake_site("example.com", strategy=strategy("scraper"))
 
-    assert resolver(config, fake_site("o.com"), first, second).site_plugin(WATCH) is first
+    found = resolver(config, fake_site("o.com"), first, second).site_plugin(WATCH)
+
+    assert found is not None
+    assert found.plugin is first
     assert resolver(config, second).site_plugin(URL.parse("https://o.com/")) is None
+
+
+async def test_site_plugins_are_asked_lowest_priority_first(config: Settings) -> None:
+    late = fake_site("example.com", called="late", first=10)
+    early = fake_site("example.com", called="early", first=-1)
+
+    found = resolver(config, late, fake_site("example.com"), early).site_plugin(WATCH)
+
+    assert found is not None
+    assert found.name == "early"
+
+
+async def test_a_site_plugin_that_fails_to_match_is_passed_over(
+    config: Settings, caplog: pytest.LogCaptureFixture
+) -> None:
+    class Broken(FakeSitePlugin):
+        name = "broken"
+
+        def matches(self, url: URL) -> bool:
+            raise RuntimeError("boom")
+
+    found = resolver(config, Broken(), fake_site(called="works")).site_plugin(WATCH)
+
+    assert found is not None
+    assert found.name == "works"
+    assert "The broken site plugin failed to match" in caplog.text
+
+
+async def test_a_site_plugin_whose_strategy_fails_leaves_the_stored_strategies_first(
+    config: Settings, db: DBManager, caplog: pytest.LogCaptureFixture
+) -> None:
+    class Broken(FakeSitePlugin):
+        def strategy(self, url: URL) -> Strategy | None:
+            raise RuntimeError("boom")
+
+    await db.upsert_strategy(strategy("scraper", options={"confidence": 0.5}))
+
+    found = await candidates(resolver(config, Broken()), WATCH, db)
+
+    assert tools(found) == [("scraper", CandidateSource.STORED), *probing(*TOOLS)]
+    assert "failed to choose a strategy for" in caplog.text
 
 
 async def test_reprobing_skips_the_stored_strategies(config: Settings, db: DBManager) -> None:
