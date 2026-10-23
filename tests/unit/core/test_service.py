@@ -57,7 +57,7 @@ from udl.db.models import (
     SiteQuery,
     StrategySource,
 )
-from udl.errors import ConfigError, DatabaseError, DoesNotExist, ErrorCode, PluginError
+from udl.errors import ConfigError, DoesNotExist, ErrorCode, PluginError
 from udl.plugins.databases.memory import MemoryDatabase
 from udl.plugins.downloaders.base import Requirement
 from udl.plugins.registry import DATABASES, DOWNLOADERS, PluginRegistry
@@ -348,10 +348,10 @@ async def test_download_can_be_kept_to_some_databases(tmp_path: Path, make: Make
     assert await local.strategies_for("example.com") == []
 
 
-async def test_download_with_an_unknown_database_is_a_database_error(make: Make) -> None:
+async def test_download_with_an_unknown_database_does_not_exist(make: Make) -> None:
     service = await make()
 
-    with pytest.raises(DatabaseError, match="nope"):
+    with pytest.raises(DoesNotExist, match="nope"):
         await service.download(DownloadRequest(urls=[A], databases=["nope"]))
 
 

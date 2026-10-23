@@ -22,12 +22,9 @@ from rich.markup import escape
 
 # Local Imports
 from udl.config import Settings
-from udl.core.service import UDLService, operations
+from udl.core.service import ServiceFactory, UDLService, operations
 from udl.core.urls import URL
 from udl.errors import ConfigError, UDLError
-
-type ServiceFactory = Callable[[Settings], UDLService]
-"""Makes the service a command runs on (tests pass their own, through ctx.obj)."""
 
 EXIT_FAILED = 1
 EXIT_USAGE = 2

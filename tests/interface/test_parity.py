@@ -87,19 +87,15 @@ def test_every_operation_has_its_cli_command() -> None:
 # ---------------------------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="4.4-4.5: the API is not built yet")
 def test_every_operation_has_its_api_route() -> None:
-    from fastapi.routing import APIRoute
+    from udl.interfaces.api.app import create_app
 
-    # (Imported by name until the API exists.)
-    create_app = importlib.import_module("udl.interfaces.api.app").create_app
-
-    app = create_app(Settings())
+    # (The documented routes, from the OpenAPI schema: its operationIds are the operations'.)
+    paths = create_app(Settings()).openapi()["paths"]
     found = {
-        f"{method} {route.path}": route.operation_id
-        for route in app.routes
-        if isinstance(route, APIRoute)
-        for method in route.methods or ()
+        f"{method.upper()} {path}": details["operationId"]
+        for path, methods in paths.items()
+        for method, details in methods.items()
     }
 
     assert found == {api: op for op, (_, api) in MATRIX.items()} | API_ONLY

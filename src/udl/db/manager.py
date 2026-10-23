@@ -27,7 +27,7 @@ from udl.db.models import (
     download_order,
     strategy_order,
 )
-from udl.errors import DatabaseError
+from udl.errors import DatabaseError, DoesNotExist
 from udl.plugins.databases.base import DatabasePlugin
 from udl.plugins.registry import DATABASES, PluginRegistry
 
@@ -100,13 +100,13 @@ class DBManager:
         """A view that reads from, and writes to, only the connections called `names`: writes
         go to the writable ones among them, whatever the write policy. Its primary is this
         manager's if named, else the highest-priority writable one. It shares this manager's
-        databases, so connect and close this manager, not the view. Raises DatabaseError when a
+        databases, so connect and close this manager, not the view. Raises DoesNotExist when a
         name is not a connection's."""
         unknown = sorted(set(names) - set(self._databases))
         if unknown or not names:
             what = f"named {', '.join(unknown)}" if unknown else "was named"
             known = ", ".join(c.name for c in self._connections)
-            raise DatabaseError(
+            raise DoesNotExist(
                 f"No database connection {what}", hint=f"The connections are: {known}."
             )
         view = copy.copy(self)

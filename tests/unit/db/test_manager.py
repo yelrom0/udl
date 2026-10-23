@@ -28,7 +28,7 @@ from udl.db.models import (
     StrategySource,
     strategy_order,
 )
-from udl.errors import DatabaseError, PluginError
+from udl.errors import DatabaseError, DoesNotExist, PluginError
 from udl.plugins.databases.base import DatabasePlugin
 from udl.plugins.databases.memory import MemoryDatabase
 from udl.plugins.registry import DATABASES, PluginRegistry
@@ -608,5 +608,6 @@ async def test_a_view_of_read_only_connections_cannot_be_written(
 def test_a_view_must_name_known_connections(registry: PluginRegistry, names: list[str]) -> None:
     manager = make_manager(registry, conn("local", primary=True))
 
-    with pytest.raises(DatabaseError, match="connection"):
+    # (The request's fault, not a database's: what it names does not exist.)
+    with pytest.raises(DoesNotExist, match="connection"):
         manager.only(names)

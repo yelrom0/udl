@@ -61,6 +61,11 @@ class JobStatus(StrEnum):
     FAILED = "failed"
     CANCELLED = "cancelled"
 
+    @property
+    def ended(self) -> bool:
+        """Whether the download has ended (finished, failed or cancelled)."""
+        return self not in (JobStatus.QUEUED, JobStatus.RUNNING)
+
 
 def _check_regex(pattern: str) -> str:
     try:

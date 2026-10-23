@@ -218,3 +218,11 @@ def test_query_bounds_are_checked(fields: dict[str, int]) -> None:
 @pytest.mark.parametrize("site", ["example.com", "www.example.com", "https://m.example.com/watch"])
 def test_a_download_query_takes_a_site_as_a_key_a_host_or_a_url(site: str) -> None:
     assert DownloadQuery(site_key=site).site_key == "example.com"
+
+
+def test_a_job_status_says_whether_the_download_has_ended() -> None:
+    assert [status for status in JobStatus if status.ended] == [
+        JobStatus.FINISHED,
+        JobStatus.FAILED,
+        JobStatus.CANCELLED,
+    ]

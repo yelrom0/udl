@@ -59,7 +59,7 @@ from udl.core.resolver import Resolver, SiteBehaviour
 from udl.core.tools import Toolbox
 from udl.core.urls import URL
 from udl.db.manager import DBManager
-from udl.db.models import DownloadQuery, JobStatus, Site, SiteQuery, Strategy, StrategySource
+from udl.db.models import DownloadQuery, Site, SiteQuery, Strategy, StrategySource
 from udl.errors import AuthRequired, DoesNotExist, UDLError
 from udl.plugins.downloaders.auth import AuthCookies
 from udl.plugins.downloaders.base import Cookie, ProbeContext, ProbeResult
@@ -309,7 +309,7 @@ class UDLService:
             record = await self.db.get_download(request.id)
             if record is None:
                 raise
-        if record.status in (JobStatus.QUEUED, JobStatus.RUNNING):
+        if not record.status.ended:
             raise DoesNotExist(
                 f"The download {request.id} is run by another udl, not this one",
                 hint="Cancel it in the udl that runs it (with Ctrl-C, or the cancel_download of "
@@ -476,6 +476,10 @@ class UDLService:
 
 def _wants_login(result: ProbeResult) -> bool:
     return result.error is not None and result.error.code is AuthRequired.code
+
+
+type ServiceFactory = Callable[[Settings], UDLService]
+"""Makes the service an interface runs on: UDLService itself, or (in tests) one on fakes."""
 
 
 # ---------------------------------------------------------------------------------------------

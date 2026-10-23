@@ -21,7 +21,7 @@ from typer.core import TyperGroup, TyperOption
 from udl.config import Settings
 from udl.core.service import UDLService
 from udl.errors import ConfigError
-from udl.interfaces.cli.commands import browser, downloads, probe, sites, system
+from udl.interfaces.cli.commands import browser, downloads, probe, servers, sites, system
 from udl.interfaces.cli.common import EXIT_USAGE, Runtime, fail
 from udl.log import configure_logging
 
@@ -127,6 +127,7 @@ app.add_typer(sites.app, name="sites")
 app.add_typer(system.db, name="db")
 app.add_typer(system.plugins, name="plugins")
 app.add_typer(system.config, name="config")
+app.command("serve")(servers.serve)
 app.add_typer(browser.app, name="browser")
 
 
