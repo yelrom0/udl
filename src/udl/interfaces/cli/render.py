@@ -212,7 +212,16 @@ class DownloadProgress:
             )
         elif event.type.ends:
             mark, style = _STATUS[shown.status]
-            self._progress.update(task, description=f"[{style}]{mark}[/] {escape(shown.url)}")
+            # (The last progress event may have come well before the end.)
+            done = shown.progress.downloaded_bytes if shown.progress else 0
+            if shown.status is JobStatus.FINISHED:
+                done = shown.size_bytes
+            self._progress.update(
+                task,
+                completed=done,
+                total=done if shown.status is JobStatus.FINISHED else None,
+                description=f"[{style}]{mark}[/] {escape(shown.url)}",
+            )
             self._progress.stop_task(task)
 
 

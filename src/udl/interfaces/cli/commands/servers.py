@@ -3,7 +3,7 @@
 - servers.py -
 --------------
 
-udl serve: the other interfaces, served from the command line
+udl serve and udl mcp: the other interfaces, served from the command line
 """
 
 # System Imports
@@ -13,7 +13,7 @@ from typing import Annotated
 import typer
 
 # Local Imports
-from udl.interfaces.cli.common import Runtime
+from udl.interfaces.cli.common import Runtime, run
 
 
 def serve(
@@ -42,3 +42,14 @@ def serve(
         update={name: value for name, value in chosen.items() if value is not None}
     )
     serve_api(runtime.settings.model_copy(update={"api": api}), verbosity=runtime.verbosity)
+
+
+def mcp(ctx: typer.Context) -> None:
+    """Serve udl's MCP server on stdin and stdout, for an AI agent to run.
+
+    An agent's MCP config runs it as `{"command": "udl", "args": ["mcp"]}`. Its logs go to
+    stderr."""
+    # (Imported here: the other commands start faster without the MCP SDK.)
+    from udl.interfaces.mcp.server import create_server
+
+    run(ctx, lambda service: create_server(lambda: service).run_stdio_async())

@@ -7,6 +7,7 @@ Fixtures shared by every test
 """
 
 # System Imports
+import logging
 import os
 from collections.abc import Iterator
 from pathlib import Path
@@ -53,6 +54,20 @@ def isolated_user_dirs(
         if name.startswith("UDL_"):
             monkeypatch.delenv(name)
     return home
+
+
+@pytest.fixture(autouse=True)
+def _restore_logging() -> Iterator[None]:
+    """Put the logging setup back: `udl` (and the servers) configure logging as they start."""
+    root, udl = logging.getLogger(), logging.getLogger("udl")
+    handlers, levels = list(root.handlers), (root.level, udl.level)
+    yield
+    for handler in list(root.handlers):
+        if handler not in handlers:
+            root.removeHandler(handler)
+            handler.close()
+    root.setLevel(levels[0])
+    udl.setLevel(levels[1])
 
 
 @pytest.hookimpl(tryfirst=True)  # before -m deselects anything

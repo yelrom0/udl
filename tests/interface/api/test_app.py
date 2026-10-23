@@ -14,6 +14,7 @@ from pathlib import Path
 import httpx
 import pytest
 from pydantic import SecretStr
+from starlette.types import Message, Receive, Scope, Send
 
 # Local Imports
 from support.api import client_for
@@ -21,6 +22,7 @@ from support.interfaces import Harness
 from udl.config import APISettings
 from udl.core.service import operations
 from udl.errors import ErrorCode, ErrorInfo
+from udl.interfaces.api.app import LocalHostsOnly
 
 
 def keyed(tmp_path: Path, key: str = "s3cret") -> Harness:
@@ -104,3 +106,20 @@ async def test_a_bug_is_a_server_error_without_its_details(
     assert response.status_code == 500
     assert ErrorInfo.model_validate(response.json()).code is ErrorCode.UDL_ERROR
     assert "a secret detail" not in response.text
+
+
+async def test_the_host_check_leaves_the_lifespan_alone() -> None:
+    seen: list[str] = []
+
+    async def app(scope: Scope, receive: Receive, send: Send) -> None:
+        seen.append(scope["type"])
+
+    async def receive() -> Message:
+        raise AssertionError
+
+    async def send(message: Message) -> None:
+        raise AssertionError
+
+    await LocalHostsOnly(app)({"type": "lifespan"}, receive, send)
+
+    assert seen == ["lifespan"]

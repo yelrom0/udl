@@ -17,6 +17,7 @@ import pytest
 # Local Imports
 from support.api import client_for
 from support.interfaces import Harness
+from support.tasks import held
 from udl.config import APISettings
 
 
@@ -27,5 +28,5 @@ def harness(tmp_path: Path) -> Harness:
 
 @pytest.fixture
 async def client(harness: Harness) -> AsyncIterator[httpx.AsyncClient]:
-    async with client_for(harness) as client:
+    async with held(client_for(harness)) as client:
         yield client

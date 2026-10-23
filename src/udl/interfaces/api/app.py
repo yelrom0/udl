@@ -4,11 +4,12 @@
 ----------
 
 The HTTP API (FastAPI): a route for every operation (planning.md's Feature Matrix), named after
-it (its operationId), and a download's events as server-sent events. `udl serve` runs it.
+it (its operationId), and a download's events as server-sent events. The MCP server is at /mcp
+(streamable HTTP), on the same service. `udl serve` runs it.
 
 udl's errors are answered as ErrorInfo, with a status that fits (404 for what does not exist,
 400 for a tool or options that cannot work...). When api.api_key is set, every route but the
-docs (/docs, /openapi.json) needs it, in the X-API-Key header. Served on localhost (the
+docs (/docs, /openapi.json) needs it, in the X-API-Key header, /mcp too. Served on localhost (the
 default), it answers only requests for localhost: a web page that points its own name at
 127.0.0.1 (DNS rebinding) sends that name as the Host, and is refused.
 """
@@ -27,13 +28,15 @@ from fastapi import FastAPI, Request, Security
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 from starlette.datastructures import Headers
+from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 # Local Imports
 from udl.config import Settings
 from udl.core.service import ServiceFactory, UDLService
-from udl.errors import ErrorCode, ErrorInfo, UDLError
+from udl.errors import ErrorCode, ErrorInfo, UDLError, Unauthorized
 from udl.interfaces.api.routes import downloads, sites, system
+from udl.interfaces.mcp.server import create_server
 from udl.interfaces.security import API_KEY_HEADER, check_api_key
 
 log = logging.getLogger(__name__)
@@ -48,6 +51,8 @@ _STATUS: Final[dict[ErrorCode, int]] = {
 }
 
 _LOCAL_HOSTS: Final = frozenset({"localhost"})
+
+MCP_PATH: Final = "/mcp"
 
 _DESCRIPTION: Final = """\
 udl works out how to download a URL (yt-dlp, gallery-dl, a plain HTTP download, the page's
@@ -70,9 +75,12 @@ async def require_api_key(request: Request, key: Annotated[str | None, Security(
 def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService) -> FastAPI:
     """The API, on a service made from `settings` (started and closed by the app's lifespan)."""
 
+    mcp = create_server(lambda: app.state.service)
+    mcp_app = mcp.streamable_http_app(streamable_http_path=MCP_PATH, host=settings.api.host)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-        async with make_service(settings) as service:
+        async with make_service(settings) as service, mcp.session_manager.run():
             app.state.service = service
             yield
 
@@ -86,6 +94,8 @@ def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService)
     app.state.settings = settings
     for router in (downloads.router, sites.router, system.router):
         app.include_router(router)
+    # (A route rather than a mount, which would answer only /mcp/...)
+    app.router.routes.append(Route(MCP_PATH, KeyRequired(mcp_app, settings)))
 
     @app.exception_handler(UDLError)
     async def udl_error(request: Request, error: UDLError) -> JSONResponse:
@@ -106,8 +116,27 @@ def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService)
 
 
 # ---------------------------------------------------------------------------------------------
-# Localhost only
+# Who is answered
 # ---------------------------------------------------------------------------------------------
+
+
+class KeyRequired:
+    """An ASGI app (the MCP server) behind the API key, when the server has one."""
+
+    def __init__(self, app: ASGIApp, settings: Settings) -> None:
+        self.app = app
+        self.settings = settings
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            check_api_key(self.settings, Headers(scope=scope).get(API_KEY_HEADER))
+        except Unauthorized as e:
+            refused = JSONResponse(
+                e.to_info().model_dump(mode="json"), 401, {"WWW-Authenticate": API_KEY_HEADER}
+            )
+            await refused(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
 
 
 def is_local(host: str) -> bool:

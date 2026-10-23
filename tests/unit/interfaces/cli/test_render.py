@@ -58,7 +58,13 @@ def shown[M](render_it: Callable[[Console, M], None], model: M) -> str:
 
 def job(**fields: object) -> JobInfo:
     return JobInfo.model_validate(
-        {"id": uuid.uuid4(), "url": URL, "site_key": "example.com", "started_at": NOW, **fields}
+        {
+            "id": uuid.uuid4(),
+            "url": URL,
+            "site_key": "example.com",
+            "started_at": NOW,
+            **fields,
+        }
     )
 
 
@@ -122,7 +128,10 @@ def test_progress_bars_on_a_terminal() -> None:
     progress = started.model_copy(
         update={"progress": DownloadProgress(downloaded_bytes=50, total_bytes=100)}
     )
-    finished = progress.model_copy(update={"status": JobStatus.FINISHED})
+    # (Progress events are spaced out: the last one can come well before the end.)
+    finished = progress.model_copy(update={"status": JobStatus.FINISHED, "size_bytes": 100})
+    other = job(url="https://example.com/other", status=JobStatus.QUEUED)
+    failed = other.model_copy(update={"status": JobStatus.FAILED})
 
     async def run() -> None:
         with render.DownloadProgress(console) as bars:
@@ -131,12 +140,16 @@ def test_progress_bars_on_a_terminal() -> None:
                 (JobEventType.STARTED, started),
                 (JobEventType.PROGRESS, progress),
                 (JobEventType.FINISHED, finished),
+                (JobEventType.QUEUED, other),
+                (JobEventType.FAILED, failed),
             ):
                 await bars.show(JobEvent(type=kind, at=NOW, job=info, tool="http"))
 
     asyncio.run(run())
 
     assert URL in output.getvalue()
+    assert "100/100 bytes" in output.getvalue()
+    assert "✗ https://example.com/other" in output.getvalue()
 
 
 def test_no_progress_bars_when_not_enabled() -> None:

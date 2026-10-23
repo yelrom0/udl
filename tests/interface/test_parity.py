@@ -9,13 +9,11 @@ the interface-only commands listed here
 """
 
 # System Imports
-import importlib
 import inspect
 from collections.abc import Iterator
 from typing import Any
 
 # Package Imports
-import pytest
 from typer.core import TyperGroup
 
 # Local Imports
@@ -64,7 +62,6 @@ def _commands(command: Any, path: tuple[str, ...] = ()) -> Iterator[tuple[str, A
         yield " ".join(path), command
 
 
-@pytest.mark.xfail(strict=True, reason="4.2-4.3: the CLI is not built yet")
 def test_every_operation_has_its_cli_command() -> None:
     import typer.main
 
@@ -106,14 +103,12 @@ def test_every_operation_has_its_api_route() -> None:
 # ---------------------------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="4.6-4.7: the MCP server is not built yet")
 async def test_every_operation_has_its_mcp_tool() -> None:
-    # (Imported by name until the MCP server exists.)
-    create_server = importlib.import_module("udl.interfaces.mcp.server").create_server
+    from udl.interfaces.mcp.server import create_server
 
     def no_service() -> UDLService:
         raise AssertionError("listing the tools needs no service")
 
-    server = create_server(no_service, Settings())
+    server = create_server(no_service)
 
     assert {tool.name for tool in await server.list_tools()} == set(operations())

@@ -128,6 +128,7 @@ app.add_typer(system.db, name="db")
 app.add_typer(system.plugins, name="plugins")
 app.add_typer(system.config, name="config")
 app.command("serve")(servers.serve)
+app.command("mcp")(servers.mcp)
 app.add_typer(browser.app, name="browser")
 
 

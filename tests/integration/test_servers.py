@@ -3,11 +3,13 @@
 - test_servers.py -
 -------------------
 
-udl's servers for real, each in its own process, as a user runs them: `udl serve` (Granian)
-downloading from the local fixture site
+udl's servers for real, each in its own process, as a user (or an AI agent) runs them: `udl
+serve` (Granian, with the MCP server at /mcp) and `udl mcp` (stdio), downloading from the local
+fixture site
 """
 
 # System Imports
+import os
 import signal
 import socket
 import subprocess
@@ -20,10 +22,12 @@ from pathlib import Path
 # Package Imports
 import httpx
 import pytest
+from mcp import Client, StdioServerParameters
 
 # Local Imports
 from support.fixture_site import FixtureSite, Page
-from udl.core.models import ConfigInfo, DownloadBatch
+from udl.core.models import ConfigInfo, DownloadBatch, ProbeReport
+from udl.core.service import operations
 from udl.db.models import JobStatus
 
 
@@ -110,3 +114,33 @@ def test_udl_serve_stops_on_ctrl_c(served: Served) -> None:
     served.process.send_signal(signal.SIGINT)
 
     assert served.process.wait(timeout=30) == 0
+
+
+async def test_udl_serve_serves_the_mcp_server_at_mcp(
+    served: Served, fixture_site: FixtureSite
+) -> None:
+    async with Client(f"{served.url}/mcp") as client:
+        tools = await client.list_tools()
+        result = await client.call_tool("probe_url", {"url": fixture_site.url(Page.VIDEO)})
+
+    assert {tool.name for tool in tools.tools} == set(operations())
+    assert not result.is_error, result.content
+    report = ProbeReport.model_validate(result.structured_content)
+    assert [(r.tool, r.ok) for r in report.results] == [("http", False), ("yt-dlp", True)]
+
+
+async def test_udl_mcp_serves_an_agent_on_stdio(tmp_path: Path, fixture_site: FixtureSite) -> None:
+    config = write_config(tmp_path, free_port())
+    server = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "udl", "--config", str(config), "mcp"],
+        env=dict(os.environ),  # (the tests' own dirs, not the user's)
+    )
+
+    async with Client(server) as client:
+        result = await client.call_tool("download", {"urls": [fixture_site.url(Page.DIRECT_FILE)]})
+
+    assert not result.is_error, result.content
+    [job] = DownloadBatch.model_validate(result.structured_content).jobs
+    assert job.status is JobStatus.FINISHED, job.error
+    assert [p.read_bytes() for p in job.files] == [fixture_site.content(Page.DIRECT_FILE)]
