@@ -101,11 +101,22 @@ def gallerydl_cli(site: FixtureSite) -> Case:
     return Case(downloader, site, Page.DIRECT_FILE, Page.PRIVATE_FILE, Page.SLOW_FILE)
 
 
+def http(backend: str) -> Callable[[FixtureSite], Case]:
+    def case(site: FixtureSite) -> Case:
+        downloader = installed("http", backend=backend)
+        return Case(downloader, site, Page.DIRECT_FILE, Page.PRIVATE_FILE, Page.SLOW_FILE)
+
+    return case
+
+
 # How to get each downloader, and the pages it is meant for.
 CASES: dict[str, Callable[[FixtureSite], Case]] = {
     "fake": fake,
     "gallery-dl": gallerydl,
     "gallery-dl (subprocess)": gallerydl_cli,
+    "http": http("httpx"),
+    "http (curl)": http("curl"),
+    "http (wget)": http("wget"),
     "yt-dlp": ytdlp,
 }
 

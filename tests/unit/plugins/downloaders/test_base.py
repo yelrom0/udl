@@ -48,6 +48,7 @@ from udl.plugins.downloaders.base import (
     ProbeResult,
     Requirement,
     RequirementKind,
+    cancellable,
     cookie_header,
     default_downloader_for,
     render_template,
@@ -468,6 +469,84 @@ async def test_threadsafe_progress_arrives_on_the_event_loop_thread() -> None:
     await asyncio.sleep(0)  # let the loop run the scheduled callbacks
 
     assert seen == [(threading.get_ident(), 1), (threading.get_ident(), 2)]
+
+
+async def test_cancellable_returns_what_it_awaited() -> None:
+    async def work() -> str:
+        await asyncio.sleep(0.05)
+        return "done"
+
+    assert await cancellable(work(), CancelToken(), interval=0.01) == "done"
+
+
+async def test_cancellable_stops_a_stalled_coroutine_once_the_token_is_cancelled() -> None:
+    token = CancelToken()
+    started = asyncio.Event()
+    cleaned_up = False
+
+    async def stalled() -> None:
+        nonlocal cleaned_up
+        started.set()
+        try:
+            await asyncio.sleep(60)
+        finally:
+            cleaned_up = True
+
+    task = asyncio.create_task(cancellable(stalled(), token, interval=0.01))
+    await started.wait()
+    token.cancel()
+    start = time.monotonic()
+
+    with pytest.raises(Cancelled):
+        await task
+    assert time.monotonic() - start < 1
+    assert cleaned_up
+
+
+async def test_cancellable_keeps_what_the_coroutine_raised() -> None:
+    async def fails() -> None:
+        raise AuthRequired("Sign in")
+
+    with pytest.raises(AuthRequired):
+        await cancellable(fails(), CancelToken(), interval=0.01)
+
+
+async def test_cancelling_the_task_cancels_the_token_and_the_coroutine() -> None:
+    token = CancelToken()
+    started = asyncio.Event()
+    cleaned_up = False
+
+    async def stalled() -> None:
+        nonlocal cleaned_up
+        started.set()
+        try:
+            await asyncio.sleep(60)
+        finally:
+            cleaned_up = True
+
+    task = asyncio.create_task(cancellable(stalled(), token, interval=0.01))
+    await started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert token.cancelled
+    assert cleaned_up
+
+
+async def test_cancellable_with_a_cancelled_token_never_starts() -> None:
+    token = CancelToken()
+    token.cancel()
+    ran = False
+
+    async def work() -> None:
+        nonlocal ran
+        ran = True
+
+    with pytest.raises(Cancelled):
+        await cancellable(work(), token)
+
+    assert not ran
 
 
 # ---------------------------------------------------------------------------------------------

@@ -36,6 +36,7 @@ sqlite = "udl.plugins.databases.sqlite:SQLitePlugin"
 
 [project.entry-points."udl.downloaders"]
 gallery-dl = "udl.plugins.downloaders.gallerydl:GalleryDlDownloader"
+http = "udl.plugins.downloaders.http:HttpDownloader"
 yt-dlp = "udl.plugins.downloaders.ytdlp:YtDlpDownloader"
 
 [build-system]

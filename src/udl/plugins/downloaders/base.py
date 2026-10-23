@@ -22,7 +22,7 @@ import shutil
 import string
 import threading
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Self, cast
@@ -262,6 +262,27 @@ async def run_blocking[T](call: Callable[[], T], *, cancel: CancelToken) -> T:
         cancel.cancel()
         await asyncio.wait([worker])
         raise
+
+
+async def cancellable[T](
+    awaitable: Awaitable[T], cancel: CancelToken, *, interval: float = 0.1
+) -> T:
+    """Await `awaitable`, stopping it (and raising Cancelled) within `interval` seconds of
+    `cancel` being cancelled, even if it is stuck waiting (e.g. on a stalled server). If the
+    awaiting task is cancelled, `cancel` is cancelled too."""
+    task = asyncio.ensure_future(awaitable)
+    try:
+        while not cancel.cancelled:
+            if (await asyncio.wait([task], timeout=interval))[0]:
+                return task.result()
+        task.cancel()  # (before its first step, if it never started)
+        await asyncio.wait([task])
+    except asyncio.CancelledError:
+        cancel.cancel()
+        task.cancel()
+        await asyncio.wait([task])
+        raise
+    raise Cancelled("The download was cancelled")
 
 
 # ---------------------------------------------------------------------------------------------

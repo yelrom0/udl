@@ -43,7 +43,7 @@ Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task
   - [x] 2.2 Error taxonomy mapping (table-driven tests per tool: `AuthRequired`, `Unsupported`, `RateLimited`, …)
   - [x] 2.3 `yt-dlp` (in-process API, offline extractor match, `extract_info(download=False)`, progress hooks)
   - [x] 2.4 `gallery-dl` (offline `extractor.find()`, in-process job)
-  - [ ] 2.5 `http` direct-file downloader: `httpx` by default, `curl` / `wget` backends when installed, resume support
+  - [x] 2.5 `http` direct-file downloader: `httpx` by default, `curl` / `wget` backends when installed, resume support
   - [ ] 2.6 `scraper` (static HTML, `selectolax`): heuristic media discovery, then hand off to `http` / `yt-dlp`
   - [ ] 2.7 `browser` (Playwright): network sniffing for media/manifest URLs + cookie capture, then hand off
   - [ ] 2.8 Auth (401/403): `cookies_from_browser`, persistent browser profile, `udl browser login`
