@@ -26,6 +26,7 @@ from hypothesis import strategies as st
 from pydantic import JsonValue, SecretStr, ValidationError
 
 # Local Imports
+from support.downloaders import Lookup
 from udl.errors import (
     AuthRequired,
     Cancelled,
@@ -33,6 +34,7 @@ from udl.errors import (
     DownloadError,
     ErrorCode,
     ExtractionFailed,
+    NotFound,
     PluginError,
     ToolUnavailable,
 )
@@ -709,6 +711,60 @@ async def test_a_handoff_downloads_with_the_named_downloader(tmp_path: Path) -> 
     assert seen.headers == {"User-Agent": "udl", "Referer": URL}
     assert [c.name for c in seen.cookies] == ["mine", "found"]
     assert (seen.output_dir, seen.cancel) == (ctx.output_dir, ctx.cancel)
+
+
+CANDIDATES = [f"https://cdn.example.com/{n}.mp4" for n in range(4)]
+
+
+async def hand_off_best(lookup: Lookup, tmp_path: Path, *, tries: int = 5) -> DownloadResult:
+    handoffs = [Handoff(tool="fake", url=url) for url in CANDIDATES]
+    ctx = DownloadContext(url=URL, output_dir=tmp_path, downloader_for=lookup)
+    return await Finder().hand_off_best(handoffs, ctx, tries=tries)
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        ErrorCode.NOT_FOUND,
+        ErrorCode.UNSUPPORTED_URL,
+        ErrorCode.EXTRACTION_FAILED,
+        ErrorCode.TOOL_UNAVAILABLE,
+    ],
+)
+async def test_when_a_handoff_fails_for_its_media_the_next_one_is_tried(
+    tmp_path: Path, code: ErrorCode
+) -> None:
+    lookup = Lookup({CANDIDATES[1]: b"second"}, errors={CANDIDATES[0]: code})
+
+    result = await hand_off_best(lookup, tmp_path)
+
+    assert [file.read_bytes() for file in result.files] == [b"second"]
+    assert (result.tool, result.handed_off_to) == ("finder", "fake")
+    assert len(lookup.asked) == 2
+
+
+@pytest.mark.parametrize(
+    "code", [ErrorCode.AUTH_REQUIRED, ErrorCode.RATE_LIMITED, ErrorCode.NETWORK_ERROR]
+)
+async def test_a_failure_that_is_not_the_medias_own_stops_the_handoffs(
+    tmp_path: Path, code: ErrorCode
+) -> None:
+    lookup = Lookup({CANDIDATES[1]: b"second"}, errors={CANDIDATES[0]: code})
+
+    with pytest.raises(DownloadError) as caught:
+        await hand_off_best(lookup, tmp_path)
+
+    assert caught.value.code is code
+    assert len(lookup.asked) == 1
+
+
+async def test_when_no_handoff_works_the_first_failure_is_raised(tmp_path: Path) -> None:
+    lookup = Lookup({}, errors={CANDIDATES[0]: ErrorCode.NOT_FOUND})
+
+    with pytest.raises(NotFound):
+        await hand_off_best(lookup, tmp_path, tries=3)
+
+    assert len(lookup.asked) == 3
 
 
 def test_the_default_lookup_names_an_unknown_downloader() -> None:

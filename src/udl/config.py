@@ -66,6 +66,11 @@ def default_db_path() -> Path:
     return data_dir() / "udl.db"
 
 
+def browser_profile_dir() -> Path:
+    """The browser profile udl keeps logins in (`udl browser login`)."""
+    return data_dir() / "browser-profile"
+
+
 def expand_path(path: Path) -> Path:
     """`path` with `~` and `$VARS` expanded."""
     return Path(os.path.expandvars(path)).expanduser()
@@ -163,7 +168,7 @@ class BrowserSettings(_Frozen):
     """The [browser] table, used by the browser downloader."""
 
     headless: bool = True
-    profile_dir: ExpandedPath = Field(default_factory=lambda: data_dir() / "browser-profile")
+    profile_dir: ExpandedPath = Field(default_factory=browser_profile_dir)
 
 
 # The config file Settings() reads; Settings.load() sets it.

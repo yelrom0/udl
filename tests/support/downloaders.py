@@ -10,6 +10,7 @@ exactly what happens. It passes the downloader contract suite, like any real dow
 
 # System Imports
 import asyncio
+from typing import Any
 
 # Package Imports
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeFloat, PositiveInt
@@ -103,3 +104,19 @@ class FakeDownloader(Downloader[FakeOptions]):
         if media.cookie and media.cookie not in (cookie_header(ctx.cookies, ctx.url) or ""):
             raise AuthRequired(f"{ctx.url} needs the {media.cookie.split('=')[0]} cookie")
         return media
+
+
+class Lookup:
+    """A DownloadContext's downloader_for: a FakeDownloader for every handoff, whatever tool it
+    names, with `media` scripted (and `errors`). It remembers the tools asked for."""
+
+    def __init__(self, media: dict[str, bytes], errors: dict[str, ErrorCode] | None = None) -> None:
+        self.options = FakeOptions(
+            media={url: FakeMedia(content=data) for url, data in media.items()},
+            errors=errors or {},
+        )
+        self.asked: list[str] = []
+
+    def __call__(self, name: str) -> Downloader[Any]:
+        self.asked.append(name)
+        return FakeDownloader(self.options)

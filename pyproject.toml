@@ -35,6 +35,7 @@ memory = "udl.plugins.databases.memory:MemoryDatabase"
 sqlite = "udl.plugins.databases.sqlite:SQLitePlugin"
 
 [project.entry-points."udl.downloaders"]
+browser = "udl.plugins.downloaders.browser:BrowserDownloader"
 gallery-dl = "udl.plugins.downloaders.gallerydl:GalleryDlDownloader"
 http = "udl.plugins.downloaders.http:HttpDownloader"
 scraper = "udl.plugins.downloaders.scraper:ScraperDownloader"

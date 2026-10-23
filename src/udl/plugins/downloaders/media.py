@@ -6,16 +6,22 @@
 What kind of media a URL or a content type is: a media file (video, audio, image) or a stream
 playlist (HLS, DASH). Guesses use mimetypes' built-in table only (not the system's), so they are
 the same on every system.
+
+Also Find: media found on a web page (by the scraper or the browser), and its handoff.
 """
 
 # System Imports
 import mimetypes
+from collections.abc import Iterable, Mapping
 from pathlib import PurePosixPath
 from typing import Final
 from urllib.parse import unquote, urlsplit
 
+# Package Imports
+from pydantic import BaseModel, ConfigDict
+
 # Local Imports
-from udl.plugins.downloaders.base import MediaKind
+from udl.plugins.downloaders.base import Confidence, Cookie, Handoff, MediaCandidate, MediaKind
 
 _MIME: Final = mimetypes.MimeTypes()
 _MIME.add_type("application/dash+xml", ".mpd")
@@ -54,3 +60,35 @@ def stream_kind(url: str, content_type: str | None = None) -> MediaKind | None:
 def extension_for(content_type: str) -> str | None:
     """The usual extension for a content type, e.g. ".mp4"."""
     return _MIME.guess_extension(content_type)
+
+
+class Find(BaseModel):
+    """Media found on a web page, by a downloader that hands its download off."""
+
+    model_config = ConfigDict(frozen=True)
+
+    media: MediaCandidate
+    confidence: Confidence
+    referer: str  # the page (or frame) it is on
+
+    def handoff(
+        self, *, cookies: list[Cookie], headers: Mapping[str, str] | None = None
+    ) -> Handoff:
+        """Its download as if from its page: a file by http, a stream playlist by yt-dlp."""
+        return Handoff(
+            tool="http" if self.media.kind is MediaKind.FILE else "yt-dlp",
+            url=self.media.url,
+            headers={**(headers or {}), "Referer": self.referer},
+            cookies=cookies,
+        )
+
+
+def unique(finds: Iterable[Find]) -> list[Find]:
+    """`finds` with each URL once (the first time it was found)."""
+    seen: set[str] = set()
+    unique: list[Find] = []
+    for find in finds:
+        if find.media.url not in seen:
+            seen.add(find.media.url)
+            unique.append(find)
+    return unique

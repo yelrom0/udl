@@ -17,16 +17,10 @@ from pytest_httpserver import HTTPServer
 from werkzeug import Request, Response
 
 # Local Imports
-from support.downloaders import FakeDownloader, FakeMedia, FakeOptions
+from support.downloaders import Lookup
 from support.fixture_site import FixtureSite, Page
 from udl.errors import AuthRequired, ErrorCode, NetworkError, NotFound
-from udl.plugins.downloaders.base import (
-    DownloadContext,
-    Downloader,
-    MediaKind,
-    ProbeContext,
-    ProbeResult,
-)
+from udl.plugins.downloaders.base import DownloadContext, MediaKind, ProbeContext, ProbeResult
 from udl.plugins.downloaders.scraper import ScraperDownloader, ScraperOptions
 
 CDN = "https://cdn.example.com"
@@ -280,19 +274,6 @@ async def test_an_iframe_that_fails_is_skipped(httpserver: HTTPServer) -> None:
 # ---------------------------------------------------------------------------------------------
 # Downloading: handoffs
 # ---------------------------------------------------------------------------------------------
-
-
-class Lookup:
-    """Gives fake downloaders for handoffs, and remembers which were asked for."""
-
-    def __init__(self, media: dict[str, bytes]) -> None:
-        self.media = media
-        self.asked: list[str] = []
-
-    def __call__(self, name: str) -> Downloader[Any]:
-        self.asked.append(name)
-        scripted = {url: FakeMedia(content=data) for url, data in self.media.items()}
-        return FakeDownloader(FakeOptions(media=scripted))
 
 
 async def test_a_stream_playlist_is_handed_to_yt_dlp(

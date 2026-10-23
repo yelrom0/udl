@@ -22,7 +22,7 @@ import shutil
 import string
 import threading
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
@@ -52,8 +52,10 @@ from udl.errors import (
     DownloadError,
     ErrorInfo,
     ExtractionFailed,
+    NotFound,
     ToolUnavailable,
     UDLError,
+    UnsupportedURL,
 )
 
 if TYPE_CHECKING:
@@ -611,6 +613,24 @@ class Downloader[O: DownloaderOptions = DownloaderOptions](ABC):
         return result.model_copy(
             update={"tool": self.name, "url": ctx.url, "handed_off_to": downloader.name}
         )
+
+    async def hand_off_best(
+        self, handoffs: Sequence[Handoff], ctx: DownloadContext, *, tries: int = 5
+    ) -> DownloadResult:
+        """Download the first of `handoffs` (best first) that works. When one fails because of
+        its media (unsupported, not found, not media) or its downloader is missing, the next is
+        tried, `tries` at most;
+        another failure (e.g. AuthRequired) is raised at once, so other media (e.g. a trailer)
+        never stands in for media that needs a login. When none works, the first failure is
+        raised."""
+        failures: list[DownloadError] = []
+        for handoff in handoffs[:tries]:
+            try:
+                return await self.hand_off(handoff, ctx)
+            except (UnsupportedURL, ExtractionFailed, NotFound, ToolUnavailable) as e:
+                log.info("Could not download %s (%s); trying the next find", handoff.url, e)
+                failures.append(e)
+        raise failures[0]
 
     def _unexpected(self, error: Exception) -> DownloadError:
         return DownloadError(f"{type(error).__name__}: {error}", tool=self.name)

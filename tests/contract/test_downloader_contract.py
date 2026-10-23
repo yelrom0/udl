@@ -24,6 +24,7 @@ import pytest
 from pydantic import JsonValue
 
 # Local Imports
+from support.browser import needs_chromium
 from support.downloaders import FakeDownloader, FakeMedia, FakeOptions
 from support.downloads import session_cookie
 from support.fixture_site import COOKIE_NAME, COOKIE_VALUE, FixtureSite, Page
@@ -113,8 +114,16 @@ def scraper(site: FixtureSite) -> Case:
     return Case(installed("scraper"), site, Page.VIDEO, Page.PRIVATE, Page.SLOW)
 
 
+def browser(site: FixtureSite) -> Case:
+    needs_chromium()
+    # A new profile each time: udl's persistent one would be written to the user data dir.
+    downloader = installed("browser", profile_dir=None, wait=0.5)
+    return Case(downloader, site, Page.JS, Page.PRIVATE, Page.SLOW)
+
+
 # How to get each downloader, and the pages it is meant for.
 CASES: dict[str, Callable[[FixtureSite], Case]] = {
+    "browser": browser,
     "fake": fake,
     "gallery-dl": gallerydl,
     "gallery-dl (subprocess)": gallerydl_cli,
