@@ -31,6 +31,7 @@ from support.engine import (
     script,
     settings,
 )
+from support.integrations import FakeIntegration
 from support.sites import FakeSitePlugin, fake_site
 from udl.chains.models import TagChain
 from udl.config import APISettings, SecretsSettings, Settings
@@ -73,7 +74,14 @@ from udl.errors import (
     PluginError,
 )
 from udl.plugins.databases.memory import MemoryDatabase
-from udl.plugins.registry import DATABASES, DOWNLOADERS, SECRETS, SITES, PluginRegistry
+from udl.plugins.registry import (
+    DATABASES,
+    DOWNLOADERS,
+    INTEGRATIONS,
+    SECRETS,
+    SITES,
+    PluginRegistry,
+)
 from udl.plugins.requirements import Requirement
 from udl.plugins.secrets.keyring import KeyringSecretStore
 from udl.plugins.sites.base import SitePlugin
@@ -1016,6 +1024,28 @@ async def test_listing_the_plugins_says_which_databases_can_run(tmp_path: Path, 
 
     assert (found["remote"].available, found["remote"].missing) == (False, list(Remote.requires))
     assert found["memory"].available is True
+
+
+class NeedsAnSDK(FakeIntegration):
+    name = "needs-an-sdk"
+    requires: ClassVar[tuple[Requirement, ...]] = (
+        Requirement.module("udl_no_such_sdk", hint="Install the SDK"),
+    )
+
+
+async def test_listing_the_plugins_says_which_integrations_can_run(make: Make) -> None:
+    plugins = registry()
+    plugins.register(INTEGRATIONS, FakeIntegration)
+    plugins.register(INTEGRATIONS, NeedsAnSDK)
+    service = await make(plugins=plugins)
+
+    found = {p.name: p for p in (await service.list_plugins(ListPluginsRequest())).plugins}
+
+    assert (found["fake"].kind, found["fake"].available) == ("udl.integrations", True)
+    assert (found["needs-an-sdk"].available, found["needs-an-sdk"].missing) == (
+        False,
+        list(NeedsAnSDK.requires),
+    )
 
 
 class NeedsFfmpeg(FakeSitePlugin):

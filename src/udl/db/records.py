@@ -80,6 +80,7 @@ _UDL_KINDS: Final = (
     "udl.automations.events",
     "udl.automations.subscriptions",
     "udl.plugins.actions.base",
+    "udl.plugins.integrations.base",
     "udl.automations.runs",
     "udl.automations.schedules",
 )

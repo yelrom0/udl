@@ -16,7 +16,7 @@ from typing import Any
 
 # Package Imports
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 from pydantic import JsonValue
 
@@ -302,6 +302,7 @@ _GROWTH = st.sampled_from(
 
 @settings(max_examples=60, deadline=None)
 @given(growth=_GROWTH, rounds=st.integers(1, 60))
+@example(growth="s | replace('a', s)", rounds=60)  # (udl's own filter, whatever is drawn)
 def test_output_and_what_is_made_on_the_way_are_capped(growth: str, rounds: int) -> None:
     # (Text that grows each time a macro calls itself: there is no other way to keep it.)
     source = (

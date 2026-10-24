@@ -15,7 +15,7 @@ import hashlib
 import secrets
 from dataclasses import dataclass, field
 from typing import Final
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 # Package Imports
 import httpx
@@ -93,8 +93,15 @@ class FakeAuthorizationServer:
 
     # -- the endpoints -------------------------------------------------------------------------
 
+    def approve(self, url: str) -> str:
+        """What the authorization page at `url` does when the user answers it (signing in, or
+        refusing when `deny`): the URL it sends the browser back to."""
+        return self._answer(dict(parse_qsl(urlsplit(url).query)))
+
     async def _authorize(self, request: Request) -> Response:
-        query = dict(request.query_params)
+        return RedirectResponse(self._answer(dict(request.query_params)), status_code=302)
+
+    def _answer(self, query: dict[str, str]) -> str:
         self.authorized.append(query)
         redirect = query["redirect_uri"]
         if self.deny:
@@ -108,7 +115,7 @@ class FakeAuthorizationServer:
                 scope=query.get("scope", ""),
             )
             answer = {"code": code, "state": query.get("state", "")}
-        return RedirectResponse(f"{redirect}?{urlencode(answer)}", status_code=302)
+        return f"{redirect}?{urlencode(answer)}"
 
     async def _token(self, request: Request) -> Response:
         if self.fail_token_endpoint:

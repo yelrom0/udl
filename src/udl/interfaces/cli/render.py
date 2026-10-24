@@ -81,7 +81,7 @@ from udl.core.models import (
 from udl.db.models import JobStatus, Strategy
 from udl.errors import ErrorInfo
 from udl.plugins.downloaders.base import MediaCandidate, MediaKind
-from udl.plugins.registry import ACTIONS, DATABASES, DOWNLOADERS, SECRETS, SITES
+from udl.plugins.registry import ACTIONS, DATABASES, DOWNLOADERS, INTEGRATIONS, SECRETS, SITES
 
 _STATUS: Final[dict[JobStatus, tuple[str, str]]] = {
     JobStatus.QUEUED: ("…", "dim"),
@@ -107,6 +107,7 @@ _PLUGIN_TYPES: Final[dict[str, str]] = {
     SITES.group: "site",
     SECRETS.group: "secret store",
     ACTIONS.group: "action",
+    INTEGRATIONS.group: "integration",
 }
 
 

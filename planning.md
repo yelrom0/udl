@@ -51,7 +51,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 10.6 End to end: a schedule runs a script through `udl serve`'s runtime (on a `FakeClock`)
 
 - [ ] **Phase 11: Integrations & accounts**
-  - [ ] 11.1 `udl.integrations` plugin kind: `Integration` base class + contract suite + `FakeIntegration`
+  - [x] 11.1 `udl.integrations` plugin kind: `Integration` base class + contract suite + `FakeIntegration`
   - [ ] 11.2 `Account` record (any number per integration, each named), `AccountHandle` (credentials from the secret store, refreshed when they expire; `needs_reauth`)
   - [ ] 11.3 Connecting: `oauth` (a loopback listener for the CLI and stdio MCP; the server's own callback for the API and UI), `tokens`, and `none` (a source that needs no login)
   - [ ] 11.4 Integration operations join the registry (8.1) with an `account` argument (optional while one account is connected), through the generated adapters (8.3); read-only ones that list things fan out over several accounts (`account: "*"` or a list), results tagged by account

@@ -28,6 +28,7 @@ from udl.plugins.registry import (
     ACTIONS,
     DATABASES,
     DOWNLOADERS,
+    INTEGRATIONS,
     SITES,
     PluginInfo,
     PluginRegistry,
@@ -439,3 +440,26 @@ def test_a_site_plugin_with_a_domain_that_is_not_a_host_is_reported(plugin_dir: 
     [problem] = registry.problems
     assert problem.origin == str(path)
     assert "MySite.domains: 'https://example.com/' is not a host" in problem.error
+
+
+def test_integration_plugins_are_found(plugin_dir: Path) -> None:
+    write_plugin(
+        plugin_dir,
+        "service.py",
+        """
+        from udl.plugins.integrations.base import AccountIdentity, ConnectMethod, Integration
+
+        class Service(Integration):
+            name = "service"
+            title = "A service"
+            connect = (ConnectMethod.NONE,)
+
+            async def identify(self, credentials, options):
+                return AccountIdentity(id="x", display="x")
+        """,
+    )
+
+    registry = PluginRegistry.discover([plugin_dir])
+
+    assert registry.get(INTEGRATIONS, "service").title == "A service"
+    assert registry.problems == []

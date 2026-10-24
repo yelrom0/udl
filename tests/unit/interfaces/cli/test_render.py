@@ -298,6 +298,13 @@ def test_plugins_by_type_with_the_sites_site_plugins_handle_and_what_they_overri
                 available=True,
             ),
             PluginStatus(
+                kind="udl.integrations",
+                name="gmail",
+                source=PluginSource.BUILTIN,
+                origin="udl.plugins.integrations.gmail:Gmail",
+                available=True,
+            ),
+            PluginStatus(
                 kind="udl.sites",
                 name="youtube",
                 source=PluginSource.LOCAL,
@@ -313,12 +320,15 @@ def test_plugins_by_type_with_the_sites_site_plugins_handle_and_what_they_overri
 
     text = shown(render.plugins, listed)
     rows = [
-        line.split("│") for line in text.splitlines() if "sqlite:" in line or "youtube.py" in line
+        line.split("│")
+        for line in text.splitlines()
+        if any(origin in line for origin in ("sqlite:", "gmail:", "youtube.py"))
     ]
 
     assert "Type" in text
     assert [(row[1].strip(), row[2].strip()) for row in rows] == [
         ("database", "sqlite"),
+        ("integration", "gmail"),
         ("site", "youtube"),
     ]
     assert "youtube.com" in text

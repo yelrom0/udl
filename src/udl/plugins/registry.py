@@ -4,7 +4,7 @@
 ---------------
 
 PluginRegistry: finds plugins of every kind (databases, downloaders, site behaviour, secret
-stores, actions).
+stores, actions, integrations).
 
 Plugins come from entry points (udl's built-ins are registered the same way third-party ones are)
 and from the `*.py` files in the configured plugin dirs. Later sources override earlier ones:
@@ -33,6 +33,7 @@ from udl.errors import PluginError
 from udl.plugins.actions.base import ActionPlugin
 from udl.plugins.databases.base import DatabasePlugin
 from udl.plugins.downloaders.base import Downloader
+from udl.plugins.integrations.base import Integration
 from udl.plugins.secrets.base import SecretStore
 from udl.plugins.sites.base import SitePlugin
 
@@ -84,9 +85,17 @@ DOWNLOADERS: Final = PluginKind[Downloader[Any]]("udl.downloaders", Downloader)
 SITES: Final = PluginKind("udl.sites", SitePlugin)
 SECRETS: Final = PluginKind("udl.secrets", SecretStore)
 ACTIONS: Final = PluginKind[ActionPlugin[Any]]("udl.actions", ActionPlugin)
+INTEGRATIONS: Final = PluginKind[Integration[Any, Any]]("udl.integrations", Integration)
 
 # Every kind of plugin udl uses.
-PLUGIN_KINDS: Final[tuple[PluginKind[Any], ...]] = (DATABASES, DOWNLOADERS, SITES, SECRETS, ACTIONS)
+PLUGIN_KINDS: Final[tuple[PluginKind[Any], ...]] = (
+    DATABASES,
+    DOWNLOADERS,
+    SITES,
+    SECRETS,
+    ACTIONS,
+    INTEGRATIONS,
+)
 
 
 @dataclass(frozen=True)

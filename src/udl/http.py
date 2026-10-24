@@ -6,13 +6,17 @@
 udl's HTTP client (httpx), for every kind of plugin that talks to servers (downloaders, the
 webhook action, integrations): it sends a browser's User-Agent unless told another, a site's
 cookies, follows redirects, and raises httpx's errors as the UDLErrors they mean.
+
+An integration is given an HttpClientFactory, which makes its clients (api_client(), unless a
+test gives clients of its fake servers).
 """
 
 # System Imports
 import http.cookiejar
+import importlib.metadata
 from collections.abc import AsyncGenerator, Mapping, Sequence
-from contextlib import asynccontextmanager
-from typing import Final
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from typing import Final, Protocol
 
 # Package Imports
 import httpx
@@ -64,3 +68,19 @@ async def http_client(
             yield client
     except httpx.HTTPError as e:
         raise httpx_error(e, tool=tool) from e
+
+
+class HttpClientFactory(Protocol):
+    """What makes the HTTP clients an integration (or OAuth) talks to its service with."""
+
+    def __call__(self, *, tool: str) -> AbstractAsyncContextManager[httpx.AsyncClient]:
+        """A client, for the time a block takes; httpx's errors are raised as the UDLErrors
+        they mean, from `tool` (the integration's name)."""
+        ...
+
+
+def api_client(*, tool: str) -> AbstractAsyncContextManager[httpx.AsyncClient]:
+    """udl's client of a service's API (an integration's, an OAuth provider's): as
+    http_client(), saying it is udl."""
+    version = importlib.metadata.version("udl")
+    return http_client(headers={}, seconds=30, retries=2, tool=tool, user_agent=f"udl/{version}")
