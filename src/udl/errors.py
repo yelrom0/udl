@@ -38,6 +38,7 @@ class ErrorCode(StrEnum):
     NOT_ALLOWED = "not_allowed"
     UNAUTHORIZED = "unauthorized"
     SECRET_STORE_ERROR = "secret_store_error"  # noqa: S105 - (a code, not a secret)
+    TEMPLATE_ERROR = "template_error"
 
 
 class ErrorInfo(BaseModel):
@@ -223,6 +224,13 @@ class SecretStoreError(UDLError):
     """The secret store failed (e.g. the keyring is locked, or its file cannot be read)."""
 
     code = ErrorCode.SECRET_STORE_ERROR
+
+
+class TemplateError(UDLError):
+    """A template (an action's arguments, an AI prompt) cannot be rendered: it is not a template,
+    names what the event does not have, or tries what the sandbox refuses."""
+
+    code = ErrorCode.TEMPLATE_ERROR
 
 
 def _classes(cls: type[UDLError]) -> list[type[UDLError]]:

@@ -26,7 +26,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 8.5 Records in every DB plugin: `memory`, the SQLAlchemy base (schema version 3: a table per record kind), `mongodb` (a collection per kind); `DBManager` reads and writes them with its policies; `db sync` copies them
   - [x] 8.6 `udl.secrets` plugin kind: `SecretStore` ABC + contract suite; `keyring` (Secret Service / KWallet), `file` (`0600`) and `memory` built-ins; `SecretRef`; secrets never in a database, the config or a log
   - [x] 8.7 `Clock` (`SystemClock`; `FakeClock` in `tests/support`) for everything time-driven
-  - [ ] 8.8 Templates: a sandboxed Jinja2 environment for action arguments and prompts (`StrictUndefined`, size limits, a lone `{{ expression }}` keeps its type), with property tests
+  - [x] 8.8 Templates: a sandboxed Jinja2 environment for action arguments and prompts (`StrictUndefined`, size limits, a lone `{{ expression }}` keeps its type), with property tests
   - [ ] 8.9 OAuth 2.0 helper on httpx: authorization code + PKCE, a loopback redirect listener, refresh, revoke; tested against a fake authorization server
   - [ ] 8.10 Settings: the `[automations]`, `[secrets]`, `[ai]`, `[integrations.<name>]` and `[web]` tables; `PluginSettings` records layered over the file (`get_plugin_settings` / `set_plugin_settings`); `get_config` hides the new secrets
 
