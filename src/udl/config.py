@@ -8,8 +8,11 @@ Settings (pydantic-settings) and where udl keeps its files (platformdirs user di
 
 # System Imports
 import os
+import re
 import tomllib
+import zoneinfo
 from contextvars import ContextVar
+from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Final, Self
@@ -23,6 +26,7 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
+    PlainSerializer,
     PositiveInt,
     SecretStr,
     ValidationError,
@@ -83,6 +87,61 @@ def _empty_is_none(value: object) -> object:
 
 type ExpandedPath = Annotated[Path, AfterValidator(expand_path)]
 """A path in which `~` and `$VARS` are expanded."""
+
+
+# A duration as written in the config: a number and a unit, or several (1h30m).
+_DURATION: Final = re.compile(r"(?:\d+(?:\.\d+)?(?:ms|s|m|h|d))+")
+_DURATION_PART: Final = re.compile(r"(\d+(?:\.\d+)?)(ms|s|m|h|d)")
+_UNITS: Final = {"ms": 0.001, "s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def parse_duration(value: object) -> object:
+    """A duration as written: `30s`, `5m`, `24h`, `1h30m`, `2d`, `250ms`, or a number of seconds
+    (anything else is left for validation to refuse)."""
+    if isinstance(value, bool):
+        raise ValueError(f"{value!r} is not a duration, such as 30s, 5m or 1h30m")
+    if isinstance(value, int | float):
+        if value < 0:
+            raise ValueError(f"{value!r} is not a duration: it is less than none")
+        return timedelta(seconds=value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not _DURATION.fullmatch(text):
+            raise ValueError(f"{value!r} is not a duration, such as 30s, 5m or 1h30m")
+        seconds = sum(float(n) * _UNITS[unit] for n, unit in _DURATION_PART.findall(text))
+        return timedelta(seconds=seconds)
+    return value
+
+
+def format_duration(duration: timedelta) -> str:
+    """A duration as it is written: e.g. 24h, 1h30m, 1m30s, 1.5s."""
+    seconds = duration.total_seconds()
+    hours, rest = divmod(seconds, 3600)
+    minutes, rest = divmod(rest, 60)
+    written = "".join(
+        f"{int(amount)}{unit}" for amount, unit in ((hours, "h"), (minutes, "m")) if amount
+    )
+    if rest or not written:
+        written += f"{rest:g}s"
+    return written
+
+
+type Duration = Annotated[
+    timedelta,
+    BeforeValidator(parse_duration),
+    PlainSerializer(format_duration, return_type=str, when_used="json"),
+]
+"""A length of time, written as `30s`, `5m`, `24h` or `1h30m` (or a number of seconds)."""
+
+
+def _timezone(name: str) -> str:
+    """An IANA time zone's name (or nothing, for the system's)."""
+    if name:
+        try:
+            zoneinfo.ZoneInfo(name)
+        except (zoneinfo.ZoneInfoNotFoundError, ValueError) as e:
+            raise ValueError(f"{name!r} is not a time zone this system knows") from e
+    return name
 
 
 class _Frozen(BaseModel):
@@ -165,6 +224,41 @@ class APISettings(_Frozen):
     allowed_output_roots: list[ExpandedPath] = Field(default_factory=lambda: [downloads_dir()])
 
 
+class AutomationSettings(_Frozen):
+    """The [automations] table: the runtime that runs subscriptions' actions (in `udl serve`)."""
+
+    # Run the runtime in `udl serve`.
+    enabled: bool = True
+    max_concurrent_runs: PositiveInt = 4
+    # Events caused by runs, caused by events...: deeper ones are stored, not dispatched.
+    max_event_depth: PositiveInt = 8
+    event_retention_days: PositiveInt = 30
+    # Script actions run programs from here only.
+    scripts_dir: ExpandedPath = Field(default_factory=lambda: config_dir() / "scripts")
+    # Schedules' time zone (an IANA name); empty is the system's.
+    timezone: Annotated[str, AfterValidator(_timezone)] = ""
+
+
+class AISettings(_Frozen):
+    """The [ai] table: local AI's defaults (providers, prompts and guidance are records)."""
+
+    # The AI provider an action uses when it names none.
+    default_provider: str | None = None
+    # How long a run waits for a tool call to be approved, before it is denied.
+    approval_timeout: Duration = timedelta(hours=24)
+
+
+class WebSettings(_Frozen):
+    """The [web] table: the web UI, which `udl serve` serves at /ui."""
+
+    enabled: bool = True
+    session_hours: PositiveInt = 12
+    # Folders of UI plugins (each a folder with a manifest.json).
+    ui_plugin_dirs: list[ExpandedPath] = Field(
+        default_factory=lambda: [config_dir() / "ui-plugins"]
+    )
+
+
 class SecretsSettings(_Frozen):
     """The [secrets] table: where udl keeps secrets (tokens, keys, passwords), which are never
     in a database, the config or a log."""
@@ -220,8 +314,14 @@ class Settings(BaseSettings):
     api: APISettings = Field(default_factory=APISettings)
     browser: BrowserSettings = Field(default_factory=BrowserSettings)
     secrets: SecretsSettings = Field(default_factory=SecretsSettings)
+    automations: AutomationSettings = Field(default_factory=AutomationSettings)
+    ai: AISettings = Field(default_factory=AISettings)
+    web: WebSettings = Field(default_factory=WebSettings)
     # Per-downloader options, e.g. [tools.yt-dlp]; each downloader validates its own (task 2.1).
     tools: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
+    # Per-plugin settings, e.g. [integrations.gmail]: the file's layer of a plugin's settings,
+    # under what is set through udl (set_plugin_settings). Each plugin validates its own.
+    integrations: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
 
     @classmethod
     def settings_customise_sources(

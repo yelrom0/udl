@@ -69,6 +69,8 @@ def test_every_operation_says_whether_it_is_admin() -> None:
         # (It copies what one database holds, settings included, over another's.)
         "sync_databases": True,
         "list_plugins": False,
+        "get_plugin_settings": False,
+        "set_plugin_settings": True,
         "get_config": False,
     }
 

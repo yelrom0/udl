@@ -21,8 +21,8 @@ from udl.config import Settings
 from udl.core.operations import operations
 from udl.core.service import UDLService
 
-# planning/01-core.md's Feature Matrix: each operation's CLI command and API route (its MCP tool is
-# named after the operation).
+# The Feature Matrices of planning/01-core.md and planning.md: each operation's CLI command and API
+# route (its MCP tool is named after the operation).
 MATRIX: dict[str, tuple[str, str]] = {
     "download": ("get", "POST /downloads"),
     "get_download": ("jobs show", "GET /downloads/{id}"),
@@ -41,6 +41,8 @@ MATRIX: dict[str, tuple[str, str]] = {
     "list_databases": ("db list", "GET /databases"),
     "sync_databases": ("db sync", "POST /databases/sync"),
     "list_plugins": ("plugins list", "GET /plugins"),
+    "get_plugin_settings": ("plugins settings", "GET /plugins/{name}/settings"),
+    "set_plugin_settings": ("plugins configure", "PUT /plugins/{name}/settings"),
     "get_config": ("config show", "GET /config"),
 }
 

@@ -3,7 +3,7 @@
 - system.py -
 -------------
 
-udl db list, udl db sync, udl plugins list, udl config show: udl itself
+udl db list, udl db sync, udl plugins list / settings / configure, udl config show: udl itself
 """
 
 # System Imports
@@ -15,12 +15,14 @@ import typer
 # Local Imports
 from udl.core.models import (
     GetConfigRequest,
+    GetPluginSettingsRequest,
     ListDatabasesRequest,
     ListPluginsRequest,
+    SetPluginSettingsRequest,
     SyncDatabasesRequest,
 )
 from udl.interfaces.cli import render
-from udl.interfaces.cli.common import JsonOption, parse, run, runs, show
+from udl.interfaces.cli.common import JsonOption, key_values, parse, run, runs, show
 
 db = typer.Typer(
     help="The databases udl keeps what it learns in.",
@@ -28,7 +30,8 @@ db = typer.Typer(
     rich_markup_mode="markdown",
 )
 plugins = typer.Typer(
-    help="udl's plugins: databases, downloaders and site plugins.",
+    help="udl's plugins: databases, downloaders, site plugins and secret stores, and their "
+    "settings.",
     no_args_is_help=True,
     rich_markup_mode="markdown",
 )
@@ -86,6 +89,60 @@ def list_plugins(ctx: typer.Context, as_json: JsonOption = False) -> None:
     dirs."""
     request = ListPluginsRequest()
     show(run(ctx, lambda service: service.list_plugins(request)), as_json, render.plugins)
+
+
+Plugin = Annotated[str, typer.Argument(help="The plugin (`udl plugins list` names them).")]
+
+
+@plugins.command("settings")
+@runs("get_plugin_settings")
+def plugin_settings(ctx: typer.Context, plugin: Plugin, as_json: JsonOption = False) -> None:
+    """Show a plugin's settings, and where each comes from.
+
+    A plugin's settings are its defaults, then its [integrations.<name>] table in the config, then
+    what `udl plugins configure` set. Secrets are hidden."""
+    request = parse(GetPluginSettingsRequest, plugin=plugin)
+    show(run(ctx, lambda service: service.get_plugin_settings(request)), as_json, render.settings)
+
+
+@plugins.command("configure")
+@runs("set_plugin_settings")
+def configure_plugin(
+    ctx: typer.Context,
+    plugin: Plugin,
+    option: Annotated[
+        list[str] | None,
+        typer.Option(
+            "-O",
+            "--option",
+            help="Set a setting, e.g. -O poll_interval=30s (JSON values allowed).",
+            metavar="KEY=VALUE",
+        ),
+    ] = None,
+    unset: Annotated[
+        list[str] | None,
+        typer.Option(
+            help="Give a setting back to the config file (or its default).", metavar="KEY"
+        ),
+    ] = None,
+    secret: Annotated[
+        list[str] | None,
+        typer.Option(
+            help="Set a secret: its value is asked for, hidden, and kept in udl's secret store.",
+            metavar="KEY",
+        ),
+    ] = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Change a plugin's settings, over its [integrations.<name>] table in the config.
+
+    Settings that widen what udl reaches (such as folders it sends files from) are set in the
+    config file only."""
+    values = key_values(option or [])
+    for key in secret or []:
+        values[key] = typer.prompt(key, hide_input=True, err=True)
+    request = parse(SetPluginSettingsRequest, plugin=plugin, values=values, unset=unset or [])
+    show(run(ctx, lambda service: service.set_plugin_settings(request)), as_json, render.settings)
 
 
 @config.command("show")

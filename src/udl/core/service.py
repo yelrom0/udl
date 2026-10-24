@@ -24,7 +24,7 @@ from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
 # Package Imports
-from pydantic import BaseModel, JsonValue
+from pydantic import BaseModel, JsonValue, ValidationError
 
 # Local Imports
 from udl.chains.executor import ChainRun, ChainRunner
@@ -53,6 +53,7 @@ from udl.core.models import (
     DownloadList,
     DownloadRequest,
     GetConfigRequest,
+    GetPluginSettingsRequest,
     ImportChainsRequest,
     ImportedChains,
     JobEvent,
@@ -61,10 +62,12 @@ from udl.core.models import (
     ListDatabasesRequest,
     ListPluginsRequest,
     PluginList,
+    PluginSettingsInfo,
     PluginStatus,
     ProbeReport,
     ProbeRequest,
     SetChainRequest,
+    SetPluginSettingsRequest,
     SetStrategyRequest,
     SiteInfo,
     SiteList,
@@ -80,9 +83,11 @@ from udl.core.tools import Toolbox
 from udl.core.urls import URL
 from udl.db.manager import DBManager
 from udl.db.models import DownloadQuery, Site, SiteQuery, Strategy, StrategySource
+from udl.db.records import PluginSettings, RecordQuery
 from udl.db.sync import sync
 from udl.errors import (
     AuthRequired,
+    ConfigError,
     DatabaseError,
     DoesNotExist,
     DownloadError,
@@ -103,6 +108,13 @@ from udl.plugins.registry import (
 )
 from udl.plugins.requirements import unmet
 from udl.plugins.secrets.base import SecretStore, secret_store
+from udl.plugins.settings import (
+    SettingSource,
+    is_file_only,
+    is_secret,
+    secret_ref,
+    settings_model_of,
+)
 from udl.plugins.sites.base import SitePlugin
 
 log = logging.getLogger(__name__)
@@ -816,6 +828,157 @@ class UDLService:
             }
         )
 
+    # -- plugins' settings ---------------------------------------------------------------------
+
+    async def plugin_settings(self, name: str) -> BaseModel:
+        """The settings the plugin called `name` runs with (its settings model, secrets
+        readable): the model's defaults, its [integrations.<name>] table, then what was set
+        through udl. Raises DoesNotExist, or ConfigError when they are not valid."""
+        _, model = self._configurable(name)
+        return await self._layered(name, model, await self._stored_settings(name))
+
+    @operation(
+        "get_plugin_settings",
+        title="Show a plugin's settings",
+        hints=OperationHints(read_only=True),
+    )
+    async def get_plugin_settings(self, request: GetPluginSettingsRequest) -> PluginSettingsInfo:
+        """Show a plugin's settings: what it runs with (secrets hidden), where each comes from
+        (its default, the config file's [integrations.<name>] table, or set through udl), which
+        are secrets and which only the config file sets, and their JSON Schema."""
+        info, model = self._configurable(request.plugin)
+        return await self._settings_info(info, model, await self._stored_settings(info.name))
+
+    @operation(
+        "set_plugin_settings",
+        title="Change a plugin's settings",
+        hints=OperationHints(idempotent=True, admin=True),
+    )
+    async def set_plugin_settings(self, request: SetPluginSettingsRequest) -> PluginSettingsInfo:
+        """Change a plugin's settings: set some (over the config file's [integrations.<name>]
+        table), and give others back to the file (unset).
+
+        A secret's value goes to the secret store, never to a database (null forgets it).
+        Settings that widen what udl reaches are set in the config file only. What the plugin
+        would run with is checked before anything is kept.
+        """
+        info, model = self._configurable(request.plugin)
+        name, fields = info.name, model.model_fields
+        unknown = sorted((set(request.values) | set(request.unset)) - set(fields))
+        if unknown:
+            raise ConfigError(
+                f"The {name} plugin has no setting {', '.join(unknown)}",
+                hint=f"Its settings: {', '.join(fields)}.",
+            )
+        file_only = sorted(field for field in request.values if is_file_only(fields[field]))
+        if file_only:
+            raise NotAllowed(
+                f"{', '.join(file_only)} of the {name} plugin is set in the config file only",
+                hint=f"Set it in [integrations.{name}] in the config: it widens what udl "
+                "reaches, so no API client or AI may change it.",
+            )
+        stored = await self._stored_settings(name)
+        values = {
+            field: value
+            for field, value in (stored.values if stored else {}).items()
+            if field not in request.unset
+        }
+        secrets = {
+            field for field in (stored.secrets if stored else []) if field not in request.unset
+        }
+        new_secrets: dict[str, JsonValue] = {}
+        for field, value in request.values.items():
+            if is_secret(fields[field]):
+                new_secrets[field] = value
+                values.pop(field, None)
+            else:
+                values[field] = value
+        candidate: dict[str, Any] = {**self.settings.integrations.get(name, {}), **values}
+        for field in secrets - set(new_secrets):
+            if (kept := await self.secrets.get(secret_ref(name, field))) is not None:
+                candidate[field] = kept
+        candidate |= {field: value for field, value in new_secrets.items() if value is not None}
+        checked = _plugin_settings(name, model, candidate)  # (raises ConfigError)
+
+        for field in stored.secrets if stored else []:
+            if field in request.unset:
+                await self.secrets.delete(secret_ref(name, field))
+        for field, value in new_secrets.items():
+            if value is None:
+                await self.secrets.delete(secret_ref(name, field))
+                secrets.discard(field)
+            else:
+                await self.secrets.set(secret_ref(name, field), getattr(checked, field))
+                secrets.add(field)
+        kept_now: PluginSettings | None = None
+        if values or secrets:
+            kept_now = await self.db.upsert_record(
+                (stored or PluginSettings(plugin=name)).model_copy(
+                    update={"values": values, "secrets": sorted(secrets)}
+                )
+            )
+        elif stored is not None:
+            await self.db.delete_record(PluginSettings, stored.id)
+        return await self._settings_info(info, model, kept_now)
+
+    def _configurable(self, name: str) -> tuple[PluginInfo, type[BaseModel]]:
+        """The plugin called `name` that has settings, and its settings model. Raises
+        DoesNotExist."""
+        configurable = [
+            (info, model)
+            for info, plugin in self.registry.entries()
+            if (model := settings_model_of(plugin)) is not None
+        ]
+        for info, model in configurable:
+            if info.name == name:
+                return info, model
+        names = ", ".join(sorted({info.name for info, _ in configurable})) or "none"
+        raise DoesNotExist(
+            f"No plugin called {name!r} has settings",
+            hint=f"The plugins that have settings: {names}.",
+        )
+
+    async def _stored_settings(self, name: str) -> PluginSettings | None:
+        found = await self.db.list_records(
+            PluginSettings, RecordQuery(where={"plugin": name}, limit=1)
+        )
+        return found[0] if found else None
+
+    async def _layered(
+        self, name: str, model: type[BaseModel], stored: PluginSettings | None
+    ) -> BaseModel:
+        values: dict[str, Any] = {**self.settings.integrations.get(name, {})}
+        if stored is not None:
+            values |= stored.values
+            for field in stored.secrets:
+                if (secret := await self.secrets.get(secret_ref(name, field))) is not None:
+                    values[field] = secret
+        return _plugin_settings(name, model, values)
+
+    async def _settings_info(
+        self, info: PluginInfo, model: type[BaseModel], stored: PluginSettings | None
+    ) -> PluginSettingsInfo:
+        layered = await self._layered(info.name, model, stored)
+        in_file = self.settings.integrations.get(info.name, {})
+        set_here = {*stored.values, *stored.secrets} if stored is not None else set[str]()
+        fields = model.model_fields
+        return PluginSettingsInfo(
+            plugin=info.name,
+            kind=info.kind,
+            settings=layered.model_dump(mode="json"),
+            sources={
+                field: SettingSource.STORED
+                if field in set_here
+                else SettingSource.FILE
+                if field in in_file
+                else SettingSource.DEFAULT
+                for field in fields
+            },
+            json_schema=model.model_json_schema(),
+            secrets=[field for field, found in fields.items() if is_secret(found)],
+            file_only=[field for field, found in fields.items() if is_file_only(found)],
+        )
+
     @operation("get_config", title="Show the settings", hints=OperationHints(read_only=True))
     async def get_config(self, request: GetConfigRequest) -> ConfigInfo:
         """Show the settings udl runs with (from its config file, UDL_* environment variables
@@ -827,6 +990,22 @@ async def _suggestions(
     suggester: ChainSuggester, url: URL, cookies: list[Cookie]
 ) -> list[ChainSuggestion]:
     return await suggester.suggest_chains(ProbeContext(url=url.value, cookies=cookies))
+
+
+def _plugin_settings(name: str, model: type[BaseModel], values: dict[str, Any]) -> BaseModel:
+    """`values` as the plugin's settings. Raises ConfigError, saying what is wrong."""
+    try:
+        return model.model_validate(values)
+    except ValidationError as e:
+        problems = "; ".join(
+            f"{'.'.join(map(str, problem['loc'])) or 'settings'}: {problem['msg']}"
+            for problem in e.errors()
+        )
+        raise ConfigError(
+            f"The {name} plugin's settings are not valid: {problems}",
+            hint=f"Check [integrations.{name}] in the config, and what was set through udl "
+            f"(`udl plugins settings {name}`).",
+        ) from e
 
 
 def _cannot_start(plugin: type[SitePlugin]) -> str | None:
@@ -884,7 +1063,8 @@ def _hidden(table: dict[str, JsonValue]) -> dict[str, JsonValue]:
 
 def _without_secrets(settings: Settings) -> Settings:
     """The settings to show: the API key is a SecretStr (hidden when shown already), database
-    URLs lose their passwords and the [tools.<name>] tables their secrets."""
+    URLs lose their passwords and the [tools.<name>] and [integrations.<name>] tables their
+    secrets."""
     connections = [
         connection.model_copy(update={"url": hide_password(connection.url)})
         for connection in settings.db.connections
@@ -893,5 +1073,6 @@ def _without_secrets(settings: Settings) -> Settings:
         update={
             "db": settings.db.model_copy(update={"connections": connections}),
             "tools": {name: _hidden(table) for name, table in settings.tools.items()},
+            "integrations": {name: _hidden(table) for name, table in settings.integrations.items()},
         }
     )

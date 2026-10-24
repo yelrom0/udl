@@ -13,17 +13,18 @@ from pathlib import Path
 # Package Imports
 from pydantic import SecretStr
 
+# Local Imports
 from support.cli import CLI
 from support.engine import connection
 from support.interfaces import Harness
-
-# Local Imports
 from support.records import Note
+from support.settings import Configurable
 from udl.config import APISettings, config_dir
-from udl.core.models import ConfigInfo, DatabaseList, PluginList, SyncReport
+from udl.core.models import ConfigInfo, DatabaseList, PluginList, PluginSettingsInfo, SyncReport
 from udl.db.manager import DBManager
 from udl.db.models import Site, SiteQuery
 from udl.db.sync import SyncCounts
+from udl.plugins.registry import SITES
 
 
 def test_db_list_lists_the_connections(tmp_path: Path) -> None:
@@ -136,3 +137,80 @@ def test_config_show_shows_the_settings_with_secrets_hidden(tmp_path: Path) -> N
     assert json.loads(result.stdout)["max_per_site"] == 3
     assert shown.settings.max_per_site == 3
     assert shown.settings.api == APISettings(api_key=SecretStr("**********"))
+
+
+# ---------------------------------------------------------------------------------------------
+# A plugin's settings
+# ---------------------------------------------------------------------------------------------
+
+
+def configurable(tmp_path: Path) -> CLI:
+    harness = Harness(tmp_path, integrations={"configurable": {"client_id": "from-the-file"}})
+    harness.registry.register(SITES, Configurable)
+    return CLI(harness)
+
+
+def test_plugins_settings_shows_a_plugin_s_settings_and_where_they_come_from(
+    tmp_path: Path,
+) -> None:
+    cli = configurable(tmp_path)
+
+    shown = cli("plugins", "settings", "configurable")
+    as_json = PluginSettingsInfo.model_validate_json(
+        cli("plugins", "settings", "configurable", "--json").stdout
+    )
+
+    assert shown.exit_code == 0, shown.output
+    assert "from-the-file" in shown.stdout
+    assert "file" in shown.stdout
+    assert "secret" in shown.stdout
+    assert as_json.settings["client_id"] == "from-the-file"
+
+
+def test_plugins_configure_sets_unsets_and_asks_for_secrets(tmp_path: Path) -> None:
+    cli = configurable(tmp_path)
+
+    first = cli(
+        "plugins",
+        "configure",
+        "configurable",
+        "-O",
+        "speed=fast",
+        "-O",
+        "limit=30",
+        "--secret",
+        "client_secret",
+        "--json",
+        stdin="s3cret\n",
+    )
+    then = cli("plugins", "configure", "configurable", "--unset", "limit", "--json")
+
+    assert first.exit_code == 0, first.output
+    assert "s3cret" not in first.output
+    changed = PluginSettingsInfo.model_validate_json(first.stdout)
+    assert (changed.settings["speed"], changed.settings["limit"]) == ("fast", 30)
+    assert changed.settings["client_secret"] == "**********"  # noqa: S105 - (hidden)
+    unset = PluginSettingsInfo.model_validate_json(then.stdout)
+    assert (unset.settings["speed"], unset.settings["limit"]) == ("fast", 10)
+
+
+def test_plugins_configure_shows_what_it_set(tmp_path: Path) -> None:
+    result = configurable(tmp_path)("plugins", "configure", "configurable", "-O", "limit=3")
+
+    assert result.exit_code == 0, result.output
+    assert "limit" in result.stdout
+
+
+def test_plugins_configure_refuses_what_the_plugin_does_not_take(tmp_path: Path) -> None:
+    cli = configurable(tmp_path)
+
+    unknown = cli("plugins", "configure", "configurable", "-O", "nope=1")
+    file_only = cli("plugins", "configure", "configurable", "-O", 'roots=["/"]')
+    no_plugin = cli("plugins", "settings", "nope")
+    bad_pair = cli("plugins", "configure", "configurable", "-O", "limit")
+
+    assert (unknown.exit_code, file_only.exit_code, no_plugin.exit_code) == (2, 1, 1)
+    assert "nope" in unknown.output
+    assert "config file only" in file_only.output
+    assert "has settings" in no_plugin.output
+    assert bad_pair.exit_code == 2

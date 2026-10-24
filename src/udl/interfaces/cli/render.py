@@ -47,6 +47,7 @@ from udl.core.models import (
     JobEventType,
     JobInfo,
     PluginList,
+    PluginSettingsInfo,
     ProbeReport,
     SiteInfo,
     SiteList,
@@ -503,6 +504,28 @@ def plugins(console: Console, listed: PluginList) -> None:
     if listed.plugin_dirs:
         dirs = ", ".join(escape(str(directory)) for directory in listed.plugin_dirs)
         console.print(f"Local plugins (a single .py file each) are read from {dirs}.")
+
+
+def settings(console: Console, info: PluginSettingsInfo) -> None:
+    """A plugin's settings: each one's value (secrets hidden) and where it comes from."""
+    table = Table("Setting", _folded("Value"), "From", "")
+    for name, value in info.settings.items():
+        notes = [
+            note
+            for note, applies in (
+                ("secret", name in info.secrets),
+                ("file only", name in info.file_only),
+            )
+            if applies
+        ]
+        table.add_row(
+            name,
+            escape(json.dumps(value, ensure_ascii=False)),
+            str(info.sources.get(name, "")),
+            f"[dim]{', '.join(notes)}[/]",
+        )
+    console.print(f"The [bold]{escape(info.plugin)}[/] plugin's settings:")
+    console.print(table)
 
 
 def config(console: Console, info: ConfigInfo) -> None:

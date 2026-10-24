@@ -33,7 +33,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, NonNegativeInt, Posit
 from sqlmodel import Field, SQLModel
 
 # Local Imports
-from udl.db.models import utcnow
+from udl.db.models import JsonObject, utcnow
 
 _KIND: Final = re.compile(r"[a-z][a-z0-9_]*")
 # Names udl's tables and collections already have.
@@ -207,3 +207,22 @@ class Lease(Record):
     name: str
     holder: str
     expires_at: AwareDatetime
+
+
+# ---------------------------------------------------------------------------------------------
+# Plugin settings
+# ---------------------------------------------------------------------------------------------
+
+
+class PluginSettings(Record):
+    """What a plugin's settings were set to through udl (set_plugin_settings), over its
+    [integrations.<name>] table: the values, but for secrets, which the secret store keeps
+    (`secrets` names those it has)."""
+
+    kind = "plugin_settings"
+    indexed = ("plugin",)
+    unique = (("plugin",),)
+
+    plugin: str
+    values: JsonObject = Field(default_factory=dict)
+    secrets: list[str] = Field(default_factory=list[str])

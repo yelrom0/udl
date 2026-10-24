@@ -7,19 +7,17 @@ udl sites list / show / set / rm
 """
 
 # System Imports
-import json
 from typing import Annotated
 
 # Package Imports
 import typer
-from pydantic import JsonValue
 from rich.console import Console
 
 # Local Imports
 from udl.core.models import Deleted, SetStrategyRequest, SiteRequest
 from udl.db.models import SiteQuery
 from udl.interfaces.cli import render
-from udl.interfaces.cli.common import EXIT_FAILED, JsonOption, parse, run, runs, show
+from udl.interfaces.cli.common import EXIT_FAILED, JsonOption, key_values, parse, run, runs, show
 
 app = typer.Typer(
     help="What udl knows about sites, and which downloaders to use on them.",
@@ -56,20 +54,6 @@ def show_site(ctx: typer.Context, site: Site, as_json: JsonOption = False) -> No
     Its strategies (the downloaders to use on it), with how often each has worked and failed."""
     request = parse(SiteRequest, site=site)
     show(run(ctx, lambda service: service.get_site(request)), as_json, render.site)
-
-
-def _options(pairs: list[str]) -> dict[str, JsonValue]:
-    """KEY=VALUE pairs as options; a VALUE that is JSON is read as JSON, else as text."""
-    options: dict[str, JsonValue] = {}
-    for pair in pairs:
-        key, equals, value = pair.partition("=")
-        if not key or not equals:
-            raise typer.BadParameter(f"{pair!r} is not KEY=VALUE", param_hint="'-O' / '--option'")
-        try:
-            options[key] = json.loads(value)
-        except json.JSONDecodeError:
-            options[key] = value
-    return options
 
 
 @app.command("set")
@@ -109,7 +93,7 @@ def set_strategy(
         site=site,
         tool=tool,
         pattern=pattern,
-        options=_options(option or []),
+        options=key_values(option or []),
         priority=priority,
         requires_auth=requires_auth,
     )

@@ -10,13 +10,14 @@ error), and showing responses (rendered for people, or as JSON with --json)
 
 # System Imports
 import asyncio
+import json
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Annotated, Any, NoReturn, Self
 
 # Package Imports
 import typer
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, JsonValue, ValidationError
 from rich.console import Console
 from rich.markup import escape
 
@@ -92,6 +93,21 @@ def parse[M: BaseModel](model: type[M], **fields: object) -> M:
         return model.model_validate(fields)
     except ValidationError as e:
         usage_error(problems(e))
+
+
+def key_values(pairs: list[str], option: str = "'-O' / '--option'") -> dict[str, JsonValue]:
+    """KEY=VALUE pairs (an option's, repeated) as values; a VALUE that is JSON is read as JSON,
+    else as text."""
+    values: dict[str, JsonValue] = {}
+    for pair in pairs:
+        key, equals, value = pair.partition("=")
+        if not key or not equals:
+            raise typer.BadParameter(f"{pair!r} is not KEY=VALUE", param_hint=option)
+        try:
+            values[key] = json.loads(value)
+        except json.JSONDecodeError:
+            values[key] = value
+    return values
 
 
 def parse_url(text: str) -> URL:

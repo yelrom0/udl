@@ -158,6 +158,8 @@ def test_the_operations_are_the_feature_matrix_s() -> None:
         "list_databases",
         "sync_databases",
         "list_plugins",
+        "get_plugin_settings",
+        "set_plugin_settings",
         "get_config",
     }
 
@@ -1057,6 +1059,7 @@ async def test_the_config_is_shown_with_its_secrets_hidden(tmp_path: Path, make:
             "yt-dlp": {"format": "best", "params": {"password": "pw-secret", "username": "me"}},
             "http": {"headers": [{"Authorization": "Bearer token-secret"}]},
         },
+        integrations={"gmail": {"client_id": "abc", "client_secret": "gmail-secret"}},
     )
     service = await make(config)
 
@@ -1064,9 +1067,10 @@ async def test_the_config_is_shown_with_its_secrets_hidden(tmp_path: Path, make:
 
     text = shown.model_dump_json()
     assert isinstance(shown, ConfigInfo)
-    for secret in ("api-secret", "db-secret", "pw-secret", "token-secret"):
+    for secret in ("api-secret", "db-secret", "pw-secret", "token-secret", "gmail-secret"):
         assert secret not in text
     data = json.loads(text)["settings"]
+    assert data["integrations"]["gmail"]["client_id"] == "abc"
     assert data["tools"]["yt-dlp"]["format"] == "best"
     assert data["tools"]["yt-dlp"]["params"]["username"] == "me"
     assert data["db"]["connections"][0]["url"] == "memory://udl:***@nas/udl"

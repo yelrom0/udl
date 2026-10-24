@@ -68,7 +68,7 @@ class Harness:
             config = loaded.model_copy(
                 update={
                     field: getattr(self.settings, field)
-                    for field in ("db", "tools", "probe_order", "download_dir")
+                    for field in ("db", "tools", "integrations", "probe_order", "download_dir")
                 }
             )
         self.loaded.append(config)

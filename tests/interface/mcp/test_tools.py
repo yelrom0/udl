@@ -22,6 +22,7 @@ from mcp_types import CallToolResult, TextContent
 from support.engine import connection, script
 from support.interfaces import A, B, Harness
 from support.mcp import client_for
+from support.settings import Configurable
 from udl.core.models import (
     ConfigInfo,
     DatabaseList,
@@ -30,6 +31,7 @@ from udl.core.models import (
     DownloadList,
     JobInfo,
     PluginList,
+    PluginSettingsInfo,
     ProbeReport,
     SiteInfo,
     SiteList,
@@ -38,6 +40,7 @@ from udl.core.models import (
 from udl.core.operations import operations
 from udl.db.models import JobStatus, Site, Strategy, StrategySource
 from udl.interfaces.mcp.server import DEFAULT_WAIT
+from udl.plugins.registry import SITES
 
 GONE = "https://example.com/gone"
 
@@ -319,3 +322,27 @@ async def test_udl_itself(client: Client) -> None:
     assert [db.name for db in databases.databases] == ["local"]
     assert {plugin.name for plugin in plugins.plugins} >= {"memory", "http"}
     assert config.settings.max_concurrent == 4
+
+
+async def test_a_plugin_s_settings(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    harness.registry.register(SITES, Configurable)
+    async with client_for(harness) as client:
+        changed = PluginSettingsInfo.model_validate(
+            await call(
+                client,
+                "set_plugin_settings",
+                plugin="configurable",
+                values={"limit": 7, "client_secret": "s3cret"},
+            )
+        )
+        shown = PluginSettingsInfo.model_validate(
+            await call(client, "get_plugin_settings", plugin="configurable")
+        )
+        refused = await failure(
+            client, "set_plugin_settings", plugin="configurable", values={"roots": []}
+        )
+
+    assert changed.settings["limit"] == 7
+    assert shown == changed
+    assert "not_allowed" in refused

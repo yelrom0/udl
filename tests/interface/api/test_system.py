@@ -3,7 +3,8 @@
 - test_system.py -
 ------------------
 
-GET /databases, POST /databases/sync, GET /plugins, GET /config
+GET /databases, POST /databases/sync, GET /plugins, GET and PUT /plugins/{name}/settings, GET
+/config
 """
 
 # System Imports
@@ -17,10 +18,12 @@ import pytest
 from support.api import client_for
 from support.engine import connection
 from support.interfaces import Harness
-from udl.core.models import DatabaseList, PluginList, SyncReport
+from support.settings import Configurable
+from udl.core.models import DatabaseList, PluginList, PluginSettingsInfo, SyncReport
 from udl.db.models import Site
 from udl.db.sync import SyncCounts
 from udl.errors import ErrorCode, ErrorInfo
+from udl.plugins.registry import SITES
 
 
 async def test_listing_the_databases(tmp_path: Path) -> None:
@@ -100,3 +103,60 @@ async def test_the_config_is_shown_with_its_secrets_hidden(tmp_path: Path) -> No
     assert "pw-secret" not in response.text
     params = response.json()["settings"]["tools"]["yt-dlp"]["params"]
     assert params == {"password": "***"}
+
+
+async def test_a_plugin_s_settings_are_shown_and_changed(tmp_path: Path) -> None:
+    harness = Harness(tmp_path, integrations={"configurable": {"limit": 20}})
+    harness.registry.register(SITES, Configurable)
+    async with client_for(harness) as client:
+        shown = await client.get("/plugins/configurable/settings")
+        changed = await client.put(
+            "/plugins/configurable/settings",
+            json={"values": {"speed": "fast", "client_secret": "s3cret"}, "unset": ["limit"]},
+        )
+        again = await client.get("/plugins/configurable/settings")
+
+    assert shown.status_code == 200
+    assert PluginSettingsInfo.model_validate(shown.json()).settings["limit"] == 20
+    assert changed.status_code == 200
+    assert "s3cret" not in changed.text
+    after = PluginSettingsInfo.model_validate(again.json())
+    assert (after.settings["speed"], after.settings["limit"]) == ("fast", 20)  # (the file's)
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body", "status", "code"),
+    [
+        ("GET", "/plugins/nope/settings", None, 404, ErrorCode.DOES_NOT_EXIST),
+        ("PUT", "/plugins/nope/settings", {}, 404, ErrorCode.DOES_NOT_EXIST),
+        (
+            "PUT",
+            "/plugins/configurable/settings",
+            {"values": {"nope": 1}},
+            400,
+            ErrorCode.CONFIG_ERROR,
+        ),
+        (
+            "PUT",
+            "/plugins/configurable/settings",
+            {"values": {"roots": []}},
+            403,
+            ErrorCode.NOT_ALLOWED,
+        ),
+    ],
+)
+async def test_settings_that_cannot_be_are_refused(
+    tmp_path: Path,
+    method: str,
+    path: str,
+    body: object,
+    status: int,
+    code: ErrorCode,
+) -> None:
+    harness = Harness(tmp_path)
+    harness.registry.register(SITES, Configurable)
+    async with client_for(harness) as client:
+        response = await client.request(method, path, json=body)
+
+    assert response.status_code == status
+    assert ErrorInfo.model_validate(response.json()).code is code

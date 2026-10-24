@@ -8,6 +8,7 @@ Settings: platformdirs defaults, the TOML config file, UDL_* environment variabl
 
 # System Imports
 import re
+from datetime import timedelta
 from pathlib import Path
 
 # Package Imports
@@ -259,3 +260,142 @@ def test_write_policy_can_name_connections() -> None:
     )
 
     assert db.write_policy == ["local", "shared"]
+
+
+# ---------------------------------------------------------------------------------------------
+# Automations, secrets, integrations, AI and the web UI (planning.md's configuration example)
+# ---------------------------------------------------------------------------------------------
+
+AUTOMATIONS_CONFIG = """
+[automations]
+enabled = true                            # run the runtime in `udl serve`
+max_concurrent_runs = 4
+max_event_depth = 8                       # events caused by runs, caused by events, …
+event_retention_days = 30
+scripts_dir = "~/.config/udl/scripts"     # script actions run programs from here only
+timezone = ""                             # schedules' default; empty = the system's
+
+[secrets]
+store = "auto"                            # auto (keyring, else file) | keyring | file | memory
+
+[integrations.gmail]
+client_id = "1234-abc.apps.googleusercontent.com"   # your Desktop-app OAuth client
+client_secret = "GOCSPX-…"                # moved to the secret store when set through udl
+poll_interval = "60s"
+attachment_roots = ["~/Downloads"]        # file-only: what the API and MCP may attach
+
+[integrations.slack]                      # nothing needed: each account brings its app's tokens
+
+[ai]
+default_provider = "local"
+approval_timeout = "24h"
+
+[web]
+enabled = true
+session_hours = 12
+ui_plugin_dirs = ["~/.config/udl/ui-plugins"]
+"""
+
+
+def test_the_documented_automations_config_loads() -> None:
+    write_config(AUTOMATIONS_CONFIG)
+
+    settings = Settings.load()
+
+    automations = settings.automations
+    assert (automations.enabled, automations.max_concurrent_runs) == (True, 4)
+    assert (automations.max_event_depth, automations.event_retention_days) == (8, 30)
+    assert automations.scripts_dir == Path.home() / ".config/udl/scripts"
+    assert automations.timezone == ""
+    assert settings.secrets.store == "auto"
+    assert settings.integrations["gmail"]["poll_interval"] == "60s"
+    assert settings.integrations["slack"] == {}
+    assert (settings.ai.default_provider, settings.ai.approval_timeout) == (
+        "local",
+        timedelta(hours=24),
+    )
+    assert (settings.web.enabled, settings.web.session_hours) == (True, 12)
+    assert settings.web.ui_plugin_dirs == [Path.home() / ".config/udl/ui-plugins"]
+
+
+def test_the_new_tables_have_defaults(isolated_user_dirs: Path) -> None:
+    settings = Settings()
+
+    config = isolated_user_dirs / ".config" / "udl"
+    assert settings.automations.scripts_dir == config / "scripts"
+    assert settings.automations.enabled is True
+    assert settings.web.ui_plugin_dirs == [config / "ui-plugins"]
+    assert settings.ai.default_provider is None
+    assert settings.ai.approval_timeout == timedelta(hours=24)
+    assert settings.integrations == {}
+
+
+@pytest.mark.parametrize(
+    ("written", "duration"),
+    [
+        ("30s", timedelta(seconds=30)),
+        ("5m", timedelta(minutes=5)),
+        ("24h", timedelta(hours=24)),
+        ("1h30m", timedelta(hours=1, minutes=30)),
+        ("2d", timedelta(days=2)),
+        ("1.5h", timedelta(minutes=90)),
+        ("250ms", timedelta(milliseconds=250)),
+        (" 10m ", timedelta(minutes=10)),
+        (90, timedelta(seconds=90)),
+        (2.5, timedelta(seconds=2.5)),
+    ],
+)
+def test_durations_are_written_with_their_units(written: object, duration: timedelta) -> None:
+    assert Settings(ai={"approval_timeout": written}).ai.approval_timeout == duration  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.parametrize("written", ["soon", "5x", "-5m", "m", "", -3, True, "5 m"])
+def test_what_is_not_a_duration_is_refused(written: object) -> None:
+    with pytest.raises(ValidationError, match="duration"):
+        Settings(ai={"approval_timeout": written})  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.parametrize(
+    ("duration", "written"),
+    [
+        (timedelta(hours=24), "24h"),
+        (timedelta(hours=1, minutes=30), "1h30m"),
+        (timedelta(seconds=90), "1m30s"),
+        (timedelta(milliseconds=1500), "1.5s"),
+        (timedelta(0), "0s"),
+    ],
+)
+def test_durations_are_shown_as_they_are_written(duration: timedelta, written: str) -> None:
+    shown = Settings(ai={"approval_timeout": duration}).model_dump(mode="json")  # pyright: ignore[reportArgumentType]
+
+    assert shown["ai"]["approval_timeout"] == written
+
+
+def test_a_duration_can_come_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UDL_AI__APPROVAL_TIMEOUT", "2h")
+
+    assert Settings.load().ai.approval_timeout == timedelta(hours=2)
+
+
+def test_the_timezone_is_one_the_system_knows() -> None:
+    assert Settings(automations={"timezone": "Europe/London"}).automations.timezone == (  # pyright: ignore[reportArgumentType]
+        "Europe/London"
+    )
+    with pytest.raises(ValidationError, match="Mars/Olympus_Mons"):
+        Settings(automations={"timezone": "Mars/Olympus_Mons"})  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.parametrize(
+    ("toml", "problem"),
+    [
+        ("[automations]\nmax_event_depth = 0\n", "automations.max_event_depth"),
+        ("[web]\nsession_hours = 0\n", "web.session_hours"),
+        ("[automations]\nnope = 1\n", "automations.nope"),
+        ("[integrations]\ngmail = 1\n", "integrations.gmail"),
+    ],
+)
+def test_invalid_new_tables_are_config_errors(toml: str, problem: str) -> None:
+    write_config(toml)
+
+    with pytest.raises(ConfigError, match=re.escape(problem)):
+        Settings.load()
