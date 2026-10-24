@@ -43,7 +43,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 9.10 Operations (events, subscriptions, actions, runs, status) via CLI, API and MCP; `GET /events/stream` (SSE)
 
 - [ ] **Phase 10: Scheduler**
-  - [ ] 10.1 `ScheduleSpec`: `cron` | `every` | `at`, in a timezone; cron parsing behind `CronExpression`; next times tested across DST changes (hypothesis)
+  - [x] 10.1 `ScheduleSpec`: `cron` | `every` | `at`, in a timezone; cron parsing behind `CronExpression`; next times tested across DST changes (hypothesis)
   - [ ] 10.2 `Schedule` record: misfire policy (`skip` | `once`), jitter, `next_run_at`
   - [ ] 10.3 `Scheduler` on the `Clock`: sleeps until the next due schedule, wakes when schedules change, fires `schedule.fired` once per due time
   - [ ] 10.4 A schedule's `actions` keep a linked subscription, so a cron job is one command
