@@ -108,7 +108,10 @@ def cli_command(op: Operation) -> Callable[..., None]:
             elif given is not None and given != []:
                 values[spec.name] = _value(spec.kind, given)
         request = parse(op.request, **values)
-        show(run(ctx, lambda service: service.call(op.name, request)), as_json, render.model)
+        # (As data, which the service reads as its own operation's request: a local plugin's
+        # file is imported again by each service, so its models are other classes there.)
+        given = request.model_dump(round_trip=True)
+        show(run(ctx, lambda service: service.call(op.name, given)), as_json, render.model)
 
     parameters = [
         inspect.Parameter("ctx", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=typer.Context),

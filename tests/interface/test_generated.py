@@ -23,21 +23,25 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from mcp import Client
-from pydantic import JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue
 
 # Local Imports
 from support.api import client_for as api_client_for
 from support.cli import CLI
+from support.engine import registry
 from support.interfaces import Harness
 from support.mcp import client_for as mcp_client_for
 from support.operations import Colour, Echoed, EchoRequest, Gizmo, Point, echoed
 from support.tasks import held
-from udl.core.operations import operations
+from udl.config import Settings
+from udl.core.operations import Operation, operations
+from udl.core.service import UDLService
 from udl.errors import ErrorCode, ErrorInfo
 from udl.interfaces.adapters import api_path, cli_groups
 from udl.interfaces.api.app import create_app
 from udl.interfaces.cli.common import operation_of
 from udl.plugins.registry import SITES
+from udl.plugins.sites.base import SitePlugin
 
 ECHO = "/sites/gizmo/echo"
 
@@ -265,6 +269,50 @@ def test_without_json_the_response_is_rendered(cli: CLI) -> None:
     assert "hello there" in result.stdout
     assert "Token length" in result.stdout
     assert "x: 4" in result.stdout
+
+
+def fresh_greeter() -> type[SitePlugin]:
+    """A plugin whose request model is a class of its own each time: as a local plugin file's
+    is, since each service that discovers the plugins imports the file again."""
+
+    class GreetRequest(BaseModel):
+        model_config = ConfigDict(use_attribute_docstrings=True)
+
+        name: str
+        """Who to greet."""
+
+    class Greeting(BaseModel):
+        text: str
+
+    async def greet(service: UDLService, request: GreetRequest) -> Greeting:
+        """Greet someone."""
+        return Greeting(text=f"Hello, {request.name}!")
+
+    class Greeter(SitePlugin):
+        name = "greeter"
+
+        @classmethod
+        def operations(cls) -> list[Operation]:
+            return [Operation.of(greet, name="greet", title="Greet")]
+
+    return Greeter
+
+
+def test_a_command_runs_on_a_service_that_imported_the_plugin_again(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    make = harness.service
+
+    def again(loaded: Settings | None = None) -> UDLService:
+        harness.registry = registry()
+        harness.registry.register(SITES, fresh_greeter())
+        return make(loaded)
+
+    harness.service = again
+
+    result = CLI(harness)("greeter", "greet", "--name", "Dan", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {"text": "Hello, Dan!"}
 
 
 def test_a_udl_error_is_shown_with_its_hint_and_exits_with_1(cli: CLI) -> None:
