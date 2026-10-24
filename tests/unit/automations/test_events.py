@@ -45,6 +45,8 @@ UDL_TYPES = {
     "udl.account.connected",
     "udl.account.needs_reauth",
     "udl.account.error",
+    "udl.fetch.challenge",
+    "udl.fetch.finished",
     "schedule.fired",
 }
 

@@ -73,6 +73,7 @@ from udl.errors import (
     NotAllowed,
     PluginError,
 )
+from udl.fetch.models import BatchStatus, FetchBatch
 from udl.plugins.databases.memory import MemoryDatabase
 from udl.plugins.registry import (
     DATABASES,
@@ -1182,6 +1183,19 @@ async def test_starting_alone_marks_downloads_a_stopped_udl_left_as_interrupted(
     assert job.status is JobStatus.FAILED
     assert job.error is not None
     assert job.error.code is ErrorCode.INTERRUPTED
+
+
+async def test_starting_alone_marks_fetches_a_stopped_udl_left_as_interrupted(
+    tmp_path: Path, make: Make
+) -> None:
+    config = settings(tmp_path)
+    db = databases(config, registry())
+    await db.connect()
+    left = await db.upsert_record(FetchBatch(status=BatchStatus.RUNNING, runner="gone"))
+
+    service = await make(config, db=db)
+
+    assert (await service.fetches.queue.batch(left.id)).status is BatchStatus.INTERRUPTED
 
 
 async def test_starting_while_another_udl_runs_leaves_the_history_alone(

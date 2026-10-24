@@ -45,6 +45,7 @@ class ErrorCode(StrEnum):
     ACTION_FAILED = "action_failed"
     IN_USE = "in_use"
     AMBIGUOUS_ACCOUNT = "ambiguous_account"
+    CHALLENGE_REQUIRED = "challenge_required"
 
 
 class ErrorInfo(BaseModel):
@@ -142,6 +143,14 @@ class AuthRequired(DownloadError):
     """The site needs a login (401/403, "sign in" messages). Retry with cookies, then a browser."""
 
     code = ErrorCode.AUTH_REQUIRED
+
+
+class ChallengeRequired(AuthRequired):
+    """A page waits behind an anti-bot check that nobody passed: its fetch said not to ask
+    (person: fail), or it waited longer than [fetch] challenge_expiry (the hint says how to pass
+    it: `udl fetch solve`)."""
+
+    code = ErrorCode.CHALLENGE_REQUIRED
 
 
 class RateLimited(DownloadError):

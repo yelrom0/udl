@@ -36,9 +36,11 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, NonNegativeInt
 
 # Local Imports
+from udl.config import PersonMode
 from udl.db.models import JsonObject, utcnow
 from udl.db.records import Record, RecordScope, SyncRule
 from udl.errors import ConfigError, ErrorCode, ErrorInfo, PluginError
+from udl.fetch.challenges import ChallengeKind
 
 if TYPE_CHECKING:
     from udl.plugins.registry import PluginRegistry
@@ -578,6 +580,64 @@ def _schedule_fired(data: ScheduleFiredData) -> str:
     return f"The {data.schedule} schedule fired" + (", late" if data.late else "")
 
 
+class FetchChallengeData(_Data):
+    """A site that waits for a person to pass its anti-bot check: udl.fetch.challenge (once a
+    streak: again only once the site has been passed, and challenged anew)."""
+
+    batch: UUID
+    """The fetch (batch) whose URL met it (`udl fetch show`, get_fetch)."""
+    site: str
+    """The site."""
+    url: str
+    """The URL that met it."""
+    kind: ChallengeKind
+    """Whose check it is (cloudflare, recaptcha...)."""
+    waiting: NonNegativeInt
+    """How many of the site's URLs wait for it."""
+    mode: PersonMode
+    """ask: a window opened for the user to pass it; wait: until someone runs `udl fetch
+    solve`."""
+    hint: str
+    """What to do."""
+
+
+def _fetch_challenge(data: FetchChallengeData) -> str:
+    urls = "1 URL" if data.waiting == 1 else f"{data.waiting} URLs"
+    return f"{data.site} waits for you to pass its {data.kind} check ({urls})"
+
+
+class FetchFailure(_Data):
+    """A URL of a fetch that failed."""
+
+    url: str
+    """The URL."""
+    code: ErrorCode
+    """Why, as its error's code (e.g. challenge_required, not_found)."""
+
+
+class FetchFinishedData(_Data):
+    """A fetch (batch) that ended: udl.fetch.finished."""
+
+    batch: UUID
+    """The fetch's id (`udl fetch show`, get_fetch)."""
+    label: str | None = None
+    """Its label, if it was given one."""
+    succeeded: NonNegativeInt = 0
+    """How many of its URLs were read."""
+    failed: NonNegativeInt = 0
+    """How many failed."""
+    cancelled: NonNegativeInt = 0
+    """How many were cancelled."""
+    failures: list[FetchFailure] = Field(default_factory=list[FetchFailure])
+    """Each URL that failed, with why."""
+
+
+def _fetch_finished(data: FetchFinishedData) -> str:
+    pages = "1 page" if data.succeeded == 1 else f"{data.succeeded} pages"
+    failed = f" ({data.failed} failed)" if data.failed else ""
+    return f"Fetched {pages}{failed}" + (f": {data.label}" if data.label else "")
+
+
 _EXAMPLE_ID: Final = UUID("00000000-0000-4000-8000-000000000001")
 _DOWNLOAD: Final = DownloadEventData(
     download=_EXAMPLE_ID,
@@ -666,6 +726,38 @@ UDL_TYPES: Final[tuple[EventType[Any], ...]] = (
         summary="An account's watcher failed (it is retried with backoff).",
         example=_ACCOUNT.model_copy(update={"error": _FAILED}),
         subject=_account_error,
+    ),
+    EventType(
+        name="udl.fetch.challenge",
+        data=FetchChallengeData,
+        summary="A site waits for a person to pass its anti-bot check (once a streak): its "
+        "fetches' URLs wait, until someone passes it (`udl fetch solve`).",
+        example=FetchChallengeData(
+            batch=_EXAMPLE_ID,
+            site="example.com",
+            url="https://example.com/a",
+            kind=ChallengeKind.CLOUDFLARE,
+            waiting=2,
+            mode=PersonMode.WAIT,
+            hint="Run `udl fetch solve` on udl's machine to pass it in a browser window.",
+        ),
+        subject=_fetch_challenge,
+    ),
+    EventType(
+        name="udl.fetch.finished",
+        data=FetchFinishedData,
+        summary="A fetch (a batch of pages) ended: how many of its URLs were read, and why "
+        "the others failed.",
+        example=FetchFinishedData(
+            batch=_EXAMPLE_ID,
+            label="docs",
+            succeeded=4,
+            failed=1,
+            failures=[
+                FetchFailure(url="https://example.com/gone", code=ErrorCode.NOT_FOUND),
+            ],
+        ),
+        subject=_fetch_finished,
     ),
     EventType(
         name="schedule.fired",

@@ -441,6 +441,11 @@ class Fetcher:
         self.sites = sites
         self.clock = clock
 
+    async def settle(self) -> None:
+        """Write what plain requests were given back to udl's browser profile (a batch
+        ended)."""
+        await self.jar.flush()
+
     async def fetch(self, url: URL, options: FetchOptions, *, cancel: CancelToken) -> FetchOutcome:
         """Read `url`'s page, climbing the ladder as far as it has to. Raises Cancelled."""
         known = await self.sites.get(url.site_key)

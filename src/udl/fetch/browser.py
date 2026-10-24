@@ -9,10 +9,12 @@ for its network to go quiet, and for any reload the page makes of itself), and r
 rendered; what is not HTML (JSON, a file) is read as it was served, through the browser's own
 cookies.
 
-ChromiumTabs opens a Chromium for each tab. (The queue's browser lane keeps one open for its
-batches: udl.fetch.queue.) ProfileCookies reads and writes the profile's cookies, through the
-browser that has it open, if one does. Playwright comes with udl's browser extra, so this module
-is only imported when it is needed.
+The fetcher's tabs come from its BrowserLane: one Chromium on the profile, opened when a tab is
+wanted, at most [fetch] browser_tabs tabs at once, and closed after browser_idle without one, so
+downloads, `udl browser login`, the challenge window and other udls get the profile back.
+(ChromiumTabs opens a Chromium for each tab.) ProfileCookies reads and writes the profile's
+cookies, through the browser that has it open, if one does. Playwright comes with udl's browser
+extra, so this module is only imported when it is needed.
 """
 
 # System Imports
@@ -31,6 +33,7 @@ from playwright.async_api import Error as PlaywrightError
 
 # Local Imports
 from udl.clock import Clock
+from udl.config import FetchSettings
 from udl.fetch.content import media_type
 from udl.fetch.cookies import of_site
 from udl.fetch.ladder import Snapshot
@@ -179,6 +182,110 @@ class ChromiumTabs:
             if self._user_agent is None:
                 self._user_agent = await tab.user_agent()
             yield tab
+
+
+class BrowserLane:
+    """The fetcher's browser (udl.fetch.ladder.Tabs): one Chromium on the profile in
+    `profile_dir`, opened when a tab is wanted, at most `browser_tabs` tabs at once, closed after
+    `browser_idle` without one. `launches` counts the times it opened."""
+
+    def __init__(self, profile_dir: Path | None, *, settings: FetchSettings, clock: Clock) -> None:
+        self.profile_dir = profile_dir
+        self.settings = settings
+        self.clock = clock
+        self.launches = 0
+        self._slots = asyncio.Semaphore(settings.browser_tabs)
+        self._opening = asyncio.Lock()
+        self._context: BrowserContext | None = None
+        self._holder: asyncio.Task[None] | None = None
+        self._release = asyncio.Event()
+        self._active = 0
+        self._idle: asyncio.Task[None] | None = None
+        self._user_agent: str | None = None
+
+    @property
+    def context(self) -> BrowserContext | None:
+        """The browser's context, while it is open."""
+        return self._context
+
+    @property
+    def open(self) -> bool:
+        return self._context is not None
+
+    @property
+    def user_agent(self) -> str | None:
+        return self._user_agent
+
+    @asynccontextmanager
+    async def tab(
+        self, *, headers: Mapping[str, str], cancel: CancelToken
+    ) -> AsyncGenerator[PlaywrightTab]:
+        async with self._slots:
+            context = await self._opened()
+            self._active += 1
+            if self._idle is not None:
+                self._idle.cancel()
+                self._idle = None
+            try:
+                async with opened(
+                    context, headers, loads_within=self.settings.timeout, clock=self.clock
+                ) as tab:
+                    if self._user_agent is None:
+                        self._user_agent = await tab.user_agent()
+                    yield tab
+            finally:
+                self._active -= 1
+                if self._active == 0:
+                    self._idle = asyncio.create_task(self._close_when_idle())
+
+    async def _opened(self) -> BrowserContext:
+        """The browser's context, opening it if it is closed."""
+        async with self._opening:
+            if self._context is not None:
+                return self._context
+            ready = asyncio.get_running_loop().create_future()
+            self._release = asyncio.Event()
+            self._holder = asyncio.create_task(self._hold(ready), name="udl fetch browser")
+            # (A tab given up on while it opens leaves it opening, for the next.)
+            return await asyncio.shield(ready)
+
+    async def _hold(self, ready: asyncio.Future[BrowserContext]) -> None:
+        """Hold the browser open until it is released."""
+        try:
+            async with chromium(
+                profile_dir=self.profile_dir, headless=True, cancel=CancelToken()
+            ) as context:
+                self.launches += 1
+                self._context = context
+                ready.set_result(context)
+                await self._release.wait()
+        except Exception as e:  # noqa: BLE001 - (whatever kept it from opening, for its tabs)
+            if not ready.done():
+                ready.set_exception(e)
+            else:
+                log.warning("udl's browser closed with a problem: %s", e)
+        finally:
+            self._context = None
+
+    async def _close_when_idle(self) -> None:
+        await self.clock.sleep(self.settings.browser_idle)
+        if self._active == 0:
+            self._idle = None
+            await self.close()
+
+    async def close(self) -> None:
+        """Close the browser (letting go of the profile) once its tabs have closed."""
+        if self._idle is not None and self._idle is not asyncio.current_task():
+            self._idle.cancel()
+        self._idle = None
+        holder = self._holder
+        if holder is None:
+            return
+        self._holder = None
+        self._release.set()
+        await asyncio.wait([holder])
+        if not holder.cancelled() and (problem := holder.exception()) is not None:
+            log.warning("udl's browser closed with a problem: %s", problem)
 
 
 @asynccontextmanager

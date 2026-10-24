@@ -16,6 +16,7 @@ import pytest
 from udl.errors import (
     AuthRequired,
     Cancelled,
+    ChallengeRequired,
     ConfigError,
     DatabaseError,
     DoesNotExist,
@@ -164,3 +165,11 @@ def test_every_code_rebuilds_its_own_class() -> None:
         info = ErrorInfo(code=cls.code, message="m")
 
         assert type(error_from_info(info)) is cls
+
+
+def test_a_check_nobody_passed_is_a_login_the_fetch_did_not_have() -> None:
+    error = ChallengeRequired("a.example waits behind a check", hint="udl fetch solve")
+
+    assert isinstance(error, AuthRequired)
+    assert error.code is ErrorCode.CHALLENGE_REQUIRED
+    assert error.to_info().code == "challenge_required"

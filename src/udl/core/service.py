@@ -142,6 +142,7 @@ from udl.errors import (
     PluginError,
     UDLError,
 )
+from udl.fetch.kit import FetchKit
 from udl.http import HttpClientFactory, api_client
 from udl.integrations.accounts import AccountManager, Integrations
 from udl.integrations.models import (
@@ -250,6 +251,12 @@ class UDLService:
         self.runtime: AutomationRuntime | None = None
         """The runtime that runs the automations in this udl, when one does (`udl serve`)."""
         self.automations = Automations(self)
+        self.fetches = FetchKit(
+            settings, db=self.db, bus=self.bus, clock=self.clock, cookies=self.cookies
+        )
+        """The page fetcher: its queue, ladder, cookies and browser (udl.fetch)."""
+        if isinstance(self.cookies, AuthCookies) and self.cookies.reader is None:
+            self.cookies.reader = self.fetches.profile  # (through the fetcher's open browser)
         self.jobs = JobManager(
             self.executor,
             max_concurrent=settings.max_concurrent,
@@ -284,8 +291,9 @@ class UDLService:
         await self.close()
 
     async def start(self) -> None:
-        """Connect to the databases. When no other udl is running, the downloads that a udl
-        which stopped left unfinished are marked as interrupted."""
+        """Connect to the databases. When no other udl is running, the downloads, runs and
+        fetches that a udl which stopped left unfinished are marked as interrupted (and fetches
+        older than [fetch] keep go)."""
         await self.db.connect()
         try:
             alone = await asyncio.to_thread(self._lock.acquire)
@@ -300,6 +308,7 @@ class UDLService:
             try:
                 await recover_interrupted(self.db)
                 await self._recover_runs()
+                await self._recover_fetches()
             finally:
                 self._lock.share()
 
@@ -309,10 +318,19 @@ class UDLService:
         except DatabaseError as e:
             log.warning("Could not read the runs to clean them up: %s", e)
 
+    async def _recover_fetches(self) -> None:
+        try:
+            await self.fetches.queue.recover()
+            await self.fetches.queue.prune()
+        except DatabaseError as e:
+            log.warning("Could not read the fetches to clean them up: %s", e)
+
     async def close(self) -> None:
-        """Cancel the downloads and runs still running, then close the databases."""
+        """Cancel the downloads and runs still running (the fetches are left interrupted),
+        then close the databases."""
         await self.jobs.shutdown()
         await self.runner.shutdown()
+        await self.fetches.close()
         await self.accounts.close()
         await self.db.close()
         self._lock.release()

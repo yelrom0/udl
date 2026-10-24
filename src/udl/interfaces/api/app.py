@@ -62,6 +62,7 @@ _STATUS: Final[dict[ErrorCode, int]] = {
     ErrorCode.ALREADY_EXISTS: 409,
     ErrorCode.IN_USE: 409,  # (an action a subscription runs)
     ErrorCode.AMBIGUOUS_ACCOUNT: 400,  # (which account?)
+    ErrorCode.CHALLENGE_REQUIRED: 409,  # (an anti-bot check waits for the user)
 }
 
 _LOCAL_HOSTS: Final = frozenset({"localhost"})
