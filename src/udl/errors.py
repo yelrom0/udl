@@ -40,6 +40,7 @@ class ErrorCode(StrEnum):
     SECRET_STORE_ERROR = "secret_store_error"  # noqa: S105 - (a code, not a secret)
     TEMPLATE_FAILED = "template_failed"
     REAUTH_REQUIRED = "reauth_required"
+    INVALID_FILTER = "invalid_filter"
 
 
 class ErrorInfo(BaseModel):
@@ -232,6 +233,13 @@ class TemplateFailed(ConfigError):
     names what the event does not have, or tries what the sandbox refuses."""
 
     code = ErrorCode.TEMPLATE_FAILED
+
+
+class InvalidFilter(ConfigError):
+    """A filter (a subscription's) does not parse, or does not fit its event types: it names a
+    field they lack, or compares a field with what it cannot be."""
+
+    code = ErrorCode.INVALID_FILTER
 
 
 class ReauthRequired(UDLError):

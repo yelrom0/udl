@@ -32,7 +32,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
 
 - [ ] **Phase 9: Events, subscriptions & actions**
   - [x] 9.1 `Event` / `EventType` models and the event type registry; udl's own types (`udl.download.*`, `udl.action.*`, `udl.account.*`, `custom.*`); `list_event_types` gives each type's data schema
-  - [ ] 9.2 `Filter`: conditions on an event's data, checked against its type's schema when saved; a one-line shorthand with round-trip property tests; the evaluator
+  - [x] 9.2 `Filter`: conditions on an event's data, checked against its type's schema when saved; a one-line shorthand with round-trip property tests; the evaluator
   - [ ] 9.3 `Subscription`: event types (globs), accounts, filter, source filter (11.6), actions, throttle; matching
   - [ ] 9.4 `udl.actions` plugin kind: `ActionPlugin` base + contract suite + `FakeAction`; the `Action` record
   - [ ] 9.5 Built-in actions: `script`, `operation`, `webhook`, `emit`, `notify`

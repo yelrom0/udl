@@ -55,6 +55,7 @@ _STATUS: Final[dict[ErrorCode, int]] = {
     ErrorCode.SECRET_STORE_ERROR: 503,
     ErrorCode.TEMPLATE_FAILED: 400,
     ErrorCode.REAUTH_REQUIRED: 409,  # (the account needs connecting again)
+    ErrorCode.INVALID_FILTER: 400,
 }
 
 _LOCAL_HOSTS: Final = frozenset({"localhost"})
