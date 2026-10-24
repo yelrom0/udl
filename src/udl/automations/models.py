@@ -163,7 +163,7 @@ class EmitEventRequest(_Frozen):
     """An event of your own to publish."""
 
     type: Annotated[str, AfterValidator(_custom)]
-    """Its type: custom.<name> (e.g. custom.hello)."""
+    """Its type: `custom.<name>` (e.g. custom.hello)."""
     data: JsonObject = Field(default_factory=dict)
     """What happened: any JSON object (a `subject` in it is its subject)."""
     dedupe_key: str | None = None
@@ -592,7 +592,7 @@ class SetScheduleRequest(_Frozen):
     enabled: bool = True
     """Whether it fires."""
     actions: list[Name] | None = None
-    """The actions it runs when it fires (through its subscription, schedule:<name>); [] runs
+    """The actions it runs when it fires (through its subscription, `schedule:<name>`); [] runs
     none; leaving it out keeps those it runs."""
 
     @model_validator(mode="after")
@@ -653,7 +653,7 @@ class ScheduleInfo(_Frozen):
     actions: list[str]
     """The actions it runs when it fires."""
     subscription: SubscriptionInfo | None
-    """The subscription it runs them through (schedule:<name>), when it runs any."""
+    """The subscription it runs them through (`schedule:<name>`), when it runs any."""
     created_at: AwareDatetime
     """When it was made."""
     updated_at: AwareDatetime

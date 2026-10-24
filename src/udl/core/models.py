@@ -248,7 +248,7 @@ class StrategySpec(_Frozen):
     """Use it only for the site's URLs whose path this regex is found in (e.g. "^/shorts/");
     by default for the whole site."""
     options: JsonObject = Field(default_factory=dict)
-    """The downloader's options, as in its [tools.<name>] config table."""
+    """The downloader's options, as in its `[tools.<name>]` config table."""
     priority: int = 0
     """Lower is tried first, among the site's strategies."""
     requires_auth: bool = False

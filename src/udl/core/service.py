@@ -926,7 +926,7 @@ class UDLService:
 
     async def plugin_settings(self, name: str) -> BaseModel:
         """The settings the plugin called `name` runs with (its settings model, secrets
-        readable): the model's defaults, its [integrations.<name>] table, then what was set
+        readable): the model's defaults, its `[integrations.<name>]` table, then what was set
         through udl. Raises DoesNotExist, or ConfigError when they are not valid."""
         return await self._plugin_settings.settings_of(name)
 
@@ -937,7 +937,7 @@ class UDLService:
     )
     async def get_plugin_settings(self, request: PluginSettingsRequest) -> PluginSettingsInfo:
         """Show a plugin's settings: what it runs with (secrets hidden), where each comes from
-        (its default, the config file's [integrations.<name>] table, or stored through udl),
+        (its default, the config file's `[integrations.<name>]` table, or stored through udl),
         which are secrets and which only the config file sets, and their JSON Schema."""
         return await self._plugin_settings.show(request.name)
 
@@ -947,7 +947,7 @@ class UDLService:
         hints=OperationHints(idempotent=True, admin=True),
     )
     async def set_plugin_settings(self, request: SetPluginSettingsRequest) -> PluginSettingsInfo:
-        """Change a plugin's settings: set some (over the config file's [integrations.<name>]
+        """Change a plugin's settings: set some (over the config file's `[integrations.<name>]`
         table), and give others back to the file (reset).
 
         A secret's value goes to the secret store, never to a database (null forgets it).
@@ -1003,7 +1003,7 @@ class UDLService:
         api=APISpec(method="POST", path="/events", status=201),
     )
     async def emit_event(self, request: EmitEventRequest) -> EventInfo:
-        """Publish an event of your own (custom.<name>, with any JSON object as its data): the
+        """Publish an event of your own (`custom.<name>`, with any JSON object as its data): the
         subscriptions that match it run their actions (in the udl that runs the automations).
         An event with a dedupe_key seen before is not published again (its first is given)."""
         return await self.automations.emit_event(request)
@@ -1276,7 +1276,7 @@ class UDLService:
         """Save a schedule: when it fires schedule.fired (exactly one of cron: a cron
         expression such as `0 8 * * 1-5`; every: an interval such as 15m, from start; at: a
         time, once), in a time zone, and the actions it runs then, so one command makes a cron
-        job. Its actions run through a subscription it keeps (schedule:<name>); leaving them out
+        job. Its actions run through a subscription it keeps (`schedule:<name>`); leaving them out
         keeps those it runs, and [] runs none.
 
         Times without a zone are in its time zone. A time missed while udl was stopped is

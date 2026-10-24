@@ -1792,6 +1792,9 @@ Where the build differs from a card, it is on purpose, as below.
 - **The phase's hand check** passed on 2026-10-24 against a real `udl serve` on a scratch config:
   `udl schedules set ping --every 1m --action hello` ran `hello` at 23:14, 23:15 and 23:16, each
   from its own `schedule.fired`, and `udl status` listed the next time.
+- **Fixed on the way:** the CLI shows help as Markdown, where a bare `<name>` is an HTML tag
+  and vanished (`custom.<name>` showed as `custom.`, since Phase 8 for `[integrations.<name>]`).
+  Placeholders in operations' help go in code spans now, and a test keeps it so.
 
 ---
 

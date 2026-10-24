@@ -10,6 +10,7 @@ model. The CLI, the API and the MCP server only call these (Phase 4).
 # System Imports
 import asyncio
 import json
+import re
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from pathlib import Path
@@ -214,6 +215,19 @@ def test_every_request_field_is_described() -> None:
     for op in operations().values():
         for name, field in op.request.model_fields.items():
             assert field.description, f"{op.request.__name__}.{name} has no description"
+
+
+def test_help_keeps_its_placeholders() -> None:
+    # The CLI shows help as Markdown, where a bare <name> is an HTML tag, and vanishes: in help
+    # (an operation's description, its fields'), placeholders go in `code`.
+    bare = re.compile(r"<[A-Za-z]")
+    for op in operations().values():
+        texts = [op.description] + [
+            field.description or "" for field in op.request.model_fields.values()
+        ]
+        for text in texts:
+            outside_code = re.sub(r"`[^`]*`", "", text)
+            assert not bare.search(outside_code), f"{op.name}: {text!r}"
 
 
 def test_the_download_operation_s_models() -> None:
