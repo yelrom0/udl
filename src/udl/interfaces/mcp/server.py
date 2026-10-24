@@ -18,15 +18,18 @@ current_caller). udl's errors are tool errors that say what to do next.
 import functools
 import importlib.metadata
 import inspect
+import types
+import typing
 from collections.abc import Awaitable, Callable
-from typing import Annotated, Any, Final
+from pathlib import Path
+from typing import Annotated, Any, Final, Union
 from uuid import UUID
 
 # Package Imports
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PlainValidator, SecretStr, TypeAdapter, WithJsonSchema
 from pydantic.fields import FieldInfo
 
 # Local Imports
@@ -124,9 +127,7 @@ def _tool[Q: BaseModel](
         inspect.Parameter(
             name,
             inspect.Parameter.KEYWORD_ONLY,
-            annotation=Annotated[
-                field.annotation, *field.metadata, Field(description=field.description)
-            ],
+            annotation=Annotated[_parameter(field), Field(description=field.description)],
             default=defaults.get(name, _default(field)),
         )
         for name, field in request.model_fields.items()
@@ -136,6 +137,35 @@ def _tool[Q: BaseModel](
     signature = inspect.Signature([*fields, context], return_annotation=op.response)
     setattr(tool, "__signature__", signature)  # noqa: B010 - (functions do not declare it)
     return tool
+
+
+def _parameter(field: FieldInfo) -> Any:
+    """A request field's type as a tool's parameter.
+
+    The MCP SDK reads a string argument that is JSON (null, true, a list...) as JSON unless its
+    parameter is exactly str, so a text field (text, a secret, a path) is given as str, with a
+    validator that also takes null and the field's own JSON Schema: "null" stays the text
+    "null", and the request model then validates the field as it is.
+    """
+    annotation = field.rebuild_annotation()  # (its type, with its constraints)
+    if not _is_text(field.annotation):
+        return annotation
+    schema = TypeAdapter[Any](annotation).json_schema()
+    return Annotated[str, PlainValidator(_text_or_null), WithJsonSchema(schema)]
+
+
+def _is_text(annotation: Any) -> bool:
+    """Whether a field's type is text in JSON: a str, a secret or a path (or None)."""
+    args = [arg for arg in typing.get_args(annotation) if arg is not type(None)]
+    if not (isinstance(annotation, types.UnionType) or typing.get_origin(annotation) is Union):
+        args = [annotation]
+    return len(args) == 1 and args[0] in (str, SecretStr, Path)
+
+
+def _text_or_null(value: object) -> object:
+    if value is None or isinstance(value, str):
+        return value
+    raise ValueError("Input should be text, or null")
 
 
 def _default(field: FieldInfo) -> object:

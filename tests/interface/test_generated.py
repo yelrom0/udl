@@ -114,6 +114,45 @@ async def test_every_plugin_operation_has_its_mcp_tool(harness: Harness) -> None
     assert "gizmo_lookup" in tools
 
 
+@pytest.mark.parametrize("text", ["null", "true", "false", "12", "[1, 2]", '{"a": 1}'])
+async def test_text_that_looks_like_json_stays_text_over_mcp(harness: Harness, text: str) -> None:
+    # (The MCP SDK reads a string argument that is JSON as JSON, unless its parameter is text.)
+    raw = {"text": text, "token": text, "path": text}
+
+    answer = await _through_mcp(harness, raw)
+
+    assert answer == echoed(EchoRequest.model_validate(raw)).model_dump(mode="json")
+
+
+async def test_text_and_secrets_may_still_be_null_over_mcp(harness: Harness) -> None:
+    answer = await _through_mcp(harness, {"text": "x", "token": None, "path": None})
+
+    assert answer == echoed(EchoRequest(text="x")).model_dump(mode="json")
+
+
+async def test_text_that_is_not_text_is_a_tool_error_over_mcp(harness: Harness) -> None:
+    async with mcp_client_for(harness) as client:
+        result = await client.call_tool("gizmo_echo", {"text": 5})
+
+    assert result.is_error
+
+
+async def test_text_and_secrets_keep_their_schema_over_mcp(harness: Harness) -> None:
+    async with mcp_client_for(harness) as client:
+        tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+
+    properties = tools["gizmo_echo"].input_schema["properties"]
+    assert properties["token"] == {
+        "anyOf": [{"format": "password", "type": "string", "writeOnly": True}, {"type": "null"}],
+        "default": None,
+        "description": "A secret.",
+        "title": "Token",
+    }
+    assert properties["text"] == {"description": "Some text.", "title": "Text", "type": "string"}
+    tool = tools["set_site_strategy"].input_schema["properties"]["tool"]
+    assert tool["minLength"] == 1  # (a constraint of udl's own is kept too)
+
+
 def test_a_plugin_s_operations_from_a_plugin_dir_get_all_three(tmp_path: Path) -> None:
     plugin_dir = tmp_path / "plugins"
     plugin_dir.mkdir()
@@ -499,11 +538,8 @@ _requests: st.SearchStrategy[dict[str, Any]] = st.fixed_dictionaries(
         "tags": st.lists(_words, max_size=3),
         "sizes": st.lists(st.integers(-1000, 1000), max_size=3),
         "point": st.fixed_dictionaries({"x": st.integers(-9, 9)}, optional={"y": st.integers()}),
-        # (Not null, true or false: the MCP SDK reads a string argument that is JSON as JSON
-        # unless its parameter is exactly str, so over MCP those would not stay text.)
-        "token": st.text(st.characters(codec="ascii", categories=["L", "N"]), min_size=1).filter(
-            lambda token: token not in ("null", "true", "false")
-        ),
+        "token": st.text(st.characters(codec="ascii", categories=["L", "N"]), min_size=1)
+        | st.sampled_from(["null", "true", "false", "123"]),
         "extra": _json,
         "limit": st.integers(1, 10),
     },

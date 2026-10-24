@@ -1012,9 +1012,10 @@ them. Where it still differs from a card, it is on purpose, as below.
     classes in each service.
   - `route(op)` gives an operation's APISpec with its default path. A route's path, query and body are put
     together and checked as one request, so a model validator across them is a 422.
-  - Known limit, from the MCP SDK: it reads a string argument that is JSON (`null`, `true`, a list...) as
-    JSON unless its parameter is exactly `str`, so a secret (or any text) that is one of those does not stay
-    text over MCP (udl's own tools too). The CLI and the API keep it; hypothesis found it.
+  - The MCP SDK reads a string argument that is JSON (`null`, a list...) as JSON unless its parameter is
+    exactly `str` (hypothesis found a secret `null` arriving as nothing). So a tool's text fields (text,
+    secrets, paths) are `str` parameters with a validator that also takes `null` and the field's own JSON
+    Schema; the request model then validates them as before. Fields that are JSON keep the SDK's reading.
   - `current_caller` lives in `udl.core.operations` (`Caller`: cli, api, mcp, automation). Python callers
     (udl itself, tests) are `None` and, like the CLI, not checked. The API sets it in a plain ASGI
     middleware (in the request's task). `check_output_dir` moved to `udl.core.paths`.
