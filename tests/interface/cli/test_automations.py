@@ -11,6 +11,7 @@ emitted event make a run, in the runtime of a `udl serve`
 # System Imports
 import asyncio
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,9 @@ from support.cli import CLI
 from support.interfaces import Harness
 from udl.automations.runs import ActionRun, RunStatus
 from udl.automations.runtime import AutomationRuntime
+from udl.automations.schedules import CronSpec, Schedule
 from udl.config import AutomationsSettings
+from udl.db.manager import DBManager
 from udl.db.records import RecordQuery
 from udl.plugins.actions.script import ScriptAction
 from udl.plugins.registry import ACTIONS
@@ -375,6 +378,24 @@ def test_the_status_is_said(cli: CLI) -> None:
 
     assert "stopped" in shown
     assert said["automations"] == "stopped"
+
+
+def test_the_status_says_the_next_schedules(cli: CLI, harness: Harness) -> None:
+    async def schedule(db: DBManager) -> None:
+        await db.upsert_record(
+            Schedule(
+                name="digest",
+                spec=CronSpec(cron="0 8 * * *"),
+                next_run_at=datetime(2030, 1, 1, 8, tzinfo=UTC),
+            )
+        )
+
+    harness.seed(schedule)
+
+    shown = ok(cli, "status")
+
+    assert "Next schedules" in shown
+    assert "digest" in shown
 
 
 # ---------------------------------------------------------------------------------------------

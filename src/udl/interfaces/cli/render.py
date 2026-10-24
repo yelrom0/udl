@@ -831,6 +831,16 @@ def status(console: Console, shown: RuntimeStatus) -> None:
         rows.append(("Last dispatch", _when(shown.last_dispatch)))
     if shown.lease_expires_at is not None and shown.automations is not AutomationState.STOPPED:
         rows.append(("Lease until", _when(shown.lease_expires_at)))
+    if shown.next_schedules:
+        rows.append(
+            (
+                "Next schedules",
+                "\n".join(
+                    f"{_when(found.next_run_at)}  {escape(found.name)}"
+                    for found in shown.next_schedules
+                ),
+            )
+        )
     _lines(console, rows)
 
 

@@ -13,11 +13,12 @@ host, its process and a random part). While it holds it, it runs:
 - the runner (udl.automations.runner), after ending as interrupted what a runtime that stopped
   left running;
 - retention: every hour, it prunes events and ended runs older than event_retention_days (never
-  a pending event, or a run that waits).
+  a pending event, or a run that waits);
+- the scheduler (udl.automations.scheduler), which fires the schedules as they come due.
 
 A runtime that loses the lease stops them (interrupting its runs) until it has it again;
-closing releases it, so another `udl serve` takes over at once. The scheduler (Phase 10) and the
-watchers (Phase 11) join them. It will not start with a scripts_dir inside a folder udl writes
+closing releases it, so another `udl serve` takes over at once. The watchers (Phase 11) join
+them. It will not start with a scripts_dir inside a folder udl writes
 to, so nothing udl downloads can become a script.
 
 runtime_status() is what get_status says: read from the database, so any udl can say which udl
@@ -39,11 +40,13 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Final, Self
 
 # Package Imports
-from pydantic import AwareDatetime, BaseModel, ConfigDict, NonNegativeInt
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, NonNegativeInt
 
 # Local Imports
 from udl.automations.events import EventRecord, EventStatus
 from udl.automations.runs import ActionRun, RunStatus
+from udl.automations.schedules import Schedule
+from udl.clock import pause
 from udl.config import Settings
 from udl.db.manager import DBManager
 from udl.db.records import Lease, Record, RecordQuery
@@ -59,6 +62,8 @@ LEASE: Final = "automations"
 RETENTION_EVERY: Final = timedelta(hours=1)
 PRUNE_PAGE: Final = 500
 """Records pruned at a time."""
+UPCOMING: Final = 5
+"""How many of the next schedules the status says."""
 STOP_GRACE: Final = 5.0
 """Seconds the runtime's loops get to stop where they wait, before they are cancelled (one
 stuck on a database that does not answer)."""
@@ -71,6 +76,17 @@ class AutomationState(StrEnum):
     ELSEWHERE = "elsewhere"  # another udl (the lease's holder)
     STOPPED = "stopped"  # nobody
     DISABLED = "disabled"  # [automations] enabled = false
+
+
+class UpcomingSchedule(BaseModel):
+    """A schedule, and when it fires next."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
+
+    name: str
+    """The schedule's name."""
+    next_run_at: AwareDatetime
+    """When it fires next (without its jitter)."""
 
 
 class RuntimeStatus(BaseModel):
@@ -97,6 +113,8 @@ class RuntimeStatus(BaseModel):
     """Events stored but not dispatched yet."""
     last_dispatch: AwareDatetime | None = None
     """When an event was last dispatched."""
+    next_schedules: list[UpcomingSchedule] = Field(default_factory=list[UpcomingSchedule])
+    """The next schedules to fire (five at most), soonest first."""
 
 
 def check_scripts_dir(settings: Settings) -> None:
@@ -189,15 +207,7 @@ class AutomationRuntime:
 
     async def _pause(self, delay: timedelta, *until: asyncio.Event) -> None:
         """Wait for `delay`, or until one of `until` is set."""
-        waits = [
-            asyncio.ensure_future(self.service.clock.sleep(delay)),
-            *(asyncio.ensure_future(event.wait()) for event in until),
-        ]
-        try:
-            await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
-        finally:
-            for wait in waits:
-                wait.cancel()
+        await pause(self.service.clock, delay, *until)
 
     async def _claim(self, ttl: timedelta) -> bool:
         try:
@@ -227,6 +237,7 @@ class AutomationRuntime:
             group.create_task(self._dispatcher(stop))
             group.create_task(self._forever("run", self.service.runner.serve, stop))
             group.create_task(self._retention(stop))
+            group.create_task(self._forever("schedule", self.service.scheduler.serve, stop))
 
     # -- the work ------------------------------------------------------------------------------
 
@@ -317,6 +328,14 @@ async def runtime_status(service: UDLService) -> RuntimeStatus:
     dispatched = await db.list_records(
         EventRecord, RecordQuery(where={"status": EventStatus.DISPATCHED}, limit=1)
     )
+    upcoming = sorted(
+        (
+            UpcomingSchedule(name=schedule.name, next_run_at=schedule.next_run_at)
+            for schedule in await db.list_records(Schedule, RecordQuery(where={"enabled": True}))
+            if schedule.next_run_at is not None
+        ),
+        key=lambda found: found.next_run_at,
+    )
     return RuntimeStatus(
         automations=state,
         holder=lease.holder if lease is not None else None,
@@ -327,4 +346,5 @@ async def runtime_status(service: UDLService) -> RuntimeStatus:
         waiting_runs=await count(ActionRun, RunStatus.AWAITING_APPROVAL),
         pending_events=await count(EventRecord, EventStatus.PENDING),
         last_dispatch=dispatched[0].dispatched_at if dispatched else None,
+        next_schedules=upcoming[:UPCOMING],
     )

@@ -64,6 +64,7 @@ from udl.automations.models import (
 )
 from udl.automations.runner import ActionRunner
 from udl.automations.runtime import AutomationRuntime, RuntimeStatus
+from udl.automations.scheduler import Scheduler
 from udl.chains.executor import ChainRun, ChainRunner
 from udl.chains.files import read_chains, write_chains
 from udl.chains.models import FetchMode, SiteChain, StepTrace, TagChain
@@ -209,6 +210,7 @@ class UDLService:
         self.event_types = EventTypes.discover(registry)
         self.bus = EventBus(self.db, self.event_types, self.clock, settings.automations)
         self.runner = ActionRunner(self)
+        self.scheduler = Scheduler(self.db, self.bus, self.clock, settings.automations)
         self.runtime: AutomationRuntime | None = None
         """The runtime that runs the automations in this udl, when one does (`udl serve`)."""
         self.automations = Automations(self)

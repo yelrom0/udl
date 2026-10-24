@@ -18,6 +18,7 @@ from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 # Package Imports
 import pytest
@@ -32,6 +33,7 @@ from udl.automations.bus import NewEvent
 from udl.automations.events import EventRecord, EventStatus
 from udl.automations.runs import ActionRun, RunStatus
 from udl.automations.runtime import LEASE, AutomationRuntime, AutomationState, runtime_status
+from udl.automations.schedules import AtSpec, EverySpec, Schedule
 from udl.automations.subscriptions import Subscription
 from udl.config import APISettings, AutomationsSettings
 from udl.core.models import DownloadRequest
@@ -263,6 +265,28 @@ async def test_the_runtime_keeps_going_when_the_database_fails(
         assert "the disk is full" in caplog.text
 
 
+async def test_the_runtime_fires_the_schedules_and_runs_what_they_start(
+    service: UDLService, clock: FakeClock, fake: type[FakeAction]
+) -> None:
+    await service.db.upsert_record(Action(name="hello", plugin="fake", options={"output": 1}))
+    await service.db.upsert_record(
+        Subscription(name="ticks", events=["schedule.fired"], actions=["hello"])
+    )
+    await service.db.upsert_record(
+        Schedule(name="tick", spec=EverySpec(every=timedelta(minutes=1))).planned(
+            clock.now(), ZoneInfo("UTC")
+        )
+    )
+    async with AutomationRuntime(service, holder="here:1:a"):
+        await clock.advance(timedelta(0))
+
+        await clock.advance(timedelta(minutes=1))
+        await service.runner.idle()
+
+        [run] = await runs(service)
+        assert (run.status, run.event_type) == (RunStatus.SUCCEEDED, "schedule.fired")
+
+
 # ---------------------------------------------------------------------------------------------
 # What it will not start with
 # ---------------------------------------------------------------------------------------------
@@ -369,6 +393,33 @@ async def test_the_status_says_what_waits(service: UDLService, clock: FakeClock)
     assert (status.queued_runs, status.running_runs, status.waiting_runs) == (2, 1, 1)
     assert status.pending_events == 1
     assert (status.holder, status.lease_expires_at, status.last_dispatch) == (None, None, None)
+
+
+async def test_the_status_says_the_next_five_schedules(
+    service: UDLService, clock: FakeClock
+) -> None:
+    for n in (6, 3, 1, 5, 2, 4):
+        await service.db.upsert_record(
+            Schedule(
+                name=f"in-{n}h",
+                spec=AtSpec(at=clock.now() + timedelta(hours=n)),
+                next_run_at=clock.now() + timedelta(hours=n),
+            )
+        )
+    await service.db.upsert_record(
+        Schedule(
+            name="off",
+            spec=AtSpec(at=clock.now()),
+            next_run_at=clock.now(),
+            enabled=False,
+        )
+    )
+
+    status = await runtime_status(service)
+
+    assert [(found.name, found.next_run_at) for found in status.next_schedules] == [
+        (f"in-{n}h", clock.now() + timedelta(hours=n)) for n in range(1, 6)
+    ]
 
 
 async def test_the_status_says_when_automations_are_disabled(tmp_path: Path) -> None:

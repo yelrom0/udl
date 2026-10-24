@@ -18,7 +18,7 @@ import pytest
 # Local Imports
 import udl
 from support.clock import T0, FakeClock
-from udl.clock import Clock, SystemClock
+from udl.clock import Clock, SystemClock, pause
 
 
 def test_the_system_clock_tells_the_time_in_utc() -> None:
@@ -225,3 +225,35 @@ def test_what_waits_for_a_time_asks_the_clock() -> None:
     ]
 
     assert offenders == []
+
+
+# ---------------------------------------------------------------------------------------------
+# pause(): a sleep that something may end early
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_pause_lasts_its_delay() -> None:
+    clock = FakeClock()
+    woken = asyncio.Event()
+    paused = asyncio.create_task(pause(clock, timedelta(seconds=10), woken))
+
+    await clock.advance(timedelta(seconds=9))
+    assert not paused.done()
+    await clock.advance(timedelta(seconds=1))
+
+    assert paused.done()
+    assert clock.sleepers == 0
+
+
+async def test_a_pause_ends_when_what_it_waits_for_happens() -> None:
+    clock = FakeClock()
+    one, other = asyncio.Event(), asyncio.Event()
+    paused = asyncio.create_task(pause(clock, timedelta(hours=1), one, other))
+    await clock.advance(timedelta(0))
+
+    other.set()
+    await clock.advance(timedelta(0))
+
+    assert paused.done()
+    assert clock.sleepers == 0  # (its sleep is cancelled)
+    assert clock.now() == T0

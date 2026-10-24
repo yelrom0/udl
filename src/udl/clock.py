@@ -54,3 +54,17 @@ class SystemClock:
         # (Waiting for the wall clock, not for an event: hence a step at a time.)
         while (left := when - self.now()) > timedelta(0):  # noqa: ASYNC110
             await asyncio.sleep(min(left, _STEP).total_seconds())
+
+
+async def pause(clock: Clock, delay: timedelta, *until: asyncio.Event) -> None:
+    """Wait on `clock` for `delay`, or until one of `until` is set (what a loop that also
+    wakes for news waits with)."""
+    waits = [
+        asyncio.ensure_future(clock.sleep(delay)),
+        *(asyncio.ensure_future(event.wait()) for event in until),
+    ]
+    try:
+        await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for wait in waits:
+            wait.cancel()
