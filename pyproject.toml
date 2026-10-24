@@ -123,7 +123,7 @@ target-version = "py314"
 src = ["src", "tests"]
 
 [tool.ruff.format]
-# Leave the hand-aligned snippets in planning.md / README.md alone.
+# Leave the hand-aligned snippets in planning.md, planning/ and README.md alone.
 exclude = ["*.md"]
 
 [tool.ruff.lint]

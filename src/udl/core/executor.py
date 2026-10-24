@@ -6,7 +6,7 @@
 The executor: downloads a URL by trying its candidates (from the resolver) in turn until one
 actually downloads it (real, non-empty files inside the output dir: Downloader.download checks).
 
-How it reacts to a failed try (the error taxonomy in planning.md):
+How it reacts to a failed try (the error taxonomy in planning/01-core.md):
 
 - UnsupportedURL, ExtractionFailed, any other DownloadError, a config or plugin problem: the next
   candidate.

@@ -3,7 +3,7 @@
 - test_error_mapping.py -
 -------------------------
 
-How each tool's failures map onto the error taxonomy (planning.md, Phase 2): raw tool errors
+How each tool's failures map onto the error taxonomy (planning/01-core.md, Phase 2): raw tool errors
 (HTTP statuses, httpx exceptions, yt-dlp messages, gallery-dl exit statuses and log messages,
 curl / wget exit codes, Chromium network errors) to UDLError subclasses
 """

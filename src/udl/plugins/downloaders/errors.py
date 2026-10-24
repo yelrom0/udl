@@ -3,7 +3,7 @@
 - errors.py -
 -------------
 
-How each tool's failures map onto the error taxonomy (planning.md, Phase 2): HTTP statuses,
+How each tool's failures map onto the error taxonomy (planning/01-core.md, Phase 2): HTTP statuses,
 httpx exceptions, yt-dlp messages, gallery-dl exit statuses and log messages, curl / wget exit
 codes and Chromium network errors. The downloaders raise what these return, so the resolver
 reacts to every tool's failures the same way.

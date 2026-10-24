@@ -4,8 +4,8 @@
 ------------------
 
 Every operation (udl.core.service.operations()) has a CLI command, an API route and an MCP tool,
-named as planning.md's Feature Matrix names them, and the interfaces offer nothing else except
-the interface-only commands listed here
+named as planning/01-core.md's Feature Matrix names them, and the interfaces offer nothing else
+except the interface-only commands listed here
 """
 
 # System Imports
@@ -20,7 +20,7 @@ from typer.core import TyperGroup
 from udl.config import Settings
 from udl.core.service import UDLService, operations
 
-# planning.md's Feature Matrix: each operation's CLI command and API route (its MCP tool is
+# planning/01-core.md's Feature Matrix: each operation's CLI command and API route (its MCP tool is
 # named after the operation).
 MATRIX: dict[str, tuple[str, str]] = {
     "download": ("get", "POST /downloads"),

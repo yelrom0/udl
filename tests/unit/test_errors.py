@@ -55,7 +55,7 @@ def test_every_error_has_its_own_code() -> None:
 @pytest.mark.parametrize(
     ("error", "counts_against_strategy", "retryable"),
     [
-        # The error taxonomy table in planning.md (Phase 2).
+        # The error taxonomy table in planning/01-core.md (Phase 2).
         (UnsupportedURL, True, False),
         (ExtractionFailed, True, False),
         (AuthRequired, True, False),

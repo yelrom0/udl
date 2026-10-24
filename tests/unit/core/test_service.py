@@ -137,7 +137,7 @@ def slow_settings(tmp_path: Path) -> Settings:
 
 
 def test_the_operations_are_the_feature_matrix_s() -> None:
-    # planning.md's Feature Matrix (syncing databases comes in Phase 7).
+    # planning/01-core.md's Feature Matrix (syncing databases comes in Phase 7).
     assert set(operations()) == {
         "download",
         "get_download",

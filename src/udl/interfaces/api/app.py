@@ -3,9 +3,9 @@
 - app.py -
 ----------
 
-The HTTP API (FastAPI): a route for every operation (planning.md's Feature Matrix), named after
-it (its operationId), and a download's events as server-sent events. The MCP server is at /mcp
-(streamable HTTP), on the same service. `udl serve` runs it.
+The HTTP API (FastAPI): a route for every operation (planning/01-core.md's Feature Matrix), named
+after it (its operationId), and a download's events as server-sent events. The MCP server is at
+/mcp (streamable HTTP), on the same service. `udl serve` runs it.
 
 udl's errors are answered as ErrorInfo, with a status that fits (404 for what does not exist,
 400 for a tool or options that cannot work...). When api.api_key is set, every route but the

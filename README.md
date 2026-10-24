@@ -360,8 +360,9 @@ make smoke                      # udl against real sites (needs the internet; ne
 make fmt                        # format, and fix what ruff can
 ```
 
-udl is built test first and fully typed. [planning.md](planning.md) is the plan, and records the
-decisions made along the way. The tests run against a local fixture site. The PostgreSQL and
+udl is built test first and fully typed. [planning.md](planning.md) is the current plan (accounts,
+automations, local AI and a web UI), and [planning/](planning/) keeps the finished ones with the
+decisions made along the way ([planning/01-core.md](planning/01-core.md): the downloader). The tests run against a local fixture site. The PostgreSQL and
 MongoDB tests start throwaway Docker containers (`postgres:18-alpine`, `mongo:8`). Without
 Docker they are skipped, unless `UDL_TEST_POSTGRES_URL` or `UDL_TEST_MONGODB_URL` names a server
 to use.

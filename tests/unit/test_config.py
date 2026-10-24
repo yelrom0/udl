@@ -19,7 +19,7 @@ from pydantic import ValidationError
 from udl.config import DBConnectionConfig, DBSettings, ReadPolicy, Settings, WritePolicy
 from udl.errors import ConfigError
 
-# The configuration example from planning.md.
+# The configuration example from planning/01-core.md.
 EXAMPLE_CONFIG = """
 download_dir = "~/Downloads/udl"
 filename_template = "{site}/{title}.{ext}"

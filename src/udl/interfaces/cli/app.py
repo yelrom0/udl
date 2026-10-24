@@ -3,8 +3,8 @@
 - app.py -
 ----------
 
-The `udl` command (Typer): a command for every operation (planning.md's Feature Matrix), with
-`udl <url>...` short for `udl get <url>...`, plus `udl serve` and `udl mcp` (the other
+The `udl` command (Typer): a command for every operation (planning/01-core.md's Feature Matrix),
+with `udl <url>...` short for `udl get <url>...`, plus `udl serve` and `udl mcp` (the other
 interfaces) and `udl browser login`
 """
 

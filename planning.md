@@ -1,155 +1,191 @@
-# UDL: Implementation Plan
+# UDL: Automations, AI & Web UI Plan
 
-> One tool (`udl`) that works out **how** to download a URL, remembers that per site, and exposes every
-> feature identically through a **CLI** (Typer), an **HTTP API** (FastAPI + Granian) and an **MCP server**.
+> udl grows from a downloader into a local automation hub. It connects **several Google and Slack
+> accounts**, turns what happens in them (and on a **schedule**) into **events**, and runs the **actions**
+> that **subscribe** to those events: scripts, udl operations, webhooks, or a **local AI** with its own prompts
+> and guidance. Everything stays available through the **CLI**, the **HTTP API** and the **MCP server**, and a
+> **web UI** (React, served by FastAPI) joins them. The UI is built from **UI plugins**, so any plugin can
+> bring its own screens, built with whatever component library it likes.
 >
-> All work is done **TDD-style** and must be fully **typed** (Pydantic / SQLModel models wherever data
-> crosses a boundary). See [Working agreement](#working-agreement-tdd--typing).
+> Phases 0–7 (the downloader) are done: their plan and the decisions made along the way are in
+> [planning/01-core.md](planning/01-core.md). Numbering continues from there. The work is still **TDD-style**
+> and fully **typed**, now in TypeScript too. See [Working agreement](#working-agreement-tdd--typing).
 
 ---
 
 ## Progress tracker
 
-Task IDs (e.g. `3.4`) are referenced in the detailed sections below. Tick a task only when it meets the
+Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task only when it meets the
 [Definition of Done](#definition-of-done-applies-to-every-task).
 
-- [x] **Phase 0: Foundations, tooling & cleanup**
-  - [x] 0.1 `git init` + `.gitignore` (`.venv/`, `__pycache__/`, `*.db`, coverage output)
-  - [x] 0.2 Move package management to **uv** (see [Package management](#package-management-uv))
-    - [x] 0.2.1 Install uv (`sudo pacman -S uv`) and add a user-level `~/.config/uv/uv.toml` with `link-mode = "clone"` so every project's `.venv` reflinks from one shared cache
-    - [x] 0.2.2 Write `pyproject.toml` (`uv_build` backend, src layout, `browser` + `postgres` extras, `dev` dependency group, `py.typed`) + `.python-version` (`uv python pin 3.14`); add deps with `uv add`
-    - [x] 0.2.3 Delete `requirements.txt` and the pip-built `.venv`, run `uv sync`, generate `uv.lock` (commit it in 0.1); all deps import on Python 3.14.7
-    - [x] 0.2.4 Check shared disk usage with `btrfs filesystem du`: `.venv` is 556M apparent but only 25 MiB exclusive
-  - [x] 0.3 Quality tooling: pytest (+ asyncio, cov, respx, pytest-httpserver, hypothesis), pyright **strict**, ruff; a single `make check` command; pre-commit hook (including `uv-lock`); coverage gate
-  - [x] 0.4 Restructure into the `src/udl/` package (see [Layout](#project-layout))
-  - [x] 0.5 🔴→🟢 Write regression tests for each existing DB bug (replacing `test.py`), then fix them (see [Phase 0 notes](#phase-0-notes-existing-code-issues))
-  - [x] 0.6 🔴→🟢 Test that two DB instances with different URLs coexist, then remove the per-class singleton
-  - [x] 0.7 `Settings` model (pydantic-settings): TOML file + `UDL_*` env vars + `platformdirs` defaults
-  - [x] 0.8 `UDLError` hierarchy + logging setup
-  - [x] 0.9 Test fixture site: a local HTTP server with a direct file, a `<video>` page, an iframe embed, a JS-rendered page and a cookie-gated (401) page
+- [ ] **Phase 8: Groundwork (plugin operations, records, secrets)**
+  - [ ] 8.1 `Operation` carries its tool hints (read-only, destructive, idempotent, open-world, moving `_HINTS` out of the MCP server) and whether it is `admin` (changes automations, accounts, AI setup or settings); an `OperationRegistry` per service holds udl's operations and its plugins' (`operations()` stays the core set)
+  - [ ] 8.2 🔴 **Parity test first** for generated adapters: an operation a plugin adds must get a CLI command, an API route and an MCP tool, made from its request model
+  - [ ] 8.3 Generated adapters: Typer commands (an option per field, `--input FILE` for the whole request), FastAPI routes (typed in the OpenAPI schema), MCP tools (as today)
+  - [ ] 8.4 `Record` base model + `RecordQuery`; `DatabasePlugin` gains the record methods and `claim_lease`; their contract tests first
+  - [ ] 8.5 Records in every DB plugin: `memory`, the SQLAlchemy base (schema version 3: a table per record kind), `mongodb` (a collection per kind); `DBManager` reads and writes them with its policies; `db sync` copies them
+  - [ ] 8.6 `udl.secrets` plugin kind: `SecretStore` ABC + contract suite; `keyring` (Secret Service / KWallet), `file` (`0600`) and `memory` built-ins; `SecretRef`; secrets never in a database, the config or a log
+  - [ ] 8.7 `Clock` (`SystemClock`; `FakeClock` in `tests/support`) for everything time-driven
+  - [ ] 8.8 Templates: a sandboxed Jinja2 environment for action arguments and prompts (`StrictUndefined`, size limits, a lone `{{ expression }}` keeps its type), with property tests
+  - [ ] 8.9 OAuth 2.0 helper on httpx: authorization code + PKCE, a loopback redirect listener, refresh, revoke; tested against a fake authorization server
+  - [ ] 8.10 Settings: the `[automations]`, `[secrets]`, `[ai]`, `[integrations.<name>]` and `[web]` tables; `PluginSettings` records layered over the file (`get_plugin_settings` / `set_plugin_settings`); `get_config` hides the new secrets
 
-- [x] **Phase 1: Plugin system & database layer**
-  - [x] 1.1 Plugin registry: entry points (`udl.databases`, `udl.downloaders`, `udl.sites`) + local plugin dir
-  - [x] 1.2 Domain models: SQLModel bases (`Site`, `Strategy`, `DownloadRecord`) + table variants, typed JSON fields
-  - [x] 1.3 `DatabasePlugin` ABC + **shared contract test suite** (parametrised over every DB plugin)
-  - [x] 1.4 `memory` DB plugin (test double that passes the contract suite)
-  - [x] 1.5 `SQLAlchemyDatabase` base (async SQLModel), usable by any SQLAlchemy URL
-  - [x] 1.6 `sqlite` plugin: the default DB, created automatically in the user data dir
-  - [x] 1.7 `DBManager`: multiple named connections, read policy (`first` / `merge`), write policy (`primary` / `all` / named)
-  - [x] 1.8 Schema versioning (`schema_version` table + `migrate()` on connect)
+- [ ] **Phase 9: Events, subscriptions & actions**
+  - [ ] 9.1 `Event` / `EventType` models and the event type registry; udl's own types (`udl.download.*`, `udl.action.*`, `udl.account.*`, `custom.*`); `list_event_types` gives each type's data schema
+  - [ ] 9.2 `Filter`: conditions on an event's data, checked against its type's schema when saved; a one-line shorthand with round-trip property tests; the evaluator
+  - [ ] 9.3 `Subscription`: event types (globs), accounts, filter, source filter (11.6), actions, throttle; matching
+  - [ ] 9.4 `udl.actions` plugin kind: `ActionPlugin` base + contract suite + `FakeAction`; the `Action` record
+  - [ ] 9.5 Built-in actions: `script`, `operation`, `webhook`, `emit`, `notify`
+  - [ ] 9.6 `EventBus`: publish (persist, dedupe, causation depth), match subscriptions, queue runs; events other udl processes publish are picked up
+  - [ ] 9.7 `ActionRunner`: persisted runs, concurrency limits, timeouts, retries, cancelling, crash recovery; a run's end is an event
+  - [ ] 9.8 Loop protection: `max_event_depth`, per-subscription throttles, udl's own messages marked (used by 12 and 13)
+  - [ ] 9.9 `AutomationRuntime` in `udl serve`: dispatcher, runner, retention, a lease so one runtime runs per database; finished downloads publish `udl.download.*`
+  - [ ] 9.10 Operations (events, subscriptions, actions, runs, status) via CLI, API and MCP; `GET /events/stream` (SSE)
 
-- [x] **Phase 2: Downloader plugins**
-  - [x] 2.1 `Downloader` ABC, per-plugin `Options` model, `ProbeResult` / `DownloadResult` models + **contract test suite**; add the `udl.downloaders` `PluginKind` to `PLUGIN_KINDS`
-  - [x] 2.2 Error taxonomy mapping (table-driven tests per tool: `AuthRequired`, `Unsupported`, `RateLimited`, …)
-  - [x] 2.3 `yt-dlp` (in-process API, offline extractor match, `extract_info(download=False)`, progress hooks)
-  - [x] 2.4 `gallery-dl` (offline `extractor.find()`, in-process job)
-  - [x] 2.5 `http` direct-file downloader: `httpx` by default, `curl` / `wget` backends when installed, resume support
-  - [x] 2.6 `scraper` (static HTML, `selectolax`): heuristic media discovery, then hand off to `http` / `yt-dlp`
-  - [x] 2.7 `browser` (Playwright): network sniffing for media/manifest URLs + cookie capture, then hand off
-  - [x] 2.8 Auth (401/403): `cookies_from_browser`, persistent browser profile, `udl browser login`
+- [ ] **Phase 10: Scheduler**
+  - [ ] 10.1 `ScheduleSpec`: `cron` | `every` | `at`, in a timezone; cron parsing behind `CronExpression`; next times tested across DST changes (hypothesis)
+  - [ ] 10.2 `Schedule` record: misfire policy (`skip` | `once`), jitter, `next_run_at`
+  - [ ] 10.3 `Scheduler` on the `Clock`: sleeps until the next due schedule, wakes when schedules change, fires `schedule.fired` once per due time
+  - [ ] 10.4 A schedule's `actions` keep a linked subscription, so a cron job is one command
+  - [ ] 10.5 Operations (`list/get/set/delete/run/preview_schedule`) via CLI, API and MCP
+  - [ ] 10.6 End to end: a schedule runs a script through `udl serve`'s runtime (on a `FakeClock`)
 
-- [x] **Phase 3: Resolution engine & service layer**
-  - [x] 3.1 URL normalisation + site key (registrable domain via `tldextract`), with property-based tests
-  - [x] 3.2 Resolver precedence: request override, then site plugin, then stored strategy (all DBs), then probe
-  - [x] 3.3 Probe chain: offline matches first, then network checks, then scraper, then browser
-  - [x] 3.4 Execute with fallback: try candidates until a download **actually succeeds** (`AuthRequired`: retry with `AuthCookies`, then the `browser` downloader)
-  - [x] 3.5 Record winning strategy + download history through `DBManager`; update success/failure counters; `requires_auth` when it needed cookies
-  - [x] 3.6 Self-healing: a stored strategy that fails N times in a row gets re-probed and replaced
-  - [x] 3.7 Output dir resolution (request, then site, then config) + filename templates
-  - [x] 3.8 Multi-URL batches: async concurrency with global + per-site limits
-  - [x] 3.9 Job manager: progress events, cancellation, persisted as `DownloadRecord`
-  - [x] 3.10 `UDLService` façade + operations registry (the only thing interfaces call)
+- [ ] **Phase 11: Integrations & accounts**
+  - [ ] 11.1 `udl.integrations` plugin kind: `Integration` base class + contract suite + `FakeIntegration`
+  - [ ] 11.2 `Account` record (any number per integration, each named), `AccountHandle` (credentials from the secret store, refreshed when they expire; `needs_reauth`)
+  - [ ] 11.3 Connecting: `oauth` (a loopback listener for the CLI and stdio MCP; the server's own callback for the API and UI), `tokens`, and `none` (a source that needs no login)
+  - [ ] 11.4 Integration operations join the registry (8.1) with an `account` argument (optional while one account is connected), through the generated adapters (8.3); read-only ones that list things fan out over several accounts (`account: "*"` or a list), results tagged by account
+  - [ ] 11.5 Watchers: one per connected account that a subscription could match, in the runtime, restarted with backoff; cursors in `PluginState`; `udl.account.*` events
+  - [ ] 11.6 Source filters: criteria only the integration can check (e.g. a Gmail search), checked after the generic filter
+  - [ ] 11.7 Account operations via CLI, API and MCP
 
-- [x] **Phase 4: Interfaces (CLI, API, MCP)**
-  - [x] 4.1 🔴 **Parity test first**: every registered operation must have a CLI command, an API route and an MCP tool
-  - [x] 4.2 CLI: Typer app + default-command shim so `udl <url>...` == `udl get <url>...`; add `[project.scripts]` and install system-wide with `uv tool install --editable .`
-  - [x] 4.3 CLI: all [Feature Matrix](#feature-matrix-source-of-truth-for-parity) commands + rich progress + `--json` output; `udl browser login` (`auth.browser_login()`, ending on Enter)
-  - [x] 4.4 API: FastAPI routes from the Feature Matrix, job endpoints, SSE progress
-  - [x] 4.5 API: `udl serve` runs Granian; localhost bind by default, optional API key, allowed output roots
-  - [x] 4.6 MCP: tools from the Feature Matrix (official `mcp` 2.x SDK, `MCPServer`)
-  - [x] 4.7 MCP: `udl mcp` (stdio) + streamable HTTP mounted at `/mcp` in the API
+- [ ] **Phase 12: Gmail plugin (`gmail`)**
+  - [ ] 12.1 Fake Gmail + fake Google OAuth servers in `tests/support/` (the REST calls udl makes)
+  - [ ] 12.2 Google OAuth with the user's own Desktop OAuth client; scopes by access (`read`, `send`, `drafts`, `organise`); revoke on disconnect
+  - [ ] 12.3 Typed Gmail client (httpx): messages, threads, history, labels, attachments, send; error mapping
+  - [ ] 12.4 `gmail.message.received` and its watcher: History API polling, watched labels, recovery from an expired history id
+  - [ ] 12.5 Source filter: a Gmail search query (`from:bank.com has:attachment`)
+  - [ ] 12.6 Operations: list, get, thread, send, reply, draft, modify (labels, read, archive), labels, save attachments
+  - [ ] 12.7 Opt-in smoke tests against a real account
 
-- [x] **Phase 5: Tag chains (user-defined extraction)**
-  - [x] 5.1 `TagChain` model with discriminated-union step types; add `Strategy.chain` (a schema migration, see [Phase 1 decisions](#decisions-made-while-building-phase-1))
-  - [x] 5.2 One-line shorthand parser (`iframe#player@src >> video source@src`) with round-trip property tests
-  - [x] 5.3 Static chain executor (`selectolax`)
-  - [x] 5.4 Browser chain executor (Playwright: `wait_for`, `click`, `network` steps)
-  - [x] 5.5 `suggest_chain`: scan a page, rank candidate media elements, generate stable selectors
-  - [x] 5.6 `udl chain wizard <url>`: suggest, pick, test, save
-  - [x] 5.7 Chain import/export (YAML files ↔ DB)
-  - [x] 5.8 Expose suggest / test / set / import / export via CLI, API and MCP
-  - [x] 5.9 "All tools failed" returns an actionable hint pointing at chain definition
+- [ ] **Phase 13: Slack plugin (`slack`)**
+  - [ ] 13.1 Fake Slack (Web API + a Socket Mode WebSocket) in `tests/support/`
+  - [ ] 13.2 Connect with tokens from the user's own Slack app (`auth.test`); `slack_app_manifest` gives the app's manifest
+  - [ ] 13.3 Typed Web API client (httpx): pagination, rate-limit tiers, `Retry-After`
+  - [ ] 13.4 Socket Mode client (`websockets`): acknowledge envelopes, reconnect when Slack asks or the connection drops
+  - [ ] 13.5 `slack.message.posted` / `slack.reaction.added`; user and channel names; messages udl sent are recognised
+  - [ ] 13.6 Operations: channels, read a channel or thread, search, send, react, users, save files, manifest
+  - [ ] 13.7 Opt-in smoke tests against a real workspace
 
-- [x] **Phase 6: Site behaviour plugins**
-  - [x] 6.1 `SitePlugin` base class (`matches`, `transform_urls`, `strategy`, `prepare`, `output_dir`, `post_process`) + contract tests; add the `udl.sites` `PluginKind`
-  - [x] 6.2 Hook site plugins into resolver/executor with documented precedence
-  - [x] 6.3 Example built-in site plugin (`youtube`)
-  - [x] 6.4 Local single-file plugins in `~/.config/udl/plugins/` (no packaging needed)
-  - [x] 6.5 `plugins list` shows type, source and availability (e.g. a missing binary)
+- [ ] **Phase 14: Local AI**
+  - [ ] 14.1 `udl.ai` plugin kind: `AIProvider` base + contract suite + `FakeAI` (scripted); `AIProviderConnection` records
+  - [ ] 14.2 `ollama` provider: chat with tool calls, models, `keep_alive`, pulling a model
+  - [ ] 14.3 `openai-compatible` provider (llama.cpp's `llama-server`, LM Studio, vLLM…); any provider's optional `command` is started on demand and stopped when idle
+  - [ ] 14.4 Tools from operations: schemas from request models; `ToolPolicy` (allowlist; destructive / open-world tools wait for approval in `ask` mode and run unattended in `auto` mode; `admin` operations never, for now)
+  - [ ] 14.5 The agent loop: tool calls, step / time / size limits, the transcript kept on the run
+  - [ ] 14.6 Approvals (`ask` mode): a run waits (`awaiting_approval`), `decide_run`, a `udl.action.awaiting_approval` event, denied after a timeout
+  - [ ] 14.7 `Prompt` and `Guidance` records; how a prompt is put together (guidance by scope, the prompt, then the event as untrusted data)
+  - [ ] 14.8 The `ai` action
+  - [ ] 14.9 Operations (providers, models, prompts, guidance, `try_prompt`) via CLI, API and MCP
 
-- [x] **Phase 7: Hardening & docs**
-  - [x] 7.1 `postgres` plugin (SQLAlchemy base) passing the DB contract suite
-  - [x] 7.2 A non-SQL plugin (e.g. MongoDB) passing the same suite, which proves the abstraction
-  - [x] 7.3 `db sync` between connected DBs (UUID keys make this collision-free)
-  - [x] 7.4 Opt-in `network` smoke tests against real sites (never in the default run)
-  - [x] 7.5 Plugin authoring guide (DB / downloader / site) + README usage docs
-  - [x] 7.6 Security review: API exposure, output path restriction, cookie/profile storage permissions
+- [ ] **Phase 15: Web UI foundations & UI plugins**
+  - [ ] 15.1 `web/` pnpm workspace and tooling: Vite + SWC, TypeScript strict, Biome, Vitest (+ coverage gate), Playwright, Tailwind CSS + daisyUI; `make web`, `make e2e`, and `make check` runs the web checks
+  - [ ] 15.2 Typed API client generated from udl's OpenAPI schema (`openapi-typescript` + `openapi-fetch`); `make check` fails when it is stale
+  - [ ] 15.3 FastAPI serves the UI at `/ui` (from the package, SPA fallback, CSP, cache headers), and a page saying how to build it when it isn't built
+  - [ ] 15.4 Web sessions: sign in with the API key → a session cookie; a CSRF header and an Origin check on writes
+  - [ ] 15.5 The shell: layout, TanStack Router (file routes, auth guard, a splat route for plugin pages), Zustand stores, light / dark / system theme
+  - [ ] 15.6 Live data: shared SSE connections feeding Zustand stores, reconnecting with backoff
+  - [ ] 15.7 `UIManifest` (Pydantic → JSON Schema → TypeScript), `ui` on every plugin kind, the `udl.ui` kind, local UI plugin dirs, `GET /ui/plugins.json`, UI availability in `list_plugins`
+  - [ ] 15.8 `@udl/ui-sdk`: `defineUIPlugin`, the mount contract, a React adapter, the plugin context, SDK version checks
+  - [ ] 15.9 The plugin host: `<PluginSlot>` (lazy import, Shadow DOM isolation, error boundary) and the contribution points
+  - [ ] 15.10 Proof: an example UI plugin built with shadcn/ui runs isolated inside the daisyUI shell (e2e); a template for new UI plugins
+
+- [ ] **Phase 16: Web UI for the downloader**
+  - [ ] 16.1 Dashboard (recent downloads, runs and events, next schedules, accounts needing attention, approvals; a widget slot)
+  - [ ] 16.2 Downloads: start downloads, live progress, history, cancel
+  - [ ] 16.3 Sites and strategies
+  - [ ] 16.4 Tag chains: the wizard on the web (suggest → pick → test → save), import / export
+  - [ ] 16.5 Databases (health, sync with a dry run), plugins (status, problems, UIs, settings), config (read-only)
+  - [ ] 16.6 End to end against the fixture site
+
+- [ ] **Phase 17: Web UI for automations + the Gmail and Slack UI plugins**
+  - [ ] 17.1 Events: live, history, detail (the plugin's event view, else JSON), emit, replay
+  - [ ] 17.2 Subscriptions: event type picker, a filter builder from the type's schema (↔ the shorthand), "would have matched" over recent events
+  - [ ] 17.3 Actions and runs: editors for the built-in actions (`auto` AI actions clearly marked), run detail (output, AI transcript), the approvals inbox
+  - [ ] 17.4 Schedules: a cron editor showing the next times, timezone, run now
+  - [ ] 17.5 AI: providers and models, prompts and guidance, a playground that tries a prompt on an event
+  - [ ] 17.6 Accounts: connect (through the integration's UI plugin), status, reconnect, disconnect
+  - [ ] 17.7 `gmail` UI plugin: OAuth client and account setup, mailbox, compose / reply, event view, Gmail-search filter editor
+  - [ ] 17.8 `slack` UI plugin: account setup (manifest + tokens), channels and threads, send, event view
+  - [ ] 17.9 End to end: a subscription made in the UI fires on a fake email, and its run shows up live
+
+- [ ] **Phase 18: Hardening & docs**
+  - [ ] 18.1 Security review against the [security model](#security-model): secrets at rest, OAuth, untrusted content (templates, scripts, prompt injection), approvals, the UI (CSP, CSRF, sessions, plugin trust), webhooks, logs
+  - [ ] 18.2 Resilience: watchers reconnecting, a provider or database going away, a crash mid-run (recovery tests); an accessibility pass (axe in the e2e tests)
+  - [ ] 18.3 `udl service install`: a systemd user unit, so the runtime is always on
+  - [ ] 18.4 Docs: README, `docs/automations.md`, `docs/plugins.md` (integrations, actions, AI providers, secret stores), `docs/ui-plugins.md`
+  - [ ] 18.5 Opt-in smoke tests: Gmail, Slack and Ollama end to end
 
 ---
 
 ## Working agreement (TDD + typing)
 
-### TDD loop
+Unchanged from [Phases 0–7](planning/01-core.md#working-agreement-tdd--typing): **red → green → refactor**,
+tests describe behaviour through public interfaces, every plugin kind gets a **contract suite first**, bugs
+get a failing regression test before the fix, and **fakes over mocks**. What's new:
 
-Every task is built as a series of **red → green → refactor** cycles:
-
-1. **Red:** write the smallest test that describes the next behaviour. Run it and **watch it fail** for the
-   expected reason.
-2. **Green:** write the minimum code that makes it pass.
-3. **Refactor:** clean up while the whole suite stays green; `make check` passes before committing.
-
-Rules of thumb:
-
-- Tests describe **behaviour through public interfaces** (ABCs, service operations, CLI/API/MCP surfaces),
-  not private helpers, so refactors don't break them.
-- **Interfaces get contract suites first.** Every plugin type (DB, downloader, site) has one parametrised test
-  suite that each implementation must pass. A new plugin starts by adding itself to the suite's params (red).
-- **Bugs get a failing regression test before the fix** (Phase 0 starts this way).
-- **Fakes over mocks:** `MemoryDatabase`, `FakeDownloader` and `FakeSitePlugin` are real implementations of
-  the ABCs. Use `respx` only to stub `httpx` at the edge.
-- Every test commit is small: one behaviour, one test, one implementation step.
+- **New fakes:** `FakeIntegration`, `FakeAction`, `FakeAI` (scripted replies and tool calls), `FakeClock`,
+  the `memory` secret store, and **fake servers** for Google (OAuth + Gmail), Slack (Web API + Socket Mode)
+  and an OpenAI-compatible endpoint. The fake servers are ASGI apps: unit tests reach them through httpx's
+  `ASGITransport`, integration and e2e tests serve them on a port, so udl's real clients run against them.
+  `respx` stays for stubbing httpx at the edge.
+- **Time is injected.** Nothing in the scheduler, watchers, leases, throttles or retries calls
+  `datetime.now()` or `asyncio.sleep()` directly; it goes through a `Clock`, so tests move time on instead
+  of waiting.
+- **The frontend is tested first too:** a component, store or SDK function starts as a failing Vitest test;
+  a user-visible flow starts as a failing Playwright test.
+- When a phase is done, it gets a "Decisions made while building Phase N" section here, as Phases 0–7 did.
 
 ### Test layers
 
 | Layer | Scope | Tools | Default run? |
 |---|---|---|---|
 | Unit | Pure logic, fakes, `tmp_path` only, no network | pytest, hypothesis, respx | ✅ |
-| Contract | Every plugin of a type against one shared suite | parametrised pytest | ✅ |
-| Integration | Real yt-dlp / gallery-dl / httpx / Playwright against the **local fixture site** (0.9) | pytest-httpserver, `@pytest.mark.integration` | ✅ (browser tests skip if Chromium is missing) |
-| Interface | CLI via Typer `CliRunner`, API via `httpx.ASGITransport`, MCP via the SDK's in-memory client session | pytest | ✅ |
-| Smoke | Real sites | `@pytest.mark.network` | ❌ opt-in |
+| Contract | Every plugin of a kind (databases, downloaders, sites, integrations, actions, AI providers, secret stores) against one shared suite | parametrised pytest | ✅ |
+| Integration | Real plugins against the fake servers; the runtime end to end on a `FakeClock`; the fixture site (Phases 0–7) | pytest, `@pytest.mark.integration` | ✅ |
+| Interface | CLI, API and MCP, generated adapters included; the parity test | pytest | ✅ |
+| Web unit | Components, stores, the SDK, the plugin host, against `FakeUdl` (a typed in-memory client) | Vitest, Testing Library, jsdom | ✅ (`make check`) |
+| Web e2e | Playwright against a real `udl serve` with fake integrations, a fake AI and the fixture site, in both themes | `@playwright/test` | ❌ `make e2e`, required for UI tasks |
+| Smoke | Real sites, a real Gmail account, a real Slack workspace, Ollama | `@pytest.mark.network` | ❌ opt-in |
 
-Property-based tests (hypothesis) for parsers and normalisers: URL normalisation/site keys (3.1), the tag chain
-shorthand round-trip (5.2) and filename templating (3.7).
+Property-based tests (hypothesis): the filter shorthand round-trip (9.2), schedule times across DST
+changes (10.1), templates never escaping their sandbox (8.8), and generated adapters round-tripping any
+request model (8.3).
 
 ### Typing rules
 
-- `pyright --strict` passes; `py.typed` ships with the package; no unannotated public functions.
-- **SQLModel** for anything persisted; **Pydantic** for everything else that crosses a boundary: config,
-  requests/responses, plugin options, probe/download results, progress events, tag chains.
-- No `dict[str, Any]` across module boundaries. JSON columns (`Strategy.options`, `Strategy.chain`) are
-  (de)serialised through their owning model inside the repository layer, so callers only see typed models.
-- `StrEnum` for closed sets (tool status, job status, read/write policies); `Annotated[..., Field(...)]` for constraints.
-- Untyped third-party libraries (e.g. gallery-dl) are wrapped inside their plugin module behind a typed façade.
-  Any `# pyright: ignore` must stay inside that adapter. The yt-dlp info dict gets a `TypedDict` for the fields we use.
+- **Python:** as before (`pyright --strict`, Pydantic at every boundary, SQLModel for anything persisted,
+  no `dict[str, Any]` across modules). New JSON blobs (an event's data, an action's or account's options,
+  plugin state) are stored as `JsonObject` and only handed out validated by their owning model: the event
+  type's, the action plugin's, the integration's.
+- **TypeScript:** `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`,
+  `verbatimModuleSyntax`; no `any` (Biome); API types come only from the generated client, never by hand;
+  the UI manifest's type is generated from its Pydantic model; untrusted JSON (an event's data in a view)
+  is `unknown` until narrowed.
 
 ### Definition of Done (applies to every task)
 
 - [ ] Tests were written first and observed failing
 - [ ] Implementation passes; refactor done with the suite green
-- [ ] `make check` passes: ruff + pyright strict + pytest with **≥ 90 % branch coverage** (ratchet upwards, never down), all run through `uv run` against the locked environment
-- [ ] Boundary data is a Pydantic/SQLModel model
-- [ ] If an operation was added or changed: the CLI, API and MCP adapters and their interface tests are updated and the parity test passes
+- [ ] `make check` passes: as before (ruff, pyright strict, pytest with **≥ 90 % branch coverage**), plus the
+  web checks (Biome, `tsc --noEmit`, Vitest with **≥ 90 % coverage**, the generated API client up to date)
+- [ ] Boundary data is a Pydantic/SQLModel model (Python) or a generated type (TypeScript)
+- [ ] If an operation was added or changed: the CLI, API and MCP adapters and their interface tests are
+  updated, the parity test passes, and the TypeScript client is regenerated
+- [ ] If new data is persisted: it is a record kind, and the record contract suite covers it in every DB plugin
+- [ ] If the UI changed: a Playwright test covers the flow, in light and dark themes, and `make e2e` passes
+- [ ] Secrets go only through the secret store; untrusted content never reaches a shell, a template's code
+  or a tool call the policy hasn't allowed
 
 ---
 
@@ -157,1068 +193,1364 @@ shorthand round-trip (5.2) and filename templating (3.7).
 
 | # | Requirement | Tasks |
 |---|---|---|
-| 1 | CLI / API / MCP feature parity | 3.10, Phase 4 (parity test 4.1) |
-| 2 | `udl <url>...` checks connected DB(s) for the right tool | 3.1–3.5, 4.2 |
-| 3 | User-specified download folder | 3.7 |
-| 4 | Unknown site → try all tools → easy tag chain fallback | 3.3, Phase 5 |
-| 5 | Record the working path in the DB | 3.5, 3.6 |
-| 6 | DB engines as plugins | 1.1, 1.3–1.6, 7.1–7.2 |
-| 7 | Multiple DBs of different types at once (SQLite default) | 1.7, 7.3 |
-| 8 | Site behaviour as plugins | Phase 6 |
-| + | Everything unit tested, typed, TDD | [Working agreement](#working-agreement-tdd--typing), 0.3 |
-| + | uv package management with a shared global cache | 0.2, [Package management](#package-management-uv) |
+| 1 | Several Google accounts, reading and writing email | 11.2–11.3, 12.2–12.6 |
+| 1a | Subscribe to some emails (or all of them); a matching email fires an event that reaches every subscribed action | Phase 9, 11.5–11.6, 12.4–12.5 |
+| 1b | Gmail as a plugin | 11.1, Phase 12 |
+| 2 | Several Slack accounts, reading and sending messages | 11.2–11.3, 13.2–13.6 |
+| 2a | Pub/sub for Slack | Phase 9, 13.4–13.5 |
+| 2b | Slack as a plugin | 11.1, Phase 13 |
+| 3 | Set up local AI; scripts that run when events fire; prompts and guidance for the AI per event | 9.5 (scripts), Phase 14 |
+| 3a | AI actions that can run unattended (`auto` mode); changing automations and accounts is left to a later AI chat | 8.1 (`admin`), 14.4, 14.8 |
+| 4 | Scheduled events, like cron | Phase 10 |
+| 5 | A web UI for all of it, and for Phases 0–7's features | Phases 15–17 |
+| 5a | React, SWC, Vite, TypeScript, pnpm, Vitest, Playwright, daisyUI (light and dark), Tailwind, Zustand, TanStack Router | 15.1, 15.5 |
+| 5b | Served by FastAPI | 15.3–15.4 |
+| 5c | Each plugin can have a UI plugin for its behaviour and configuration | 8.10, 15.7–15.9, 17.7–17.8 |
+| 5d | A plugin without a UI plugin is used through the CLI, API and MCP only | 8.1–8.3 (generated adapters), 15.7 |
+| 5e | Other component libraries and themes in UI plugins (e.g. shadcn/ui instead of daisyUI) | 15.9 (isolation, themes), 15.10 |
+| + | CLI / API / MCP parity for every new operation | 8.2, each phase's operations task |
+| + | TDD, fully typed (Python and TypeScript) | [Working agreement](#working-agreement-tdd--typing) |
+
+---
+
+## Where udl is heading
+
+The longer-term aim, which this plan builds towards rather than finishes:
+
+1. **Pub/sub for apps and programs that don't offer it:** udl notices what changes in them, turns it into
+   events anyone can subscribe to, and eventually builds those flows itself.
+2. **Multi-account access for AIs that only offer one account**, such as an assistant whose mail connector
+   sees a single inbox.
+3. **AI for apps that have none (or none that's good)**, through their integrations' operations.
+
+| Aim | What this plan lays down | What comes later |
+|---|---|---|
+| 1 | Watchers with cursors and dedupe (11.5) that may poll, diff or scrape; sources that need no login (`none`, 11.3); `custom.*` events from scripts and `POST /events`; MCP clients (agents you run) can already create subscriptions, actions and schedules | Generic watchers (a page through tag chains, a command, a file, a feed); an AI chat that builds flows from a description |
+| 2 | Any number of accounts per integration (11.2); every integration operation is an MCP tool with an `account` argument; read-only ones fan out over several accounts in one call (11.4) | More integrations |
+| 3 | Integration operations as tools for udl's local AI (14.4) and for any MCP client; AI actions on events, unattended in `auto` mode | Browser-driven integrations for apps without an API; the AI chat |
+
+What that means for the design now:
+
+- **An integration is as useful as its operations are to an agent:** every field described, docstrings
+  written for agents (as the MCP tools' already are), and fan-out wherever an operation only reads.
+- **Nothing assumes an event source has an API or a login:** a watcher may poll a page, run a program or
+  diff a file, and its "account" is then just a configured source.
+- **`admin` operations are marked from Phase 8,** so unattended AI actions can't reach them, and a later AI
+  chat can be given them with the user there to confirm each one.
+
+---
+
+## Concepts
+
+| Term | Meaning |
+|---|---|
+| **Integration** | A plugin (`udl.integrations`) that connects udl to a service: `gmail`, `slack`. It brings how to connect an account, operations, event types and a watcher |
+| **Account** | One connected login of an integration, named by the user: `gmail:work`, `gmail:personal`, `slack:acme`. Any number per integration; credentials live in the secret store |
+| **Event** | Something that happened: an email arrived, a Slack message was posted, a schedule came due, a download finished, an action ran. Typed by its **event type** (`gmail.message.received`), stored, deduplicated. (A download's progress events from Phase 3, `JobEvent`, are something else; a job's end is published as a `udl.download.*` event) |
+| **Subscription** | "When an event like *this* happens, run *these* actions": event types, accounts, a **filter** on the event's data, and the actions |
+| **Action** | A named, reusable thing to run: a script, a udl operation, a webhook, an AI agent… Action kinds are plugins (`udl.actions`) |
+| **Run** | One action running for one event: queued, running, maybe awaiting approval, then succeeded, failed or cancelled |
+| **Schedule** | A cron-like timer that fires `schedule.fired` events |
+| **Runtime** | What runs inside `udl serve`: the watchers, the scheduler, the event bus and the action runner |
+| **AI provider** | A plugin (`udl.ai`) that runs a model: `ollama`, `openai-compatible` |
+| **Prompt / Guidance** | A prompt is a reusable AI task. Guidance is standing instructions added for everything, an event type, a subscription or an action |
+| **UI plugin** | A bundle the web UI loads at runtime that adds pages, panels and editors (**contributions**) for a plugin |
 
 ---
 
 ## Architecture
 
 ```
-   CLI (Typer)          API (FastAPI on Granian)          MCP (MCPServer)
-        \                        |                          /
-         └─────────── UDLService (operations registry) ────┘
-                                 |
-      ┌──────────────┬───────────┴───────┬──────────────────┐
-   Resolver      JobManager          DBManager         PluginRegistry
-      |                                  |           (databases / downloaders / sites)
-      |                       sqlite · postgres · mongo …
-      ▼
- site plugin ─► stored Strategy ─► probe chain
-                                       |
-            yt-dlp · gallery-dl · http (httpx/curl/wget) · scraper · browser
+ Web UI (/ui)               CLI (Typer)        API (FastAPI on Granian)       MCP (MCPServer)
+ shell + UI plugins              \                      |                         /
+        \________________________ └── UDLService: the operations registry ──────┘
+                                      (udl's own + every integration's)
+                                                   |
+   ┌────────────┬────────────┬─────────────────────┼─────────────────────┬────────────────┐
+ Resolver    JobManager   DBManager          AutomationRuntime       PluginRegistry     SecretStore
+ (downloads: Phases 0–7)  (+ records)        (in `udl serve`)        databases · downloaders · sites ·
+                                                   |                 integrations · actions · ai ·
+                                                   |                 secrets · ui
+           ┌──────────────────┬────────────────────┼────────────────────┐
+       Watchers           Scheduler            EventBus             ActionRunner
+   (one per account)   (cron · every · at)  (store, dedupe,      (script · operation · webhook ·
+    gmail · slack                            match)                emit · notify · ai ─► AIProvider)
+```
+
+How an event travels:
+
+```
+ gmail watcher ──┐                        ┌─ "bank mail": gmail.message.received where from.address endswith "@bank.com"
+ slack socket ───┤                        │        └─► summarise (ai)    └─► file-it (script)
+ scheduler ──────┼─► EventBus.publish ────┼─ "morning": schedule.fired where schedule == "morning"
+ downloads ──────┤   store · dedupe       │        └─► digest (ai)
+ POST /events ───┘   depth ≤ 8            └─ "done → slack": udl.download.finished
+                          ▲                        └─► post-it (operation: slack_send_message)
+                          │
+                          └──── each run's end: udl.action.succeeded / failed / awaiting_approval
 ```
 
 Principles:
 
-- **Interfaces hold no logic.** They parse input into a Pydantic request, call `UDLService`, and render the
-  Pydantic response. That's what makes parity cheap to keep and test.
-- **Async core.** FastAPI, MCP, httpx and Playwright are async-native. Sync libraries (yt-dlp, gallery-dl)
-  run in `asyncio.to_thread`. The CLI wraps calls in `asyncio.run`.
-- **One plugin registry** for all three plugin kinds.
+- **Interfaces still hold no logic.** New operations follow Phases 0–7's pattern. Operations that plugins
+  add get **generated** adapters, so a plugin without a UI is still fully usable from the CLI, API and MCP.
+- **Everything is an event, every reaction is a run.** Email, Slack, schedules, downloads, the API and
+  actions themselves all go through one bus, so limits, retries, history, loop protection and the UI's live
+  view live in one place.
+- **At least once, never twice.** An event is stored before it is dispatched and a run before it starts;
+  dedupe keys stop the same email or Slack message from firing twice, and a crash resumes where it stopped.
+- **Untrusted by default.** Email bodies and Slack messages are written by anyone. They are data: they never
+  become shell, template code or a tool call unless the action's policy allows it (see
+  [Security model](#security-model)).
+- **One runtime per database** (a lease), so two `udl serve`s sharing PostgreSQL never run an action twice.
+- **Secrets live in the secret store**; records hold only a `SecretRef`.
+- **The web UI is a client of the API like any other.** UI plugins are isolated islands that share only the
+  SDK's context.
 
-## Project layout
+## Where things live: config file vs records
 
-```
-pyproject.toml  uv.lock  .python-version  Makefile  .pre-commit-config.yaml
-src/udl/
-  __init__.py  __main__.py  py.typed
-  config.py                 # Settings (pydantic-settings)
-  errors.py                 # UDLError hierarchy
-  log.py                    # configure_logging() (stderr; Rich on a terminal)
-  core/
-    service.py              # UDLService + @operation registry
-    resolver.py             # candidates: request, site plugin, stored strategies, probe chain
-    executor.py             # try candidates with fallback, sign in, retry, record and heal
-    sites.py                # site plugins: which ones udl uses, how the engine calls them (SiteHooks)
-    jobs.py                 # JobManager, job events, concurrency limits, crash recovery
-    tools.py                # Toolbox: configured downloaders
-    output.py               # output dir precedence, {site} in filename templates
-    urls.py                 # normalisation, site keys
-    models.py               # jobs, request/response DTOs
-  db/
-    models.py               # Site / Strategy / DownloadRecord, Outcome, SiteQuery / DownloadQuery
-    manager.py              # DBManager
-    sync.py                 # sync(): copy what one database knows into another (`udl db sync`)
-  plugins/
-    registry.py             # PluginRegistry, PluginKind (DATABASES, DOWNLOADERS, SITES)
-    requirements.py         # Requirement: what a plugin needs installed
-    databases/   base.py  memory.py  sqlalchemy.py (+ table variants)  sqlite.py  postgres.py  mongodb.py
-    downloaders/ base.py  errors.py  process.py  media.py  ytdlp.py  gallerydl.py  http.py  scraper.py  browser.py  auth.py
-    sites/       base.py  youtube.py
-  chains/        models.py  shorthand.py  executor.py  suggest.py  files.py
-  interfaces/
-    security.py             # allowed output roots, the API key (the API and MCP)
-    cli/         app.py  common.py  render.py  commands/  (downloads probe sites chains system servers browser)
-    api/         app.py  deps.py  serve.py  routes/  (downloads sites chains system)
-    mcp/         server.py
-docs/plugins.md             # writing plugins (site / downloader / database)
-tests/
-  conftest.py               # (also the database servers' fixtures: postgres_url, mongodb_url)
-  fixtures/site/            # HTML pages + small media files served by the fixture server
-  support/                  # shared helpers imported as `support.*` (fixture_site.py: FixtureSite, Page;
-                            #   interfaces.py: Harness; cli.py, api.py, mcp.py: run each interface on it;
-                            #   servers.py: PostgreSQL and MongoDB in throwaway Docker containers)
-  unit/  contract/  integration/  interface/  smoke/  (smoke: real sites, `make smoke`)
-```
-
-## Package management (uv)
-
-### How the space saving works
-- uv keeps **one global cache** of unpacked packages (`~/.cache/uv`). Each project still gets its own `.venv`,
-  so projects stay isolated, but the files inside it are **links into the cache**. A package used by ten
-  projects is stored once.
-- Don't install into the system Python (`uv pip install --system`). It saves no extra space and brings back
-  the version conflicts that venvs avoid.
-- uv's Linux default is `hardlink`. On btrfs, use **`clone` (reflinks)** instead. It saves the same space but is
-  copy-on-write. With hardlinks, a file edited in one `.venv` silently changes the cache and every other
-  project, because they share the inode.
-- Links only work within one filesystem. This project and `~/.cache/uv` are both on the `/home` btrfs
-  subvolume (verified). Projects on another drive get plain copies, and uv warns about it.
-- uv-managed Pythons (`uv python install 3.14`) are shared the same way, from `~/.local/share/uv/python`.
-
-```toml
-# ~/.config/uv/uv.toml (user-level, applies to every project on the system)
-link-mode = "clone"
-```
-
-**Checking it works:** `du` counts reflinked data in full, so it will look unchanged. Use
-`btrfs filesystem du -s ~/.cache/uv .venv` and compare the *Exclusive* and *Set shared* columns.
-
-### `pyproject.toml` skeleton
-
-```toml
-[project]
-name = "udl"
-version = "0.1.0"
-requires-python = ">=3.14"
-dependencies = [                       # added via `uv add`, which writes the version bounds
-  "typer", "rich", "fastapi", "granian", "mcp",
-  "sqlmodel", "aiosqlite", "pydantic-settings", "platformdirs",
-  "tldextract", "httpx", "yt-dlp", "gallery-dl", "selectolax", "pyyaml",
-]
-
-[project.optional-dependencies]
-browser = ["playwright"]
-postgres = ["psycopg[binary]"]
-mongodb = ["pymongo"]
-
-[project.scripts]                      # added in 4.2, once the CLI exists
-udl = "udl.interfaces.cli.app:main"
-
-[dependency-groups]
-dev = [
-  "pytest", "pytest-asyncio", "pytest-cov", "pytest-httpserver", "respx",
-  "hypothesis", "pyright[nodejs]", "ruff", "types-yt-dlp", "types-pyyaml",
-  "udl[browser,postgres,mongodb]",     # so pyright and every plugin's tests have their drivers
-]
-
-[build-system]
-requires = ["uv_build>=0.13.5,<0.14.0"]
-build-backend = "uv_build"
-```
-
-### Everyday commands
-
-| Task | Command |
-|---|---|
-| Create or refresh the env from the lockfile | `uv sync` (`uv sync --all-extras` to include `browser`, `postgres` and `mongodb`) |
-| Add a dependency | `uv add httpx` · `uv add --dev pytest` · `uv add --optional browser playwright` |
-| Run anything in the project env | `uv run udl …` · `uv run pytest` |
-| Upgrade | `uv lock --upgrade`, or `uv lock --upgrade-package yt-dlp`. yt-dlp needs this often, because site extractors break |
-| Global `udl` command | `uv tool install --editable '.[browser]'`; code changes apply immediately, dependency changes need `--reinstall` |
-| Global dev tools | `uv tool install pre-commit` |
-| Browser binaries | `uv run playwright install chromium` |
-| Clear unused cache entries | `uv cache prune` |
-| udl against real sites (needs the internet) | `make smoke` (`uv run pytest -m network`; never part of `make check`) |
-
-### `make check`
-
-```make
-export UV_LOCKED := 1                # every uv command fails if uv.lock is out of date with pyproject.toml
-
-check:
-	uv lock --check
-	uv run ruff format --check .
-	uv run ruff check .
-	uv run pyright
-	uv run pytest --cov              # branch coverage + the 90 % gate live in [tool.coverage]
-```
-
-It deliberately avoids `uv sync --locked`: that sync is exact, so it would uninstall extras installed with
-`uv sync --all-extras` (e.g. playwright) on every run. `uv run` syncs inexactly. The coverage threshold lives
-in `pyproject.toml` so the ratchet has one home. `make fmt` applies ruff's formatting and fixes. The
-PostgreSQL and MongoDB tests start Docker containers (see [Phase 7](#phase-7-hardening--docs)), and skip
-without Docker.
-
-The pre-commit hooks are `astral-sh/uv-pre-commit` (`uv-lock`, which keeps `uv.lock` in sync) plus a local hook
-that runs `make check`.
-
----
-
-## Phase 0 notes: existing code issues
-
-These are confirmed in the current code. Each one gets a failing regression test first (task 0.5 / 0.6):
-
-| Location | Problem | Fix |
+| Kept in | What | Edited with |
 |---|---|---|
-| `src/plugins/databases/base.py:38,54,128` | `Engine`, `Any` and `delete` are used but never imported | Import them, and pyright strict will catch future cases |
-| `base.py:54` | `transacrion` typo | Rename to `transaction` |
-| `base.py:83-95` | `_do_add` runs `create_all` (DDL) and never calls `s.add()`, so `add()` creates **tables** instead of inserting **rows**. DDL is committed through the engine even with `commit_session=False`. This is the root cause of the TODO in `test.py` | Create the schema once on connect (`migrate()`); make `add()` take model **instances** and call `s.add_all()` |
-| `base.py:131-133` | `s.execute()` auto-begins a transaction, so `not s.in_transaction()` is always `False` (verified). Deletes are never committed and get rolled back when the session closes | Commit explicitly, or use the `transaction()` context manager |
-| `base.py:22-27` | The singleton is keyed by class, so a second `SQLLiteEngine("sqlite:///other.db")` silently returns the first instance with the old URL. This blocks requirement 7 | `DBManager` owns instances keyed by configured connection name |
-| `base.py:18` | `sqlite:///database.db` is relative to the CWD, so a new DB appears wherever `udl` runs | Default to `platformdirs.user_data_dir("udl")/udl.db` |
-| `base.py:105` | `list()` prints instead of returning data | Return typed models and let the interface render them |
-| `src/plugins/downloaders/base.py:10` | Method has a comment-only body (`IndentationError`) and no `self` | Replaced by the `Downloader` ABC in 2.1 |
-| `sqllite.py` | Misspelt module/class name | `sqlite.py` / `SQLitePlugin` |
+| Config file (`config.toml`, `UDL_*`) | Machine and security settings: `[automations]` (`scripts_dir`, limits), `[secrets]`, `[web]`, `[ai]` (defaults), `[api]`, `[db]`; the base layer of `[integrations.<name>]` and the fields that widen access (`attachment_roots`) | The file (`get_config` shows it) |
+| Records (the databases) | Accounts, subscriptions, actions, runs, events, schedules, prompts, guidance, AI provider connections, plugin settings (over the file's table), plugin state, leases | Operations: CLI, API, MCP, UI |
+| Secret store | OAuth tokens, Slack tokens, API keys, secret plugin settings | Only through udl (connecting an account, a secret setting) |
 
----
+A plugin's settings are its model's defaults, then its `[integrations.<name>]` table, then its stored
+`PluginSettings` (what its UI plugin's settings panel writes). Fields marked file-only in the plugin's model
+(anything that widens what an API client could reach, such as a path root) are refused by
+`set_plugin_settings`.
 
-## Phase 1: Plugin system & database layer
+## Feature Matrix (new operations)
 
-### Tests first
-- Registry: discovers a dummy entry point; loads a `.py` from a temp plugin dir; a local plugin overrides a
-  built-in with the same name and logs a warning; a broken plugin is reported, not fatal.
-- DB contract suite (`tests/contract/test_database_contract.py`), parametrised over `[memory, sqlite, …]`:
-  upsert/get/list/delete sites; strategies ordered correctly; `record_outcome` updates counters; download
-  history round-trips; JSON fields come back as typed models; `migrate()` is idempotent.
-- DBManager: `first` read policy returns the highest-priority hit; `merge` dedupes by
-  `(site, url_pattern, tool)`; writes respect `primary` / `all` / named lists; read-only connections are never
-  written; a failing secondary DB logs a warning instead of failing the operation.
-
-### Data model (UUID primary keys, so records can be synced between DBs)
-
-- **Site**: `id`, `key` (eTLD+1, unique), `name`, `default_output_dir: Path | None`, `notes`, `created_at`, `updated_at`
-- **Strategy** (many per site): `id`, `site_key`, `url_pattern: str | None` (regex on path; `None` = whole site),
-  `tool: str` (downloader plugin name), `options: JsonObject` (validated by that downloader's `Options` model),
-  `requires_auth: bool`, `source: StrategySource` (`probe | manual | plugin | import`), `priority` (lower first),
-  `success_count`, `failure_count`, `consecutive_failures`, `last_success_at`, `last_error: ErrorInfo | None`,
-  `enabled`. `chain: TagChain | None` arrives in 5.1.
-- **DownloadRecord**: `id`, `url`, `site_key`, `strategy_id`, `tool`, `status: JobStatus`, `output_dir`,
-  `files: list[Path]`, `size_bytes`, `started_at`, `finished_at`, `error: ErrorInfo | None`
-
-Pattern: `class Strategy(SQLModel)` is plain Pydantic, so non-SQL plugins reuse it.
-`class StrategyTable(Strategy, table=True)` lives with the SQLAlchemy plugin.
-
-### `DatabasePlugin` (repository-level, not SQL-specific, so MongoDB or similar can be a plugin)
-
-```python
-class DatabasePlugin(ABC):
-    name: ClassVar[str]                                   # "sqlite", "postgres", "memory", …
-    def __init__(self, connection: DBConnectionConfig) -> None: ...
-    async def connect(self) -> None: ...                  # runs migrate()
-    async def close(self) -> None: ...
-    async def migrate(self) -> None: ...                  # idempotent
-    async def health(self) -> bool: ...
-    async def get_site(self, key: str) -> Site | None: ...
-    async def list_sites(self, query: SiteQuery) -> list[Site]: ...
-    async def upsert_site(self, site: Site) -> Site: ...
-    async def delete_site(self, key: str) -> bool: ...
-    async def strategies_for(self, site_key: str) -> list[Strategy]: ...
-    async def upsert_strategy(self, strategy: Strategy) -> Strategy: ...
-    async def record_outcome(self, strategy_id: UUID, outcome: Outcome) -> Strategy | None: ...
-    async def add_download(self, record: DownloadRecord) -> None: ...
-    async def update_download(self, record: DownloadRecord) -> None: ...
-    async def list_downloads(self, query: DownloadQuery) -> list[DownloadRecord]: ...
-```
-
-`SQLAlchemyDatabase` implements this once with `create_async_engine` + SQLModel's `AsyncSession`
-(`sqlite+aiosqlite`, `postgresql+psycopg`). A new SQL engine plugin is then mostly just a name, a URL scheme
-and a driver dependency.
-
-### Plugin registry
-
-```toml
-# pyproject.toml: built-ins are registered the same way third-party plugins are
-[project.entry-points."udl.databases"]
-sqlite = "udl.plugins.databases.sqlite:SQLitePlugin"
-[project.entry-points."udl.downloaders"]
-yt-dlp = "udl.plugins.downloaders.ytdlp:YtDlpDownloader"
-# …
-```
-
-Local plugins: every `*.py` in `plugin_dirs` is imported, and any `DatabasePlugin` / `Downloader` /
-`SitePlugin` subclass it defines is registered.
-
-The registry is generic: each plugin type is a `PluginKind` (entry point group + base class), and
-`PLUGIN_KINDS` lists the ones udl uses. Load order is udl's own entry points, then other installed
-packages', then each plugin dir; a later plugin with the same name overrides an earlier one (with a
-warning), and a plugin that fails to load lands in `registry.problems` (for `plugins list`) instead of
-stopping udl.
-
-### Decisions made while building Phase 1
-
-- **Strategies and downloads refer to their site by `site_key`, not `site_id`.** The key is the same in
-  every connected DB, while two DBs that each learned a site on their own give it different ids. With
-  `site_key`, `DBManager` can write a strategy to several DBs and `merge` reads need no id mapping. A
-  download also knows its site key before the site row exists (first download from a new site).
-- **`upsert_site` matches on `key`** and keeps the stored `id` / `created_at` (it sets `updated_at`).
-  `upsert_strategy` matches on `id` and needs the site stored first. `record_outcome` is one atomic update
-  (concurrent outcomes are all counted) and returns the updated strategy for self-healing (3.6), or `None`.
-- **`Strategy.chain` is left to 5.1.** Nothing in Phases 1–4 reads it, and adding it then (a JSON column)
-  is the first real schema migration.
-- **Errors are typed JSON** (`ErrorInfo`), as are `options` (`JsonObject`) and `files` (`list[Path]`).
-  The SQL plugin stores them through Pydantic-backed column types, so they load as the same types.
-- **`DBManager` reads:** `get_site` takes the highest-priority hit; `strategies_for` follows the read policy;
-  `list_sites` / `list_downloads` always combine every connection (highest-priority copy wins). A failing
-  connection is skipped with a warning, except the primary (the `primary = true` one, else the
-  highest-priority writable one) or a write's leading connection, whose failure raises `DatabaseError`.
-- **Migrations:** a new DB is created at the current version; an older one runs the steps it lacks
-  (`SQLAlchemyDatabase.migrations`) in one transaction; a newer one is refused. The `sqlite` plugin lets
-  SQLAlchemy begin transactions (the sqlite3 module would commit DDL as it runs) and uses one pooled
-  connection, so concurrent writers never hit "database is locked".
-
----
-
-## Phase 2: Downloader plugins
-
-### Tests first
-- Downloader contract suite, parametrised over every downloader. `probe()` never writes files.
-  `download()` writes into `output_dir` only. Results validate as models. Cancellation stops the download
-  within N seconds. `available()` is false when the binary or package is missing.
-- Error mapping: table-driven tests from raw tool errors (yt-dlp messages, gallery-dl exit codes, HTTP status
-  codes) to `UDLError` subclasses.
-- Integration tests against the fixture site (0.9): each plugin succeeds on the page it's meant for and
-  returns `Unsupported` on the others.
-
-### Interface
-
-```python
-class Downloader[O: DownloaderOptions](ABC):
-    name: ClassVar[str]
-    options_model: ClassVar[type[DownloaderOptions]]      # e.g. YtDlpOptions(format="bv*+ba/b", …)
-    requires: ClassVar[tuple[Requirement, ...]] = ()      # Requirement.binary("curl"), .module("yt_dlp")
-    def __init__(self, options: O | None = None) -> None: ...
-    @classmethod
-    def configure(cls, *layers: Mapping[str, JsonValue]) -> Self: ...  # [tools.<name>], then a strategy's
-    def requirements(self) -> tuple[Requirement, ...]: ...  # may depend on the options (http's backend)
-    def available(self) -> bool: ...
-    def match(self, url: str) -> MatchResult | None: ...  # offline, no network (optional)
-    async def probe(self, ctx: ProbeContext) -> ProbeResult: ...  # raises only Cancelled
-    async def download(self, ctx: DownloadContext) -> DownloadResult: ...  # a DownloadError, or Cancelled
-```
-
-Plugins implement `_probe` / `_download`; the public methods add the checks every downloader must pass.
-`hand_off()` / `hand_off_best()` download media a plugin found with another downloader.
-
-- `ProbeResult`: `tool`, `ok`, `confidence`, `title`, `media: list[MediaCandidate]`, `handoff: Handoff | None`
-  (scraper/browser give a concrete media URL + headers/cookies for another downloader), `error: ErrorInfo | None`
-- `ProbeContext`: `url`, `headers`, `cookies: list[Cookie]`, `cancel: CancelToken`. `DownloadContext` adds
-  `output_dir`, `filename_template`, `progress: ProgressSink` and `downloader_for` (finds the handoff's tool)
-- `DownloadResult`: `tool`, `url`, `files` (absolute, real, not empty and inside `output_dir`: checked),
-  `size_bytes`, `title`, `handed_off_to`
-
-### Per-tool notes
-
-| Plugin | Offline match | Probe | Download | Notes |
-|---|---|---|---|---|
-| `yt-dlp` | Any extractor except `Generic` whose `suitable(url)` is true | `extract_info(download=False)` | `YoutubeDL` + progress hooks | A Generic-extractor hit gets low confidence. Use a new `YoutubeDL` per job. Cancel by raising from the progress hook |
-| `gallery-dl` | `gallery_dl.extractor.find(url)` | First item's metadata | In-process `DownloadJob` (subprocess fallback) | Untyped and less stable as a library, so keep it behind the plugin's typed façade |
-| `http` | URL path has a video/audio/image extension | `HEAD` (on 403/405/501: a `GET` of the first byte); anything but a web page or a stream playlist is a file | Into `<name>.part`, renamed once complete; a part left by an earlier try is resumed with `Range` | `backend: httpx \| curl \| wget` makes every request (curl/wget optional). Named from `Content-Disposition`, else the URL |
-| `scraper` | n/a | Fetch the HTML: `<video>/<audio>/<source>`, `og:video`/`og:audio`, JSON-LD `contentUrl`, media `<a href>`, media and playlist URLs in scripts; its iframes' pages when the page has none | Hand off the best find to `http` (files) or `yt-dlp` (HLS/DASH), the next one on a failure of its own | `selectolax` (Lexbor) is typically an order of magnitude faster than BeautifulSoup. Add `lxml` only if XPath steps are needed |
-| `browser` | n/a | Chromium: the media and playlists the page requests (any frame, not stream segments), then its media elements' sources | Hand off like the scraper, with the `Referer` the browser sent, its UA and its cookies | `udl[browser]` extra + `uv run playwright install chromium`; udl's persistent profile by default |
-
-### Error taxonomy and how the resolver reacts
-
-| Error | Resolver action | Counts against strategy? |
-|---|---|---|
-| `UnsupportedURL`, `ExtractionFailed` | Try the next candidate | yes |
-| `AuthRequired` (401/403, "sign in" messages) | Retry with cookies, then fall back to `browser` | yes |
-| `RateLimited` | Back off (honour `Retry-After`) and retry the same tool | no |
-| `NetworkError` | Retry with backoff | no |
-| `NotFound` | Stop: the content is gone, not the strategy | no |
-| `ToolUnavailable` | Skip the tool and note it in `plugins list` | no |
-
-### Auth-gated sites (2.8)
-1. Retry the same tool with the site's cookies from `AuthCookies.for_url()`: the user's own browser
-   (`cookies_from_browser`, read by udl with yt-dlp's cookie readers) and udl's persistent browser profile
-   (whose cookies win). Every downloader takes them as `ctx.cookies`.
-2. Fall back to the `browser` plugin, which loads the page on that profile, captures media URLs and cookies,
-   and hands off.
-3. `udl browser login <url>` (CLI in 4.3) calls `browser_login()`: a **headed** Chromium on the persistent
-   profile, until the user closes it (or presses Enter), so they log in once.
-4. The winning strategy is saved with `requires_auth=True`, so cookies are attached upfront next time (3.5).
-
-### Decisions made while building Phase 2
-
-- **Options live on the downloader**, not the context: `Downloader[O]` holds a validated `O`, and
-  `configure(*layers)` merges `[tools.<name>]` and then a strategy's `options` (a ConfigError names the tool).
-  One instance is one configured tool, so `requirements()` can depend on its options (http's backend).
-- **Probe results carry `ErrorInfo`**, not a `UDLError`, so they serialise for the API, MCP and `--json`;
-  `error_from_info()` turns one back into its exception. `probe()` reports failures and raises only
-  `Cancelled`; `download()` raises a `DownloadError` or `Cancelled`, and succeeds only with real, non-empty
-  files inside `output_dir`.
-- **`Cancelled` is not a `DownloadError`**, so code that tries the next tool after a failure stops instead.
-  Threaded tools run through `run_blocking()`, async work through `cancellable()` and programs through
-  `run_process()`; each stops soon after its `CancelToken` is cancelled and never outlives its task.
-- **The resolver fills in `{site}`** before a downloader sees the filename template (3.7). Each downloader
-  translates the rest: yt-dlp's `outtmpl`, gallery-dl's `directory`/`filename`, http's `{title}`/`{ext}` from
-  the file's name. `DownloadContext` checks templates (relative, plain `{field}`s), and a field's value can
-  never add a folder or leave one.
-- **Cookies are udl's own `Cookie` model** (the value a `SecretStr`), translated for each tool: standard
-  library cookie jars (yt-dlp, gallery-dl, httpx), Netscape cookie files in a private temp dir (curl, wget,
-  gallery-dl's CLI) and Playwright's. udl reads `cookies_from_browser` itself (`AuthCookies`) instead of
-  passing yt-dlp's `cookiesfrombrowser` / gallery-dl's `cookies-from-browser`, so every downloader gets the
-  same cookies.
-- **`http`'s backend makes every request**, HEAD too, so a site that blocks one client is not probed with
-  another. It asks for files uncompressed (and decodes them if a server compresses anyway), so sizes compare;
-  a size that disagrees with the server's is a `NetworkError` that keeps the `.part`. A file downloaded
-  before (same size) is kept. curl and wget ignore `~/.curlrc` / `~/.wgetrc` and write no `~/.wget-hsts`.
-- **Finds are handed off best first** (`hand_off_best()`): a failure of the find's own (unsupported, not
-  found, not media, its tool missing) tries the next, five at most; any other (auth, rate limit, network) is
-  raised at once, so a trailer never stands in for a film that needs a login. The scraper searches iframes'
-  pages only when the page itself has no media.
-- **The browser runs on udl's persistent profile by default** (`BrowserOptions.profile_dir` defaults to
-  `[browser] profile_dir`'s default); the resolver should pass `[browser]`'s `headless` and `profile_dir` as
-  the first layer of its options. One Chromium at a time uses a profile (others wait). Headless, it runs
-  without the GPU, whose drivers would write shader caches to the user's cache dir. Playwright is imported
-  only when the browser or the profile is used, so udl works without the `browser` extra.
-- **gallery-dl's in-process jobs take turns** (its config is global), and its command line takes over if its
-  Python API breaks (e.g. after an upgrade).
-
----
-
-## Phase 3: Resolution engine & service layer
-
-### Tests first
-- URL normalisation (hypothesis): idempotent; `www.`/`m.` and tracking params handled; the site key equals the
-  registrable domain (`a.b.example.co.uk` → `example.co.uk`).
-- Resolver precedence using `FakeSitePlugin` / `MemoryDatabase` / `FakeDownloader`: request `tool` beats the
-  site plugin, which beats the stored strategy, which beats the probe. `url_pattern` specificity orders
-  strategies.
-- Executor: falls through to the next candidate when a download fails; records only verified successes;
-  `NotFound` stops without penalising; `heal_threshold` failures trigger a re-probe; manual strategies are
-  never auto-disabled.
-- Output dirs: precedence, `~`/env expansion, directory creation, template rendering (hypothesis: never escapes
-  `output_dir`).
-- Concurrency: never more than `max_concurrent` running, or `max_per_site` for one site.
-- Jobs: event order `queued → started → progress* → finished|failed|cancelled`; cancellation; on restart,
-  in-flight records become `failed: interrupted`.
-
-### Resolution flow
-
-```
-udl URL...
- └─ for each URL (a job; ≤ max_concurrent at once, ≤ max_per_site per site, across batches):
-     1. normalise the URL; site_key = registrable domain (tldextract's bundled suffix list)
-     2. output dir: request → site plugin → Site.default_output_dir → download_dir; {site} filled in
-     3. candidates, best first (Resolver.candidates):
-          request.tool        → the only candidate
-          site plugin         → its strategy
-          stored strategies   → every DB (read policy); enabled, url_pattern found in the path; ranked
-          probe chain         → probe_order: offline matches first, then the rest
-     4. try each until a download actually succeeds (real, non-empty files in the output dir):
-          unsupported / extraction failed → next · AuthRequired → same tool with cookies, then browser
-          RateLimited / NetworkError → wait and retry the same tool · NotFound / Cancelled → stop
-     5. remember (unless --no-record): the winner, the stored strategies' successes and failures,
-        requires_auth; heal_threshold failures in a row disable a learned strategy
-     6. all failed → the most useful error (login, rate limit, network), else NoStrategyFound
-```
-
-### Probe chain (order configurable via `probe_order`)
-1. **Offline** (no network): the tools whose `match()` recognises the URL (a site's yt-dlp or gallery-dl
-   extractor, a media file's extension), in `probe_order`.
-2. The other tools, in `probe_order`. By default: **`http`** (is the URL itself a file?), **yt-dlp**'s generic
-   extractor, **gallery-dl**, the **`scraper`**, and the **`browser`**, the most expensive, last.
-
-A candidate is tried by downloading with it: each downloader's `download()` makes the checks its `probe()`
-would and fails as fast, so the chain stops at the first **successful download**. `udl probe <url> --all`
-(`probe_url`) runs `probe()` on every tool for debugging.
-
-### Recording rules
-- Strategies are recorded **site-wide** by default. Use `sites set --pattern '^/shorts/'` when one site needs
-  different tools for different sections.
-- Only failures that are the strategy's fault (`counts_against_strategy`) are counted against it.
-- Self-healing: when `consecutive_failures >= heal_threshold` (default 3), the strategy is disabled, the rest
-  of the chain re-probes the URL and the new winner is recorded. `manual` strategies only warn.
-
-### Output paths
-Precedence: request `output_dir` (`-o/--output`) → site plugin → `Site.default_output_dir` → config
-`download_dir` (default: `platformdirs.user_downloads_dir()/udl`). `filename_template` (e.g.
-`{site}/{title}.{ext}`, the request's or the config's) gets `{site}` filled in, then is translated per tool:
-yt-dlp `outtmpl`, gallery-dl `directory`/`filename`, or derived for `http`.
-
-### Jobs & progress
-- `JobManager` runs one asyncio task per URL; a batch (one request) shares a batch id.
-- `JobEvent`s (`queued → started → progress* → finished|failed|cancelled`, each carrying the job's `JobInfo`)
-  go to every subscriber of the job or batch (`UDLService.events()`): the CLI renders progress bars, the API
-  streams SSE and MCP sends progress notifications. Progress is sent at most every 0.25 s per job.
-- Threaded tools report via `loop.call_soon_threadsafe`; cancellation uses a `CancelToken` checked in
-  yt-dlp/gallery-dl hooks.
-
-### Service & operations registry
-
-```python
-class UDLService:
-    @operation("download")
-    async def download(self, request: DownloadRequest) -> DownloadBatch: ...
-    @operation("probe_url")
-    async def probe(self, request: ProbeRequest) -> ProbeReport: ...
-    # get_download, list_downloads, cancel_download, list_sites, get_site, set_site_strategy,
-    # delete_site, list_databases, list_plugins, get_config
-
-operations()                  # name -> Operation(name, request, response, summary, description, method)
-await service.call(name, request_model_or_plain_data)
-service.events(job_or_batch_id)   # a stream, not an operation
-```
-
-Every operation takes and returns Pydantic models, so the CLI, API and MCP share validation and serialisation.
-Each adapter registers which operation it implements, and the parity test compares those sets against the
-registry. Operation names are the Feature Matrix's MCP tool names.
-
-### Decisions made while building Phase 3
-
-- **Candidates are tried by downloading, not probed first.** A downloader's `download()` makes the same
-  checks its `probe()` would (a HEAD request, fetching the page, extraction) and fails as fast with
-  `UnsupportedURL`, so probing first would only double the work for the tool that wins.
-- **`probe_order` now defaults to `http, yt-dlp, gallery-dl, scraper, browser`**, as the chain above needs:
-  http's HEAD request is cheap and certain, so it goes before yt-dlp's generic extractor, and a direct media
-  link goes to http before gallery-dl's direct-link extractor. Offline matches go first in `probe_order` (not
-  by confidence), so `probe_order` is the one setting that orders the chain.
-- **The probe chain also follows failed stored strategies**, not only a site with none: a download works on
-  the first run even when the stored strategy has just broken. A tool is never offered twice with the same
-  options.
-- **Ranking stored strategies:** a matching `url_pattern` before a site-wide strategy, then `priority`, a
-  manual strategy before a learned one, fewer consecutive failures, the better success rate (smoothed: an
-  untried strategy counts as half), then the id. Among patterns, `priority` decides.
-- **URL normalisation** lowercases the scheme and host, drops default ports, tracking parameters (`utm_*`,
-  `fbclid`, …) and text fragments, and adds `https://` to a URL written without a scheme. Everything else stays
-  as written: `www.`/`m.` (a site may not answer without them), the query's encoding and order (a signed URL's
-  signature covers it) and fragments (pages that route in JavaScript). **Site keys** include the suffix
-  list's private domains (`someone.github.io` is its own site); a host with no registrable domain (localhost,
-  an IP address, an intranet name) is its own key, without its port.
-- **Signing in:** a URL's cookies are read once, at its first `AuthRequired` (or up front for a
-  `requires_auth` strategy); after a login failure every later candidate is signed in. The `browser` comes in
-  straight after the failure, once, but never for a tool the request named, whose own failure is the error.
-- **Retries** (`RetryPolicy`, not in the config): 2 more tries after a network error or rate limit, waiting
-  the site's `Retry-After` or a backoff from 1 s that doubles, at most 60 s; a longer `Retry-After` moves on.
-- **What is remembered:** the probe's winner (site-wide, `source=probe`), or its success on the site's
-  strategy for that tool and options (enabling it again). A requested tool or a site plugin's strategy is
-  chosen, not learned, so neither is stored. A strategy stored only in a database udl does not write to (a
-  read-only shared one) is copied into one it does when counted. A database that cannot be written is
-  logged and never fails a download.
-- **The executor learns strategies; the job manager writes the history.** A `DownloadRecord` is saved when
-  its job is queued, starts and ends (`started_at` is the queue time until it starts); `--no-record` saves
-  neither strategies nor history.
-- **Concurrency:** a job waits for its site's turn before a global one, so jobs queued behind a busy site
-  leave room for other sites. The limits hold across batches. `-j/--jobs` (4.2) sets the CLI's
-  `max_concurrent` (each CLI run makes its own service) rather than being a request field; `--db` is
-  `DownloadRequest.databases`, a `DBManager.only()` view that reads from and writes to the named connections.
-- **Cancelling** a running job cancels its `CancelToken`, so the downloader stops as designed and the try ends
-  as cancelled; its task is cancelled only if it has not stopped 5 s later. A job waiting for its turn has its
-  task cancelled at once.
-- **Recovering after a crash:** a starting udl marks records left `queued`/`running` as `failed:
-  interrupted` only when no other udl is running: every udl holds a shared `flock` on `udl.lock` in the data
-  dir, and one that can take it exclusively is alone (it keeps it exclusively while it cleans up). This is
-  POSIX-only. A udl on another machine that shares a database can still have a record marked interrupted;
-  its final update puts it right.
-- **Site plugins (Phase 6)** are asked through the `SiteBehaviour` protocol (`matches`, `strategy`,
-  `output_dir`); `transform_urls`, `prepare` and `post_process` arrive with 6.2.
-- **Smaller pieces:** `Toolbox` gives configured downloaders (the `[browser]` table first for the browser);
-  a downloader's offline `match()` that raises counts as no match. `DatabasePlugin.get_download(id)` joined
-  the contract, and errors gained `Interrupted` and `DoesNotExist`. The config's `filename_template` is
-  validated when the config loads. A request's URLs are deduplicated after normalising.
-
----
-
-## Phase 4: Interfaces
-
-### Feature Matrix (source of truth for parity)
+Source of truth for parity, added to `tests/interface/test_parity.py`'s `MATRIX` as each phase lands (the
+Phases 0–7 rows are in [planning/01-core.md](planning/01-core.md#feature-matrix-source-of-truth-for-parity)).
 
 | Operation | CLI | API | MCP tool |
 |---|---|---|---|
-| download | `udl <url>...` / `udl get` | `POST /downloads` | `download` |
-| job status | (CLI waits) `udl jobs show <id>` | `GET /downloads/{id}` | `get_download` |
-| history | `udl history` | `GET /downloads` | `list_downloads` |
-| cancel | Ctrl-C / `udl jobs cancel <id>` | `DELETE /downloads/{id}` | `cancel_download` |
-| probe | `udl probe <url>` | `POST /probe` | `probe_url` |
-| list sites | `udl sites list` | `GET /sites` | `list_sites` |
-| show site | `udl sites show <site>` | `GET /sites/{key}` | `get_site` |
-| set strategy | `udl sites set <site> --tool … [--pattern …]` | `PUT /sites/{key}/strategies` | `set_site_strategy` |
-| delete site/strategy | `udl sites rm <site>` | `DELETE /sites/{key}` | `delete_site` |
-| suggest chain | `udl chain suggest <url>` | `POST /chains/suggest` | `suggest_chain` |
-| test chain | `udl chain test <url> <chain>` | `POST /chains/test` | `test_chain` |
-| save chain | `udl chain set <site> <chain>` | `PUT /sites/{key}/chain` | `set_site_chain` |
-| import / export chains | `udl chain import/export` | `POST /chains/import`, `GET /sites/{key}/chain` | `import_chains`, `export_chain` |
-| list DBs | `udl db list` | `GET /databases` | `list_databases` |
-| sync DBs | `udl db sync --from a --to b` | `POST /databases/sync` | `sync_databases` |
-| list plugins | `udl plugins list` | `GET /plugins` | `list_plugins` |
-| show config | `udl config show` | `GET /config` (secrets redacted) | `get_config` |
+| plugin settings | `udl plugins settings <name>` | `GET /plugins/{name}/settings` | `get_plugin_settings` |
+| set plugin settings | `udl plugins configure <name> -O KEY=VALUE` | `PUT /plugins/{name}/settings` | `set_plugin_settings` |
+| event types | `udl events types` | `GET /event-types` | `list_event_types` |
+| event history | `udl events list [--type T] [--since …]` | `GET /events` | `list_events` |
+| show event | `udl events show <id>` | `GET /events/{id}` | `get_event` |
+| emit event | `udl events emit <type> [--data JSON]` | `POST /events` | `emit_event` |
+| replay event | `udl events replay <id> [--subscription S]` | `POST /events/{id}/replay` | `replay_event` |
+| list subscriptions | `udl subs list` | `GET /subscriptions` | `list_subscriptions` |
+| show subscription | `udl subs show <name>` | `GET /subscriptions/{name}` | `get_subscription` |
+| set subscription | `udl subs set <name> --on TYPE… [--where FILTER] [--account A…] --action A…` | `PUT /subscriptions/{name}` | `set_subscription` |
+| test subscription | `udl subs test <name> [--event ID]` | `POST /subscriptions/test` | `test_subscription` |
+| delete subscription | `udl subs rm <name>` | `DELETE /subscriptions/{name}` | `delete_subscription` |
+| list actions | `udl actions list` | `GET /actions` | `list_actions` |
+| show action | `udl actions show <name>` | `GET /actions/{name}` | `get_action` |
+| set action | `udl actions set <name> --kind K -O KEY=VALUE` (or `-f action.yaml`) | `PUT /actions/{name}` | `set_action` |
+| run action | `udl actions run <name> [--event ID] [--dry-run]` | `POST /actions/{name}/run` | `run_action` |
+| delete action | `udl actions rm <name>` | `DELETE /actions/{name}` | `delete_action` |
+| list runs | `udl runs list [--status S]` | `GET /runs` | `list_runs` |
+| show run | `udl runs show <id>` | `GET /runs/{id}` | `get_run` |
+| cancel run | `udl runs cancel <id>` | `DELETE /runs/{id}` | `cancel_run` |
+| approve / deny | `udl runs approve <id>` / `udl runs deny <id>` | `POST /runs/{id}/decision` | `decide_run` |
+| runtime status | `udl status` | `GET /status` | `get_status` |
+| list schedules | `udl schedules list` | `GET /schedules` | `list_schedules` |
+| show schedule | `udl schedules show <name>` | `GET /schedules/{name}` | `get_schedule` |
+| set schedule | `udl schedules set <name> (--cron C \| --every D \| --at T) [--tz Z] [--action A…]` | `PUT /schedules/{name}` | `set_schedule` |
+| run schedule now | `udl schedules run <name>` | `POST /schedules/{name}/run` | `run_schedule` |
+| preview schedule | `udl schedules preview '<spec>' [-n 5] [--tz Z]` | `POST /schedules/preview` | `preview_schedule` |
+| delete schedule | `udl schedules rm <name>` | `DELETE /schedules/{name}` | `delete_schedule` |
+| list accounts | `udl accounts list [--integration I]` | `GET /accounts` | `list_accounts` |
+| show account | `udl accounts show <integration:name>` | `GET /accounts/{account}` | `get_account` |
+| connect account | `udl accounts add <integration> <name> [--access …]` | `POST /accounts` | `connect_account` |
+| set account options | `udl accounts set <account> -O KEY=VALUE` | `PATCH /accounts/{account}` | `set_account` |
+| check account | `udl accounts check <account>` | `POST /accounts/{account}/check` | `check_account` |
+| disconnect account | `udl accounts rm <account>` | `DELETE /accounts/{account}` | `disconnect_account` |
+| AI providers | `udl ai providers` | `GET /ai/providers` | `list_ai_providers` |
+| set / remove provider | `udl ai providers set <name> --plugin P …` / `rm` | `PUT` / `DELETE /ai/providers/{name}` | `set_ai_provider`, `delete_ai_provider` |
+| models | `udl ai models [--provider P]` | `GET /ai/models` | `list_ai_models` |
+| pull a model | `udl ai pull <model> [--provider P]` | `POST /ai/models` | `pull_ai_model` |
+| prompts | `udl ai prompts list \| show \| set \| rm` | `/ai/prompts`, `/ai/prompts/{name}` | `list_prompts`, `get_prompt`, `set_prompt`, `delete_prompt` |
+| guidance | `udl ai guidance list \| set \| rm` | `/ai/guidance`, `/ai/guidance/{name}` | `list_guidance`, `set_guidance`, `delete_guidance` |
+| try a prompt | `udl ai try <prompt> [--event ID] [--model M]` | `POST /ai/try` | `try_prompt` |
+| an integration's operation | `udl <integration> <op> …` (generated) | `POST /integrations/{integration}/{op}` (generated) | `<integration>_<op>` |
 
-**Interface-only (explicitly exempt in the parity test):** `udl serve`, `udl mcp`, `udl chain wizard` (an
-interactive wrapper over suggest/test/set, which are available everywhere) and `udl browser login` (needs a
-headed browser on the user's machine).
-
-### Tests first
-- Parity test (4.1) goes in first and stays red until all three adapters exist.
-- One interface test per matrix row per adapter, all running against a `UDLService` built on fakes.
-- One end-to-end `probe` through all three adapters against the fixture site, asserting identical results.
-
-### CLI
-- **Default-command shim:** when the first argument after udl's own options (`-v`, `--config FILE`…)
-  is not a command's name, `get` goes in before it (`DefaultGetGroup.parse_args`), so
-  `udl --config x.toml <url>` and `udl -o history <url>` both work.
-
-  ```python
-  class DefaultGetGroup(TyperGroup):
-      def parse_args(self, ctx: Any, args: list[str]) -> list[str]:
-          at = self._own_options_end(ctx, args)
-          if at < len(args) and args[at] not in self.commands:
-              args = [*args[:at], "get", *args[at:]]
-          return super().parse_args(ctx, args)
-  ```
-- `get` options: `-o/--output DIR`, `--tool NAME`, `--db NAME` (restrict lookup/writes:
-  `DownloadRequest.databases`), `--reprobe`, `--no-record`, `-i/--input FILE` (`-` = stdin), `-j/--jobs N`
-  (the CLI's `max_concurrent`, see [Phase 3 decisions](#decisions-made-while-building-phase-3)), `--json`.
-- Global options: `--config PATH`, `-v/--verbose`, `-q/--quiet`. Exit codes: `0` all OK, `1` some failed,
-  `2` usage error.
-
-### API
-- `POST /downloads` returns `202` with job ids; `?wait=true` blocks until done (handy for scripts).
-  `GET /downloads/{id}/events` streams SSE.
-- The service is created in FastAPI's `lifespan` and injected with `Depends`. OpenAPI at `/docs` is the base
-  for the future UI.
-- `udl serve [--host 127.0.0.1] [--port 8765]` runs Granian (ASGI) with **one worker**, because job state is
-  in-process. Multiple workers would need an external queue (out of scope).
-- Security: bind to localhost by default. When `api.api_key` is set, an `X-API-Key` header is required.
-  `output_dir` must be under `api.allowed_output_roots`, otherwise the request gets a 403.
-
-### MCP
-- Built on the official `mcp` 2.x SDK: `from mcp.server.mcpserver import MCPServer`. mcp 2.x renamed
-  `FastMCP` to `MCPServer`, so ignore v1 examples that import `mcp.server.fastmcp`. Tool docstrings are written for LLMs.
-- `download` takes `wait: bool` (default true, with a timeout). When not waiting it returns job ids, and it
-  reports progress via MCP progress notifications.
-- `suggest_chain`, `test_chain` and `set_site_chain` let an AI agent teach udl an unsupported site itself.
-- Transports: `udl mcp` (stdio) plus streamable HTTP mounted at `/mcp` in the API, with the MCP session
-  manager wired into FastAPI's lifespan. It uses the same output-root restrictions as the API.
-- Client config: `{"mcpServers": {"udl": {"command": "udl", "args": ["mcp"]}}}`. This works anywhere once
-  `udl` is installed as a uv tool (4.2). Without that, use
-  `"command": "uv", "args": ["run", "--project", "/path/to/udl", "udl", "mcp"]`.
-
-### Decisions made while building Phase 4
-
-- **The parity test holds the Feature Matrix** (operation → CLI command → API route; the MCP tool is
-  the operation's name). CLI commands are marked with `@runs("<operation>")`, API routes are read from
-  the OpenAPI schema's operationIds (FastAPI 0.143 includes routers lazily, so `app.routes` no longer
-  lists them) and MCP tools from `list_tools()`. Interface-only: `serve`, `mcp`, `browser login` and
-  `GET /downloads/{id}/events`. A new operation fails it until each interface has it, and the MCP
-  server refuses to start without the operation's tool annotations (`_HINTS`).
-- **The service grew what the interfaces needed, so they hold no logic:** `download(on_event=…)`
-  hears the jobs' events while it waits (the CLI's progress bars, MCP progress), `DownloadSpec` /
-  `StrategySpec` are the requests without `wait`/`timeout` and `site` (the API takes those from the
-  query and the path), and every request field is described with an attribute docstring
-  (`use_attribute_docstrings`), which becomes the API's docs and the MCP tools' argument descriptions.
-- **A udl cancels only the downloads it runs**, and each CLI run makes its own service, so
-  `udl jobs cancel` of a download in the history leaves one that has ended as it is, and says when
-  another udl runs it (Ctrl-C cancels `udl get`'s). `DBManager.only()` raises `DoesNotExist` for an
-  unknown connection: the request's fault, not a database's.
-- **CLI:** Typer 0.26+ vendors Click, so the CLI uses only Typer's API (`typer.Context`,
-  `typer.core.TyperGroup`). Exit codes `0` / `1` / `2` (a usage error, an invalid config or invalid
-  tool options) and `130` for Ctrl-C, which closes the service (cancelling and saving its downloads).
-  `get` also takes `-t/--template`, `sites set` takes `-O KEY=VALUE` (JSON values), and `history`
-  shows 20 by default. Progress bars go to stderr, only on a terminal; results to stdout. `udl browser
-  login` waits for Enter only on a terminal, through the event loop (a thread blocked on `input()`
-  would keep udl from exiting). `serve` and `mcp` import their servers only when run.
-- **API:** errors are `ErrorInfo` with a status by code: 404 does not exist, 400 a plugin or config
-  error (a tool or options that cannot work), 403 not allowed, 401 unauthorized, 503 a database,
-  500 a bug (whose details are only logged). `POST /downloads` answers 202, or 200 once every job has
-  ended. Events use FastAPI's own SSE (`EventSourceResponse`, with keep-alives); an unknown id is a
-  404 before the stream starts. The API key covers every route but the docs, and `/mcp`.
-- **Served on localhost, udl answers only requests for localhost** (`LocalHostsOnly`, 421), so a web
-  page that points its name at 127.0.0.1 (DNS rebinding) cannot drive it; the MCP SDK checks `/mcp`'s
-  Host and Origin too. Serving other machines without an `api_key` logs a warning.
-- **`udl serve`** gives Granian a pickled loader, `worker_app(settings, verbosity)`, so its worker
-  process makes the app from exactly the settings `udl serve` had (`--config`, `--host`, `--port`, `-v`),
-  with no environment variables to pass on. `-v` adds Granian's access log.
-- **MCP:** each tool's signature is built from its request model, so the arguments are the request's
-  fields, flat. `download` waits at most `DEFAULT_WAIT` (120 s) by default, its progress counting one
-  unit per URL; an output dir it is given must be in `api.allowed_output_roots` on both transports (an
-  agent picks paths, whoever runs it). Errors are tool errors reading `<code>: <message>` and the hint.
-  `/mcp` is a route (a mount would answer only `/mcp/…`), and the SDK's session manager runs in the
-  API's lifespan.
-- **Fixed on the way:** `JobManager.shutdown()` now waits for jobs that have just ended to be saved
-  (their final save could run after the databases closed).
-- **Tests:** a `Harness` (tests/support/interfaces.py) makes services on fakes whose in-memory
-  databases outlive each one (each CLI run makes its own). CLI tests are not async (the CLI runs
-  `asyncio.run`); API tests run the app's lifespan around httpx's `ASGITransport`; MCP tests use the
-  SDK's in-process `Client`. anyio task groups must be left in the task they were entered in, which
-  async fixtures do not do, so `support.tasks.held()` holds them in a task of their own. The MCP
-  client uses httpx2, so `/mcp` is tested against a real `udl serve`; a stdio client gets only a
-  default environment, so the tests pass theirs. Coverage follows the processes tests start
-  (`patch = ["subprocess"]`).
+**Interface-only (exempt in the parity test):** `GET /events/stream` (SSE of events and run changes),
+`POST /ai/try/stream` (the playground, streamed), `GET /accounts/callback` (OAuth's redirect),
+`POST /session` / `DELETE /session` (web sign-in), everything under `/ui`, and `udl service install`. As in
+Phase 5, methods behind `test_*` operations are named `try_*`, and their request models `…TestRequest`.
 
 ---
 
-## Phase 5: Tag chains
+## Project layout (additions)
 
-The "easy system" for sites no tool handles. A chain is stored on a `Strategy` (`tool = "scraper"` or
-`"browser"`), so it shares the recording, syncing and import/export machinery.
+Phases 0–7's layout is in [planning/01-core.md](planning/01-core.md#project-layout).
+
+```
+planning.md                     # this plan; planning/ keeps the finished ones
+src/udl/
+  clock.py                      # Clock, SystemClock
+  automations/
+    events.py                   # Event, EventType, the event type registry, udl's own event types
+    filters.py                  # Filter, its shorthand, the evaluator
+    subscriptions.py            # Subscription, matching, throttles
+    bus.py                      # EventBus
+    runner.py                   # ActionRunner, ActionRun
+    schedules.py                # ScheduleSpec, CronExpression, Scheduler
+    runtime.py                  # AutomationRuntime: watchers, scheduler, bus, runner, lease, retention
+    templates.py                # the sandboxed template environment
+  ai/
+    agent.py                    # the agent loop, ToolPolicy, approvals
+    prompts.py                  # Prompt, Guidance, putting a prompt together
+  db/records.py                 # Record, RecordQuery, Lease, the record kinds
+  integrations/
+    oauth.py                    # OAuth 2.0: PKCE, the loopback listener, refresh, revoke
+    accounts.py                 # Account, AccountHandle, connecting
+    watchers.py                 # WatcherSupervisor
+  plugins/
+    integrations/ base.py  gmail/ (plugin.py client.py models.py events.py ui/)  slack/ (… socket.py ui/)
+    actions/      base.py  script.py  operation.py  webhook.py  emit.py  notify.py  ai.py
+    ai/           base.py  ollama.py  openai.py
+    secrets/      base.py  keyring.py  file.py  memory.py
+    ui.py                       # UIManifest, UIBundle, UIPlugin (the udl.ui kind)
+  interfaces/
+    adapters.py                 # generated CLI commands, API routes and MCP tools for any Operation
+    api/openapi.py              # writes (or checks) web/packages/api/openapi.json
+    web/                        # /ui: static files, sessions, CSP; dist/ is built, not committed
+web/                            # the frontend: a pnpm workspace
+  package.json  pnpm-workspace.yaml  pnpm-lock.yaml  .node-version  tsconfig.base.json  biome.json
+  packages/
+    api/                        # @udl/api: openapi.json → generated types + an openapi-fetch client
+    sdk/                        # @udl/ui-sdk: defineUIPlugin, the mount contract, react(), context types
+    shell/                      # the app (React, TanStack Router, Zustand, daisyUI) → src/udl/interfaces/web/dist
+    template/                   # a starting point for a UI plugin
+  plugins/
+    gmail/  slack/              # UI plugins → src/udl/plugins/integrations/<name>/ui/
+  examples/shadcn/              # 15.10's proof
+  e2e/                          # Playwright tests against a real `udl serve`
+docs/  automations.md  ui-plugins.md  (+ plugins.md)
+tests/support/  clock.py  secrets.py  integrations.py  actions.py  ai.py  google.py  slack.py  e2e.py
+```
+
+## Package management (uv + pnpm)
+
+Python stays on uv with the shared reflinked cache
+([planning/01-core.md](planning/01-core.md#package-management-uv)). The frontend uses **pnpm** (12.x and
+Node 26 are installed here), which keeps one content-addressable store for every project, as uv does.
+
+- **Reflinks, not hardlinks:** `packageImportMethod: clone-or-copy` in `web/pnpm-workspace.yaml`, for the same
+  reason as uv's `link-mode = "clone"` (a hardlinked file edited in one project changes the store and every
+  other project). Check with `btrfs filesystem du -s "$(pnpm store path)" web/node_modules`.
+- `packageManager` in `web/package.json` pins pnpm; `web/.node-version` pins Node's major.
+- **One Chromium:** `@playwright/test` is pinned to the Python Playwright's version (1.63 in `uv.lock`), so
+  both use the same browser in `~/.cache/ms-playwright` instead of downloading another (~650 MB). Bump them
+  together.
+
+| Task | Command |
+|---|---|
+| Install the frontend's dependencies | `pnpm -C web install` |
+| Add one | `pnpm -C web --filter @udl/shell add zustand` (`-D` for dev) |
+| Develop the UI | `udl serve` in one terminal, `pnpm -C web dev` in another (Vite on :5173 serves `/ui/` and proxies everything else to udl) |
+| Build the UI into the package | `make web` |
+| Regenerate the API client | `make openapi` |
+| Web checks | `pnpm -C web check` (part of `make check`) |
+| End-to-end tests | `make e2e` (starts `udl serve` on fakes via `tests/support/e2e.py`) |
+
+```make
+check: check-py check-web
+
+check-web:
+	uv run python -m udl.interfaces.api.openapi --check web/packages/api/openapi.json
+	pnpm -C web install --frozen-lockfile
+	pnpm -C web check                # biome ci, tsc --noEmit, vitest run --coverage
+
+web:
+	pnpm -C web build                # the shell and the built-in UI plugins, into src/udl/…
+
+e2e: web
+	pnpm -C web e2e
+```
+
+---
+
+## Phase 8: Groundwork
+
+Everything later phases share: plugins that add operations, a place to persist the new data, somewhere to
+keep secrets, a clock, templates and OAuth.
 
 ### Tests first
-- Model validation: unknown step types are rejected; browser-only steps in `fetch: static` are rejected.
-- Shorthand parser (hypothesis): `parse(format(chain)) == chain`; invalid syntax gives a helpful error
-  location.
-- Executor against fixture pages: direct `<video>`, iframe → follow → `<source>`, JSON-in-`<script>`, a
-  JS-rendered page (browser), a `network` capture. Relative URLs resolve against the current document.
-- `suggest_chain` ranks the real media element first on each fixture page, and generated selectors are stable
-  (no `nth-child` when an id/class/data-attr exists).
+- Registry: every existing MCP tool keeps exactly its annotations once hints move onto `Operation` (a
+  snapshot of today's `_HINTS`); every operation says whether it is `admin` (a test lists them, so a new
+  one has to choose); a plugin operation named like an existing one is refused; operations list by
+  namespace.
+- **Generated adapters (parity, 8.2):** a fake plugin whose operations use every field kind (str, int,
+  bool, `StrEnum`, `Path`, lists, a nested model, `SecretStr`, `JsonValue`) gets a working CLI command, an
+  API route (in the OpenAPI schema with its models; bad input is a 422) and an MCP tool, and the same
+  request (hypothesis) gives the same response through all three.
+- **Record contract suite** (every DB plugin): upsert / get / delete per kind; `list_records` by indexed
+  fields, newest first, paged, `since`; unique keys enforced (`DuplicateKey`); JSON data comes back as its
+  model; `prune_records(kind, before)`; `claim_lease` is exclusive across two connections to one database,
+  renewed by its holder and taken over once it expires.
+- **Secret stores contract:** set / get / delete; a value never shows in a `repr` or a log line; `file`
+  makes its file `0600` in a `0700` folder; `keyring` skips when there is no backend.
+- **Templates (hypothesis):** rendering never reads files, imports, or reaches `_` attributes; an undefined
+  name fails with the template's line; output is capped; `{{ x }}` alone keeps `x`'s type (a list stays a
+  list).
+- **OAuth** against a fake authorization server: PKCE challenge, `state` checked, code exchanged, tokens
+  refreshed before they expire, a refused refresh becomes `ReauthRequired`; the loopback listener binds to
+  127.0.0.1 only and closes after one callback or its timeout.
 
-### Formats
+### Operations from plugins (8.1–8.3)
 
-One-liner shorthand (CLI-friendly): steps separated by `>>`. A select step is a CSS selector plus `@attr` or
-`::text`; the other steps are `regex:PATTERN`, `json:PATH`, `follow`, and (browser only) `wait_for:SELECTOR`,
-`click:SELECTOR` and `network:PATTERN`. A step that finds values may end with `| all` or `| best`. When a step
-yields a URL and a step that reads the document follows, that URL is fetched next.
+```python
+@dataclass(frozen=True)
+class Operation:
+    name: str                      # "download", "gmail_send_message"
+    request: type[BaseModel]
+    response: type[BaseModel]
+    summary: str
+    description: str               # written for people and AI agents (MCP, and AI tools in 14.4)
+    method: Callable[..., Awaitable[BaseModel]]
+    hints: OperationHints          # read_only, destructive, idempotent, open_world (were the MCP server's _HINTS),
+                                   # and admin: it changes automations, accounts, AI setup or settings
+    namespace: str | None = None   # the plugin that adds it ("gmail"); None for udl's own
+```
+
+`UDLService.operations` is an `OperationRegistry`: udl's own operations (the module-level `operations()`, as
+now) plus those of every loaded plugin, known as soon as the service is made (plugins are discovered then),
+so `create_app()` can add their routes before the service starts. `service.call(name, …)` works for both.
+
+Generated adapters (`udl.interfaces.adapters`), used for plugin operations, and for udl's own wherever a
+hand-written adapter would add nothing:
+
+| Interface | From the request model | Output |
+|---|---|---|
+| CLI | An option per field (`--to`, `--flag/--no-flag`, repeatable for lists, choices for enums, JSON for nested models), hidden prompts for `SecretStr`, `--input FILE` (`-` = stdin) for the whole request | `render.py`'s generic renderer, or `--json` |
+| API | `app.add_api_route()` with the request as the body, the response model, the operation's name as its operationId | JSON, errors as `ErrorInfo` |
+| MCP | As today: the tool's arguments are the request's fields | Structured content |
+
+### Records (8.4–8.5)
+
+```python
+class Record(SQLModel):                          # plain Pydantic; table variants live with the SQL plugin
+    kind: ClassVar[str]                          # "account", "event", "subscription", …
+    indexed: ClassVar[tuple[str, ...]]           # fields RecordQuery can filter on
+    unique: ClassVar[tuple[tuple[str, ...], ...]] = ()   # e.g. (("type", "dedupe_key"),)
+    id: UUID
+    created_at: datetime
+    updated_at: datetime
+
+class DatabasePlugin(ABC):
+    ...                                          # (Phases 1–7's methods)
+    async def get_record[R: Record](self, kind: type[R], id: UUID) -> R | None: ...
+    async def list_records[R: Record](self, kind: type[R], query: RecordQuery) -> list[R]: ...
+    async def upsert_record[R: Record](self, record: R) -> R: ...          # DuplicateKey on a unique clash
+    async def delete_record(self, kind: type[Record], id: UUID) -> bool: ...
+    async def prune_records(self, kind: type[Record], before: datetime) -> int: ...
+    async def claim_lease(self, name: str, holder: str, ttl: timedelta) -> Lease | None: ...
+```
+
+`RecordQuery`: `where` (equality on indexed fields), `since` / `until` (on `created_at`), `limit`,
+`offset`, newest first.
+
+| Record | Phase | Indexed (unique) | Notes |
+|---|---|---|---|
+| `PluginSettings` | 8 | `plugin` (unique) | Secret fields go to the secret store |
+| `Lease` | 9 | `name` (unique) | Through `claim_lease` only |
+| `EventRecord` | 9 | `type`, `source`, `account_id`, `status`; (`type`, `dedupe_key`) unique | An `Event` and its dispatch status; `data` validated by its type's model; pruned after `event_retention_days` |
+| `Subscription` | 9 | `name` (unique), `enabled` | |
+| `Action` | 9 | `name` (unique), `kind` | `options` validated by its action plugin |
+| `ActionRun` | 9 | `action_id`, `event_id`, `subscription_id`, `status` | Output and AI transcript; pruned with events |
+| `Schedule` | 10 | `name` (unique), `enabled`, `next_run_at` | |
+| `Account` | 11 | (`integration`, `name`) unique, `status` | Holds a `SecretRef`, never a secret |
+| `PluginState` | 11 | (`plugin`, `account_id`) unique | A watcher's cursor, validated by the plugin's `state_model` |
+| `AIProviderConnection` | 14 | `name` (unique) | |
+| `Prompt`, `Guidance` | 14 | `name` (unique) | |
+
+- SQL (sqlite, postgres): a table per record kind with Pydantic-backed JSON columns, as Phase 1 did; schema
+  version 3. MongoDB: a collection per kind with its unique indexes. Memory: dicts.
+- `DBManager` reads and writes records with the read and write policies, like sites. `db sync` copies the
+  configuration records (subscriptions, actions, schedules, prompts, guidance, AI providers, plugin
+  settings, accounts) and the history that has ended (dispatched events, ended runs), never `PluginState`
+  or leases, which belong to one runtime. An account synced to another machine has no credentials there, so
+  it shows as `needs_reauth` until it is connected again.
+
+### Secrets (8.6)
+
+```python
+class SecretStore(ABC):
+    name: ClassVar[str]                          # "keyring", "file", "memory"
+    requires: ClassVar[tuple[Requirement, ...]] = ()
+    async def get(self, ref: SecretRef) -> SecretStr | None: ...
+    async def set(self, ref: SecretRef, value: SecretStr) -> None: ...
+    async def delete(self, ref: SecretRef) -> bool: ...
+```
+
+- `SecretRef` is a path such as `accounts/<account id>/refresh_token`, under the keyring service `udl`.
+- `[secrets] store = "auto"`: `keyring` when it has a backend (Secret Service, KWallet), else `file`
+  (`<data dir>/secrets.json`, `0600`, plain text protected by its mode, like the browser profile's cookies).
+  `keyring` is synchronous, so it runs in `asyncio.to_thread`.
+
+### Clock, templates, OAuth (8.7–8.9)
+
+```python
+class Clock(Protocol):
+    def now(self) -> datetime: ...                        # aware, UTC
+    async def sleep_until(self, when: datetime) -> None: ...
+# tests/support/clock.py: FakeClock.advance(delta) wakes sleepers in order
+```
+
+- **Templates** are Jinja2's `SandboxedEnvironment` with `StrictUndefined`, no autoescaping (the output is
+  not HTML), and a cap on output size. Their context is the event (`event.type`, `event.subject`,
+  `event.data…`, `event.account`), `run` and `now`. Filters: `urls` (the URLs in a text), `tojson`,
+  `truncate`. A value that is a single `{{ expression }}` keeps its type, so
+  `{"urls": "{{ event.data.body_text | urls }}"}` gives a list.
+- **OAuth** (`udl.integrations.oauth`): authorization code with PKCE (S256) and `state`;
+  `loopback_redirect()` listens on `127.0.0.1` on a free port for one callback; tokens are refreshed a minute
+  before they expire; `revoke()` on disconnect. Google and Slack are plain OAuth 2.0 over HTTP, so one
+  small typed module on httpx replaces two vendor SDKs.
+
+---
+
+## Phase 9: Events, subscriptions & actions
+
+### Tests first
+- Event types: data is validated by the type's model; an unknown type is refused, except `custom.*` (any
+  JSON object); `list_event_types` gives each type's JSON Schema and an example.
+- Filters (hypothesis): `parse(format(f)) == f`; a filter naming a field its event type doesn't have is
+  refused when saved, listing the type's fields; an operator on the wrong kind of value is refused; a
+  missing optional field never matches (except `not exists`); `~` (regex) reads at most 64 KiB of a field.
+- Subscriptions: type globs (`gmail.*`); account restrictions; a disabled subscription never matches; a
+  throttle (`10 per 1h`) skips the rest, recording why.
+- Bus: an event whose dedupe key was seen is not dispatched again, even after a restart; events are stored
+  before dispatch; each matched action gets its own run; an event deeper than `max_event_depth` is stored
+  as `dropped` and logged, not dispatched.
+- Runner: never more than `max_concurrent_runs`, or an action's `max_concurrent`; retries only retryable
+  failures, with backoff; a timeout fails the run; cancelling stops it; after a crash, queued runs resume
+  and running ones become `failed: interrupted`; every run's end publishes `udl.action.succeeded` or
+  `udl.action.failed` with its output or error.
+- Built-in actions pass the action contract suite. `script` refuses a program outside `scripts_dir` (after
+  `..` is resolved), never uses a shell, passes the event on stdin, keeps 64 KiB of output, fails with the
+  end of stderr on a non-zero exit. `operation`'s arguments are checked against the operation's request
+  model when saved (rendered with the event type's example) and again when run.
+- Runtime: a second runtime on the same database waits for the lease, and takes over when the first stops
+  renewing it; `GET /events/stream` sends events and run changes in order, filtered by type.
+
+### Events (9.1)
+
+```python
+class EventType[D: BaseModel]:
+    name: str                          # "gmail.message.received"
+    data: type[D]
+    summary: str                       # for list_event_types, the UI and AI prompts
+    example: D                         # checks filters and templates when they are saved
+    subject: Callable[[D], str]        # one line: "Mail from bank@example.com: Your statement"
+
+class Event(BaseModel):
+    id: UUID
+    type: str
+    source: str                        # "gmail", "slack", "scheduler", "udl", "api"
+    account_id: UUID | None
+    occurred_at: datetime
+    subject: str
+    data: JsonObject                   # validated by the type's model
+    dedupe_key: str | None             # e.g. "<account id>:<gmail message id>"
+    caused_by: UUID | None             # the run that led to it
+    depth: int                         # 0 for events from outside; a run's events are its event's + 1
+```
+
+udl's own event types:
+
+| Event type | Published by | Data |
+|---|---|---|
+| `udl.download.finished` / `udl.download.failed` | `JobManager`, when a job ends | url, site, tool, files, size, error |
+| `udl.action.succeeded` / `failed` / `awaiting_approval` | `ActionRunner` | run, action, subscription, event, output or error, the pending tool call |
+| `udl.account.connected` / `needs_reauth` / `error` | accounts, watchers | account, integration, error |
+| `schedule.fired` | `Scheduler` (Phase 10) | schedule, scheduled_for, fired_at, late, data |
+| `custom.<name>` | `emit_event`, `POST /events`, the `emit` action | any JSON object |
+
+### Filters (9.2)
+
+A filter is a tree of `all` / `any` / `not` over conditions on dotted paths into the event's data, checked
+against the type's schema when a subscription is saved:
+
+```python
+type Filter = AllOf | AnyOf | Not | Condition
+class Condition(BaseModel):
+    field: str                        # "from.address", "labels", "channel.name"
+    op: Op                            # eq, ne, contains, startswith, endswith, matches, in, exists, lt, le, gt, ge
+    value: JsonValue = None
+```
+
+The shorthand (accepted wherever a filter is, like tag chains' shorthand in Phase 5):
 
 ```
-iframe#player@src >> video > source[type*=mp4]@src
-script#data::text >> json:video.sources.*.url | best
-click:button.play >> network:\.m3u8
+from.address endswith "@bank.com" and (subject ~ "(?i)statement|invoice" or has_attachments)
+channel.kind == "dm" and not sent_by_udl
+labels contains "IMPORTANT"
 ```
 
-An argument may be quoted (`"..."` or `'...'`, where a backslash before the quote or another backslash is the
-only escape), and must be when it starts with a quote, contains `>>` or `|`, or has spaces around it.
+A bare field means "is truthy"; strings compare case-sensitively unless written `i"…"`; `~` is a regex
+search. Regexes are matched against at most 64 KiB of a field (someone else's email is the input).
+`google-re2` (linear time) is used if it has wheels for udl's Python, else `re`.
 
-Full YAML (chain files: `udl chain export` writes them, `udl chain import` reads them, by default from
-`~/.config/udl/sites/*.yaml`; the chains themselves are stored in the DB), a document per chain:
+### Subscriptions (9.3)
+
+```python
+class Subscription(Record):
+    name: str
+    description: str = ""
+    events: list[str]                  # types or globs: "gmail.message.received", "slack.*"
+    accounts: list[str] | None = None  # "gmail:work"…; None = every account
+    filter: Filter | None = None       # None = every event of those types ("emails in general")
+    source_filter: JsonObject | None = None   # checked by the integration (11.6), e.g. {"query": "has:attachment"}
+    actions: list[str]                 # action names; each matched action is a run of its own
+    throttle: Throttle | None = None   # e.g. at most 10 runs an hour
+    enabled: bool = True
+```
+
+Actions are separate records so several subscriptions can share one ("notify me on Slack"), and a
+subscription "alerts" every action it lists: each gets its own run, in parallel. Chaining is through events:
+a run's end is `udl.action.succeeded`, which other subscriptions can match (`action == "summarise"`).
+
+### Actions (9.4–9.5)
+
+```python
+class ActionPlugin[O: ActionOptions](ABC):
+    name: ClassVar[str]                                   # "script", "operation", "ai", …
+    options_model: ClassVar[type[ActionOptions]]
+    requires: ClassVar[tuple[Requirement, ...]] = ()
+    ui: ClassVar[UIBundle | None] = None                  # an editor for its options (15.7)
+    async def check(self, options: JsonObject, event_type: EventType[Any] | None) -> None: ...  # when saved
+    async def run(self, ctx: ActionContext[O]) -> ActionOutput: ...   # raises ActionFailed or Cancelled
+
+class Action(Record):
+    name: str
+    kind: str                          # the action kind: an action plugin's name
+    options: JsonObject                # may hold templates; rendered for each event, then validated
+    timeout: timedelta = timedelta(minutes=5)
+    retries: int = 0                   # more tries after a retryable failure, with backoff
+    max_concurrent: int = 1
+    enabled: bool = True
+```
+
+`ActionContext` gives the run's id, the event, the rendered options, the service (to call operations), the
+secret store, the clock, a `CancelToken` and a log sink.
+
+| Action | Does | Main options | Notes |
+|---|---|---|---|
+| `script` | Runs a program from `scripts_dir` | `command` (argv), `cwd`, `env`, `stdin` (`event` \| `none` \| a template) | Never through a shell, each argument rendered on its own. The event as JSON on stdin and in `UDL_EVENT_FILE`; `UDL_EVENT_ID`, `UDL_EVENT_TYPE` and `UDL_CONFIG` set. stdout that is JSON becomes the output. Runs through Phase 2's `run_process()` |
+| `operation` | Calls any udl operation | `operation`, `arguments` (templated JSON) | e.g. download the links in an email: `{"operation": "download", "arguments": {"urls": "{{ event.data.body_text \| urls }}"}}` |
+| `webhook` | Sends an HTTP request | `url`, `method`, `headers` (values may be `SecretRef`s), `body` | `http_client()`; keeps the status and the start of the body |
+| `emit` | Fires another event | `type` (`custom.*`), `data` | Depth + 1 |
+| `notify` | A desktop notification | `title`, `body`, `urgency` | `notify-send` (a requirement) |
+| `ai` | Runs an AI agent | see [Phase 14](#phase-14-local-ai) | |
+
+An external AI agent (any CLI agent run headless, with udl's MCP server configured) is a `script` action;
+`docs/automations.md` gets an example.
+
+### The bus, the runner and the runtime (9.6–9.9)
+
+- **Publishing:** an event is stored (its `(type, dedupe_key)` unique, so a duplicate is dropped there),
+  then matched against the enabled subscriptions, and a run is queued for each matched action.
+- **Runs:** `queued → running → succeeded | failed | cancelled`, with `awaiting_approval` from Phase 14.
+  At most `max_concurrent_runs` run at once and at most `max_concurrent` of one action. Retryable failures
+  (`NetworkError`, `RateLimited`, a timeout when the action says so) are tried again `retries` times.
+- **Loops:** an action's own events (an email it sends, a Slack message it posts, an `emit`) carry
+  `caused_by` and `depth + 1`; past `max_event_depth` they are stored but not dispatched. Integrations
+  recognise what udl sent (12.6, 13.5), so subscriptions can say `not sent_by_udl`.
+- **The runtime** (`AutomationRuntime`) runs in `udl serve`, in the API's lifespan beside the service,
+  unless `[automations] enabled = false`. It takes the `automations` lease (renewed every 10 s, 30 s TTL)
+  before running anything; a second `udl serve` on the same database serves the API and UI and says (in
+  `get_status`) which udl runs the automations.
+- **Processes without the runtime** (a CLI run, `udl mcp` on stdio) publish events as `pending`, and the
+  runtime dispatches pending events on start and every 2 s. A run asked for directly (`run_action`,
+  `try_prompt`) runs in the process that asked, as downloads do; runs caused by events run in the runtime.
+- **Recovery:** runs left `running` by a runtime that lost its lease, or by a udl that stopped (Phase 3's
+  `InstanceLock`, as for downloads), become `failed: interrupted`; pending events are dispatched again
+  (runs are keyed by event, action and dispatch, so this queues nothing twice; a replay is a new dispatch).
+- **Retention:** events and ended runs older than `event_retention_days` are pruned hourly.
+
+---
+
+## Phase 10: Scheduler
+
+### Tests first
+- `CronExpression` (hypothesis, across DST changes in several timezones): next times are strictly after
+  `now`, in order, and match the expression in the schedule's wall-clock time; a time skipped by a
+  spring-forward runs once just after the gap; a time repeated by a fall-back runs once.
+- `every` intervals are anchored at their `start` (no drift); `at` fires once, then the schedule disables.
+- Misfires: with udl stopped over a due time, `skip` fires next at the next due time; `once` fires one late
+  run (`late: true`) if within `misfire_grace`.
+- Scheduler on a `FakeClock`: fires each due time exactly once (a crash between firing and saving
+  `next_run_at` is deduplicated); a schedule saved with an earlier time wakes the loop; jitter stays within
+  its bound.
+
+### Specs
+
+Told apart by their key, like tag chain steps:
 
 ```yaml
-site: example.com
-pattern: "^/watch/"          # optional, defaults to the whole site
-fetch: static                # static | browser (by default browser when a step needs it)
-headers: { Referer: "{url}" }
-steps:                       # or the shorthand: "iframe#player@src >> video source[type='video/mp4']@src | best"
-  - select: "iframe#player"
-    attr: src
-  - follow: true             # (written out by the model; implied before a select)
-  - select: "video > source[type='video/mp4']"
-    attr: src
-    pick: best               # first | all | best
-handoff: http                # optional: http | yt-dlp (by default by the media's kind)
-priority: 0                  # optional
-requires_auth: false         # optional
+cron: "0 8 * * 1-5"          # minute hour day month weekday, in the schedule's timezone
+every: 15m                   # from `start` (default: when it was saved)
+at: 2026-11-01T09:00         # once
 ```
 
-| Step | Does | Mode |
-|---|---|---|
-| `select` + `attr` / `text` | CSS select, extract attribute or text | both |
-| `follow` | Fetch the extracted URL and continue on that document | both |
-| `regex` | Apply a regex (group 1) to the current values | both |
-| `json` | Parse JSON (e.g. `<script type="application/json">`) and take a dotted path (`*`: every item) | both |
-| `wait_for` | Wait for a selector | browser |
-| `click` | Click an element (e.g. a play button) | browser |
-| `network` | Capture request URLs matching a regex instead of reading the DOM | browser |
+```python
+class Schedule(Record):
+    name: str
+    spec: CronSpec | EverySpec | AtSpec
+    timezone: str | None = None        # IANA name; None = [automations] timezone, else the system's
+    data: JsonObject = {}              # passed on in the event
+    misfire: Misfire = Misfire.SKIP    # skip | once
+    misfire_grace: timedelta = timedelta(hours=1)
+    jitter: timedelta = timedelta(0)
+    enabled: bool = True
+    next_run_at: datetime | None
+    last_run_at: datetime | None
+```
 
-Steps are a Pydantic **discriminated union** told apart by their key (`Discriminator(callable)` over
-`Annotated[SelectStep, Tag("select")] | …`).
-
-### Suggest & wizard
-- `suggest_chain(url)` renders the page (static first, browser if nothing is found) and collects candidates:
-  media tags, iframes, media links, `og:video`, JSON-LD, manifest URLs and network-captured media. For each it
-  generates a stable selector (id → `data-*` → class chain) and a preview (URL, content type, size via
-  `HEAD`), ranked by type and size.
-- `udl chain wizard <url>`: numbered table → pick → test → save to DB (optionally export YAML).
-- When every tool fails, the error includes the top suggestions and the exact `udl chain set …` command to run.
-
-### Decisions made while building Phase 5
-
-- **Steps are told apart by their key**, not a `type` field (`{"select": "video", "attr": "src"}`), with a
-  callable `Discriminator` whose error lists the step kinds, so chain files read naturally and dump as they
-  are written. `json` is the alias of `JsonStep.path` (a field called `json` would shadow `BaseModel.json`).
-  `select` takes `attr` or `text: true`, never both; selectors are checked with Lexbor, regexes compiled.
-- **One form per chain:** a step that reads the document (select, wait_for, click, network) right after one
-  that found values follows them, and the model writes that `follow` out. So `follow` is only written in the
-  shorthand before a regex or json step (to read the opened document's text), the shorthand never writes an
-  implied follow, and reading what `format_steps()` wrote gives the same chain (hypothesis, 5000 examples, and
-  through YAML too). A follow needs a URL before it; the last step must find the media's URLs. Without
-  `fetch`, a chain with browser-only steps is a browser chain; `fetch: static` with them is refused. A whole
-  chain, or its steps, can be given as the shorthand (`ChainInput` says "string or chain" in the JSON schema
-  the API and MCP publish). Shorthand errors give the step and the character.
-- **A chain is an option of the downloader that follows it** (`chain` in `ScraperOptions` and
-  `BrowserOptions`): `Strategy.chain` is its own JSON column (schema version 2, the first real migration),
-  carried on `Candidate.chain` (part of its key) and given by `Toolbox.get(…, chain=)`. So probing, testing
-  and downloading with a chain go through the downloaders' usual interface. The scraper refuses browser
-  chains; the browser follows static ones too (on the rendered page). `FetchMode.tool` names the downloader.
-  A probe winner is never counted on a chain strategy, `set_site_strategy` leaves chains alone, and
-  `DBManager`'s merge keeps a chain apart from a plain strategy for the same tool.
-- **Running a chain** (`udl.chains.executor`) goes through a `Reader` of `Document`s, so one executor serves
-  both: the scraper's reads pages over HTTP (with the chain's headers, `{url}` being the page, and the site's
-  cookies); the browser's opens each document in a tab of its own (so a follow of several URLs keeps every
-  page), records the requests each makes (with their Referer), reads a document served as text (an API's
-  JSON) as it was served, and waits up to the browser's `timeout` for `wait_for`, `click` and `network`.
-  Picks apply per document (select, network) or per value (regex, json): `best` keeps the value that names
-  the highest resolution (`res`/`label`/`size`/`quality`/`height`/`title` attributes or their `data-` forms,
-  or `720p` in the value), else the first. A follow opens at most ten URLs and skips one that is not found
-  when another opens (any other failure is the run's). The last step's values become URLs relative to their
-  document's `<base>`, with JSON's `\/` and `\uXXXX` and HTML's entities undone; a value with whitespace is
-  not a URL. A step that finds nothing is `ExtractionFailed`, naming the step, the pages it read and the
-  `udl chain test` command; a trace records each step's finds as it runs. The finds are handed off as the
-  chain says (its handoff tool, its headers over the find's Referer); a last step that keeps `all` downloads
-  every find (`Downloader.hand_off_all`, which skips a find that fails for its own media).
-- **Suggesting** (`udl.chains.suggest`): the scraper fetches the page and its iframes' pages, the browser
-  renders it (its frames too) and reports the media it requested; `suggest()` finds media tags and their
-  sources, og:video/og:audio (not a player's page), media URLs in JSON scripts (by their dotted path), media
-  links, absolute media URLs in scripts (a regex by the media's kind), media through an iframe and requested
-  media (a network step by its kind). Selectors find their element first: its id, a `data-` attribute or its
-  classes (ids and classes with four or more digits in a row look generated, and are skipped), then inside an
-  ancestor that has one, then its type, then `:nth-of-type` (a `<source>` is selected in its media element).
-  Lexbor's `==` compares markup, so identity is `mem_id`. Every suggested chain is run on the pages it came
-  from (`FetchedPages`), so a suggestion's media is what its chain finds, and each chain is suggested once.
-- **Previews go through the http downloader's probe** rather than raw HEADs, so they honour `[tools.http]`
-  and the tests' fakes; a stream playlist (which http leaves to yt-dlp) stays "unknown". Ranking: media that
-  answered as media, then unknown, then not; video and streams before audio; the largest; then by how it was
-  found (tags, meta, JSON, links, scripts, network).
-- **Operations:** `suggest_chain` and `test_chain` report a page that cannot be read (or a chain that finds
-  nothing) in their response, as `probe_url` does, and retry with the site's cookies when it wants a login.
-  `set_site_chain` saves a manual strategy (one chain per site and pattern: saving again replaces it, keeping
-  its counts when the chain is unchanged). `import_chains` checks every chain before saving any; imported
-  chains have source `import`, so they heal like learned strategies (as Phase 3 decided), except that an
-  unchanged chain imported again keeps its source (an exported manual chain stays manual). `export_chain` is
-  a 404 for a site without chains.
-- **CLI:** `udl chain suggest | test | set | import | export | wizard`. A chain's other fields are options
-  (`--browser`, `--handoff`, `-H 'Name: value'`). `suggest` exits with 1 when there are none, `test` when the
-  chain leads to no media. `import` with no files reads `~/.config/udl/sites/*.yaml` (and `*.yml`; `-` is
-  stdin), a file at a time (one with a problem stops the import, naming the file); `export` prints the file,
-  or writes `-o FILE`. The wizard runs each step on its own service (no prompt blocks the event loop), takes
-  a number or a chain written out (a browser chain when the page needed the browser), loops until a chain
-  works and is saved, and can write the site's chain file where `import` finds it.
-- **The hint when every tool fails** asks the scraper for the page's likeliest three chains and gives each as
-  the `udl chain set <site> '<chain>'` command (`command_arguments()` adds `--browser`/`--handoff`/`-H`), then
-  the wizard (and `test_chain`/`set_site_chain` for an agent); without suggestions it points at the wizard
-  and `suggest_chain`. A login, a rate limit or a network problem keeps its own error. The CLI indents every
-  line of a multi-line hint.
-- **YAML is PyYAML** (`types-pyyaml` for pyright). Non-ASCII text is escaped when written: PyYAML writes
-  U+0085 as it is and reads it back as a line break.
-- **Fixture site:** `json.html` (a relative video URL in JSON, which yt-dlp, gallery-dl and the scraper all
-  miss) and `click.html` (its video is made, and loads, when Play is clicked).
+- The cron parser is a library (`cronsim` or `croniter`, whichever is maintained when 10.1 starts) behind
+  `CronExpression`, so it can be swapped. Timezones are `zoneinfo`.
+- **One loop**, not a job per schedule: it sleeps until the earliest `next_run_at` (or a change), fires
+  `schedule.fired` with the dedupe key `schedule:<id>:<scheduled_for>`, then saves the next time. Not
+  APScheduler: schedules are records like everything else, and the loop is a few lines on the `Clock`.
+- **One command for a cron job:** `set_schedule(…, actions=[…])` keeps a linked subscription
+  (`schedule:<name>`, on `schedule.fired` where `schedule == "<name>"`), so
+  `udl schedules set digest --cron "0 8 * * 1-5" --action morning-digest` is all it takes. The subscription
+  is shown, and deleted with the schedule.
+- `preview_schedule` gives the next N times of a spec without saving it (the UI's cron editor calls it as
+  you type).
+- This also covers the old plan's "scheduled downloads": a schedule with an `operation` action calling
+  `download`.
 
 ---
 
-## Phase 6: Site behaviour plugins
+## Phase 11: Integrations & accounts
 
 ### Tests first
-- Site plugin contract suite: all hooks are optional (the base class is a valid no-op plugin), `matches` is
-  consistent with `domains`, and `transform_urls` never returns an empty list.
-- Resolver integration: a plugin's `strategy()` beats a stored DB strategy; request args beat the plugin;
-  `post_process` sees the final file paths.
+- Integration contract suite, parametrised over every integration (`fake`, `gmail`, `slack`, each against
+  its fake server): its event types' examples validate; every operation has hints and documented fields;
+  connecting gives an identity; `watch()` emits only its own event types, stops promptly when cancelled,
+  and resumes from its saved state without repeating events.
+- Accounts: names are unique per integration; `gmail:work` and `gmail:personal` hold separate credentials;
+  an expired token is refreshed once, a refused refresh marks the account `needs_reauth` and publishes
+  `udl.account.needs_reauth`; disconnecting revokes, deletes the secret and stops the watcher.
+- Integration operations: `account` is required while two accounts are connected, optional with one, and an
+  unknown account is a 404 naming the connected ones. A fan-out operation with `account: "*"` runs on
+  every connected account at once and merges the results, each tagged with its account; an account that
+  fails (e.g. `needs_reauth`) is listed under `failures` while the others' results still come back; an
+  operation that writes refuses more than one account.
+- Watchers: one per account that an enabled subscription could match (none for an account nothing
+  subscribes to); a failing watcher restarts with backoff (1 s, doubling, at most 5 min); its state is saved
+  after each batch it emits.
 
 ### Interface
 
 ```python
-class SitePlugin:                                                     # every hook optional: the base does nothing
-    name: ClassVar[str]
-    domains: ClassVar[tuple[str, ...]] = ()                           # hosts, e.g. "youtube.com" (checked)
-    priority: ClassVar[int] = 0                                       # lower is asked first
-    requires: ClassVar[tuple[Requirement, ...]] = ()                  # e.g. a program post_process runs
-    def matches(self, url: URL) -> bool: ...                          # default: url's host is on domains
-    async def transform_urls(self, url: URL) -> list[URL]: ...        # expand lists, normalise short/mobile links
-    def strategy(self, url: URL) -> Strategy | None: ...              # force tool / options / chain
-    async def prepare(self, ctx: DownloadContext) -> DownloadContext: ...  # headers, cookies
-    def output_dir(self, url: URL) -> Path | None: ...
-    async def post_process(self, result: DownloadResult) -> DownloadResult: ...  # rename / move / tag
+class Integration[S: IntegrationSettings, A: AccountOptions]:
+    name: ClassVar[str]                                    # "gmail"
+    title: ClassVar[str]                                   # "Gmail"
+    requires: ClassVar[tuple[Requirement, ...]] = ()
+    settings_model: ClassVar[type[IntegrationSettings]]    # [integrations.<name>] + its PluginSettings
+    account_model: ClassVar[type[AccountOptions]]          # per account, e.g. the labels to watch
+    connect: ClassVar[tuple[ConnectMethod, ...]]           # OAUTH, TOKENS, or NONE (a source that needs no login)
+    event_types: ClassVar[tuple[EventType[Any], ...]]
+    source_filter_model: ClassVar[type[BaseModel] | None] = None
+    state_model: ClassVar[type[BaseModel] | None] = None   # its watcher's cursor
+    ui: ClassVar[UIBundle | None] = None                   # its UI plugin (15.7)
+
+    def __init__(self, settings: S, *, http: HttpClientFactory, clock: Clock) -> None: ...
+    def oauth_request(self, access: set[str]) -> OAuthRequest: ...            # provider, scopes, extra params
+    async def identify(self, credentials: Credentials) -> AccountIdentity: ...  # who this login is
+    async def check(self, account: AccountHandle[A]) -> AccountHealth: ...
+    async def watch(self, account: AccountHandle[A], events: EventSink, state: StateStore) -> None: ...
+    async def source_filter_matches(self, account: AccountHandle[A], event: Event, source_filter: BaseModel) -> bool: ...
+
+    @integration_operation("send_message", hints=OperationHints(open_world=True))
+    async def send_message(self, account: AccountHandle[A], request: SendMessage) -> SentMessage: ...
 ```
 
-**Precedence (highest first):** explicit request args → site plugin → stored strategy (DB) → probe. Plugins
-encode deliberate behaviour; the DB holds learned behaviour.
+```python
+class Account(Record):
+    integration: str                   # "gmail"
+    name: str                          # the user's name for it ("work"); unique per integration
+    identity: AccountIdentity          # e.g. the address, or the Slack team and user
+    access: list[str]                  # what it was connected for: ["read", "send"]
+    options: JsonObject                # validated by the integration's account_model
+    status: AccountStatus              # connected | needs_reauth | disabled | error
+    secret_ref: SecretRef
+    last_error: ErrorInfo | None
+```
 
-**When to use which:** use a strategy or tag chain (data) for *how to find the file*. Use a site plugin (code)
-for *behaviour*: auth flows, URL rewriting, per-site folders, post-processing, API-based extraction.
+An integration operation's request model gets an `account` field put in front (`GmailSendMessageRequest`),
+and its name the integration's prefix (`gmail_send_message`).
 
-### Decisions made while building Phase 6
+**Several accounts at once:** a read-only operation that lists things (`gmail_list_messages`,
+`slack_search_messages`, …) is marked `fan_out`, and its response is `items` (each with its `account`) plus
+`failures`. Its `account` then also takes a list or `"*"`: udl runs it on each account concurrently and
+merges the items, so an agent using udl's MCP server searches every inbox in one call. The response has
+the same type for one account or many.
 
-- **`SitePlugin` is a plain class, not an ABC**: every hook is optional, so the base class is a plugin
-  that does nothing (and an ABC without abstract methods is what ruff's B024 flags). `domains` are hosts,
-  checked when the class is made (a `PluginError`, so a local file with a bad one is one of the registry's
-  problems). By default a plugin matches its domains and their subdomains, by host rather than site key,
-  so a plugin can take a single subdomain (`music.example.com`); it may match fewer URLs, never others
-  (the contract suite checks lookalike hosts).
-- **The sketch's signatures changed:** `transform_urls` and `prepare` are async (expanding a list or
-  fetching a token needs the network). `output_dir(url)` has no `MediaMeta`: candidates are tried by
-  downloading (Phase 3), so nothing is known about the media before a download, and placing files by
-  their metadata is `post_process`'s job. Site plugins declare `requires` like downloaders. There is no
-  `[sites.<name>]` options table yet.
-- **`udl.core.sites` documents where each hook comes in** and `SiteHooks` is how the engine calls them:
-  1. `transform_urls` in `UDLService.download`, before any job: each URL it gives is a job of its own
-     (deduplicated, with its own site plugin, not transformed again);
-  2. `output_dir` after the request's;
-  3. `strategy` as the first candidate after the request's tool (never remembered);
-  4. `prepare` before every try, whichever downloader makes it (the request's tool too);
-  5. `post_process` once a download has worked and been remembered.
+### Connecting (11.3)
 
-  A hook that only advises (`matches`, `transform_urls`, `strategy`, `output_dir`) and fails, or gives the
-  wrong type, is logged and udl goes on as if the plugin had nothing to say; a `transform_urls` that fails
-  or gives no URLs downloads the URL as it was given. `prepare` and `post_process` take part in the
-  download: a `UDLError` they raise on purpose is the download's (a `prepare` that raises `AuthRequired`
-  is tried again with the site's cookies, which it then sees), and anything else is `PluginFailed` (a new
-  error code, `plugin_failed`) naming the plugin, which stops the executor (every other try would fail
-  the same way).
-- **`prepare` gives only headers and cookies:** what is downloaded and where stay udl's, and the request's
-  filename template beats anything a plugin could set. **`post_process`** may move files anywhere (a plugin
-  is code the user installed), but they must exist, as absolute paths, and are measured again. When it
-  fails the job fails, though the download's success has already been counted for its strategy.
-- **Which plugins:** `UDLService` uses an instance of each registered site plugin (`load_site_plugins`),
-  ordered by `priority`, then by name; one missing a requirement, or that cannot start, is left out with
-  a warning. A local plugin named like a built-in one replaces it, even when it cannot run itself. The
-  `Resolver` takes `SitePlugin`s (Phase 3's `SiteBehaviour` protocol is gone), and `FakeSitePlugin`
-  (tests/support/sites.py, `fake_site()`) is a real, scripted `SitePlugin` that passes the contract suite.
-  `probe_url`, `suggest_chain` and `test_chain` do not use site plugins.
-- **`youtube`**, the example built-in plugin, turns a video's links (youtu.be, shorts, live, embeds,
-  youtube-nocookie.com, the mobile site, share and tracking parameters) into its watch URL, keeping the
-  playlist it was linked from, so a video is downloaded once however it was linked; channels, playlists
-  and YouTube Music are left as they are. Its strategy is yt-dlp for all of YouTube. A learned yt-dlp
-  strategy with no options is the same candidate, so it is no longer offered (or counted) after it.
-- **Local plugins needed no new code**: Phase 1's registry already imports every `*.py` in `plugin_dirs`;
-  the `udl.sites` kind makes their `SitePlugin`s count. An end-to-end test drops a plugin file into
-  `~/.config/udl/plugins` and downloads from the fixture site with it.
-- **`plugins list`:** `Requirement` moved to `udl.plugins.requirements`; database plugins declare
-  `requires` too (sqlite: aiosqlite; postgres will need its driver), so `available` is a bool for every
-  plugin. Site plugins list their domains, a plugin that replaced another says which (`overrides`, kept by
-  the registry), and the list says where local plugins are read from. The CLI shows each plugin's type
-  (database, downloader, site).
+| From | OAuth (Gmail) | Tokens (Slack) |
+|---|---|---|
+| CLI | `udl accounts add gmail work --access read,send` opens the browser at Google; a loopback listener catches the redirect; prints the account | `udl accounts add slack acme` asks for the tokens (hidden), or reads them from stdin |
+| API / UI | `POST /accounts` gives `{connection, authorization_url}`; Google redirects to `/accounts/callback` on the udl server; `GET /accounts/{account}` shows it connected | `POST /accounts` with the tokens (secret fields) |
+| MCP | `connect_account` gives the URL for the user to open (over stdio, a loopback listener in the `udl mcp` process); the agent follows up with `get_account` | Tokens as secret arguments (allowed; the CLI is the safer place) |
+
+An integration that connects with `none` (a source that needs no login, such as a watched web page later
+on) is added with its options only: `udl accounts add <integration> <name> -O KEY=VALUE`.
+
+Google allows loopback redirects for Desktop OAuth clients, so the UI's flow works when the browser runs on
+udl's machine. Serving the UI to other machines needs a Web OAuth client with the server's HTTPS callback
+registered (documented in 18.4).
 
 ---
 
-## Phase 7: Hardening & docs
+## Phase 12: Gmail plugin
 
-### Decisions made while building Phase 7
+### Tests first
+- Against the fake Google servers: connecting (scopes by access, `login_hint`, PKCE); a new message in a
+  watched label fires `gmail.message.received` once, even when two polls see it; an expired history id is
+  recovered by listing since the last message seen, firing only what was missed; messages in spam, trash,
+  sent or drafts never fire.
+- Event data: HTML-only mail gets a text body; attachments are listed, not downloaded; a message udl sent
+  (its `X-UDL-Run` header) has `sent_by_udl` and its run's causation.
+- Operations: send / reply build correct MIME (threading headers, attachments); an attachment outside
+  `attachment_roots` is refused for the API and MCP; `401` refreshes once, then `needs_reauth`; `429` and
+  `rateLimitExceeded` are `RateLimited` with the wait Google asks for.
 
-- **Database servers in the tests:** `tests/support/servers.py` starts a throwaway Docker container
-  (`postgres:18-alpine`, `mongo:8`) the first time a test needs a server, for the rest of the run, and each
-  test gets a new, empty database, dropped afterwards (the `postgres_url` and `mongodb_url` fixtures).
-  `UDL_TEST_POSTGRES_URL` / `UDL_TEST_MONGODB_URL` name a server instead; with neither, those tests skip.
-  The contract suite's `CONNECTIONS` give each plugin's URL from the test's request, so only the plugins
-  that need a server ask for one. The dev group installs every extra.
-- **`postgres` (7.1)** is the SQLAlchemy base with PostgreSQL URLs (whichever driver a URL names, async
-  psycopg; libpq's `postgres://` too) and psycopg as its requirement. A shared server showed two races
-  SQLite's one writer never hits, each now tested deterministically (a session waiting on a lock, seen in
-  `pg_stat_activity`):
-  1. udls connecting to a new database at once each created its tables. `SQLAlchemyDatabase._lock_schema()`
-     is a hook run first in the migration's transaction, and PostgreSQL's takes an advisory lock;
-  2. two writers storing the same new site: the second insert failed. A savepoint around the insert, then
-     the other writer's site is updated.
-- **`mongodb` (7.2)** uses pymongo's own async client (motor is deprecated). A record is its model's JSON
-  form, with its id (as text) for `_id`, in `sites` (unique `key`), `strategies` and `downloads`; times
-  are written in UTC at a fixed width (`isoformat(timespec="microseconds")`), because BSON dates keep
-  milliseconds and Pydantic's JSON leaves zero microseconds out, so it does not sort as text. A new
-  contract test (downloads a microsecond apart, across timezones) catches a plugin that sorts times
-  wrongly. `record_outcome` is one `$inc` update; `upsert_site` updates, else inserts, and on a
-  duplicate key updates the other writer's. The `schema_version` collection is stamped with
-  `$setOnInsert` (version 1, no migrations yet) and a newer version is refused. There are no
-  transactions (they need a replica set), so `delete_site` removes the strategies, then the site.
-- **Optional drivers:** both plugins' modules load without their driver (SQLAlchemy imports psycopg when
-  it makes the engine, `mongodb.py` imports pymongo where it uses it), so `plugins list` says what to
-  install instead of listing a broken plugin. Both give up on an unreachable server after
-  `connect_timeout` (10 s) unless their URL sets one (`connect_timeout`, `serverSelectionTimeoutMS`):
-  libpq waits as long as the system does and pymongo 30 s, and a secondary that is down would hold up
-  every udl command.
-- **`db sync` (7.3)** is the `sync_databases` operation (`udl db sync --from a --to b [--to c]
-  [--dry-run]`, `POST /databases/sync`, the `sync_databases` MCP tool, destructive and idempotent), built
-  on `udl.db.sync.sync()`. It copies one way, the source being taken to be right: what a target lacks is
-  added, what it has differently (a site with the same key, a strategy or download with the same id) is
-  replaced by the source's copy (a site keeps the target's id and times, which are not compared), and
-  nothing is deleted, so a second sync changes nothing. "Newest wins" was the alternative, but strategies
-  have no time of change (outcomes change them all the time), so it could only be half true. Only
-  downloads that have ended are copied, so a copy taken while one ran never replaces how it ended. They
-  are read a page at a time, newest first, so ones that start meanwhile push the rest back and are never
-  skipped (a repeat is recognised by its id). A read-only target is `NotAllowed` (403; `NotAllowed` now
-  means anything not allowed, not only the servers' rules), an unknown connection `DoesNotExist` and one
-  that did not connect a `DatabaseError`; naming the source as a target, or a target twice, is invalid
-  (exit 2, 422).
-- **Smoke tests (7.4)** are `tests/smoke/test_real_sites.py` (`make smoke`, i.e. `pytest -m network`):
-  a direct file (python.org), a YouTube share link (through the youtube plugin to yt-dlp), a Wikimedia
-  Commons image (gallery-dl), a page with a `<video>` (w3schools, with the scraper and the browser) and a
-  new site probed, downloaded and remembered. They found two bugs:
-  1. The http and scraper downloaders (and gallery-dl's probe on its command line) sent httpx's
-     User-Agent, which w3schools and Wikimedia refuse. udl's own requests now send a browser's
-     (`USER_AGENT`, as yt-dlp and gallery-dl do), unless the download has its own (e.g. the browser's
-     handoff); `[tools.http]` and `[tools.scraper]` take a `user_agent`, and `http_client()` sends it too.
-  2. gallery-dl reports a file once per version of a Wikimedia image, so a download listed it (and
-     counted its size) four times. `Downloader.download()` now lists each file once.
-- **The security review (7.6)** fixed:
-  - a `DatabaseError`'s message (which API clients get) held SQLAlchemy's statement and its values; it
-    now has the driver's message only, and the rest goes to the debug log;
-  - curl and wget got the request's headers on their command line, which every user can read (a site
-    plugin's header can be a token). They now go in files in the request's private temp dir, as cookies
-    did, and a header with a line break is refused;
-  - a new SQLite database (and the folder made for it) was readable by everyone: now `0600` / `0700`
-    (SQLite gives its journals the database's mode). Existing files keep theirs: the owner may share them;
-  - a downloader's file reported through `..` passed the check that files stay in the output dir: paths
-    are normalised first (lexically, so a link inside the output dir to another disk still works);
-  - a browser profile others can get into (it holds the user's logins) is warned about, with the `chmod`.
+### Setup (documented in 18.4)
 
-  It confirmed, adding regression tests where there were none: the API answers only JSON bodies and grants
-  no cross-origin access, so a page in a browser cannot start downloads on a local udl (on top of the Host
-  check and the API key); output dirs are resolved before the allowed-roots check; filename templates
-  stay relative; request URLs are http(s) only; chain files are read with `yaml.safe_load_all`; cookie
-  values are `SecretStr`; temp dirs are the owner's; Chromium makes a new profile `0700` (its Cookies
-  `0600`). Left as they are, and documented in the README: anyone who can use the API can make udl fetch
-  any URL from its machine (that is what it is for); a regex pattern from an API client could be slow to
-  match (such a client already controls udl); plugin files are code the user installs.
-- **Docs (7.5):** the README covers installing, downloading, how udl picks a downloader, sites, logins,
-  tag chains, databases, plugins, the API, the MCP server, the configuration, security and development.
-  `docs/plugins.md` is the authoring guide for all three kinds; its example plugins were checked
-  (`pyright --strict`, loaded from a plugin dir, every hook run).
+1. A Google Cloud project with the Gmail API enabled and an OAuth consent screen (External).
+2. An OAuth client of type **Desktop app**; its id and secret go in `[integrations.gmail]`, or are pasted
+   into the Gmail UI plugin's setup (stored as `PluginSettings`, the secret in the secret store). A Desktop
+   client's secret is not confidential (Google says so), but udl keeps it with the other secrets.
+3. **Publish the consent screen** ("In production"; unverified is fine for personal use, with Google's
+   warning screen). While it is in "Testing", refresh tokens expire after 7 days and every account has to
+   be connected again each week. Check this against Google's docs when 12.2 starts.
+
+| Access | Scope | Allows |
+|---|---|---|
+| `read` | `gmail.readonly` | reading mail, watching for new mail |
+| `send` | `gmail.send` | sending and replying |
+| `drafts` | `gmail.compose` | drafts |
+| `organise` | `gmail.modify` | labels, read / unread, archive |
+
+### Watching (12.4)
+
+- On connecting, the cursor is the mailbox's current `historyId` (`users.getProfile`), so old mail never
+  fires. Every `poll_interval` (default 60 s, at least 15 s), `users.history.list` with
+  `historyTypes=messageAdded` from the cursor; each added message in `watch_labels` (default `["INBOX"]`) is
+  fetched (`messages.get`) and becomes an event, deduplicated by `<account id>:<message id>`.
+- A history id Google no longer knows (a 404, after about a week offline) falls back to `messages.list`
+  with `after:<last message seen>`, firing what was missed.
+- Polling is a default, not a limit: Gmail's push notifications need a Google Cloud Pub/Sub topic (out of
+  scope; see the end), while polling works on any machine behind NAT, and history calls are cheap in quota.
+
+`gmail.message.received` data (`GmailMessage`): account (name, address), id, thread_id, message_id (the
+RFC 822 one), from / to / cc / reply_to (name, address), subject, date, snippet, labels, body_text (the
+text part, else the HTML as text via `selectolax`, at most 256 KiB), has_attachments, attachments (name,
+type, size, id), list_id (mailing lists and newsletters), in_reply_to, sent_by_udl.
+
+### Source filter (12.5)
+
+`{"query": "from:bank.com has:attachment"}`: Gmail's own search syntax, checked by asking Gmail
+(`messages.list` with `q="(<query>) rfc822msgid:<id>"`, one result at most), after the generic filter
+passed, cached per message and query.
+
+### Operations (12.6)
+
+| MCP tool | CLI | Access | Hints |
+|---|---|---|---|
+| `gmail_list_messages` | `udl gmail list [--query Q] [--max N]` | read | read-only |
+| `gmail_get_message` | `udl gmail show <id>` | read | read-only |
+| `gmail_get_thread` | `udl gmail thread <id>` | read | read-only |
+| `gmail_send_message` | `udl gmail send --to … --subject … [--body-file F] [--html] [--attach F…]` | send | open-world |
+| `gmail_reply` | `udl gmail reply <id> [--all] --body …` | send | open-world |
+| `gmail_create_draft` | `udl gmail draft --to … --subject …` | drafts | |
+| `gmail_modify_message` | `udl gmail modify <id> [--add-label L] [--remove-label L] [--read \| --unread] [--archive]` | organise | idempotent |
+| `gmail_list_labels` | `udl gmail labels` | read | read-only |
+| `gmail_save_attachments` | `udl gmail attachments <id> [-o DIR]` | read | (writes into udl's download dir) |
+
+- `gmail_list_messages` fans out: `udl gmail list --account '*' --query 'from:bank.com'` searches every
+  connected inbox.
+- MIME is built with the standard library's `email` package; replies set `In-Reply-To`, `References` and the
+  thread. Everything udl sends from a run carries an `X-UDL-Run: <run id>` header.
+- Attachments to send are files on udl's machine: from the API and MCP they must be under
+  `[integrations.gmail] attachment_roots` (a file-only setting, default the download dir), so an API
+  client or an AI cannot mail out `~/.ssh`.
+- Saved attachments go to `download_dir/gmail/<account>/` (or `-o`), named safely, as downloads are.
+
+---
+
+## Phase 13: Slack plugin
+
+### Tests first
+- Against the fake Slack: tokens are checked with `auth.test` and give the team and user; a missing scope
+  is named in the error.
+- Socket Mode: every envelope is acknowledged within Slack's 3 s; a `disconnect` (Slack refreshing the
+  connection) reconnects without losing events; a dropped socket reconnects with backoff; an envelope Slack
+  sends again (same `event_id`) fires once.
+- Events: a message in a channel, a private channel, a DM and a group DM each fire `slack.message.posted`
+  with the right `channel.kind`; edits, joins and bot echoes don't; a message udl posted (its channel and
+  `ts` recorded when sent) has `sent_by_udl`; `mentions_me` is set when the account's user is mentioned.
+- Web API: cursor pagination; `ratelimited` waits for `Retry-After`; `invalid_auth` / `token_revoked` mark
+  the account `needs_reauth`.
+
+### Setup
+
+1. `udl slack manifest` (`slack_app_manifest`) prints an app manifest: Socket Mode on, the user scopes
+   below, and user event subscriptions (`message.channels`, `message.groups`, `message.im`,
+   `message.mpim`, `reaction_added`).
+2. Create the app from that manifest at api.slack.com, install it to the workspace, and create an
+   app-level token with `connections:write`.
+3. `udl accounts add slack acme` with the user token (`xoxp-`, to read and send as yourself), the app-level
+   token (`xapp-`, for events) and, optionally, the bot token (`xoxb-`, to send as the app). Each workspace
+   is an account; several are fine.
+
+User scopes: `channels:history`, `groups:history`, `im:history`, `mpim:history`, `channels:read`,
+`groups:read`, `im:read`, `mpim:read`, `users:read`, `chat:write`, `reactions:read`, `reactions:write`,
+`files:read`, `search:read`.
+
+Slack accounts connect with tokens rather than OAuth: Slack's OAuth needs an HTTPS redirect URL, which a
+local udl doesn't have, and the user's own app is what a personal tool wants anyway.
+
+### Events
+
+| Event type | When | Data |
+|---|---|---|
+| `slack.message.posted` | A new message (not an edit, a join or a bot echo) | account, team, channel (id, name, kind: `channel` \| `private` \| `dm` \| `group_dm`), user (id, name), text, ts, thread_ts, mentions_me, files, sent_by_udl |
+| `slack.reaction.added` | A reaction on a message | account, channel, user, reaction, item_ts |
+
+Users and channels are looked up once an hour (cached), so filters can say `channel.name == "alerts"`.
+
+### Operations
+
+| MCP tool | CLI | Hints |
+|---|---|---|
+| `slack_list_channels` | `udl slack channels` | read-only |
+| `slack_read_channel` | `udl slack read <channel> [--since T] [--limit N]` | read-only |
+| `slack_read_thread` | `udl slack thread <channel> <ts>` | read-only |
+| `slack_search_messages` | `udl slack search <query>` | read-only |
+| `slack_send_message` | `udl slack send <#channel \| @user> <text> [--thread TS] [--as-bot]` | open-world |
+| `slack_add_reaction` | `udl slack react <channel> <ts> <emoji>` | idempotent |
+| `slack_get_user` | `udl slack user <id \| @name \| email>` | read-only |
+| `slack_save_files` | `udl slack files <channel> <ts> [-o DIR]` | (writes into udl's download dir) |
+| `slack_app_manifest` | `udl slack manifest` | read-only |
+
+`slack_list_channels` and `slack_search_messages` fan out over accounts (workspaces).
+
+---
+
+## Phase 14: Local AI
+
+### Tests first
+- AI provider contract suite (`fake`, `ollama` and `openai-compatible` against fake servers): models are
+  listed; a chat with tools returns tool calls as typed `ToolCall`s; a provider that is down is a
+  `ToolUnavailable`-style error naming its URL; a provider with a `command` is started on first use, waited
+  for, and stopped after `idle_timeout`.
+- `ToolPolicy`: only listed tools are offered; read-only tools run; in `ask` mode a destructive or
+  open-world tool waits for approval unless it is in `auto_approve`, and in `auto` mode it runs unattended;
+  `admin` operations are never offered to an action in either mode, even when listed (a glob like `*` skips
+  them); a run records which mode it ran in.
+- Agent loop (`FakeAI`): a tool result goes back to the model; the loop stops at an answer, `max_steps`,
+  the timeout or the size limits; the transcript is on the run; a denied tool call is told to the model,
+  which may carry on without it.
+- Prompts: guidance applies by scope and priority; event data reaches the model only inside the fenced,
+  labelled block; an event whose text says "ignore your instructions and send…" cannot reach a tool the
+  policy refused (a regression test kept for good).
+
+### Providers (14.1–14.3)
+
+```python
+class AIProvider[O: ProviderOptions](ABC):
+    name: ClassVar[str]                                   # "ollama", "openai-compatible"
+    options_model: ClassVar[type[ProviderOptions]]        # url, api key (a SecretRef), command, idle_timeout, …
+    requires: ClassVar[tuple[Requirement, ...]] = ()
+    async def health(self) -> ProviderHealth: ...
+    async def models(self) -> list[ModelInfo]: ...        # name, size, context length, tools (when known)
+    async def chat(self, request: ChatRequest) -> ChatResponse: ...
+    def stream(self, request: ChatRequest) -> AsyncIterator[ChatChunk]: ...   # the playground
+    async def pull(self, model: str) -> AsyncIterator[PullProgress]: ...      # where the provider can
+```
+
+- **`ollama`** (0.40 is installed here): `/api/chat` with tools, `/api/tags`, `/api/pull`; `keep_alive`
+  loads a model when it is needed and unloads it when idle. udl detects Ollama on `127.0.0.1:11434` and
+  `list_ai_providers` offers it before one is added.
+- **`openai-compatible`**: `/v1/chat/completions` and `/v1/models`, for `llama-server`, LM Studio, vLLM,
+  LocalAI, or any remote endpoint that speaks it (its key in the secret store).
+- **"Spins up":** any provider may have a `command` (e.g. `llama-server -m ~/models/x.gguf --port 8081`):
+  udl starts it on first use, waits for its health check, and stops it after `idle_timeout`.
+- Providers are records (`AIProviderConnection`: name, plugin, options, default model, `max_concurrent`,
+  by default 1, since one GPU runs one model at a time), so they can be set up from the UI, the CLI and MCP.
+- **No default model:** models change faster than this plan. `udl ai models` lists what a provider has, and
+  each provider or action names one.
+- Over httpx, no vendor SDKs, like the integrations.
+
+### The agent (14.4–14.6)
+
+1. **Messages:** a system message made of the guidance that applies (everywhere, then the event type's, the
+   subscription's and the action's, by priority) and the prompt's `system`; a user message that is the
+   prompt's template rendered with the event, with the event's data in a fenced block labelled as
+   untrusted content to treat as data, not instructions.
+2. **Tools** are udl operations: their JSON Schemas come from the request models and their descriptions from
+   the operations' docstrings, already written for agents (MCP).
+3. **Each tool call** goes through the `ToolPolicy`, then `UDLService.call` (the same validation as every
+   interface); its result (truncated) goes back to the model.
+4. **It stops** at an answer, `max_steps` (default 8), the action's timeout, or the size limits. The answer
+   (text, or JSON matching the prompt's `output_schema`) is the run's output, so `udl.action.succeeded` can
+   feed another subscription.
+
+| Tool | `ask` mode (the default) | `auto` mode |
+|---|---|---|
+| Read-only (`gmail_get_message`, `slack_read_thread`, `list_downloads`…) | at once, when listed in `tools` | at once, when listed |
+| Destructive or open-world (`gmail_send_message`, `slack_send_message`, `download`…) | after approval, unless listed in `auto_approve` | at once, when listed: unattended |
+| `admin`: changes automations, accounts, AI setup or settings (`set_*` / `delete_*` of subscriptions, actions, schedules, prompts, guidance, providers; `connect_account`, `disconnect_account`, `set_plugin_settings`, `decide_run`) | never offered to an AI action | never offered to an AI action |
+
+`tools` takes names and globs (`gmail_*`, or `*` for every operation that isn't `admin`). **`auto` mode**
+is set per action, for actions meant to run unattended. Their `tools`, their subscriptions' filters and
+throttles, and `max_steps` are then all that stands between an event's content and those tools, so they
+should be narrow (see [Security model](#security-model)). `admin` operations stay out of every AI action's
+reach for now; a later AI chat, with the user there to confirm each call, is where they will be offered.
+
+**Approvals** (`ask` mode): the run waits as `awaiting_approval`, showing the tool call (name and arguments), and
+publishes `udl.action.awaiting_approval`, so a subscription can send you a Slack DM or a desktop
+notification about it. `decide_run` (CLI, API, MCP, the UI's inbox) approves or denies it, with an optional
+note for the model; after `[ai] approval_timeout` (default 24 h) it is denied.
+
+### Prompts and guidance (14.7)
+
+```python
+class Prompt(Record):
+    name: str                          # "summarise-email"
+    description: str = ""
+    system: str = ""                   # instructions for the model
+    template: str                      # the user message, a template over the event
+    output_schema: JsonObject | None = None   # ask for JSON of this shape
+
+class Guidance(Record):
+    name: str
+    applies_to: GuidanceScope          # everywhere | event types (globs) | subscriptions | actions
+    text: str                          # "Never reply to newsletters." "Our on-call channel is #ops."
+    priority: int = 0
+    enabled: bool = True
+```
+
+The `ai` action (14.8):
+
+```yaml
+name: summarise-bank-mail
+kind: ai
+options:
+  provider: local                      # an AI provider's name; default [ai] default_provider
+  model: "<one `udl ai models` lists>"
+  prompt: summarise-email              # a Prompt's name, or inline {system: …, template: …}
+  guidance: [money-rules]              # extra, besides the guidance that applies by scope
+  tools: [gmail_get_message, slack_send_message]
+  approval: ask                        # ask: tools with effects wait for approval | auto: unattended
+  auto_approve: []                     # (ask mode) tools that never wait
+  max_steps: 8
+timeout: 5m
+```
+
+---
+
+## Phase 15: Web UI foundations & UI plugins
+
+### Tests first
+- Serving (pytest): `/ui/` and any client route under it answer `index.html`; hashed assets are cached as
+  immutable and `index.html` is not; responses carry the CSP; a missing build answers the "build it" page;
+  API routes are unchanged; a UI plugin's files are served from its bundle dir and nothing outside it.
+- Sessions (pytest): with an `api_key`, the UI's API calls work with the session cookie; a write without the
+  CSRF header, or from another Origin, is refused; signing out ends the session; without an `api_key` on
+  localhost, no sign-in is needed (as the API today).
+- Manifests (pytest): invalid manifests, an unknown contribution point, an entry outside the bundle, or an
+  incompatible SDK range are listed as problems, not served.
+- Shell (Vitest): the theme store follows the system until a choice is made and persists it; the router
+  redirects to sign-in when the server asks; the live store reconnects with backoff and keeps a bounded
+  buffer.
+- Plugin host (Vitest + Playwright): a contribution mounts into its slot, gets prop updates, unmounts on
+  navigation; one that throws shows an error card and the shell carries on; its styles don't leak out of
+  its shadow root, and the shell's don't leak in.
+
+### The stack (15.1)
+
+| Concern | Choice |
+|---|---|
+| Build | Vite with `@vitejs/plugin-react-swc` |
+| Language | TypeScript, strict |
+| UI | React (19 when this was written) |
+| Styling | Tailwind CSS 4 (`@tailwindcss/vite`) + daisyUI 5: `@plugin "daisyui" { themes: light --default, dark --prefersdark; }` |
+| Icons | `lucide-react` (manifests name icons; the shell maps the names) |
+| Routing | TanStack Router, file-based routes (`@tanstack/router-plugin`) |
+| State | Zustand (vanilla stores, so UI plugins can share them) |
+| API | `openapi-typescript` + `openapi-fetch`, generated from udl's OpenAPI schema |
+| Unit tests | Vitest + Testing Library (jsdom), `@vitest/coverage-v8` |
+| E2E | `@playwright/test`, pinned to the Python Playwright's version |
+| Lint and format | Biome |
+| Packages | a pnpm workspace |
+
+Versions are whatever `pnpm add` gives when 15.1 starts (pinned by `pnpm-lock.yaml`), as `uv add` did.
+
+### Serving and signing in (15.3–15.4)
+
+- `udl serve` serves the built shell at **`/ui/`** (static files, falling back to `index.html` for client
+  routes). `/` redirects to `/ui/` when a browser asks for HTML. The API keeps its paths: they are
+  documented and scripts and MCP clients use them, while the UI needs only one prefix. UI plugins are at
+  `/ui/plugins/<name>/` from each plugin's bundle dir.
+- Headers on `/ui`: `Content-Security-Policy: default-src 'self'; connect-src 'self'; frame-ancestors
+  'none'` (styles are adopted stylesheets, so `style-src 'self'` should hold; 15.9 settles it),
+  `Referrer-Policy: same-origin`, `X-Content-Type-Options: nosniff`.
+- The build (`src/udl/interfaces/web/dist/`, and each built-in UI plugin's `ui/`) is package data, built by
+  `make web` and not committed. Without it, `/ui/` says "run `make web`".
+- **Without an `api_key`** (localhost, the default) the UI just works, as the API does. **With one**,
+  `/ui/login` asks for it once; `POST /session` sets `udl_session` (a random 256-bit token kept server-side,
+  `HttpOnly`, `SameSite=Strict`, `Secure` over HTTPS, `[web] session_hours`). The API accepts the cookie in
+  place of `X-API-Key`; writes also need the `X-UDL-CSRF: 1` header and a same-origin `Origin`. So the
+  browser's `EventSource` works without headers, and other sites still can't drive udl. Sessions live in
+  the server process: restarting it means signing in again.
+
+### The shell (15.5–15.6)
+
+- **Layout:** a daisyUI drawer (Dashboard, Downloads, Sites, Chains, Events, Subscriptions, Actions, Runs,
+  Schedules, AI, Accounts, Plugins, Databases, Settings, and the plugins' nav items) and a navbar (theme
+  switcher, runtime status, approvals waiting, sign out). It works down to phone width.
+- **Routing:** file routes under `web/packages/shell/src/routes/`, `basepath: '/ui'`; `beforeLoad` checks the
+  session; `validateSearch` keeps list filters in the URL; loaders fetch through the typed client, with
+  daisyUI loading and error states. `/p/$plugin/$` renders a plugin's route, handing it the rest of the path,
+  so plugin pages need no compile-time route tree, and udl's own routes stay fully typed.
+- **State (Zustand):** `session`, `theme` (`system` | `light` | `dark`, persisted; sets `data-theme` on
+  `<html>`, or leaves it off to follow the system), `live` (one SSE connection per stream: recent events in a
+  bounded buffer, runs and download jobs by id, connection state), `plugins` (manifests, load errors),
+  `toasts`. Server data stays in route loaders (`router.invalidate()` after a change, or when a live event
+  says the data changed), not copied into stores.
+- **Dev:** Vite on :5173 serves `/ui/` with HMR and proxies every other path to `udl serve` on :8765. The
+  proxied Host stays `localhost`, so `LocalHostsOnly` lets it through.
+
+### UI plugins (15.7–15.10)
+
+Any plugin (an integration, an action kind, a site or downloader plugin) can bring a UI plugin through its
+`ui` class attribute. A UI-only plugin (a dashboard, a theme) is a `udl.ui` entry point, or a folder with a
+`manifest.json` in `[web] ui_plugin_dirs`. `GET /ui/plugins.json` lists the valid ones; `list_plugins` says
+which plugins have a UI.
+
+```jsonc
+// manifest.json, next to the bundle (validated by udl's UIManifest model)
+{
+  "name": "gmail",                       // the plugin it belongs to, or a UI-only plugin's own name
+  "version": "0.1.0",
+  "sdk": "^1.0",                         // the @udl/ui-sdk versions it was built for
+  "entry": "index.js",                   // an ES module
+  "styles": ["index.css"],               // adopted into its shadow root
+  "isolation": "shadow",                 // "shadow" (default) or "none" (light DOM, the shell's CSS)
+  "contributes": {
+    "nav": [{ "title": "Gmail", "icon": "mail", "route": "inbox" }],
+    "routes": ["inbox", "compose", "message/$id"],
+    "settings": ["gmail"],               // a settings panel for the plugin (its PluginSettings)
+    "accountSetup": ["gmail"],           // how an integration's accounts are connected
+    "eventViews": ["gmail.*"],           // how its events look in the timeline and in detail
+    "filterEditors": ["gmail"],          // an editor for its source filter
+    "actionEditors": [],                 // editors for action kinds it adds
+    "widgets": [{ "slot": "dashboard", "id": "unread" }],
+    "themes": []                         // daisyUI themes it adds
+  }
+}
+```
+
+```ts
+// A UI plugin's entry, built with React and daisyUI; any framework works through the mount contract.
+import { defineUIPlugin, react } from "@udl/ui-sdk";
+
+export default defineUIPlugin({
+  routes: { inbox: react(Inbox), compose: react(Compose), "message/$id": react(Message) },
+  settings: { gmail: react(Settings) },
+  accountSetup: { gmail: react(Connect) },
+  eventViews: { "gmail.*": react(MessageEvent) },
+});
+
+// What every contribution is, whatever it is built with:
+type Mount<P> = (target: HTMLElement, props: P, ctx: UIContext) => { update(props: P): void; unmount(): void };
+```
+
+`UIContext` is all a plugin gets from the shell: `api` (the typed client on the shell's session, plugin
+operations included) and `call(name, request)` for any operation; `events.subscribe(filter, callback)` on the
+shared live connection; `theme` (mode, name, tokens, `onChange`); `stores` (read-only vanilla Zustand stores:
+`getState`, `subscribe`); `navigate`, `toast`, `confirm`; and `plugin` (its name, version and base path).
+
+- **Isolation over sharing:** each plugin bundles its own framework and styles. A contribution mounts into a
+  shadow root with its stylesheets adopted there, so a plugin built with shadcn/ui (or Vue, or plain DOM)
+  doesn't touch the daisyUI shell, and the shell doesn't touch it. The cost is a copy of React per plugin
+  that uses React (tens of kB); sharing one through an import map can come later if that matters.
+- **Theming across the boundary:** CSS custom properties inherit into shadow roots, so daisyUI's theme
+  tokens (`--color-primary`, …) reach every plugin, and the host sets `data-theme` inside each root. A
+  shadcn/ui plugin maps its variables onto them (`--primary: var(--color-primary)`) and follows the theme
+  switch. A plugin's `themes` add daisyUI themes to the switcher. Known catch: Tailwind 4's `@property` rules
+  are ignored inside a shadow root, so the host hoists a plugin's `@property` rules to the document.
+- **Failures stay contained:** entries load lazily (`import()`) the first time one of their contributions is
+  needed; a load error or a throw shows an error card in that slot ("The gmail UI failed: …"). An SDK major
+  the shell doesn't support is listed as a problem, like a Python plugin that failed to load.
+- **udl's own pages** are part of the shell (they share its React and CSS), but are registered in the same
+  contribution registry, so nav, slots and widgets treat them like plugins'.
+- **Without a UI plugin**, a plugin is used through the CLI, API and MCP: it gets no pages, settings or
+  account setup in the web UI until someone writes a UI plugin for it (the Plugins page only notes "no web
+  UI"). Its events still show in the event log (as JSON), and can be subscribed to, because events and
+  subscriptions are udl's own pages.
+- **15.10's proof:** `web/examples/shadcn` is a UI plugin built with shadcn/ui and its own Tailwind setup. It
+  adds a route and a dashboard widget, and an e2e test checks it renders with its own styles, follows the
+  theme switch, and leaves the shell's styles alone, as Phase 7's MongoDB plugin proved the database
+  abstraction. `web/packages/template` is the starting point that `docs/ui-plugins.md` walks through.
+
+### The API client (15.2)
+
+`python -m udl.interfaces.api.openapi` writes `create_app()`'s schema (default settings, the built-in
+plugins) to `web/packages/api/openapi.json` (committed); `openapi-typescript` turns it into types and
+`openapi-fetch` into a typed client. `make check` regenerates it and fails on a difference, as
+`uv lock --check` does for the lockfile. A third-party UI plugin generates its types from its own udl's
+`/openapi.json`.
+
+---
+
+## Phase 16: Web UI for the downloader
+
+### Tests first
+- Vitest per page against `FakeUdl`; Playwright per flow against `udl serve` on the fixture site:
+  download a page's video and watch its progress to the end; cancel a download; save a strategy and see it
+  used; suggest, test and save a chain for `json.html`; sync two databases with a dry run first.
+
+### Pages
+- **Dashboard (16.1):** recent downloads, runs and events; the next schedules; accounts that need
+  attention; approvals waiting; a `dashboard` widget slot for plugins.
+- **Downloads (16.2):** a form (URLs, output dir, tool, template, re-probe); live jobs with progress bars
+  from `/downloads/{id}/events`; cancel; history with filters in the URL (status, site, since) and paging.
+- **Sites (16.3):** search; a site's strategies (successes, failures, last error, enabled); set a strategy
+  (tool and its options, validated by the server); delete.
+- **Chains (16.4):** the wizard on the web: a URL → suggestions with previews → pick → test (what each step
+  found) → save; import a YAML file, export a site's.
+- **Databases, Plugins, Config (16.5):** connections and their health, sync with a dry run; every plugin's
+  kind, availability, what's missing, problems, whether it has a UI and its settings panel; the config,
+  read-only, secrets hidden.
+
+---
+
+## Phase 17: Web UI for automations
+
+### Tests first
+- 17.9's e2e, written first: in the UI, connect a Gmail account (udl's `gmail` plugin, pointed at the fake
+  Google servers), add a `script` action, subscribe it to mail from one sender with the filter builder, have
+  the fake server deliver a matching and a non-matching message, then see exactly one run appear live, open
+  it, and read its output.
+- Approvals e2e: an `ai` action (on `FakeAI`) asks to send a Slack message; the approvals badge counts it;
+  approving it sends the message to the fake Slack.
+
+### Pages
+- **Events (17.1):** live (from the `live` store) and history (filters in the URL); detail through the
+  plugin's `eventViews`, else a JSON tree; emit a `custom.*` event; replay one to all or one subscription.
+- **Subscriptions (17.2):** pick event types from `list_event_types`; build the filter from the type's
+  schema (field paths with their types, operators by type, nested all / any / not), or edit it as the
+  shorthand (the two stay in step through `test_subscription`); pick accounts and actions; the plugin's
+  `filterEditors` for its source filter; "would have matched" over recent events as you edit.
+- **Actions and runs (17.3):** editors for the built-in kinds (`script` picks from `scripts_dir`,
+  `operation` builds arguments from the operation's schema, `ai` from providers, models, prompts and tools),
+  plugins' `actionEditors` for theirs, a dry run that renders the templates against a chosen event; runs
+  with live status, output, errors and the AI transcript (each tool call and its result); the approvals
+  inbox.
+- **Schedules (17.4):** cron / every / at with the next times from `preview_schedule` as you type, the
+  timezone, the actions to run (the linked subscription), run now.
+- **AI (17.5):** providers (Ollama offered when detected), their health and models, pulling a model; prompts
+  and guidance; a playground that renders a prompt against an event and streams the model's answer
+  (`POST /ai/try/stream`), with tool calls shown and not run.
+- **Accounts (17.6):** every integration's accounts and their status; connect, reconnect and settings
+  through the integration's UI plugin; disconnect.
+
+### The Gmail and Slack UI plugins (17.7–17.8)
+
+Built with React and daisyUI on the SDK, isolated like any other plugin, so they use only what a third
+party could:
+
+- **gmail:** setup (the OAuth client, with the consent-screen steps), connecting accounts (the access
+  levels, then Google's page), a mailbox per account (search, read, threads), compose and reply, how a
+  `gmail.message.received` event looks, and a Gmail-search editor for the source filter.
+- **slack:** setup (copy the manifest, paste the tokens, check them), channels and threads per account,
+  sending, and how `slack.*` events look.
+
+---
+
+## Phase 18: Hardening & docs
+
+- **Security review (18.1)** against the [security model](#security-model), as Phase 7's was: what it finds
+  gets a regression test and a fix, or is documented in the README's Security section.
+- **Resilience (18.2):** kill the runtime mid-run, take the database or a provider away, drop the Socket
+  Mode connection, expire tokens; each recovers as designed (tests on the fakes). An accessibility pass
+  with axe (`@axe-core/playwright`) over every page, in both themes.
+- **Always on (18.3):** `udl service install` writes a systemd user unit for `udl serve` (and
+  `udl service uninstall` removes it), since the runtime only runs while the server does.
+- **Docs (18.4):** the README (accounts, automations, schedules, AI, the web UI, the new security notes);
+  `docs/automations.md` (events, filters, subscriptions, actions, schedules, AI, with worked examples: bank
+  mail summarised to Slack, a morning digest, downloading links mailed to yourself); `docs/plugins.md` gains
+  integrations, action kinds, AI providers and secret stores; `docs/ui-plugins.md` (the manifest, the SDK,
+  isolation and theming, using another component library, testing).
+- **Smoke tests (18.5),** opt-in like Phase 7's: a real Gmail account receives a mail udl sends to itself and
+  fires once; a real Slack workspace does the same with a DM; Ollama answers a prompt with a tool call.
+
+---
+
+## Security model
+
+What changes: udl now reads content written by strangers (email, Slack), holds long-lived credentials, can
+run programs, and talks to a browser. Each risk has its answer, and 18.1 checks them.
+
+| Risk | Where | Answer |
+|---|---|---|
+| Someone else's email or message steers udl (prompt or template injection) | Every templated action; AI actions | Event data is only ever a value: templates are sandboxed, scripts get it on stdin and in env vars (never a shell), the AI sees it fenced as untrusted, and its tools are an allowlist with approval for anything with effects (unless the action is `auto`); `admin` operations are never AI action tools |
+| An unattended AI does what a stranger's message asks | `auto` AI actions | Opt-in per action and marked in the UI; its `tools`, its subscriptions' filters and throttles, and `max_steps` are the whole boundary, so they should be narrow; every tool call is in the run's transcript; `admin` operations stay out of reach |
+| An API or MCP client runs code | `script` actions | Only programs inside `scripts_dir`, which no operation can write to |
+| An API or MCP client reads files | Mail attachments | `attachment_roots`, a file-only setting |
+| Loops | Actions causing events | `max_event_depth`, throttles, udl's own messages recognised |
+| Credentials leak | Tokens, keys | The secret store only (never a database, the config or a log); `0600` files; redacted in `get_config` and errors; revoked on disconnect |
+| A web page drives udl | The UI | Same origin only; `SameSite=Strict`, `HttpOnly` session; CSRF header and Origin check on writes; `LocalHostsOnly` (Phase 4); CSP; `frame-ancestors 'none'` |
+| A UI plugin misbehaves | The UI | UI plugins are code you install, like Python plugins (documented). Shadow DOM isolates styles, not trust |
+| Requests to internal services | `webhook` actions | As for downloads, anyone who can use the API can make udl fetch a URL (accepted in Phase 7); documented |
+| Slow regexes on attacker text | Filters | 64 KiB per field; `google-re2` where available |
+| Two runtimes run the same action | A shared database | The `automations` lease |
+| Quotas and bans | Gmail, Slack | Watchers only for accounts a subscription needs; `Retry-After` honoured; backoff |
 
 ---
 
 ## Configuration example
 
-Without a config file, udl uses a single SQLite connection named `local` in the user data dir.
+Phases 0–7's settings are in [planning/01-core.md](planning/01-core.md#configuration-example). Durations
+are written `30s`, `5m`, `24h`.
 
 ```toml
-download_dir = "~/Downloads/udl"
-filename_template = "{site}/{title}.{ext}"
-max_concurrent = 4
-max_per_site = 2
-probe_order = ["http", "yt-dlp", "gallery-dl", "scraper", "browser"]
-heal_threshold = 3
-cookies_from_browser = "firefox"          # optional
-plugin_dirs = ["~/.config/udl/plugins"]
+[automations]
+enabled = true                            # run the runtime in `udl serve`
+max_concurrent_runs = 4
+max_event_depth = 8                       # events caused by runs, caused by events, …
+event_retention_days = 30
+scripts_dir = "~/.config/udl/scripts"     # script actions run programs from here only
+timezone = ""                             # schedules' default; empty = the system's
 
-[db]
-read_policy = "first"                     # first | merge
-write_policy = "primary"                  # primary | all | ["local", "shared"]
+[secrets]
+store = "auto"                            # auto (keyring, else file) | keyring | file | memory | a plugin
 
-[[db.connections]]
-name = "local"
-plugin = "sqlite"
-url = "sqlite+aiosqlite:///~/.local/share/udl/udl.db"
-primary = true
-priority = 0                              # lower = consulted first
+[integrations.gmail]
+client_id = "1234-abc.apps.googleusercontent.com"   # your Desktop-app OAuth client (or set it in the UI)
+client_secret = "GOCSPX-…"                # moved to the secret store when set through udl
+poll_interval = "60s"
+attachment_roots = ["~/Downloads"]        # file-only: what the API and MCP may attach
 
-[[db.connections]]
-name = "shared"
-plugin = "postgres"
-url = "postgresql+psycopg://udl@nas/udl"
-priority = 10
-read_only = true
+[integrations.slack]                      # nothing needed: each account brings its app's tokens
 
-[api]
-host = "127.0.0.1"
-port = 8765
-api_key = ""                              # set to require X-API-Key
-allowed_output_roots = ["~/Downloads"]
+[ai]
+default_provider = "local"
+approval_timeout = "24h"
 
-[browser]
-headless = true
-profile_dir = "~/.local/share/udl/browser-profile"
+[web]
+enabled = true
+session_hours = 12
+ui_plugin_dirs = ["~/.config/udl/ui-plugins"]
+```
 
-[tools.yt-dlp]                            # validated by YtDlpOptions
-format = "bv*+ba/b"
+Accounts, subscriptions, actions, schedules, prompts, guidance and AI providers are records, made through the
+CLI, API, MCP or UI. For example:
+
+```console
+$ udl ai providers set local --plugin ollama --default-model <model>
+$ udl accounts add gmail personal --access read,send
+$ udl actions set file-statement --kind script -O 'command=["file-statement.py"]'
+$ udl subs set bank-mail --on gmail.message.received --account gmail:personal \
+    --where 'from.address endswith "@bank.com" and has_attachments' --action file-statement
+$ udl schedules set digest --cron "0 8 * * 1-5" --action morning-digest
 ```
 
 ## Dependencies
 
 | Purpose | Packages |
 |---|---|
-| CLI | `typer`, `rich` |
-| API | `fastapi`, `granian` |
-| MCP | `mcp` 2.x (`MCPServer`; `FastMCP` was the v1 name) |
-| DB | `sqlmodel`, `aiosqlite` (`psycopg` for the postgres plugin, `pymongo` for the mongodb one) |
-| Config | `pydantic-settings`, `platformdirs` |
-| URLs | `tldextract` (use the bundled suffix list so it doesn't fetch on first run) |
-| HTTP | `httpx` |
-| Tools | `yt-dlp`, `gallery-dl` |
-| Scraping | `selectolax` |
-| Chain files | `pyyaml` (`types-pyyaml` in the dev group) |
-| Browser (extra `udl[browser]`) | `playwright` (then `uv run playwright install chromium`) |
-| Dev (`dev` dependency group) | `pytest`, `pytest-asyncio`, `pytest-cov`, `pytest-httpserver`, `respx`, `hypothesis`, `pyright[nodejs]` (ships its own Node), `ruff`, `types-yt-dlp` |
-| Global tools (`uv tool install`) | `pre-commit`, and `udl` itself |
-| Tests' database servers | Docker: `postgres:18-alpine`, `mongo:8` (else `UDL_TEST_POSTGRES_URL` / `UDL_TEST_MONGODB_URL`) |
+| Templates | `jinja2` (its sandbox) |
+| Secrets | `keyring` |
+| Schedules | a cron parser (`cronsim` or `croniter`, behind `CronExpression`); `zoneinfo` (standard library) |
+| Slack's Socket Mode | `websockets` |
+| Gmail, Slack's Web API, OAuth, AI providers | `httpx` (already a dependency) |
+| HTML mail to text | `selectolax` (already) |
+| Linear-time regexes (if it has wheels) | `google-re2` |
+| Web: app | `react`, `react-dom`, `@tanstack/react-router`, `zustand`, `tailwindcss`, `@tailwindcss/vite`, `daisyui`, `openapi-fetch`, `lucide-react` |
+| Web: dev | `vite`, `@vitejs/plugin-react-swc`, `@tanstack/router-plugin`, `typescript`, `openapi-typescript`, `vitest`, `@vitest/coverage-v8`, `@testing-library/react`, `@testing-library/user-event`, `jsdom`, `@playwright/test`, `@axe-core/playwright`, `@biomejs/biome` |
+| Web: the shadcn/ui example | shadcn/ui's generated components and their dependencies, in `web/examples/shadcn` only |
 
 ## Decisions (defaults that can be revisited)
 
-- **uv** for packaging: one committed lockfile, and one shared reflinked cache for every project on the system.
-- **Async core**, so the API and MCP never block on DB or network I/O.
-- **Repository-level DB interface** rather than an engine-level one, so non-SQL backends can be plugins.
-- **Hand-written thin adapters + parity test** rather than auto-generating MCP tools from FastAPI. MCP tools
-  need LLM-oriented descriptions and different long-running semantics.
-- **Record only verified successes**, site-wide by default.
-- **`httpx` native** for direct files; `curl`/`wget` are optional backends.
-- **`selectolax`** rather than BeautifulSoup, for speed.
-- **One Granian worker**, since job state is in-process.
+Settled on 2026-10-24: the bus and the scheduler before Gmail and Slack; isolated UI plugins; the UI at
+`/ui`; a plugin appears in the web UI only through a UI plugin; AI actions may run unattended (`auto`), but
+none may change automations or accounts yet.
+
+- **Numbering continues at Phase 8**, so branches (`phase-8`…) and commit history don't collide with
+  Phases 0–7.
+- **The bus and the scheduler come before Gmail and Slack:** the integrations' pub/sub is the bus, and the
+  scheduler is the simplest event source to prove it end to end.
+- **One model for every source:** events, subscriptions and actions, whatever fired the event.
+- **Subscriptions alert actions; actions don't form pipelines.** Each matched action is its own run, in
+  parallel; chaining goes through `udl.action.*` events.
+- **Records in the existing `DatabasePlugin` contract**, not a second storage system: one place to configure,
+  sync and back up, and every database plugin keeps working.
+- **Secrets never in a database:** a pluggable secret store, the system keyring by default.
+- **Gmail by polling the History API; Slack by Socket Mode:** neither needs a public URL or a cloud project
+  beyond the OAuth client, so both work on a laptop behind NAT.
+- **Own thin clients over httpx** for Google, Slack, Ollama and OpenAI-compatible APIs, typed with Pydantic,
+  rather than `google-api-python-client`, `slack_sdk` or vendor AI SDKs: async, typed, one HTTP stack, and
+  the fake servers test the real clients. Revisit if what udl uses of an API grows a lot.
+- **Slack accounts connect with tokens** from the user's own app.
+- **Gmail and Slack are built in** (entry points, like `youtube`) but use only the public plugin API (a test
+  checks their imports), so either could move to a package of its own.
+- **One runtime per database**, in `udl serve`, held by a lease.
+- **Scripts only from `scripts_dir`, never through a shell.**
+- **Local AI providers built in; no default model.** AI tools are udl's operations, governed by the hints
+  they already carry: anything with effects waits for approval unless the action runs in `auto` mode.
+  `admin` operations are never AI action tools; a later AI chat is where they will be offered.
+- **The UI at `/ui`; the API's paths unchanged.**
+- **UI plugins are isolated (a mount contract and Shadow DOM)** rather than sharing React through Module
+  Federation or an import map: any library, framework or version per plugin, at the price of some
+  duplicated bytes.
+- **Server data in TanStack Router loaders, client and live state in Zustand.** TanStack Query was
+  considered (it pairs well with the router); revisit if caching and invalidation get complicated.
+- **Biome** rather than ESLint + Prettier: one fast tool, as ruff is for Python.
+- **The built UI isn't committed;** `make web` builds it into the package.
+
+## Carried over from Phases 0–7
+
+Things that bit before and will bite again:
+
+- A new operation needs a `MATRIX` row in `tests/interface/test_parity.py`, a CLI command marked
+  `@runs("<op>")`, an API route with `**documented("<op>")`, its tool hints (in `_HINTS` until 8.1 moves them
+  onto `Operation`), and an attribute docstring on every request field (a test checks).
+- Typer 0.26+ vendors Click: never import `click` in the CLI; use `typer.Context` / `typer.core`.
+- FastAPI includes routers lazily: read routes from `app.openapi()`, not `app.routes`.
+- Async fixtures that hold an anyio task group (the API's lifespan, MCP clients, and now the runtime and the
+  fake Socket Mode server) go through `support.tasks.held()`.
+- Don't name functions in `src` `test_*` (pytest collects them): `test_subscription`'s method is
+  `try_subscription`. Pytest collects `Test*` classes, so request models are `SubscriptionTestRequest`.
+- SQLModel can't read PEP 695 `type X = Annotated[...]` aliases on table fields; record tables use plain
+  aliases.
+- Ruff (py314 target) rewrites `except (A, B):` to `except A, B:`.
+- A new entry point or dependency needs `uv tool install --editable '.[browser]' --reinstall` for the global
+  `udl`. This plan adds several plugin kinds.
+- The postgres and mongodb tests start Docker containers (or use `UDL_TEST_POSTGRES_URL` /
+  `UDL_TEST_MONGODB_URL`); the record contract suite runs there too.
 
 ## Out of scope (later)
 
-- Web UI (mentioned in the README); the API + SSE are designed to support it.
-- Skipping already-downloaded URLs (download archive); `DownloadRecord` makes this straightforward.
-- External job queue / multiple workers.
-- Scheduled or watched downloads (playlists, channels).
+- Automations as files (YAML import/export of subscriptions, actions, schedules, prompts), like chain files.
+- Gmail push notifications through Google Cloud Pub/Sub (mail without polling delay).
+- Slack's OAuth install flow, Enterprise Grid, edited and deleted messages as events.
+- **Generic watchers**, the first step towards pub/sub for apps that have none: a web page through tag
+  chains or the browser, a command's output, a file, a feed (sources that connect with `none`). **Watched
+  downloads** (playlists, channels) are one of these, and also need the download archive below.
+- **An AI chat in udl** (the user present) that may also use `admin` operations, each one confirmed, so it
+  can build subscriptions, actions and schedules from a description.
+- More integrations (Google Calendar and Drive, sharing one Google account between them; IMAP for other
+  mail; Discord; Matrix), and browser-driven integrations for apps without an API.
+- Remote AI providers (e.g. Anthropic's API) as plugins; letting AI actions use other MCP servers' tools.
+- A 1Password (`op`) secret store.
+- Several runtimes sharing the work (an external queue); PostgreSQL `LISTEN/NOTIFY` instead of polling for
+  pending events.
+- Skipping already-downloaded URLs (a download archive), still out from Phases 0–7.
+- Sharing React between UI plugins (an import map), if bundle size ever matters.
+- Translations.

@@ -92,7 +92,7 @@ class DatabaseError(UDLError):
 class DownloadError(UDLError):
     """A downloader failed on a URL.
 
-    The class flags tell the resolver how to react (the error taxonomy in planning.md):
+    The class flags tell the resolver how to react (the error taxonomy in planning/01-core.md):
     `counts_against_strategy` marks the stored strategy as failing, and `retryable` means the
     same tool may succeed if tried again later.
     """
