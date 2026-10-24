@@ -1071,6 +1071,7 @@ async def test_the_config_is_shown_with_its_secrets_hidden(tmp_path: Path, make:
         assert secret not in text
     data = json.loads(text)["settings"]
     assert data["integrations"]["gmail"]["client_id"] == "abc"
+    assert shown.secret_store == "memory"  # noqa: S105 - (the store [secrets] store chose)
     assert data["tools"]["yt-dlp"]["format"] == "best"
     assert data["tools"]["yt-dlp"]["params"]["username"] == "me"
     assert data["db"]["connections"][0]["url"] == "memory://udl:***@nas/udl"

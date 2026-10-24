@@ -56,7 +56,11 @@ class FileSecretStore(SecretStore):
 
     async def delete(self, ref: SecretRef) -> bool:
         async with self._changing:
-            return await asyncio.to_thread(self._change, str(ref), None)
+            return await asyncio.to_thread(self._change, str(ref), None) > 0
+
+    async def delete_prefix(self, prefix: SecretRef) -> int:
+        async with self._changing:
+            return await asyncio.to_thread(self._change, str(prefix), None, under=True)
 
     def _read(self) -> dict[str, str]:
         try:
@@ -79,23 +83,31 @@ class FileSecretStore(SecretStore):
             )
         return cast(dict[str, str], found)
 
-    def _change(self, key: str, value: str | None) -> bool:
-        """Set (or, when `value` is None, delete) one secret. Returns whether it was kept."""
+    def _change(self, key: str, value: str | None, *, under: bool = False) -> int:
+        """Set one secret, or, when `value` is None, delete it (with `under`, every secret
+        under it). Returns how many were kept (replaced, or deleted)."""
         try:
             self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             with self._locked():
                 secrets = self._read()
-                kept = key in secrets
                 if value is not None:
+                    kept = [key] if key in secrets else []
                     secrets[key] = value
-                elif kept:
-                    del secrets[key]
                 else:
-                    return False
+                    prefix = SecretRef(key)
+                    kept = [
+                        found
+                        for found in secrets
+                        if (SecretRef(found).within(prefix) if under else found == key)
+                    ]
+                    if not kept:
+                        return 0
+                    for found in kept:
+                        del secrets[found]
                 self._write(secrets)
         except OSError as e:
             raise SecretStoreError(f"Cannot write the secrets in {self.path}: {e}") from e
-        return kept
+        return len(kept)
 
     @contextlib.contextmanager
     def _locked(self) -> Generator[None]:

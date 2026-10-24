@@ -32,3 +32,9 @@ class MemorySecretStore(SecretStore):
 
     async def delete(self, ref: SecretRef) -> bool:
         return self._secrets.pop(ref, None) is not None
+
+    async def delete_prefix(self, prefix: SecretRef) -> int:
+        under = [ref for ref in self._secrets if ref.within(prefix)]
+        for ref in under:
+            del self._secrets[ref]
+        return len(under)

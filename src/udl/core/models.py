@@ -504,3 +504,6 @@ class GetConfigRequest(_Frozen):
 class ConfigInfo(_Frozen):
     settings: Settings
     """The settings, with secrets hidden."""
+    secret_store: str | None = None
+    """The secret store udl keeps secrets in (what [secrets] store chose), or None when that one
+    cannot be used here."""

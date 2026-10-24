@@ -9,22 +9,29 @@ A secret is named by a path (e.g. `accounts/<account id>/refresh_token`), which 
 in place of the secret. Values are SecretStr, so they are never shown by accident (in a repr, a
 log line or an answer). tests/contract/test_secret_contract.py is the behaviour every store must
 have.
+
+A model that udl keeps (an action's options, an account's credentials...) types its secret
+fields SecretField: store_secrets() moves each SecretStr in it into the store and leaves a
+KeptSecret (`{"secret": "<ref>"}`) in its place, and load_secrets() brings them back.
 """
 
 # System Imports
+import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Annotated, ClassVar, Final, Self
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Final, Self
 
 # Package Imports
-from pydantic import ConfigDict, RootModel, SecretStr, StringConstraints
+from pydantic import BaseModel, ConfigDict, RootModel, SecretStr, StringConstraints
 
 # Local Imports
 from udl.config import SecretsSettings
-from udl.errors import ConfigError
+from udl.errors import ConfigError, SecretStoreError
 from udl.plugins.requirements import Requirement, unmet
 
 if TYPE_CHECKING:
     from udl.plugins.registry import PluginRegistry
+
+log = logging.getLogger(__name__)
 
 # A part of a reference: letters, digits, `.`, `_` and `-`, not starting with a dot (so never `.`
 # or `..`).
@@ -43,6 +50,11 @@ class SecretRef(RootModel[Annotated[str, StringConstraints(pattern=rf"^{_PART}(/
 
     def __str__(self) -> str:
         return self.root
+
+    def within(self, prefix: SecretRef) -> bool:
+        """Whether this reference is `prefix` or under it (`accounts/1` holds `accounts/1/x`,
+        not `accounts/12`)."""
+        return self.root == prefix.root or self.root.startswith(f"{prefix.root}/")
 
 
 class SecretStore(ABC):
@@ -75,11 +87,15 @@ class SecretStore(ABC):
     async def delete(self, ref: SecretRef) -> bool:
         """Forget the secret `ref` names. Returns whether there was one."""
 
+    @abstractmethod
+    async def delete_prefix(self, prefix: SecretRef) -> int:
+        """Forget every secret under `prefix` (e.g. an account's). Returns how many."""
+
 
 _AUTO: Final = "auto"
 
 
-def secret_store(settings: SecretsSettings, plugins: PluginRegistry) -> SecretStore:
+def open_secret_store(settings: SecretsSettings, plugins: PluginRegistry) -> SecretStore:
     """The secret store [secrets] store names: `auto` is the keyring when there is one, else the
     file. Raises PluginError for a store udl does not have, and ConfigError for one that cannot
     be used here."""
@@ -103,4 +119,57 @@ def secret_store(settings: SecretsSettings, plugins: PluginRegistry) -> SecretSt
             hint='Set [secrets] store = "auto" (the keyring when there is one, else a file) '
             "in the config.",
         )
+    if store.name == "memory":
+        log.warning("[secrets] store is memory: the secrets udl is given are forgotten on exit")
     return store
+
+
+# ---------------------------------------------------------------------------------------------
+# A model's secrets
+# ---------------------------------------------------------------------------------------------
+
+
+class KeptSecret(BaseModel):
+    """What a model keeps in place of a secret the store has: its reference."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    secret: SecretRef
+
+
+type SecretField = SecretStr | KeptSecret
+"""A secret field of a model udl keeps: the secret (given as text), or, once kept, where the
+store has it."""
+
+
+async def store_secrets[M: BaseModel](model: M, store: SecretStore, prefix: SecretRef) -> M:
+    """`model` with each secret in it (its own fields', and its models') kept in `store`, at
+    `<prefix>/<field>`, and a KeptSecret in its place."""
+    changes: dict[str, Any] = {}
+    for name, value in model:
+        if isinstance(value, SecretStr):
+            ref = SecretRef(f"{prefix}/{name}")
+            await store.set(ref, value)
+            changes[name] = KeptSecret(secret=ref)
+        elif isinstance(value, BaseModel) and not isinstance(value, KeptSecret):
+            changes[name] = await store_secrets(value, store, SecretRef(f"{prefix}/{name}"))
+    return model.model_copy(update=changes)
+
+
+async def load_secrets[M: BaseModel](model: M, store: SecretStore) -> M:
+    """`model` with each KeptSecret in it (its own fields', and its models') replaced by the
+    secret `store` has. Raises SecretStoreError when the store has lost one."""
+    changes: dict[str, Any] = {}
+    for name, value in model:
+        if isinstance(value, KeptSecret):
+            secret = await store.get(value.secret)
+            if secret is None:
+                raise SecretStoreError(
+                    f"The secret store has no {value.secret} (it was kept on another machine, or "
+                    "deleted)",
+                    hint="Set it again (connect the account again).",
+                )
+            changes[name] = secret
+        elif isinstance(value, BaseModel):
+            changes[name] = await load_secrets(value, store)
+    return model.model_copy(update=changes)

@@ -117,6 +117,19 @@ async def test_deleting_a_secret(store: SecretStore) -> None:
     assert await store.get(ref("kept")) is not None
 
 
+async def test_every_secret_under_a_path_is_deleted_at_once(store: SecretStore) -> None:
+    for path in ("accounts/1/token", "accounts/1/refresh", "accounts/12/token", "plugins/x/key"):
+        await store.set(ref(path), SecretStr(path))
+
+    deleted = await store.delete_prefix(ref("accounts/1"))
+
+    assert deleted == 2
+    assert await store.get(ref("accounts/1/token")) is None
+    assert await store.get(ref("accounts/12/token")) is not None  # (another path)
+    assert await store.get(ref("plugins/x/key")) is not None
+    assert await store.delete_prefix(ref("accounts/1")) == 0
+
+
 async def test_secrets_set_at_once_are_all_kept(store: SecretStore) -> None:
     await asyncio.gather(*(store.set(ref(f"many/{n}"), SecretStr(str(n))) for n in range(20)))
 
