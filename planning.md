@@ -42,7 +42,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 9.9 `AutomationRuntime` in `udl serve`: dispatcher, runner, retention, a lease so one runtime runs per database; finished downloads publish `udl.download.*`
   - [x] 9.10 Operations (events, subscriptions, actions, runs, status) via CLI, API and MCP; `GET /events/stream` (SSE)
 
-- [ ] **Phase 10: Scheduler**
+- [x] **Phase 10: Scheduler**
   - [x] 10.1 `ScheduleSpec`: `cron` | `every` | `at`, in a timezone; cron parsing behind `CronExpression`; next times tested across DST changes (hypothesis)
   - [x] 10.2 `Schedule` record: misfire policy (`skip` | `once`), jitter, `next_run_at`
   - [x] 10.3 `Scheduler` on the `Clock`: sleeps until the next due schedule, wakes when schedules change, fires `schedule.fired` once per due time
@@ -1789,6 +1789,9 @@ Where the build differs from a card, it is on purpose, as below.
   the CLI with 2.
 - **End to end (10.6):** as the card. The fake days pass quickly with long `lease_ttl`,
   `dispatch_interval` and `recheck`; what is published in-process wakes the dispatcher anyway.
+- **The phase's hand check** passed on 2026-10-24 against a real `udl serve` on a scratch config:
+  `udl schedules set ping --every 1m --action hello` ran `hello` at 23:14, 23:15 and 23:16, each
+  from its own `schedule.fired`, and `udl status` listed the next time.
 
 ---
 
