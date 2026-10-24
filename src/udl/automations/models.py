@@ -9,7 +9,7 @@ described by the docstrings under them (what an AI agent reads about a tool).
 """
 
 # System Imports
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Self
 from uuid import UUID
@@ -25,12 +25,27 @@ from pydantic import (
     NonNegativeInt,
     PositiveInt,
     field_validator,
+    model_validator,
 )
 
 # Local Imports
 from udl.automations.events import CUSTOM_PREFIX, EventRecord, EventStatus, EventTypes
 from udl.automations.filters import Filter, FilterField, shorthand
 from udl.automations.runs import ActionRun, RunStatus
+from udl.automations.schedules import (
+    AtSpec,
+    CronSpec,
+    CronText,
+    EverySpec,
+    Interval,
+    Length,
+    Misfire,
+    Schedule,
+    ScheduleName,
+    ScheduleSpec,
+    ZoneName,
+    spec_text,
+)
 from udl.automations.subscriptions import Glob, Subscription, Throttle
 from udl.config import Duration
 from udl.db.models import JsonObject
@@ -528,3 +543,138 @@ class ScriptList(_Frozen):
 
 class StatusRequest(_Frozen):
     """The automations' runtime's status."""
+
+
+# ---------------------------------------------------------------------------------------------
+# Schedules
+# ---------------------------------------------------------------------------------------------
+
+
+class ScheduleRequest(_Frozen):
+    """A schedule, by name."""
+
+    name: ScheduleName
+    """The schedule's name."""
+
+
+class SetScheduleRequest(_Frozen):
+    """A schedule to save (a new one, or the one of its name changed): when it fires is
+    exactly one of cron, every and at."""
+
+    name: ScheduleName
+    """Its name."""
+    description: str = ""
+    """What it is for."""
+    cron: CronText | None = None
+    """A cron expression, in its time zone: five fields (minute hour day month weekday, e.g.
+    `0 8 * * 1-5`), or @hourly, @daily, @weekly, @monthly or @yearly."""
+    every: Interval | None = None
+    """Or how often it fires, from start (e.g. 15m: a minute or more)."""
+    at: datetime | None = None
+    """Or when it fires, once (without a zone: in its time zone)."""
+    start: datetime | None = None
+    """When `every` counts from (without a zone: in its time zone); none: when it was first
+    saved with that interval."""
+    timezone: ZoneName = None
+    """The time zone its times are in (an IANA name, e.g. Europe/London); none:
+    [automations] timezone, else the system's."""
+    data: JsonObject = Field(default_factory=dict)
+    """What it passes on, in each schedule.fired event's data."""
+    misfire: Misfire = Misfire.SKIP
+    """What it does about the times it missed while udl was stopped: skip them, or fire the
+    latest of them once (late), within misfire_grace."""
+    misfire_grace: Length = timedelta(hours=1)
+    """How late a missed time may still fire (when misfire is once)."""
+    jitter: Length = timedelta(0)
+    """At most how long after each time it fires (a random delay)."""
+    enabled: bool = True
+    """Whether it fires."""
+    actions: list[Name] | None = None
+    """The actions it runs when it fires (through its subscription, schedule:<name>); [] runs
+    none; leaving it out keeps those it runs."""
+
+    @model_validator(mode="after")
+    def _one_spec(self) -> Self:
+        given = [name for name in ("cron", "every", "at") if getattr(self, name) is not None]
+        if len(given) != 1:
+            raise ValueError(
+                "a schedule fires by exactly one of cron, every and at"
+                + (f" (not {' and '.join(given)})" if given else "")
+            )
+        if self.start is not None and self.every is None:
+            raise ValueError("start is when `every` counts from: it goes with every")
+        return self
+
+    @property
+    def spec(self) -> ScheduleSpec:
+        """When it fires, as a spec."""
+        if self.cron is not None:
+            return CronSpec(cron=self.cron)
+        if self.every is not None:
+            return EverySpec(every=self.every, start=self.start)
+        return AtSpec.model_validate({"at": self.at})
+
+
+class ScheduleInfo(_Frozen):
+    """A schedule."""
+
+    name: str
+    """Its name."""
+    id: UUID
+    """Its id."""
+    description: str
+    """What it is for."""
+    spec: ScheduleSpec
+    """When it fires: {"cron": ...}, {"every": ..., "start": ...} or {"at": ...}."""
+    spec_text: str
+    """When it fires, as a line (e.g. `every 15m`, as preview_schedule takes it)."""
+    timezone: str | None
+    """Its own time zone (none: the default)."""
+    zone: str
+    """The time zone it runs in: its own, else [automations] timezone, else the system's."""
+    data: JsonObject
+    """What it passes on, in each schedule.fired event's data."""
+    misfire: Misfire
+    """What it does about the times it missed while udl was stopped (skip, or once)."""
+    misfire_grace: Duration
+    """How late a missed time may still fire (when misfire is once)."""
+    jitter: Duration
+    """At most how long after each time it fires."""
+    enabled: bool
+    """Whether it fires."""
+    next_run_at: AwareDatetime | None
+    """When it fires next (without its jitter)."""
+    last_run_at: AwareDatetime | None
+    """When it last fired."""
+    next_times: list[AwareDatetime]
+    """Its next five times (none while it is disabled)."""
+    actions: list[str]
+    """The actions it runs when it fires."""
+    subscription: SubscriptionInfo | None
+    """The subscription it runs them through (schedule:<name>), when it runs any."""
+    created_at: AwareDatetime
+    """When it was made."""
+    updated_at: AwareDatetime
+    """When it was last changed."""
+
+    @classmethod
+    def of(
+        cls,
+        schedule: Schedule,
+        *,
+        zone: str,
+        next_times: list[datetime],
+        subscription: Subscription | None,
+    ) -> Self:
+        return cls.model_validate(
+            {
+                **schedule.model_dump(),
+                "spec_text": spec_text(schedule.spec),
+                "zone": zone,
+                "next_times": next_times,
+                "actions": subscription.actions if subscription is not None else [],
+                "subscription": SubscriptionInfo.of(subscription)
+                if subscription is not None
+                else None,
+            }
+        )

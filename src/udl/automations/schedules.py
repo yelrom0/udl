@@ -46,7 +46,6 @@ from pydantic import (
     Field,
     StringConstraints,
     ValidationError,
-    field_validator,
 )
 
 # Local Imports
@@ -126,10 +125,24 @@ def _cron(text: str) -> str:
     return CronExpression(text).text
 
 
+type CronText = Annotated[str, AfterValidator(_cron)]
+"""A cron expression: five fields (e.g. `0 8 * * 1-5`), or an alias (@daily...)."""
+
+
+def _a_minute_or_more(every: timedelta) -> timedelta:
+    if every < SHORTEST:
+        raise ValueError("a schedule fires every minute at most often, e.g. every 1m")
+    return every
+
+
+type Interval = Annotated[Duration, AfterValidator(_a_minute_or_more)]
+"""How often a schedule fires: a minute or more, e.g. 15m."""
+
+
 class CronSpec(_Spec):
     """A cron expression, in the schedule's time zone."""
 
-    cron: Annotated[str, AfterValidator(_cron)]
+    cron: CronText
     """Five fields (minute hour day month weekday, e.g. `0 8 * * 1-5`), or @hourly, @daily,
     @weekly, @monthly or @yearly."""
 
@@ -137,17 +150,10 @@ class CronSpec(_Spec):
 class EverySpec(_Spec):
     """An interval, counted from its start."""
 
-    every: Duration
+    every: Interval
     """How often, e.g. 15m (a minute or more)."""
     start: datetime | None = None
     """When it counts from (without a zone: in the schedule's); none: when it was saved."""
-
-    @field_validator("every")
-    @classmethod
-    def _a_minute_or_more(cls, every: timedelta) -> timedelta:
-        if every < SHORTEST:
-            raise ValueError("a schedule fires every minute at most often, e.g. every 1m")
-        return every
 
 
 class AtSpec(_Spec):
@@ -342,7 +348,8 @@ def _not_negative(length: timedelta) -> timedelta:
     return length
 
 
-type _Length = Annotated[Duration, AfterValidator(_not_negative)]
+type Length = Annotated[Duration, AfterValidator(_not_negative)]
+"""A length of time, none or more (e.g. 0s, 30s, 1h)."""
 
 
 class Schedule(Record):
@@ -366,9 +373,9 @@ class Schedule(Record):
     misfire: Misfire = Misfire.SKIP
     """What it does about the times it missed while udl was stopped: skip them, or fire the
     latest of them once (late), within misfire_grace."""
-    misfire_grace: _Length = timedelta(hours=1)
+    misfire_grace: Length = timedelta(hours=1)
     """How late a missed time may still fire (when misfire is once)."""
-    jitter: _Length = timedelta(0)
+    jitter: Length = timedelta(0)
     """At most how long after each time it fires (a random delay, the same for a time)."""
     enabled: bool = True
     """Whether it fires (an at schedule is disabled once its time has gone by)."""
@@ -410,6 +417,12 @@ class Schedule(Record):
                 "enabled": self.enabled and next_run_at is not None,
             }
         )
+
+    def upcoming(self, zone: tzinfo, count: int) -> list[datetime]:
+        """Its next `count` times (in UTC), from its next time on; none when it is disabled."""
+        if not self.enabled or self.next_run_at is None:
+            return []
+        return next_times(self.spec, zone, self.next_run_at - _TICK, count)
 
     def due_at(self) -> datetime | None:
         """When it is due: its next time, plus its jitter for that time (a delay of up to

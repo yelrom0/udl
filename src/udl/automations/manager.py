@@ -22,6 +22,7 @@ from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 # Package Imports
 from pydantic import BaseModel, SecretStr
@@ -29,7 +30,7 @@ from pydantic import BaseModel, SecretStr
 # Local Imports
 from udl.automations.bus import NewEvent
 from udl.automations.events import CUSTOM, EventRecord, EventType, EventTypeList
-from udl.automations.filters import Filter, check, failing, shorthand
+from udl.automations.filters import Condition, Filter, Op, check, failing, shorthand
 from udl.automations.filters import matches as matches_filter
 from udl.automations.models import (
     ActionInfo,
@@ -54,9 +55,12 @@ from udl.automations.models import (
     RunInfo,
     RunList,
     RunRequest,
+    ScheduleInfo,
+    ScheduleRequest,
     ScriptInfo,
     ScriptList,
     SetActionRequest,
+    SetScheduleRequest,
     SetSubscriptionRequest,
     StatusRequest,
     SubscriptionInfo,
@@ -67,7 +71,14 @@ from udl.automations.models import (
 )
 from udl.automations.runs import ActionRun
 from udl.automations.runtime import RuntimeStatus, runtime_status
-from udl.automations.subscriptions import Subscription, check_subscription, types_of
+from udl.automations.scheduler import FIRED
+from udl.automations.schedules import EverySpec, Schedule, spec_text
+from udl.automations.subscriptions import (
+    SCHEDULE_PREFIX,
+    Subscription,
+    check_subscription,
+    types_of,
+)
 from udl.automations.templates import Templates
 from udl.core.models import Deleted
 from udl.core.operations import current_caller
@@ -85,6 +96,12 @@ if TYPE_CHECKING:
 _SCAN: Final = 200  # records read at a time, when a list is filtered here
 _TRIED_AT_MOST: Final = 2000  # events read to find a subscription's latest, at most
 _HIDDEN: Final = "***"
+UPCOMING: Final = 5
+"""How many of a schedule's next times get_schedule says."""
+# (A schedule's fields that its request gives as they are.)
+_SCHEDULE_FIELDS: Final = frozenset(
+    {"name", "description", "timezone", "data", "misfire", "misfire_grace", "jitter", "enabled"}
+)
 
 
 class Automations:
@@ -256,6 +273,13 @@ class Automations:
         )
 
     async def delete_subscription(self, request: SubscriptionRequest) -> Deleted:
+        if request.name.startswith(SCHEDULE_PREFIX):
+            schedule = request.name.removeprefix(SCHEDULE_PREFIX)
+            raise NotAllowed(
+                f"{request.name!r} is the {schedule} schedule's: it runs that schedule's actions",
+                hint=f"Change the schedule's actions (`udl schedules set {schedule} ... --action "
+                f"...`), or delete the schedule (`udl schedules rm {schedule}`).",
+            )
         found = await self._named(Subscription, request.name)
         if found is None:
             return Deleted(deleted=False)
@@ -481,6 +505,104 @@ class Automations:
 
     async def status(self, request: StatusRequest) -> RuntimeStatus:
         return await runtime_status(self.service)
+
+    # -- schedules -----------------------------------------------------------------------------
+
+    async def get_schedule(self, request: ScheduleRequest) -> ScheduleInfo:
+        return await self._schedule_info(await self._schedule(request.name))
+
+    async def set_schedule(self, request: SetScheduleRequest) -> ScheduleInfo:
+        existing = await self._named(Schedule, request.name)
+        spec = request.spec
+        if (  # (an interval saved again keeps counting from where it did)
+            isinstance(spec, EverySpec)
+            and spec.start is None
+            and existing is not None
+            and isinstance(existing.spec, EverySpec)
+            and existing.spec.every == spec.every
+        ):
+            spec = existing.spec
+        schedule = Schedule.model_validate(
+            {
+                **request.model_dump(include=set(_SCHEDULE_FIELDS)),
+                "id": existing.id if existing is not None else uuid4(),
+                "spec": spec,
+                "last_run_at": existing.last_run_at if existing is not None else None,
+            }
+        )
+        planned = schedule.planned(self.service.clock.now(), self._zone(schedule))
+        if schedule.enabled and not planned.enabled:
+            raise ConfigError(
+                f"{spec_text(spec)} has gone by: an at schedule fires once, at a time to come",
+                hint="Give a time to come, or save it disabled (--no-enabled).",
+            )
+        linked = await self._linked(planned, request.actions or [])
+        stored = await self.service.db.upsert_record(planned)
+        if request.actions is not None:
+            await self._keep_linked(stored.name, linked)
+        self.service.scheduler.changed()
+        return await self._schedule_info(stored)
+
+    async def delete_schedule(self, request: ScheduleRequest) -> Deleted:
+        found = await self._named(Schedule, request.name)
+        if found is None:
+            return Deleted(deleted=False)
+        deleted = await self.service.db.delete_record(Schedule, found.id)
+        await self._keep_linked(found.name, None)
+        self.service.scheduler.changed()
+        return Deleted(deleted=deleted)
+
+    async def _schedule(self, name: str) -> Schedule:
+        found = await self._named(Schedule, name)
+        if found is None:
+            raise DoesNotExist(
+                f"No schedule called {name!r}", hint="`udl schedules list` lists them."
+            )
+        return found
+
+    def _zone(self, schedule: Schedule) -> ZoneInfo:
+        return schedule.zone(self.service.settings.automations.timezone)
+
+    async def _schedule_info(self, schedule: Schedule) -> ScheduleInfo:
+        zone = self._zone(schedule)
+        return ScheduleInfo.of(
+            schedule,
+            zone=str(zone),
+            next_times=schedule.upcoming(zone, UPCOMING),
+            subscription=await self._named(Subscription, SCHEDULE_PREFIX + schedule.name),
+        )
+
+    async def _linked(self, schedule: Schedule, actions: list[str]) -> Subscription | None:
+        """The subscription that runs `actions` when `schedule` fires (schedule:<its name>),
+        checked as set_subscription checks one; None for no actions."""
+        if not actions:
+            return None
+        name = SCHEDULE_PREFIX + schedule.name
+        existing = await self._named(Subscription, name)
+        subscription = Subscription(
+            id=existing.id if existing is not None else uuid4(),
+            name=name,
+            description=f"Runs the {schedule.name} schedule's actions (`udl schedules set`).",
+            events=[FIRED],
+            filter=Condition(field="schedule", op=Op.EQ, value=schedule.name),
+            actions=actions,
+        )
+        known = await self._actions()
+        types = self.service.event_types
+        check_subscription(subscription, types, known, for_schedule=True)
+        for action in subscription.actions:
+            await self._check_action(known[action], types_of(subscription, types))
+        return subscription
+
+    async def _keep_linked(self, schedule: str, linked: Subscription | None) -> None:
+        """Save `linked` as the schedule's subscription, or (None) delete the one it has."""
+        if linked is not None:
+            await self.service.db.upsert_record(linked)
+        else:
+            found = await self._named(Subscription, SCHEDULE_PREFIX + schedule)
+            if found is not None:
+                await self.service.db.delete_record(Subscription, found.id)
+        self.service.bus.subscriptions_changed()
 
     # -- looking records up --------------------------------------------------------------------
 
