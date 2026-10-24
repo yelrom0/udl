@@ -38,7 +38,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 9.5 Built-in actions: `script`, `operation`, `webhook`, `emit`, `notify`
   - [x] 9.6 `EventBus`: publish (persist, dedupe, causation depth), match subscriptions, queue runs; events other udl processes publish are picked up
   - [x] 9.7 `ActionRunner`: persisted runs, concurrency limits, timeouts, retries, cancelling, crash recovery; a run's end is an event
-  - [ ] 9.8 Loop protection: `max_event_depth`, per-subscription throttles, udl's own messages marked (used by 12 and 13)
+  - [x] 9.8 Loop protection: `max_event_depth`, per-subscription throttles, udl's own messages marked (used by 12 and 13)
   - [ ] 9.9 `AutomationRuntime` in `udl serve`: dispatcher, runner, retention, a lease so one runtime runs per database; finished downloads publish `udl.download.*`
   - [ ] 9.10 Operations (events, subscriptions, actions, runs, status) via CLI, API and MCP; `GET /events/stream` (SSE)
 

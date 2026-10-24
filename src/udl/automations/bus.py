@@ -10,11 +10,13 @@ after a restart). Every service has a bus (UDLService.bus), so any udl can publi
 `udl mcp`, a run's action.
 
 Dispatching (the runtime's, udl.automations.runtime) matches an event against the enabled
-subscriptions and queues a run for each action of each one that matches, then marks the event
-dispatched. Runs are keyed by event, action, subscription and dispatch, so dispatching again
-(after a crash) queues nothing twice, and a replay is a new dispatch. An event deeper than
-[automations] max_event_depth (events caused by runs, caused by events...) is dropped: stored,
-never dispatched. dispatch_pending() dispatches what is pending, whoever published it.
+subscriptions and queues a run for each action of each one that matches (skipped, saying why,
+when the subscription's throttle allows no more: its runs in the throttle's window count), then
+marks the event dispatched. Runs are keyed by event, action, subscription and dispatch, so
+dispatching again (after a crash) queues nothing twice, and a replay is a new dispatch. An event
+deeper than [automations] max_event_depth (events caused by runs, caused by events...) is
+dropped: stored, never dispatched. dispatch_pending() dispatches what is pending, whoever
+published it.
 
 notices() is what happens, as it happens (events stored and dispatched, runs changed), for the
 live stream (GET /events/stream). A listener that falls 500 behind loses the oldest and hears
@@ -223,14 +225,18 @@ class EventBus:
                 continue
             if not matches(found, event.event(), account):
                 continue
+            room = await self._room(found)
             for name in found.actions:
                 action = actions.get(name)
                 if action is None:
                     log.warning("The %s subscription runs %r, which is no action", found.name, name)
                     continue
-                run = await self._queue(event, found, action, dispatch)
+                throttled = room is not None and room <= 0
+                run = await self._queue(event, found, action, dispatch, throttled=throttled)
                 if run is not None:
                     queued.append(run)
+                    if room is not None and run.status is RunStatus.QUEUED:
+                        room -= 1
         if not replay:
             await self._mark(event, EventStatus.DISPATCHED)
         return queued
@@ -260,12 +266,36 @@ class EventBus:
             }
         return self._subscriptions, self._actions
 
+    async def _room(self, subscription: Subscription) -> int | None:
+        """How many more runs a subscription's throttle lets it have now (None: it has none):
+        its runs in the throttle's window, but those it skipped, count."""
+        throttle = subscription.throttle
+        if throttle is None:
+            return None
+        recent = await self.db.list_records(
+            ActionRun,
+            RecordQuery(
+                where={"subscription_id": subscription.id}, since=self.clock.now() - throttle.per
+            ),
+        )
+        return throttle.max_runs - sum(1 for run in recent if run.status is not RunStatus.SKIPPED)
+
     async def _queue(
-        self, event: EventRecord, subscription: Subscription, action: Action, dispatch: UUID
+        self,
+        event: EventRecord,
+        subscription: Subscription,
+        action: Action,
+        dispatch: UUID,
+        *,
+        throttled: bool,
     ) -> ActionRun | None:
-        """Store a run of `action` for `event` (skipped when the action is disabled). None when
-        it was queued before."""
-        skipped = None if action.enabled else "the action is disabled"
+        """Store a run of `action` for `event` (skipped when the subscription is `throttled` or
+        the action is disabled, saying so). None when it was queued before."""
+        skipped = None
+        if throttled:
+            skipped = f"throttled: {subscription.throttle}"
+        elif not action.enabled:
+            skipped = "the action is disabled"
         run = ActionRun(
             action_id=action.id,
             action=action.name,

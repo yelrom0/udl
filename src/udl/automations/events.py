@@ -15,7 +15,9 @@ called `custom.<name>` need no registering: their data is any JSON object (emit_
 /events, the emit action).
 
 Inside a run, current_run says which run is running, so what it publishes carries the run (as
-caused_by) and its depth (its event's, plus one), and integrations can tell what udl itself sent.
+caused_by) and its depth (its event's, plus one), and integrations can tell what udl itself sent:
+their event data has `sent_by_udl` (a mail a run sent, a Slack message a run posted), so a
+subscription can say `not sent_by_udl` and never answer itself.
 """
 
 # System Imports
