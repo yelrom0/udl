@@ -30,7 +30,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 8.9 OAuth 2.0 helper on httpx: authorization code + PKCE, a loopback redirect listener, refresh, revoke; tested against a fake authorization server
   - [x] 8.10 Settings: the `[automations]`, `[secrets]`, `[ai]`, `[integrations.<name>]` and `[web]` tables; `PluginSettings` records layered over the file (`get_plugin_settings` / `set_plugin_settings`); `get_config` hides the new secrets
 
-- [ ] **Phase 9: Events, subscriptions & actions**
+- [x] **Phase 9: Events, subscriptions & actions**
   - [x] 9.1 `Event` / `EventType` models and the event type registry; udl's own types (`udl.download.*`, `udl.action.*`, `udl.account.*`, `custom.*`); `list_event_types` gives each type's data schema
   - [x] 9.2 `Filter`: conditions on an event's data, checked against its type's schema when saved; a one-line shorthand with round-trip property tests; the evaluator
   - [x] 9.3 `Subscription`: event types (globs), accounts, filter, source filter (11.6), actions, throttle; matching
@@ -1505,6 +1505,89 @@ An external AI agent (any CLI agent run headless, with udl's MCP server configur
   `InstanceLock`, as for downloads), become `failed: interrupted`; pending events are dispatched again
   (runs are keyed by event, action and dispatch, so this queues nothing twice; a replay is a new dispatch).
 - **Retention:** events and ended runs older than `event_retention_days` are pruned hourly.
+
+### Decisions made while building Phase 9
+
+Where the build differs from a card, it is on purpose, as below.
+
+- **Events (9.1):** an `EventType` also has its `source` (udl, or the plugin that adds it).
+  A plugin of any kind adds types through an `event_types()` classmethod, each named
+  `<plugin>.<name>` (anything else is a plugin problem). `EventTypeInfo` has `json_schema`, as
+  Phase 8's settings do. An `EventField` also says its `format` (date-time), an array's
+  `items`, its `choices`, whether it is reached through a list (`in_list`) and whether it holds
+  anything (`open`: a dict or any JSON, under which a filter may name any path). A custom
+  event's `subject` field is its subject. `record_kinds()` imports the modules that define
+  udl's own kinds (`_UDL_KINDS`), so every database knows them all. `current_run` (a
+  `CurrentRun`) lives in `udl.automations.events`.
+- **Filters (9.2):** `parse()` and `shorthand()` (the card's `format()` shadows a builtin). A
+  path on its own is `Op.TRUTHY`, the default. A tree is kept in one form (an all or any of two
+  or more, nested ones flattened, an all or any of one is that filter), so
+  `parse(shorthand(f)) == f` holds for any tree. `Not`'s field is `not_`, called `not` in JSON.
+  Case only matters for text; a list's texts are all `i"…"` or none. Values are JSON's scalars
+  or lists of them. `<` … `>=` with a text value need it to be an ISO time. Regexes always run in
+  RE2 (`google-re2` has wheels for udl's Python, so there is no `re` fallback): its syntax, so a
+  lookaround is refused when the filter is saved. A field must be in every type a subscription
+  could get; values are also checked against a field's `choices`. `failing()` names the part
+  of a filter that failed (for `test_subscription`).
+- **Subscriptions (9.3):** `Throttle` reads its shorthand itself (and is stored as its fields).
+  `accounts: []` is every account. A missing action is a `ConfigError` (400). Source filters
+  are checked by their integration's check, by source (none yet: Phase 11). `Name` (in
+  `udl.db.records`) types the names users give records; indexed fields may be typed with an
+  alias such as it.
+- **Actions (9.4, 9.5):** an `Action`'s kind is the field `plugin` (`kind` is the record's own
+  class variable); the CLI option is still `--kind`. An action plugin is made for a service.
+  `check()` renders the options with an event type's example when it has one; without one
+  (custom types, or none) it only parses the templates and validates the options that hold
+  none. `UDLError.retryable` is the class's; `is_retryable()` reads it, and `ActionFailed`'s
+  own is `may_retry`. `ActionContext` also has the action's name, the subscription and the
+  depth; a run's log keeps its last 16 KiB. `CancelToken` and `cancellable()` moved to
+  `udl.process` with `run_process()` (the downloaders' base re-exports them). Settings know
+  the config file they were read from (`UDL_CONFIG`, for scripts).
+  - `script` checks its `cwd`, and its output is the JSON it prints (a `summary` in it is the
+    run's), else the text.
+  - `operation` names its operation plainly (never a template, so no event picks it), and an
+    operation's error is retryable as its class says.
+  - `webhook` honours `Retry-After` (seconds or a date) for retryable answers only; its output
+    says whether the body was `truncated`; secret headers are not templates.
+  - `notify` puts `--` before the title and body.
+  - `emit` publishes through the bus, so it was built with it (9.6); it may give a
+    `dedupe_key`. Nothing makes it fail or wait, so the contract skips those two tests for it.
+- **The bus (9.6, 9.8):** `publish()` gives the stored `EventRecord` (with its status). Runs
+  are `ActionRun` records in `udl.automations.runs`, which the bus and the runner share. A
+  run's `dispatch` is a UUID: the event's id for its first dispatch, a new one for each replay.
+  Subscriptions and actions are cached, read again at each `dispatch_pending()` and after
+  `subscriptions_changed()`. An action that is gone gets no run (logged); a disabled one, a
+  skipped run. An event another udl published is told of (pending) before its runs.
+  Throttles are counted when an event is dispatched, from the subscription's runs in the
+  window (skipped ones aside).
+- **The runner (9.7):** runs keep their `runner` (the runtime's holder; none for a run asked
+  for). A runtime that takes the lease ends the runtime runs left running as interrupted; runs
+  asked for are ended so by a udl that starts alone (`InstanceLock`, as downloads are). Runs
+  asked for can be cancelled, but not counted against the limits. Cancelled and skipped runs
+  publish nothing. `transcript`, `pending_call` and `mode` come with Phase 15 (they are JSON,
+  so adding them needs no migration).
+- **The runtime (9.9):** its loops stop where they wait (and are cancelled after `STOP_GRACE`
+  only if stuck): cancelling one mid-query left SQLite connections unclosed. A scripts_dir
+  inside the download dir or an allowed output root is a `ConfigError` when it starts
+  (attachment roots join in Phase 12). `get_status`'s `last_dispatch` is when the newest
+  dispatched event was dispatched.
+- **Operations (9.10):** their logic is `udl.automations.manager.Automations` (UDLService's
+  methods delegate to it, as Phase 8's plugin settings do), their models
+  `udl.automations.models`. udl's own operations with a `CLISpec` are commands of the `udl`
+  app (`add_commands()`, with renderers in `cli/commands/automations.py`); a one-word path
+  (`udl status`) is udl's own only. `CLISpec` gained `pairs` (a dict given as `-O KEY=VALUE`)
+  and several names per option; `--input` is also `-f`. `list_events` takes an `account_id`
+  (account names come with accounts, Phase 11), and `list_actions` a kind (`--kind`).
+  `emit_event` answers 201, with the first event when its dedupe key was seen before; its
+  source is its caller (cli, api, mcp). An action is never called `scripts`
+  (`/actions/scripts`). An action's secrets show as where the store keeps them (`{"secret":
+  "actions/<id>/…"}`), which may be given back to keep a secret; another's is refused
+  (`NotAllowed`). A subscription's `filter` is shown as a tree, and as the shorthand in
+  `filter_text`. `FilterField`'s JSON Schema takes the shorthand or a tree. The stream's
+  keep-alive is FastAPI's own (every 15 s); `lagged`'s data is `{"lagged": true}`.
+- **Fixed on the way:** a job manager test downloaded two URLs to one file name (one failed now
+  and then). The interface tests' harness carries its `[automations]` over to the settings the
+  CLI loads.
 
 ---
 

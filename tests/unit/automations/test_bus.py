@@ -400,6 +400,31 @@ async def test_listeners_hear_events_and_runs_in_order(bus: EventBus, db: DBMana
     assert heard[2].event.status is EventStatus.DISPATCHED
 
 
+async def test_listeners_hear_of_an_event_another_udl_published_before_its_runs(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(tmp_path)
+    async with harness.service() as server, harness.service() as cli:
+        await action(server.db)
+        await subscribe(server.db)
+        listening = asyncio.create_task(listen(server.bus, 3))
+        await asyncio.sleep(0)
+
+        event = await cli.bus.publish(hello())
+        assert event is not None
+        await server.bus.dispatch_pending()
+
+        heard = await asyncio.wait_for(listening, 1)
+
+    assert [(notice.kind, notice.event_id) for notice in heard] == [
+        (NoticeKind.EVENT, event.id),
+        (NoticeKind.RUN, event.id),
+        (NoticeKind.EVENT, event.id),
+    ]
+    assert heard[0].event is not None
+    assert heard[0].event.status is EventStatus.PENDING
+
+
 async def test_listeners_hear_only_the_types_they_ask_for(bus: EventBus, db: DBManager) -> None:
     await action(db)
     await subscribe(db)
@@ -442,3 +467,22 @@ async def test_a_slow_listener_hears_that_it_missed_some(bus: EventBus) -> None:
     assert lagged.kind is NoticeKind.LAGGED
     assert following.event is not None
     assert following.event.dedupe_key == "100"  # (the oldest 100 were dropped)
+
+
+async def test_the_bus_remembers_a_bounded_number_of_events_it_told_of(
+    bus: EventBus, db: DBManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("udl.automations.bus._REMEMBERED", 1)
+    first = await bus.publish(hello(dedupe_key="1"))
+    await bus.publish(hello(dedupe_key="2"))
+    assert first is not None
+    listening = asyncio.create_task(listen(bus, 2))
+    await asyncio.sleep(0)
+
+    await bus.dispatch(first)  # (forgotten: told of again)
+
+    heard = await asyncio.wait_for(listening, 1)
+    assert [notice.event.status for notice in heard if notice.event] == [
+        EventStatus.PENDING,
+        EventStatus.DISPATCHED,
+    ]

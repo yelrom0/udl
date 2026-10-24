@@ -27,7 +27,7 @@ that it lagged.
 import asyncio
 import fnmatch
 import logging
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -55,6 +55,7 @@ BATCH: Final = 100
 """Pending events dispatched at a time."""
 LISTENER_QUEUE: Final = 500
 """Notices a listener may fall behind by before it loses the oldest."""
+_REMEMBERED: Final = 10_000  # events whose storing this bus remembers having told of
 
 
 class NewEvent(BaseModel):
@@ -149,6 +150,8 @@ class EventBus:
         self.settings = settings
         self._account_names: AccountNames = account_names or (lambda account_id: None)
         self._listeners: list[_Listener] = []
+        # The events listeners heard of being stored (others' are told of as they are dispatched).
+        self._told: OrderedDict[UUID, None] = OrderedDict()
         self._subscriptions: list[Subscription] | None = None
         self._actions: dict[str, Action] | None = None
         self.published = asyncio.Event()
@@ -192,7 +195,7 @@ class EventBus:
             log.debug("The %s event %r was seen before", new.type, new.dedupe_key)
             return None
         self.published.set()
-        self._notify(BusNotice(NoticeKind.EVENT, event=stored))
+        self._tell(stored)
         return stored
 
     # -- dispatching ---------------------------------------------------------------------------
@@ -210,6 +213,8 @@ class EventBus:
         `subscription`'s), and mark it dispatched (unless this is a `replay`: a new dispatch of
         an event dispatched before). An event deeper than max_event_depth is dropped. Returns
         the runs queued (and skipped)."""
+        if event.id not in self._told:  # (another udl published it: tell of it first)
+            self._tell(event)
         limit = self.settings.max_event_depth
         if event.depth > limit:
             reason = f"it is {event.depth} deep, deeper than max_event_depth ({limit})"
@@ -348,6 +353,13 @@ class EventBus:
                     yield listener.queue.popleft()
         finally:
             self._listeners.remove(listener)
+
+    def _tell(self, event: EventRecord) -> None:
+        """Tell the listeners `event` was stored."""
+        self._told[event.id] = None
+        while len(self._told) > _REMEMBERED:
+            self._told.popitem(last=False)
+        self._notify(BusNotice(NoticeKind.EVENT, event=event))
 
     def _notify(self, notice: BusNotice) -> None:
         for listener in self._listeners:

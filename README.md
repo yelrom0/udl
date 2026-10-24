@@ -24,6 +24,7 @@ $ udl https://youtu.be/jNQXAC9IVRw
 - [Sites that need a login](#sites-that-need-a-login)
 - [Tag chains: sites no downloader handles](#tag-chains-sites-no-downloader-handles)
 - [Databases](#databases)
+- [Automations](#automations)
 - [Plugins](#plugins)
 - [The HTTP API](#the-http-api)
 - [The MCP server](#the-mcp-server)
@@ -228,11 +229,41 @@ udl db sync --from shared --to local --dry-run
 - **Nothing is deleted**, so syncing twice changes nothing the second time.
 - **Read-only connections** can be synced from, but not into.
 
+## Automations
+
+udl turns what happens into **events** (a download ended, an action's run ended, an event of your
+own), and runs **actions** for the **subscriptions** an event matches. An action is a named
+thing to run, of a kind: `script` (a program from `[automations] scripts_dir`, never through a
+shell, with the event as JSON on its stdin), `operation` (one of udl's operations), `webhook`
+(an HTTP request), `emit` (an event of your own) or `notify` (a desktop notification). Its
+options are templates, rendered with the event (`"{{ event.data.url }}"`).
+
+```sh
+udl actions set hello --kind script -O 'command=["hello.sh"]'      # ~/.config/udl/scripts/hello.sh
+udl subs set greet --on custom.hello --action hello --where 'name == "x"'
+udl events emit custom.hello --data '{"name": "x"}'
+udl runs list                                   # the run, and what the script printed
+udl events list                                 # the event, and the run's udl.action.succeeded
+```
+
+- **Filters** are conditions on the event's data: dotted paths compared with `==` `!=` `contains`
+  `startswith` `endswith` `~` (a regex) `in` `<` `<=` `>` `>=` `exists`, joined by `and`, `or`,
+  `not` and parentheses (`from.address endswith "@bank.com" and not sent_by_udl`).
+  `udl events types` lists each event type's fields; a filter that names one its types lack is
+  refused when it is saved. `udl subs test <name>` tries a subscription on the latest events.
+- **The runtime** runs in `udl serve` (unless `[automations] enabled = false`): it dispatches the
+  events (whichever udl published them) and runs their actions. One udl runs them per database,
+  the one that holds its lease; `udl status` says which. A failure that trying again may help is
+  tried again (an action's `retries`, with backoff); a subscription's throttle (`10 per 1h`) and
+  `max_event_depth` (events caused by runs caused by events...) keep anything from running for
+  ever.
+- **Live:** `GET /events/stream` sends the events and the runs' changes as they happen.
+
 ## Plugins
 
-udl has four kinds of plugin: databases, downloaders, site plugins and secret stores. `udl plugins
-list` shows each one with its type, its source (`builtin`, `installed` or `local`), and whether it
-can run.
+udl has five kinds of plugin: databases, downloaders, site plugins, secret stores and kinds of
+action. `udl plugins list` shows each one with its type, its source (`builtin`, `installed` or
+`local`), and whether it can run.
 
 - **Site plugins** are code for a particular site's behaviour. They can rewrite its URLs (for
   example short links to their usual form), choose its downloader, add the headers or cookies it
@@ -284,6 +315,16 @@ Every command has a route, named after its operation:
 | a plugin's settings | `udl plugins settings` | `GET /plugins/{name}/settings` | `get_plugin_settings` |
 | change them | `udl plugins configure` | `PUT /plugins/{name}/settings` | `set_plugin_settings` |
 | show the config | `udl config show` | `GET /config` | `get_config` |
+| event types | `udl events types` | `GET /event-types` | `list_event_types` |
+| events | `udl events list` / `show` | `GET /events`, `GET /events/{id}` | `list_events`, `get_event` |
+| emit / replay an event | `udl events emit` / `replay` | `POST /events`, `POST /events/{id}/replay` | `emit_event`, `replay_event` |
+| subscriptions | `udl subs list` / `show` / `set` / `rm` | `/subscriptions`, `/subscriptions/{name}` | `list_subscriptions`, `get_subscription`, `set_subscription`, `delete_subscription` |
+| test a subscription | `udl subs test` | `POST /subscriptions/test` | `test_subscription` |
+| actions | `udl actions list` / `show` / `set` / `rm` | `/actions`, `/actions/{name}` | `list_actions`, `get_action`, `set_action`, `delete_action` |
+| run an action | `udl actions run` | `POST /actions/{name}/run` | `run_action` |
+| scripts | `udl actions scripts` | `GET /actions/scripts` | `list_scripts` |
+| runs | `udl runs list` / `show` / `cancel` | `GET /runs`, `GET` / `DELETE /runs/{id}` | `list_runs`, `get_run`, `cancel_run` |
+| the automations' status | `udl status` | `GET /status` | `get_status` |
 | a plugin's operation | `udl <plugin> <op>` | `POST /plugins/<plugin>/<op>` | `<plugin>_<op>` |
 
 - **Starting downloads:** `POST /downloads` answers 202 with the job ids. Add `?wait=true` to get
@@ -345,11 +386,18 @@ user_agent = "Mozilla/5.0 ..."      # by default a browser's
 [secrets]
 store = "auto"                      # auto (the keyring, else a file) | keyring | file | memory
 
+[automations]                       # the runtime in udl serve (see Automations)
+enabled = true
+max_concurrent_runs = 4
+max_event_depth = 8                 # events caused by runs, caused by events...
+event_retention_days = 30
+scripts_dir = "~/.config/udl/scripts"   # script actions run programs from here only
+
 [integrations.gmail]                # a plugin's settings (under what udl plugins configure sets)
 poll_interval = "60s"               # durations: 30s, 5m, 24h, 1h30m
 
-# [db] and [[db.connections]]: see Databases. [automations], [ai] and [web] are for what
-# planning.md's later phases build.
+# [db] and [[db.connections]]: see Databases. [ai] and [web] are for what planning.md's later
+# phases build.
 ```
 
 ## Security
@@ -370,6 +418,14 @@ poll_interval = "60s"               # durations: 30s, 5m, 24h, 1h30m
   (`chmod 600`).
 - **Cookies and headers are never put on a command line**, which other users can read. curl,
   wget and gallery-dl get them in files in a private temporary folder.
+- **What an action can do.** A script action runs only programs in `scripts_dir` (links and
+  `..` resolved), never through a shell, with an environment of udl's making (not udl's own,
+  which may hold secrets); udl refuses to run the automations when `scripts_dir` is inside a
+  folder it downloads to. An operation action never calls an admin operation (one that changes
+  automations or settings), and paths it gives are held to their roots. Event data (an email,
+  a message) was written by anyone: templates render it in a sandbox, and it reaches a script
+  as data, never as code. An action's secrets (a webhook's secret headers) go to the secret
+  store.
 - **Plugins are code.** Install packages you trust, and keep the plugin dir writable only by you.
 
 ## Development

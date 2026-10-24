@@ -22,9 +22,9 @@ from support.api import client_for
 from support.interfaces import A, Harness
 from udl.config import APISettings, AutomationsSettings
 from udl.core.models import DownloadList
-from udl.core.operations import operations
+from udl.core.operations import current_caller, operations
 from udl.errors import DuplicateKey, ErrorCode, ErrorInfo
-from udl.interfaces.api.app import LocalHostsOnly, create_app
+from udl.interfaces.api.app import CalledThroughTheAPI, LocalHostsOnly, create_app
 
 
 def keyed(tmp_path: Path, key: str = "s3cret") -> Harness:
@@ -181,3 +181,20 @@ async def test_udl_serve_runs_the_automations_unless_told_not_to(
 
     assert running is enabled
     assert app.state.service.runtime is None
+
+
+async def test_what_is_not_a_request_is_no_api_call() -> None:
+    seen: list[object] = []
+
+    async def inner(scope: Scope, receive: Receive, send: Send) -> None:
+        seen.append(current_caller.get())
+
+    async def receive() -> Message:
+        raise AssertionError
+
+    async def send(message: Message) -> None:
+        raise AssertionError
+
+    await CalledThroughTheAPI(inner)({"type": "lifespan"}, receive, send)
+
+    assert seen == [None]
