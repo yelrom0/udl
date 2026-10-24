@@ -8,6 +8,7 @@ store udl uses ([secrets] store)
 """
 
 # System Imports
+import asyncio
 import json
 import os
 import stat
@@ -111,6 +112,21 @@ async def test_the_file_store_keeps_secrets_for_the_next_udl(tmp_path: Path) -> 
     assert found is not None
     assert found.get_secret_value() == "s3cret"
     assert json.loads(settings.file.read_text()) == {"token": "s3cret"}
+
+
+async def test_two_file_stores_on_one_file_keep_each_other_s_secrets(tmp_path: Path) -> None:
+    # (As two udls do: each rewrites the whole file, under the lock beside it.)
+    settings = SecretsSettings(store="file", file=tmp_path / "secrets.json")
+    first, second = FileSecretStore(settings), FileSecretStore(settings)
+
+    await asyncio.gather(
+        *(
+            (first if n % 2 else second).set(SecretRef(f"many/{n}"), SecretStr(str(n)))
+            for n in range(20)
+        )
+    )
+
+    assert json.loads(settings.file.read_text()) == {f"many/{n}": str(n) for n in range(20)}
 
 
 async def test_the_file_store_makes_a_file_others_could_read_its_owner_s(tmp_path: Path) -> None:
