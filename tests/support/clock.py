@@ -11,6 +11,8 @@ time it passes, in order
 import asyncio
 import heapq
 import itertools
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Final
 
@@ -43,6 +45,34 @@ class FakeClock:
         woken = asyncio.get_running_loop().create_future()
         heapq.heappush(self._sleepers, (when, next(self._order), woken))
         await woken
+
+    async def sleep(self, delay: timedelta) -> None:
+        await self.sleep_until(self._now + delay)
+
+    @asynccontextmanager
+    async def timeout(self, delay: timedelta) -> AsyncGenerator[None]:
+        """A block that raises TimeoutError when the clock passes `delay` from now before it
+        ends (as asyncio.timeout does: by cancelling it)."""
+        task = asyncio.current_task()
+        assert task is not None
+        expired = False
+
+        async def expire() -> None:
+            nonlocal expired
+            await self.sleep_until(self._now + delay)
+            expired = True
+            task.cancel()
+
+        watcher = asyncio.create_task(expire())
+        try:
+            yield
+        except asyncio.CancelledError:
+            if not expired:
+                raise
+            task.uncancel()
+            raise TimeoutError from None
+        finally:
+            watcher.cancel()
 
     async def advance(self, by: timedelta) -> None:
         """Move the clock on by `by`, waking each sleeper at its time, in order, and letting it

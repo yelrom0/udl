@@ -5,12 +5,13 @@
 
 Clock: what tells udl the time and lets it wait for one. Everything time-driven (schedules,
 watchers, leases, throttles, retries, refreshing tokens) asks a Clock, never datetime.now() or
-asyncio.sleep() itself, so tests move time on (tests/support/clock.py's FakeClock) instead of
-waiting.
+asyncio.sleep() itself (a test checks udl.automations, udl.integrations and udl.ai), so tests
+move time on (tests/support/clock.py's FakeClock) instead of waiting.
 """
 
 # System Imports
 import asyncio
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
 from typing import Final, Protocol
 
@@ -28,12 +29,26 @@ class Clock(Protocol):
         """Wait until `when` (at once, when it has gone by)."""
         ...
 
+    async def sleep(self, delay: timedelta) -> None:
+        """Wait for `delay`."""
+        ...
+
+    def timeout(self, delay: timedelta) -> AbstractAsyncContextManager[object]:
+        """A block that raises TimeoutError when it has not ended within `delay`."""
+        ...
+
 
 class SystemClock:
     """The system's clock."""
 
     def now(self) -> datetime:
         return datetime.now(UTC)
+
+    async def sleep(self, delay: timedelta) -> None:
+        await self.sleep_until(self.now() + delay)
+
+    def timeout(self, delay: timedelta) -> AbstractAsyncContextManager[object]:
+        return asyncio.timeout(delay.total_seconds())
 
     async def sleep_until(self, when: datetime) -> None:
         # (Waiting for the wall clock, not for an event: hence a step at a time.)

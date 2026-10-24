@@ -10,11 +10,13 @@ Clocks: the system's, and the FakeClock tests move on instead of waiting
 import asyncio
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 # Package Imports
 import pytest
 
 # Local Imports
+import udl
 from support.clock import T0, FakeClock
 from udl.clock import Clock, SystemClock
 
@@ -142,3 +144,84 @@ async def test_a_fake_clock_can_be_set_to_start_anywhere() -> None:
     start = datetime(2030, 3, 31, 1, 30, tzinfo=UTC)
 
     assert FakeClock(start).now() == start
+
+
+async def test_the_system_clock_sleeps_for_a_while() -> None:
+    started = time.monotonic()
+
+    await SystemClock().sleep(timedelta(milliseconds=30))
+
+    assert time.monotonic() - started >= 0.025
+
+
+async def test_the_system_clock_times_out_what_takes_too_long() -> None:
+    with pytest.raises(TimeoutError):
+        async with SystemClock().timeout(timedelta(milliseconds=20)):
+            await asyncio.sleep(5)
+
+
+async def test_a_fake_clock_sleeps_for_a_while() -> None:
+    clock = FakeClock()
+    task = asyncio.create_task(clock.sleep(timedelta(minutes=5)))
+
+    await clock.advance(timedelta(minutes=4))
+    assert not task.done()
+    await clock.advance(timedelta(minutes=1))
+
+    assert task.done()
+
+
+async def test_a_fake_clock_times_out_what_takes_too_long() -> None:
+    clock = FakeClock()
+
+    async def waits() -> str:
+        async with clock.timeout(timedelta(seconds=30)):
+            await asyncio.Event().wait()
+        return "never"
+
+    task = asyncio.create_task(waits())
+    await clock.advance(timedelta(seconds=29))
+    assert not task.done()
+    await clock.advance(timedelta(seconds=1))
+
+    with pytest.raises(TimeoutError):
+        await task
+
+
+async def test_a_fake_clock_s_timeout_lets_what_is_quick_finish() -> None:
+    clock = FakeClock()
+
+    async with clock.timeout(timedelta(seconds=30)):
+        await asyncio.sleep(0)
+    await clock.advance(timedelta(minutes=1))
+
+    assert clock.sleepers == 0
+
+
+async def test_a_cancelled_task_in_a_fake_clock_s_timeout_stays_cancelled() -> None:
+    clock = FakeClock()
+
+    async def waits() -> None:
+        async with clock.timeout(timedelta(seconds=30)):
+            await asyncio.Event().wait()
+
+    task = asyncio.create_task(waits())
+    await asyncio.sleep(0)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+def test_what_waits_for_a_time_asks_the_clock() -> None:
+    # (So tests move time on instead of waiting: the scheduler, watchers, leases, retries...)
+    root = Path(udl.__file__).parent
+    offenders = [
+        f"{path.relative_to(root)}:{n}"
+        for package in ("automations", "integrations", "ai")
+        for path in sorted((root / package).rglob("*.py"))
+        for n, line in enumerate(path.read_text().splitlines(), 1)
+        if "datetime.now(" in line or "asyncio.sleep(" in line
+    ]
+
+    assert offenders == []
