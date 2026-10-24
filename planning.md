@@ -3,7 +3,9 @@
 > udl grows from a downloader into a local automation hub. It connects **several Google and Slack
 > accounts**, watches **web pages that publish nothing**, turns what happens in them (and on a **schedule**)
 > into **events**, and runs the **actions** that **subscribe** to those events: scripts, udl operations, webhooks, or a **local AI** with its own prompts
-> and guidance. Everything stays available through the **CLI**, the **HTTP API** and the **MCP server**, and a
+> and guidance. It **reads pages a plain fetch can't**, in queued batches, through its browser and the
+> user's cookies, with the user passing an anti-bot check by hand where one appears. Everything stays
+> available through the **CLI**, the **HTTP API** and the **MCP server**, and a
 > **web UI** (React, served by FastAPI) joins them. The UI is built from **UI plugins**, so any plugin can
 > bring its own screens, built with whatever component library it likes.
 >
@@ -38,7 +40,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 9.5 Built-in actions: `script`, `operation`, `webhook`, `emit`, `notify`
   - [x] 9.6 `EventBus`: publish (persist, dedupe, causation depth), match subscriptions, queue runs; events other udl processes publish are picked up
   - [x] 9.7 `ActionRunner`: persisted runs, concurrency limits, timeouts, retries, cancelling, crash recovery; a run's end is an event
-  - [x] 9.8 Loop protection: `max_event_depth`, per-subscription throttles, udl's own messages marked (used by 12 and 13)
+  - [x] 9.8 Loop protection: `max_event_depth`, per-subscription throttles, udl's own messages marked (used by 13 and 14)
   - [x] 9.9 `AutomationRuntime` in `udl serve`: dispatcher, runner, retention, a lease so one runtime runs per database; finished downloads publish `udl.download.*`
   - [x] 9.10 Operations (events, subscriptions, actions, runs, status) via CLI, API and MCP; `GET /events/stream` (SSE)
 
@@ -59,82 +61,94 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 11.6 Source filters: criteria only the integration can check (e.g. a Gmail search), checked after the generic filter
   - [x] 11.7 Account operations via CLI, API and MCP
 
-- [ ] **Phase 12: Gmail plugin (`gmail`)**
-  - [ ] 12.1 Fake Gmail + fake Google OAuth servers in `tests/support/` (the REST calls udl makes)
-  - [ ] 12.2 Google OAuth with the user's own Desktop OAuth client; scopes by access (`read`, `send`, `drafts`, `organise`); revoke on disconnect
-  - [ ] 12.3 Typed Gmail client (httpx): messages, threads, history, labels, attachments, send; error mapping
-  - [ ] 12.4 `gmail.message.received` and its watcher: History API polling, watched labels, recovery from an expired history id
-  - [ ] 12.5 Source filter: a Gmail search query (`from:bank.com has:attachment`)
-  - [ ] 12.6 Operations: list, get, thread, send, reply, draft, modify (labels, read, archive), labels, save attachments
-  - [ ] 12.7 Opt-in smoke tests against a real account
+- [ ] **Phase 12: Page fetcher (`udl fetch`)**
+  - [ ] 12.1 Anti-bot fixture site in `tests/support/`: pages that turn plain clients away with a 500, a Cloudflare-style check a person passes (its clearance bound to the User-Agent), a hard block, a 429, a page built by JavaScript, a login wall; `FakePerson`
+  - [ ] 12.2 Recognising challenges: a table of markers per kind (Cloudflare, Turnstile, hCaptcha, reCAPTCHA, DataDome, PerimeterX, AWS WAF, Imperva, Sucuri, Akamai); a check a person can pass vs a block
+  - [ ] 12.3 Page content: the main content as Markdown (or text, or the HTML), links made absolute, `select`, charsets; other types kept as files
+  - [ ] 12.4 The ladder: static → with the site's cookies → udl's browser → a person, climbing on a 5xx (after one more try), 401/403, a challenge or a JavaScript shell; the rung that worked remembered per site (`FetchSite`)
+  - [ ] 12.5 Cookies: import `cookies.txt`, JSON exports, a `Cookie:` header or the user's browser into udl's profile, with the User-Agent they belong to; list (never values) and delete; the profile held across processes
+  - [ ] 12.6 Batches and the queue: `FetchBatch` / `FetchItem` records, a lane per site with limits and delays, one browser lane, a site's challenge holding its other URLs, cancel, retry, recovery, retention; `udl.fetch.challenge` and `udl.fetch.finished`
+  - [ ] 12.7 Passing challenges: one headed window on udl's profile, a tab per waiting site; `ask` / `wait` / `fail`; the clearance kept; `udl fetch solve` from any udl process
+  - [ ] 12.8 Operations (fetch, batches, pages, challenges, cookies) via CLI, API and MCP; `udl fetch <url>…`
+  - [ ] 12.9 End to end: an MCP client's batch over three fixture hosts, each check passed once
 
-- [ ] **Phase 13: Slack plugin (`slack`)**
-  - [ ] 13.1 Fake Slack (Web API + a Socket Mode WebSocket) in `tests/support/`
-  - [ ] 13.2 Connect with tokens from the user's own Slack app (`auth.test`); `slack_app_manifest` gives the app's manifest
-  - [ ] 13.3 Typed Web API client (httpx): pagination, rate-limit tiers, `Retry-After`
-  - [ ] 13.4 Socket Mode client (`websockets`): acknowledge envelopes, reconnect when Slack asks or the connection drops
-  - [ ] 13.5 `slack.message.posted` / `slack.reaction.added`; user and channel names; messages udl sent are recognised
-  - [ ] 13.6 Operations: channels, read a channel or thread, search, send, react, users, save files, manifest
-  - [ ] 13.7 Opt-in smoke tests against a real workspace
+- [ ] **Phase 13: Gmail plugin (`gmail`)**
+  - [ ] 13.1 Fake Gmail + fake Google OAuth servers in `tests/support/` (the REST calls udl makes)
+  - [ ] 13.2 Google OAuth with the user's own Desktop OAuth client; scopes by access (`read`, `send`, `drafts`, `organise`); revoke on disconnect
+  - [ ] 13.3 Typed Gmail client (httpx): messages, threads, history, labels, attachments, send; error mapping
+  - [ ] 13.4 `gmail.message.received` and its watcher: History API polling, watched labels, recovery from an expired history id
+  - [ ] 13.5 Source filter: a Gmail search query (`from:bank.com has:attachment`)
+  - [ ] 13.6 Operations: list, get, thread, send, reply, draft, modify (labels, read, archive), labels, save attachments
+  - [ ] 13.7 Opt-in smoke tests against a real account
 
-- [ ] **Phase 14: Web-page watcher (`pages`)**
-  - [ ] 14.1 Fixture site: pages a test can change between checks (a list of posts, a price, an article), served with `ETag` / `Last-Modified`
-  - [ ] 14.2 Chains that give values: a tag chain (Phase 5) run for its last step's values (text, attributes, JSON) rather than media URLs, and within one element (an item)
-  - [ ] 14.3 `PageWatch`: a `pages` account (connected with `none`) that watches `items` + `fields`, a `value`, or the `page`'s text, static or in the browser, every so often
-  - [ ] 14.4 The watcher: conditional requests, the site's cookies, a baseline at the first check (nothing fires for what is already there); `pages.item.added`, `pages.value.changed` and `pages.page.changed`, each fired once
-  - [ ] 14.5 A watch that stops finding anything (the site changed its layout) reports `udl.account.error` once, naming the step, rather than going quiet
-  - [ ] 14.6 `pages_suggest`: find a page's repeated structures (posts, products, results) and propose `items` and `fields`, ranked, with Phase 5's stable selectors
-  - [ ] 14.7 Operations (`pages_preview`, `pages_suggest`, `pages_poll`) via CLI, API and MCP; `udl pages wizard <url>` (suggest → pick → preview → save, optionally with a subscription)
+- [ ] **Phase 14: Slack plugin (`slack`)**
+  - [ ] 14.1 Fake Slack (Web API + a Socket Mode WebSocket) in `tests/support/`
+  - [ ] 14.2 Connect with tokens from the user's own Slack app (`auth.test`); `slack_app_manifest` gives the app's manifest
+  - [ ] 14.3 Typed Web API client (httpx): pagination, rate-limit tiers, `Retry-After`
+  - [ ] 14.4 Socket Mode client (`websockets`): acknowledge envelopes, reconnect when Slack asks or the connection drops
+  - [ ] 14.5 `slack.message.posted` / `slack.reaction.added`; user and channel names; messages udl sent are recognised
+  - [ ] 14.6 Operations: channels, read a channel or thread, search, send, react, users, save files, manifest
+  - [ ] 14.7 Opt-in smoke tests against a real workspace
 
-- [ ] **Phase 15: Local AI**
-  - [ ] 15.1 `udl.ai` plugin kind: `AIProvider` base + contract suite + `FakeAI` (scripted); `AIProviderConnection` records
-  - [ ] 15.2 `ollama` provider: chat with tool calls, models, `keep_alive`, pulling a model
-  - [ ] 15.3 `openai-compatible` provider (llama.cpp's `llama-server`, LM Studio, vLLM…); any provider's optional `command` is started on demand and stopped when idle
-  - [ ] 15.4 Tools from operations: schemas from request models; `ToolPolicy` (allowlist; destructive / open-world tools wait for approval in `ask` mode and run unattended in `auto` mode; `admin` operations never, for now)
-  - [ ] 15.5 The agent loop: tool calls, step / time / size limits, the transcript kept on the run
-  - [ ] 15.6 Approvals (`ask` mode): a run waits (`awaiting_approval`), `decide_run`, a `udl.action.awaiting_approval` event, denied after a timeout
-  - [ ] 15.7 `Prompt` and `Guidance` records; how a prompt is put together (guidance by scope, the prompt, then the event as untrusted data)
-  - [ ] 15.8 The `ai` action
-  - [ ] 15.9 Operations (providers, models, prompts, guidance, `try_prompt`) via CLI, API and MCP
+- [ ] **Phase 15: Web-page watcher (`pages`)**
+  - [ ] 15.1 Fixture site: pages a test can change between checks (a list of posts, a price, an article), served with `ETag` / `Last-Modified`
+  - [ ] 15.2 Chains that give values: a tag chain (Phase 5) run for its last step's values (text, attributes, JSON) rather than media URLs, and within one element (an item)
+  - [ ] 15.3 `PageWatch`: a `pages` account (connected with `none`) that watches `items` + `fields`, a `value`, or the `page`'s text, static or in the browser, every so often
+  - [ ] 15.4 The watcher: conditional requests, the site's cookies, a baseline at the first check (nothing fires for what is already there); `pages.item.added`, `pages.value.changed` and `pages.page.changed`, each fired once
+  - [ ] 15.5 A watch that stops finding anything (the site changed its layout) reports `udl.account.error` once, naming the step, rather than going quiet
+  - [ ] 15.6 `pages_suggest`: find a page's repeated structures (posts, products, results) and propose `items` and `fields`, ranked, with Phase 5's stable selectors
+  - [ ] 15.7 Operations (`pages_preview`, `pages_suggest`, `pages_poll`) via CLI, API and MCP; `udl pages wizard <url>` (suggest → pick → preview → save, optionally with a subscription)
 
-- [ ] **Phase 16: Web UI foundations & UI plugins**
-  - [ ] 16.1 `web/` pnpm workspace and tooling: Vite + SWC, TypeScript strict, Biome, Vitest (+ coverage gate), Playwright, Tailwind CSS + daisyUI; `make web`, `make e2e`, and `make check` runs the web checks
-  - [ ] 16.2 Typed API client generated from udl's OpenAPI schema (`openapi-typescript` + `openapi-fetch`); `make check` fails when it is stale
-  - [ ] 16.3 FastAPI serves the UI at `/ui` (from the package, SPA fallback, CSP, cache headers), and a page saying how to build it when it isn't built
-  - [ ] 16.4 Web sessions: sign in with the API key → a session cookie; a CSRF header and an Origin check on writes
-  - [ ] 16.5 The shell: layout, TanStack Router (file routes, auth guard, a splat route for plugin pages), Zustand stores, light / dark / system theme
-  - [ ] 16.6 Live data: shared SSE connections feeding Zustand stores, reconnecting with backoff
-  - [ ] 16.7 `UIManifest` (Pydantic → JSON Schema → TypeScript), `ui` on every plugin kind, the `udl.ui` kind, local UI plugin dirs, `GET /ui/plugins.json`, UI availability in `list_plugins`
-  - [ ] 16.8 `@udl/ui-sdk`: `defineUIPlugin`, the mount contract, a React adapter, the plugin context, SDK version checks
-  - [ ] 16.9 The plugin host: `<PluginSlot>` (lazy import, Shadow DOM isolation, error boundary) and the contribution points
-  - [ ] 16.10 Proof: an example UI plugin built with shadcn/ui runs isolated inside the daisyUI shell (e2e); a template for new UI plugins
+- [ ] **Phase 16: Local AI**
+  - [ ] 16.1 `udl.ai` plugin kind: `AIProvider` base + contract suite + `FakeAI` (scripted); `AIProviderConnection` records
+  - [ ] 16.2 `ollama` provider: chat with tool calls, models, `keep_alive`, pulling a model
+  - [ ] 16.3 `openai-compatible` provider (llama.cpp's `llama-server`, LM Studio, vLLM…); any provider's optional `command` is started on demand and stopped when idle
+  - [ ] 16.4 Tools from operations: schemas from request models; `ToolPolicy` (allowlist; destructive / open-world tools wait for approval in `ask` mode and run unattended in `auto` mode; `admin` operations never, for now)
+  - [ ] 16.5 The agent loop: tool calls, step / time / size limits, the transcript kept on the run
+  - [ ] 16.6 Approvals (`ask` mode): a run waits (`awaiting_approval`), `decide_run`, a `udl.action.awaiting_approval` event, denied after a timeout
+  - [ ] 16.7 `Prompt` and `Guidance` records; how a prompt is put together (guidance by scope, the prompt, then the event as untrusted data)
+  - [ ] 16.8 The `ai` action
+  - [ ] 16.9 Operations (providers, models, prompts, guidance, `try_prompt`) via CLI, API and MCP
 
-- [ ] **Phase 17: Web UI for the downloader**
-  - [ ] 17.1 Dashboard (recent downloads, runs and events, next schedules, accounts needing attention, approvals; a widget slot)
-  - [ ] 17.2 Downloads: start downloads, live progress, history, cancel
-  - [ ] 17.3 Sites and strategies
-  - [ ] 17.4 Tag chains: the wizard on the web (suggest → pick → test → save), import / export
-  - [ ] 17.5 Databases (health, sync with a dry run), plugins (status, problems, UIs, settings), config (read-only)
-  - [ ] 17.6 End to end against the fixture site
+- [ ] **Phase 17: Web UI foundations & UI plugins**
+  - [ ] 17.1 `web/` pnpm workspace and tooling: Vite + SWC, TypeScript strict, Biome, Vitest (+ coverage gate), Playwright, Tailwind CSS + daisyUI; `make web`, `make e2e`, and `make check` runs the web checks
+  - [ ] 17.2 Typed API client generated from udl's OpenAPI schema (`openapi-typescript` + `openapi-fetch`); `make check` fails when it is stale
+  - [ ] 17.3 FastAPI serves the UI at `/ui` (from the package, SPA fallback, CSP, cache headers), and a page saying how to build it when it isn't built
+  - [ ] 17.4 Web sessions: sign in with the API key → a session cookie; a CSRF header and an Origin check on writes
+  - [ ] 17.5 The shell: layout, TanStack Router (file routes, auth guard, a splat route for plugin pages), Zustand stores, light / dark / system theme
+  - [ ] 17.6 Live data: shared SSE connections feeding Zustand stores, reconnecting with backoff
+  - [ ] 17.7 `UIManifest` (Pydantic → JSON Schema → TypeScript), `ui` on every plugin kind, the `udl.ui` kind, local UI plugin dirs, `GET /ui/plugins.json`, UI availability in `list_plugins`
+  - [ ] 17.8 `@udl/ui-sdk`: `defineUIPlugin`, the mount contract, a React adapter, the plugin context, SDK version checks
+  - [ ] 17.9 The plugin host: `<PluginSlot>` (lazy import, Shadow DOM isolation, error boundary) and the contribution points
+  - [ ] 17.10 Proof: an example UI plugin built with shadcn/ui runs isolated inside the daisyUI shell (e2e); a template for new UI plugins
 
-- [ ] **Phase 18: Web UI for automations + the Gmail, Slack and pages UI plugins**
-  - [ ] 18.1 Events: live, history, detail (the plugin's event view, else JSON), emit, replay
-  - [ ] 18.2 Subscriptions: event type picker, a filter builder from the type's schema (↔ the shorthand), "would have matched" over recent events
-  - [ ] 18.3 Actions and runs: editors for the built-in actions (`auto` AI actions clearly marked), run detail (output, AI transcript), the approvals inbox
-  - [ ] 18.4 Schedules: a cron editor showing the next times, timezone, run now
-  - [ ] 18.5 AI: providers and models, prompts and guidance, a playground that tries a prompt on an event
-  - [ ] 18.6 Accounts: connect (through the integration's UI plugin), status, reconnect, disconnect
-  - [ ] 18.7 `gmail` UI plugin: OAuth client and account setup, mailbox, compose / reply, event view, Gmail-search filter editor
-  - [ ] 18.8 `slack` UI plugin: account setup (manifest + tokens), channels and threads, send, event view
-  - [ ] 18.9 `pages` UI plugin: add a watch from a URL (the wizard on the web), each watch's recent changes, event views (a diff for `pages.page.changed`)
-  - [ ] 18.10 End to end: a subscription made in the UI fires on a fake email, and its run shows up live
+- [ ] **Phase 18: Web UI for the downloader and the fetcher**
+  - [ ] 18.1 Dashboard (recent downloads, runs and events, next schedules, accounts needing attention, approvals, checks waiting for you; a widget slot)
+  - [ ] 18.2 Downloads: start downloads, live progress, history, cancel
+  - [ ] 18.3 Sites and strategies
+  - [ ] 18.4 Tag chains: the wizard on the web (suggest → pick → test → save), import / export
+  - [ ] 18.5 Databases (health, sync with a dry run), plugins (status, problems, UIs, settings), config (read-only)
+  - [ ] 18.6 Fetches: a batch of URLs, live progress, reading a page, the checks waiting for you (solve), cookies per site
+  - [ ] 18.7 End to end against the fixture sites
 
-- [ ] **Phase 19: Hardening & docs**
-  - [ ] 19.1 Security review against the [security model](#security-model): secrets at rest, OAuth, untrusted content (templates, scripts, prompt injection), approvals, the UI (CSP, CSRF, sessions, plugin trust), webhooks, logs
-  - [ ] 19.2 Resilience: watchers reconnecting, a provider or database going away, a crash mid-run (recovery tests); an accessibility pass (axe in the e2e tests)
-  - [ ] 19.3 `udl service install`: a systemd user unit, so the runtime is always on
-  - [ ] 19.4 Docs: README, `docs/automations.md`, `docs/plugins.md` (integrations, actions, AI providers, secret stores), `docs/ui-plugins.md`
-  - [ ] 19.5 Opt-in smoke tests: Gmail, Slack and Ollama end to end, and a `pages` watch on a real site
+- [ ] **Phase 19: Web UI for automations + the Gmail, Slack and pages UI plugins**
+  - [ ] 19.1 Events: live, history, detail (the plugin's event view, else JSON), emit, replay
+  - [ ] 19.2 Subscriptions: event type picker, a filter builder from the type's schema (↔ the shorthand), "would have matched" over recent events
+  - [ ] 19.3 Actions and runs: editors for the built-in actions (`auto` AI actions clearly marked), run detail (output, AI transcript), the approvals inbox
+  - [ ] 19.4 Schedules: a cron editor showing the next times, timezone, run now
+  - [ ] 19.5 AI: providers and models, prompts and guidance, a playground that tries a prompt on an event
+  - [ ] 19.6 Accounts: connect (through the integration's UI plugin), status, reconnect, disconnect
+  - [ ] 19.7 `gmail` UI plugin: OAuth client and account setup, mailbox, compose / reply, event view, Gmail-search filter editor
+  - [ ] 19.8 `slack` UI plugin: account setup (manifest + tokens), channels and threads, send, event view
+  - [ ] 19.9 `pages` UI plugin: add a watch from a URL (the wizard on the web), each watch's recent changes, event views (a diff for `pages.page.changed`)
+  - [ ] 19.10 End to end: a subscription made in the UI fires on a fake email, and its run shows up live
+
+- [ ] **Phase 20: Hardening & docs**
+  - [ ] 20.1 Security review against the [security model](#security-model): secrets at rest, OAuth, untrusted content (templates, scripts, prompt injection), approvals, the UI (CSP, CSRF, sessions, plugin trust), webhooks, logs
+  - [ ] 20.2 Resilience: watchers reconnecting, a provider or database going away, a crash mid-run (recovery tests); an accessibility pass (axe in the e2e tests)
+  - [ ] 20.3 `udl service install`: a systemd user unit, so the runtime is always on
+  - [ ] 20.4 Docs: README, `docs/automations.md`, `docs/plugins.md` (integrations, actions, AI providers, secret stores), `docs/ui-plugins.md`
+  - [ ] 20.5 Opt-in smoke tests: Gmail, Slack and Ollama end to end, and a `pages` watch on a real site
 
 ---
 
@@ -226,22 +240,23 @@ phase's decisions.
 
 | # | Requirement | Tasks |
 |---|---|---|
-| 1 | Several Google accounts, reading and writing email | 11.2–11.3, 12.2–12.6 |
-| 1a | Subscribe to some emails (or all of them); a matching email fires an event that reaches every subscribed action | Phase 9, 11.5–11.6, 12.4–12.5 |
-| 1b | Gmail as a plugin | 11.1, Phase 12 |
-| 2 | Several Slack accounts, reading and sending messages | 11.2–11.3, 13.2–13.6 |
-| 2a | Pub/sub for Slack | Phase 9, 13.4–13.5 |
-| 2b | Slack as a plugin | 11.1, Phase 13 |
-| 3 | Set up local AI; scripts that run when events fire; prompts and guidance for the AI per event | 9.5 (scripts), Phase 15 |
-| 3a | AI actions that can run unattended (`auto` mode); changing automations and accounts is left to a later AI chat | 8.1 (`admin`), 15.4, 15.8 |
+| 1 | Several Google accounts, reading and writing email | 11.2–11.3, 13.2–13.6 |
+| 1a | Subscribe to some emails (or all of them); a matching email fires an event that reaches every subscribed action | Phase 9, 11.5–11.6, 13.4–13.5 |
+| 1b | Gmail as a plugin | 11.1, Phase 13 |
+| 2 | Several Slack accounts, reading and sending messages | 11.2–11.3, 14.2–14.6 |
+| 2a | Pub/sub for Slack | Phase 9, 14.4–14.5 |
+| 2b | Slack as a plugin | 11.1, Phase 14 |
+| 3 | Set up local AI; scripts that run when events fire; prompts and guidance for the AI per event | 9.5 (scripts), Phase 16 |
+| 3a | AI actions that can run unattended (`auto` mode); changing automations and accounts is left to a later AI chat | 8.1 (`admin`), 16.4, 16.8 |
 | 4 | Scheduled events, like cron | Phase 10 |
-| 5 | A web UI for all of it, and for Phases 0–7's features | Phases 16–18 |
-| 5a | React, SWC, Vite, TypeScript, pnpm, Vitest, Playwright, daisyUI (light and dark), Tailwind, Zustand, TanStack Router | 16.1, 16.5 |
-| 5b | Served by FastAPI | 16.3–16.4 |
-| 5c | Each plugin can have a UI plugin for its behaviour and configuration | 8.10, 16.7–16.9, 18.7–18.9 |
-| 5d | A plugin without a UI plugin is used through the CLI, API and MCP only | 8.1–8.3 (generated adapters), 16.7 |
-| 5e | Other component libraries and themes in UI plugins (e.g. shadcn/ui instead of daisyUI) | 16.9 (isolation, themes), 16.10 |
-| 6 | Pub/sub for sites that offer none: watch a web page for new items, a changed value or changed text | Phase 14, 18.9 |
+| 5 | A web UI for all of it, and for Phases 0–7's features | Phases 17–19 |
+| 5a | React, SWC, Vite, TypeScript, pnpm, Vitest, Playwright, daisyUI (light and dark), Tailwind, Zustand, TanStack Router | 17.1, 17.5 |
+| 5b | Served by FastAPI | 17.3–17.4 |
+| 5c | Each plugin can have a UI plugin for its behaviour and configuration | 8.10, 17.7–17.9, 19.7–19.9 |
+| 5d | A plugin without a UI plugin is used through the CLI, API and MCP only | 8.1–8.3 (generated adapters), 17.7 |
+| 5e | Other component libraries and themes in UI plugins (e.g. shadcn/ui instead of daisyUI) | 17.9 (isolation, themes), 17.10 |
+| 6 | Pub/sub for sites that offer none: watch a web page for new items, a changed value or changed text | Phase 15, 19.9 |
+| 7 | Get a page's content when a plain fetch fails (a 500, a block, an anti-bot page): batches of sites, queued; cookies added; anti-bot checks passed by hand where they appear | Phase 12, 18.6 |
 | + | CLI / API / MCP parity for every new operation | 8.2, each phase's operations task |
 | + | TDD, fully typed (Python and TypeScript) | [Working agreement](#working-agreement-tdd--typing) |
 
@@ -259,9 +274,9 @@ The longer-term aim, which this plan builds towards rather than finishes:
 
 | Aim | What this plan lays down | What comes later |
 |---|---|---|
-| 1 | The `pages` watcher (Phase 14): any web page's new items, changed values or changed text as events, and `pages_suggest` to find what to watch; watchers with cursors and dedupe (11.5); sources that need no login (`none`, 11.3); `custom.*` events from scripts and `POST /events`; MCP clients (agents you run) can already create subscriptions, actions and schedules | More watchers (a command, a file, a feed); an AI chat that builds flows from a description |
-| 2 | Any number of accounts per integration (11.2); every integration operation is an MCP tool with an `account` argument; read-only ones fan out over several accounts in one call (11.4) | More integrations |
-| 3 | Integration operations as tools for udl's local AI (15.4) and for any MCP client; AI actions on events, unattended in `auto` mode | Browser-driven integrations for apps without an API; the AI chat |
+| 1 | The `pages` watcher (Phase 15): any web page's new items, changed values or changed text as events, and `pages_suggest` to find what to watch; watchers with cursors and dedupe (11.5); sources that need no login (`none`, 11.3); `custom.*` events from scripts and `POST /events`; MCP clients (agents you run) can already create subscriptions, actions and schedules | More watchers (a command, a file, a feed); an AI chat that builds flows from a description |
+| 2 | Any number of accounts per integration (11.2); every integration operation is an MCP tool with an `account` argument; read-only ones fan out over several accounts in one call (11.4); `fetch_pages` (Phase 12) reads the pages an agent's own fetch tool can't, with the user's logins and, at an anti-bot check, the user's hand | More integrations |
+| 3 | Integration operations as tools for udl's local AI (16.4) and for any MCP client; AI actions on events, unattended in `auto` mode | Browser-driven integrations for apps without an API; the AI chat |
 
 What that means for the design now:
 
@@ -285,6 +300,8 @@ What that means for the design now:
 | **Action** | A named, reusable thing to run: a script, a udl operation, a webhook, an AI agent… Action kinds are plugins (`udl.actions`) |
 | **Run** | One action running for one event: queued, running, maybe awaiting approval, then succeeded, failed or cancelled |
 | **Schedule** | A cron-like timer that fires `schedule.fired` events |
+| **Fetch** | Reading a page's content (Markdown, text or HTML) rather than downloading its media. A **batch** is the URLs of one request, queued together; each climbs the **ladder** (static → with cookies → udl's browser → a person) only as far as it has to |
+| **Challenge** | An anti-bot check (Cloudflare's, a CAPTCHA…) in front of a page. udl recognises it and shows it to the user in its browser, then keeps the clearance; it never solves one itself |
 | **Runtime** | What runs inside `udl serve`: the watchers, the scheduler, the event bus and the action runner |
 | **AI provider** | A plugin (`udl.ai`) that runs a model: `ollama`, `openai-compatible` |
 | **Prompt / Guidance** | A prompt is a reusable AI task. Guidance is standing instructions added for everything, an event type, a subscription or an action |
@@ -303,8 +320,8 @@ What that means for the design now:
    ┌────────────┬────────────┬─────────────────────┼─────────────────────┬────────────────┐
  Resolver    JobManager   DBManager          AutomationRuntime       PluginRegistry     SecretStore
  (downloads: Phases 0–7)  (+ records)        (in `udl serve`)        databases · downloaders · sites ·
-                                                   |                 integrations · actions · ai ·
-                                                   |                 secrets · ui
+ FetchQueue ─► Fetcher                             |                 integrations · actions · ai ·
+ (pages: Phase 12)                                 |                 secrets · ui
            ┌──────────────────┬────────────────────┼────────────────────┐
        Watchers           Scheduler            EventBus             ActionRunner
    (one per account)   (cron · every · at)  (store, dedupe,      (script · operation · webhook ·
@@ -346,8 +363,9 @@ Principles:
 | Kept in | What | Edited with |
 |---|---|---|
 | Config file (`config.toml`, `UDL_*`) | Machine and security settings: `[automations]` (`scripts_dir`, limits), `[secrets]`, `[web]`, `[ai]` (defaults), `[api]`, `[db]`; the base layer of `[integrations.<name>]` and the fields that widen access (`attachment_roots`) | The file (`get_config` shows it) |
-| Records (the databases) | Accounts, subscriptions, actions, runs, events, schedules, prompts, guidance, AI provider connections, plugin settings (over the file's table), plugin state, leases | Operations: CLI, API, MCP, UI |
+| Records (the databases) | Accounts, subscriptions, actions, runs, events, schedules, prompts, guidance, AI provider connections, plugin settings (over the file's table), plugin state, leases, fetches | Operations: CLI, API, MCP, UI |
 | Secret store | OAuth tokens, Slack tokens, API keys, secret plugin settings | Only through udl (connecting an account, a secret setting) |
+| udl's browser profile | Logins and cookies: signed in by hand, imported, or set by an anti-bot check a person passed | `udl browser login`, `import_cookies`, a challenge's window (Phase 12) |
 
 A plugin's settings are its model's defaults, then its `[integrations.<name>]` table, then its stored
 `PluginSettings` (what its UI plugin's settings panel writes). Fields marked file-only in the plugin's model
@@ -396,6 +414,17 @@ Phases 0–7 rows are in [planning/01-core.md](planning/01-core.md#feature-matri
 | set account options | `udl accounts set <account> -O KEY=VALUE` | `PATCH /accounts/{account}` | `set_account` |
 | check account | `udl accounts check <account>` | `POST /accounts/{account}/check` | `check_account` |
 | disconnect account | `udl accounts rm <account>` | `DELETE /accounts/{account}` | `disconnect_account` |
+| fetch pages | `udl fetch <url>… [--via V] [--format F] [--select CSS] [--person P] [--out DIR]` | `POST /fetches` | `fetch_pages` |
+| list fetches | `udl fetch list [--status S]` | `GET /fetches` | `list_fetches` |
+| show a fetch | `udl fetch show <batch>` | `GET /fetches/{id}` | `get_fetch` |
+| a fetched page | `udl fetch page <id> [--format F] [--offset N]` | `GET /fetches/pages/{id}` | `get_fetched_page` |
+| cancel a fetch | `udl fetch cancel <batch>` | `DELETE /fetches/{id}` | `cancel_fetch` |
+| retry a fetch | `udl fetch retry <batch> [--item ID…] [--via V]` | `POST /fetches/{id}/retry` | `retry_fetch` |
+| challenges waiting | `udl fetch challenges` | `GET /fetches/challenges` | `list_challenges` |
+| solve challenges | `udl fetch solve [--site S…]` | `POST /fetches/challenges/solve` | `solve_challenges` |
+| import cookies | `udl browser cookies import <file\|-> [--site S] [--from-browser B] [--user-agent UA]` | `POST /browser/cookies` | `import_cookies` |
+| list cookies | `udl browser cookies list [--site S]` | `GET /browser/cookies` | `list_cookies` |
+| delete cookies | `udl browser cookies rm <site>` | `DELETE /browser/cookies/{site}` | `delete_cookies` |
 | AI providers | `udl ai providers` | `GET /ai/providers` | `list_ai_providers` |
 | set / remove provider | `udl ai providers set <name> --plugin P …` / `rm` | `PUT` / `DELETE /ai/providers/{name}` | `set_ai_provider`, `delete_ai_provider` |
 | models | `udl ai models [--provider P]` | `GET /ai/models` | `list_ai_models` |
@@ -426,16 +455,18 @@ Phases 0–7's errors are in
 | `TemplateFailed(ConfigError)` | `template_failed` | 400 | A template doesn't parse, or fails to render (an undefined name, over a size cap) | 8.8 |
 | `ReauthRequired(UDLError)` | `reauth_required` | 409 | An account's credentials are refused or missing; the account is then `needs_reauth` | 8.9, 11.2 |
 | `InvalidFilter(ConfigError)` | `invalid_filter` | 400 | A filter doesn't parse, or names a field its event types don't have | 9.2 |
-| `InUse(UDLError)` | `in_use` | 409 | Deleting an action that a subscription lists, or a provider that an action names | 9.10, 15.9 |
+| `InUse(UDLError)` | `in_use` | 409 | Deleting an action that a subscription lists, or a provider that an action names | 9.10, 16.9 |
 | `ActionFailed(UDLError)` | `action_failed` | (a run's error) | An action's run failed; `retryable` says whether trying again may help | 9.4 |
 | `AlreadyExists(UDLError)` | `already_exists` | 409 | An account name that is taken (without `reconnect`); a `schedule:` subscription name | 10.4, 11.3 |
 | `AmbiguousAccount(UDLError)` | `ambiguous_account` | 400 | An integration operation is called without `account` while several accounts are connected (the hint lists them) | 11.4 |
-| `ProviderUnavailable(UDLError)` | `provider_unavailable` | 503 | An AI provider doesn't answer; the hint names its URL or its `command` | 15.1 |
+| `ChallengeRequired(AuthRequired)` | `challenge_required` | 409 | A page's anti-bot check wasn't passed: `person: fail`, or nobody passed it within `challenge_expiry` (the hint: `udl fetch solve`) | 12.6 |
+| `ProviderUnavailable(UDLError)` | `provider_unavailable` | 503 | An AI provider doesn't answer; the hint names its URL or its `command` | 16.1 |
 
 The existing errors cover the rest. `DoesNotExist` covers an unknown event, subscription, action, run,
 schedule, account or provider. `NotAllowed` covers a missing access level, a file-only setting, a script
 outside `scripts_dir`, an `admin` operation where one isn't allowed, and a write that fails the CSRF or
-Origin check. `Unauthorized` covers an expired web session.
+Origin check. `Unauthorized` covers an expired web session. `ToolUnavailable` covers `solve_challenges`
+where no window can open (no display), with a hint to run `udl fetch solve` on udl's machine.
 
 `UDLError` gains `retryable: ClassVar[bool] = False`, which today only `DownloadError` has. It is true for
 `NetworkError`, `RateLimited` and `ProviderUnavailable`. The action runner (9.7) and the watchers (11.5)
@@ -469,6 +500,14 @@ src/udl/
   ai/
     agent.py                    # the agent loop, ToolPolicy, approvals
     prompts.py                  # Prompt, Guidance, putting a prompt together
+  fetch/
+    challenges.py               # ChallengeKind, the markers, detect()
+    content.py                  # FetchedPage, PageText: Markdown, text, HTML; select
+    ladder.py                   # Fetcher: static → cookies → browser → person; FetchSite
+    cookies.py                  # importing cookies: cookies.txt, JSON, a Cookie header, the user's browser
+    models.py                   # FetchRequest, FetchBatch, FetchItem and the answers
+    queue.py                    # FetchQueue: batches, a lane per site, the browser lane, recovery, retention
+    window.py                   # ChallengeWindow: where the user passes a check
   db/records.py                 # Record, RecordQuery, Lease, the record kinds
   integrations/
     oauth.py                    # OAuth 2.0: PKCE, the loopback listener, refresh, revoke
@@ -486,6 +525,7 @@ src/udl/
   interfaces/
     adapters.py                 # generated CLI commands, API routes and MCP tools for any Operation
     cli/commands/ accounts.py (udl accounts add)  pages.py (udl pages wizard)  service.py (udl service)
+                  fetch.py (udl fetch <url>)  browser.py (+ udl browser cookies import)
     api/openapi.py              # writes (or checks) web/packages/api/openapi.json
     web/                        # /ui: static files, sessions, CSP; dist/ is built, not committed
 web/                            # the frontend: a pnpm workspace
@@ -497,11 +537,11 @@ web/                            # the frontend: a pnpm workspace
     template/                   # a starting point for a UI plugin
   plugins/
     gmail/  slack/  pages/      # UI plugins → src/udl/plugins/integrations/<name>/ui/
-  examples/shadcn/              # 16.10's proof
+  examples/shadcn/              # 17.10's proof
   e2e/                          # Playwright tests against a real `udl serve`
-docs/  automations.md  ui-plugins.md  (+ plugins.md)
+docs/  automations.md  fetch.md  ui-plugins.md  (+ plugins.md)
 tests/support/  clock.py  operations.py  records.py  oauth.py  integrations.py  actions.py  ai.py  ai_servers.py
-                google.py  slack.py  e2e.py  e2e_plugins/ (the fakes as local plugins, for `udl serve` in e2e)
+                google.py  slack.py  antibot.py  e2e.py  e2e_plugins/ (the fakes as local plugins, for `udl serve` in e2e)
 ```
 
 ## Package management (uv + pnpm)
@@ -826,7 +866,7 @@ keep secrets, a clock, templates and OAuth.
       (2 s) and `lease_ttl` (30 s).
     - `SecretsSettings`: `store`, `file`.
     - `AISettings`: `default_provider`, `approval_timeout`, `detect_ollama`, `allowed_commands`
-      (file-only, 15.3).
+      (file-only, 16.3).
     - `WebSettings`: `enabled`, `session_hours`, `ui_plugin_dirs`, `public_url` (11.3).
     - `integrations: dict[str, dict[str, JsonValue]]`, each table checked by its plugin's model, as
       `[tools]` is.
@@ -867,7 +907,7 @@ class Operation:
     request: type[BaseModel]
     response: type[BaseModel]
     summary: str
-    description: str               # written for people and AI agents (MCP, and AI tools in 15.4)
+    description: str               # written for people and AI agents (MCP, and AI tools in 16.4)
     method: Callable[..., Awaitable[BaseModel]]   # (service, request) -> response
     hints: OperationHints          # read_only, destructive, idempotent, open_world (were the MCP server's _HINTS),
                                    # and admin: it changes automations, accounts, AI setup or settings
@@ -926,8 +966,10 @@ class DatabasePlugin(ABC):
 | `Schedule` (`schedule`) | 10 | config | `name` (unique), `enabled`, `next_run_at` | |
 | `Account` (`account`) | 11 | config | (`integration`, `name`) unique, `status` | Holds a `SecretRef`, never a secret |
 | `PluginState` (`plugin_state`) | 11 | runtime | (`plugin`, `account_id`) unique | A watcher's cursor, validated by the plugin's `state_model` |
-| `AIProviderConnection` (`ai_provider`) | 15 | config | `name` (unique) | |
-| `Prompt` (`prompt`), `Guidance` (`guidance`) | 15 | config | `name` (unique) | |
+| `FetchBatch` (`fetch_batch`), `FetchItem` (`fetch_item`) | 12 | runtime | batch: `status`; item: `batch_id`, `site`, `status` | A batch and its URLs; the pages are files in `[fetch] store_dir`; pruned after `[fetch] keep` |
+| `FetchSite` (`fetch_site`) | 12 | runtime | `site` (unique) | The rung that last worked, a User-Agent imported with cookies, the last challenge |
+| `AIProviderConnection` (`ai_provider`) | 16 | config | `name` (unique) | |
+| `Prompt` (`prompt`), `Guidance` (`guidance`) | 16 | config | `name` (unique) | |
 
 - **Scope.** `config` records follow the read and write policies, like sites. `runtime` records (leases,
   events, runs, plugin state) are read from and written to the primary connection only. One runtime owns
@@ -948,8 +990,8 @@ class DatabasePlugin(ABC):
   every kind round-trips in every database plugin, including kinds added later.
 - `DBManager` reads and writes records by scope, as above. `db sync` copies the
   configuration records (subscriptions, actions, schedules, prompts, guidance, AI providers, plugin
-  settings, accounts) and the history that has ended (dispatched events, ended runs), never `PluginState`
-  or leases, which belong to one runtime. An account synced to another machine has no credentials there, so
+  settings, accounts) and the history that has ended (dispatched events, ended runs), never `PluginState`,
+  leases or fetches, which belong to one runtime or machine. An account synced to another machine has no credentials there, so
   it shows as `needs_reauth` until it is connected again. `SyncResult` gains `records` (kind →
   `SyncCounts`), and `udl db sync` shows them.
 
@@ -1106,7 +1148,7 @@ them. Where it still differs from a card, it is on purpose, as below.
     `schedule.fired`'s comes in 10.2.
   - `list_event_types`: `ListEventTypesRequest(match)` → `EventTypeList` of `EventTypeInfo`, with `name`,
     `summary`, `source`, `schema` (JSON Schema), `example` and `fields`. `fields` gives each dotted path with
-    its JSON type, its description and whether it is optional; the filter builder (18.2) and filter errors
+    its JSON type, its description and whether it is optional; the filter builder (19.2) and filter errors
     use it.
 - Tests first: `tests/unit/automations/test_events.py`:
   - the phase's list;
@@ -1149,7 +1191,7 @@ them. Where it still differs from a card, it is on purpose, as below.
   - the phase's list, table-driven per operator and type;
   - hypothesis round trips: `parse(format(f)) == f` for generated trees, and `format(parse(s))` is stable;
   - a bad shorthand's error gives the position.
-- Done when: the tests pass, and the module's docstring documents the shorthand (19.4 copies it into the
+- Done when: the tests pass, and the module's docstring documents the shorthand (20.4 copies it into the
   docs).
 
 **9.3 Subscriptions** · needs 9.2
@@ -1262,9 +1304,9 @@ them. Where it still differs from a card, it is on purpose, as below.
     - `event_id`, `subscription_id` and `dispatch`;
     - `status`: `queued`, `running`, `awaiting_approval`, `succeeded`, `failed`, `cancelled` or `skipped`;
     - `attempt` and `next_try_at`;
-    - `mode` (15.4), `started_at` and `finished_at`;
+    - `mode` (16.4), `started_at` and `finished_at`;
     - `output`, `error`, `log` and `skipped_reason`;
-    - `transcript` and `pending_call` (15.5, 15.6).
+    - `transcript` and `pending_call` (16.5, 16.6).
   - `ActionRunner(db, registry, service, secrets, bus, clock, settings)`:
     - It takes queued runs whose `next_try_at` has come, within `max_concurrent_runs` and each action's
       `max_concurrent`, and runs each in a task. A run renders the options with the event (8.8), validates
@@ -1286,7 +1328,7 @@ them. Where it still differs from a card, it is on purpose, as below.
   - Everything a run publishes carries depth and `caused_by`.
   - `current_run` is a `ContextVar` that the runner sets around `plugin.run()`. An operation called from a
     run (an email sent, a Slack message posted) can read it, so its integration can mark what it sent
-    (12.6, 13.5).
+    (13.6, 14.5).
   - Throttles are counted from the subscription's runs in the window. A skipped run says why, e.g.
     `throttled: 10 per 1h`.
   - `sent_by_udl` is a field in integrations' event data, so filters can use it.
@@ -1330,7 +1372,7 @@ them. Where it still differs from a card, it is on purpose, as below.
 
 **9.10 Operations and the live stream** · needs 9.9
 - Build: these operations, through the generated adapters, with the Feature Matrix's CLI and API names.
-  `decide_run` comes in 15.6.
+  `decide_run` comes in 16.6.
 
   | Operation | Request → response | Hints |
   |---|---|---|
@@ -1403,6 +1445,7 @@ udl's own event types:
 | `udl.action.succeeded` / `failed` / `awaiting_approval` | `ActionRunner` | run, action, subscription, event, output or error, the pending tool call |
 | `udl.account.connected` / `needs_reauth` / `error` | accounts, watchers | account, integration, error |
 | `schedule.fired` | `Scheduler` (Phase 10) | schedule, scheduled_for, fired_at, late, data |
+| `udl.fetch.challenge` / `udl.fetch.finished` | `FetchQueue` (Phase 12) | batch, site, url, kind, waiting / label, counts, failures |
 | `custom.<name>` | `emit_event`, `POST /events`, the `emit` action | any JSON object |
 
 ### Filters (9.2)
@@ -1456,7 +1499,7 @@ class ActionPlugin[O: ActionOptions](ABC):
     name: ClassVar[str]                                   # "script", "operation", "ai", …
     options_model: ClassVar[type[ActionOptions]]
     requires: ClassVar[tuple[Requirement, ...]] = ()
-    ui: ClassVar[UIBundle | None] = None                  # an editor for its options (16.7)
+    ui: ClassVar[UIBundle | None] = None                  # an editor for its options (17.7)
     async def check(self, options: JsonObject, event_type: EventType[Any] | None) -> None: ...  # when saved
     async def run(self, ctx: ActionContext[O]) -> ActionOutput: ...   # raises ActionFailed or Cancelled
 
@@ -1480,7 +1523,7 @@ secret store, the clock, a `CancelToken` and a log sink.
 | `webhook` | Sends an HTTP request | `url`, `method`, `headers`, `secret_headers` (kept in the secret store), `body` | `http_client()`; keeps the status and the start of the body |
 | `emit` | Fires another event | `type` (`custom.*`), `data` | Depth + 1 |
 | `notify` | A desktop notification | `title`, `body`, `urgency` | `notify-send` (a requirement) |
-| `ai` | Runs an AI agent | see [Phase 15](#phase-15-local-ai) | |
+| `ai` | Runs an AI agent | see [Phase 16](#phase-16-local-ai) | |
 
 An external AI agent (any CLI agent run headless, with udl's MCP server configured) is a `script` action;
 `docs/automations.md` gets an example.
@@ -1489,13 +1532,13 @@ An external AI agent (any CLI agent run headless, with udl's MCP server configur
 
 - **Publishing:** an event is stored (its `(type, dedupe_key)` unique, so a duplicate is dropped there),
   then matched against the enabled subscriptions, and a run is queued for each matched action.
-- **Runs:** `queued → running → succeeded | failed | cancelled`, with `awaiting_approval` from Phase 15.
+- **Runs:** `queued → running → succeeded | failed | cancelled`, with `awaiting_approval` from Phase 16.
   A run a throttle or a failed source filter stops is stored as `skipped`, with the reason.
   At most `max_concurrent_runs` run at once and at most `max_concurrent` of one action. Retryable failures
   (`NetworkError`, `RateLimited`, a timeout when the action says so) are tried again `retries` times.
 - **Loops:** an action's own events (an email it sends, a Slack message it posts, an `emit`) carry
   `caused_by` and `depth + 1`; past `max_event_depth` they are stored but not dispatched. Integrations
-  recognise what udl sent (12.6, 13.5), so subscriptions can say `not sent_by_udl`.
+  recognise what udl sent (13.6, 14.5), so subscriptions can say `not sent_by_udl`.
 - **The runtime** (`AutomationRuntime`) runs in `udl serve`, in the API's lifespan beside the service,
   unless `[automations] enabled = false`. It takes the `automations` lease (renewed every 10 s, 30 s TTL)
   before running anything; a second `udl serve` on the same database serves the API and UI and says (in
@@ -1566,12 +1609,12 @@ Where the build differs from a card, it is on purpose, as below.
   for). A runtime that takes the lease ends the runtime runs left running as interrupted; runs
   asked for are ended so by a udl that starts alone (`InstanceLock`, as downloads are). Runs
   asked for can be cancelled, but not counted against the limits. Cancelled and skipped runs
-  publish nothing. `transcript`, `pending_call` and `mode` come with Phase 15 (they are JSON,
+  publish nothing. `transcript`, `pending_call` and `mode` come with Phase 16 (they are JSON,
   so adding them needs no migration).
 - **The runtime (9.9):** its loops stop where they wait (and are cancelled after `STOP_GRACE`
   only if stuck): cancelling one mid-query left SQLite connections unclosed. A scripts_dir
   inside the download dir or an allowed output root is a `ConfigError` when it starts
-  (attachment roots join in Phase 12). `get_status`'s `last_dispatch` is when the newest
+  (attachment roots join in Phase 13). `get_status`'s `last_dispatch` is when the newest
   dispatched event was dispatched.
 - **Operations (9.10):** their logic is `udl.automations.manager.Automations` (UDLService's
   methods delegate to it, as Phase 8's plugin settings do), their models
@@ -1836,14 +1879,14 @@ Where the build differs from a card, it is on purpose, as below.
   - `INTEGRATIONS` in `PLUGIN_KINDS`. The kind's settings are its plugin settings (8.10).
   - The public plugin API is these modules: `udl.plugins.integrations.base`, `udl.integrations.oauth`,
     `udl.automations.events`, `udl.clock`, `udl.http`, `udl.process`, `udl.errors`,
-    `udl.plugins.requirements` and `udl.plugins.ui` (16.7). A test checks that the built-in integrations
+    `udl.plugins.requirements` and `udl.plugins.ui` (17.7). A test checks that the built-in integrations
     import nothing else from udl.
   - `tests/support/integrations.py`: `FakeIntegration`. It connects with `oauth` (against 8.9's fake
     server), `tokens` or `none`, and has:
     - the event type `fake.thing.happened`;
     - `fake_list_things` (fan-out, read-only) and `fake_do_thing` (open-world);
     - a watcher that emits what the test feeds it and keeps a cursor.
-- Tests first: `tests/contract/test_integration_contract.py`, over `fake` (Phases 12–14 add theirs):
+- Tests first: `tests/contract/test_integration_contract.py`, over `fake` (Phases 13–15 add theirs):
   - the phase's first bullet;
   - every operation has hints, a docstring and documented fields.
 - Done when: `FakeIntegration` passes the contract, and `udl plugins list` shows integrations.
@@ -1945,7 +1988,7 @@ Where the build differs from a card, it is on purpose, as below.
     event and subscription.
   - An error while checking it skips the run (`source filter failed: …`) rather than guessing.
 - Tests first: in `test_bus.py`, with `FakeIntegration`'s source filter (`{"contains": "x"}`).
-- Done when: Gmail's search query (12.5) only has to implement the check.
+- Done when: Gmail's search query (13.5) only has to implement the check.
 
 **11.7 Account operations** · needs 11.3
 - Build: these operations, with the Feature Matrix's names:
@@ -1981,7 +2024,7 @@ class Integration[S: IntegrationSettings, A: AccountOptions]:
     event_types: ClassVar[tuple[EventType[Any], ...]]
     source_filter_model: ClassVar[type[BaseModel] | None] = None
     state_model: ClassVar[type[BaseModel] | None] = None   # its watcher's cursor
-    ui: ClassVar[UIBundle | None] = None                   # its UI plugin (16.7)
+    ui: ClassVar[UIBundle | None] = None                   # its UI plugin (17.7)
 
     def __init__(self, settings: S, *, http: HttpClientFactory, clock: Clock) -> None: ...
     def oauth_request(self, access: set[str]) -> OAuthRequest: ...            # provider, scopes, extra params
@@ -2015,7 +2058,7 @@ and its name the integration's prefix (`gmail_send_message`).
 `failures`. Its `account` then also takes a list or `"*"`: udl runs it on each account concurrently and
 merges the items, so an agent using udl's MCP server searches every inbox in one call. The response has
 the same type for one account or many. An operation can also need no account at all (`pages_suggest`,
-Phase 14), and then has no `account` argument.
+Phase 15), and then has no `account` argument.
 
 ### Connecting (11.3)
 
@@ -2030,7 +2073,7 @@ on) is added with its options only: `udl accounts add <integration> <name> -O KE
 
 Google allows loopback redirects for Desktop OAuth clients, so the UI's flow works when the browser runs on
 udl's machine. Serving the UI to other machines needs a Web OAuth client with the server's HTTPS callback
-registered (documented in 19.4).
+registered (documented in 20.4).
 
 ### Decisions made while building Phase 11
 
@@ -2119,7 +2162,358 @@ Where the build differs from a card, it is on purpose, as below.
 
 ---
 
-## Phase 12: Gmail plugin
+## Phase 12: Page fetcher
+
+Reading a page's content (as Markdown, text or HTML) when a plain fetch can't: an agent's own fetch tool, or
+any plain HTTP request, got a 500, a 403 or an anti-bot page, or the page is built by JavaScript or sits
+behind a login. udl already has most of what that takes, built for downloads: `http_client()`, the site's
+cookies (`AuthCookies`), its browser profile with the user's logins (`udl browser login`) and Chromium. This
+phase puts them on a **ladder** (static → with cookies → udl's browser → a person), adds a **queue** that
+takes batches of URLs across many sites, a way to **add cookies**, and a **window** where the user passes an
+anti-bot check when one appears, after which udl carries on by itself with the clearance.
+
+It comes straight after Phase 11, as early as the plan allows: it needs only Phases 8–9 (operations,
+records, events, the clock), and the page watcher (Phase 15) reads its pages through it. A person passes the
+checks: udl never solves or dodges one itself (see [Decisions](#decisions-defaults-that-can-be-revisited)).
+
+### Tests first
+- Challenges (table-driven, on small pages written for the tests, never copied from a vendor): each kind is
+  recognised from its markers (headers, status, markup); an article that only talks about CAPTCHAs is not
+  one; a refusal with nothing to pass (a 403 "Access Denied") is `blocked`, not a challenge.
+- The ladder, against the anti-bot fixture site on a `FakeClock`: a page that answers plain clients with a
+  500 is tried once more, then with cookies, then in the browser; a 404 stops at once (climbing never brings
+  back a page that is gone); a 429 waits its `Retry-After` on the same rung; a JavaScript check that clears
+  itself in the browser needs no person; the rung that worked is remembered per site, so the next fetch
+  starts there, and the bottom rung is tried again after `relearn_after`.
+- The queue (on a `FakeClock`, with a fake fetcher): never more than `max_concurrent` fetches, nor
+  `max_per_site` per site, and one site's requests `site_delay` apart; a site's challenge holds its other
+  URLs rather than sending each to the same wall; cancelling a batch stops its running fetches; a udl that
+  stops leaves its batches `interrupted`, and `retry_fetch` runs what didn't finish; batches and their pages
+  go after `keep`.
+- The person (`FakePerson` standing in, on a headless "window"): in `ask` mode a challenge opens one window
+  with a tab per waiting site; passing a site reads its page, sends its other URLs back to the queue and keeps
+  the clearance in udl's profile, so the next batch needs nobody; a person who closes the window, or doesn't
+  come within `challenge_timeout`, leaves the URLs waiting; `wait` opens nothing until `udl fetch solve`;
+  `fail` fails them with `ChallengeRequired`; with no display, `ask` behaves as `wait` and says why.
+- Cookies: Netscape `cookies.txt`, a browser extension's JSON export, Playwright's storage state and a
+  `Cookie:` header (with its site) all import into udl's profile (a hypothesis round trip for
+  `cookies.txt`); a value never shows in an answer, a log line or a `repr`; deleting one site's cookies
+  leaves the others'.
+- Content: a page's main content as Markdown keeps its headings, lists, tables, code and links (made
+  absolute), and drops navigation and footers unless `main_only: false`; `select` gives only what it
+  matches; a page in `windows-1252` (declared in its header, or only in a `<meta>`) comes out right; JSON and
+  plain text are given as they are; anything else (a PDF, an image) is kept as a file and described.
+
+### Tasks
+
+**12.1 The anti-bot fixture site** · needs nothing
+- Build: `tests/support/antibot.py`: `AntiBotSite`, an ASGI app served on a port (Chromium has to reach it),
+  whose paths behave like the sites this phase is for:
+  - `/plain-500/…`: a 500 to clients that don't run JavaScript, and the page to a browser (a script sets a
+    cookie and reloads);
+  - `/flaky`: a 500 for the first `n` requests, then the page;
+  - `/checked/…`: an interstitial with Cloudflare's markers (`cf-mitigated: challenge`, a 403, "Just a
+    moment...") and an "I am human" button. Pressing it sets `clearance`, bound to the browser's User-Agent,
+    which every page under `/checked/` then needs; the same cookie with another User-Agent is challenged
+    again, as `cf_clearance` is;
+  - `/blocked`: a 403 "Access Denied" with nothing to pass;
+  - `/slow-down`: a 429 with `Retry-After`;
+  - `/built-by-js`: an empty shell that a script fills in;
+  - `/members/…`: a login wall that a session cookie gets past (for imported cookies);
+  - `/docs`, `/article`, `/data.json`, `/report.pdf` and a page in `windows-1252`: content for 12.3.
+
+  It serves the same paths under several host names (`a.localhost`, `b.localhost`…), so tests have several
+  sites. `AntiBotSite.requests` records what each client sent (User-Agent, cookies, whether it ran
+  JavaScript), so a test can say what was tried. `FakePerson` stands in for the user: given a window's tabs,
+  it presses each challenge's button through Playwright (or doesn't, or closes the window).
+- Done when: every path answers httpx and Chromium as described, and `FakePerson` gets past `/checked/`.
+
+**12.2 Recognising challenges** · needs nothing
+- Build: `udl/fetch/challenges.py`.
+  - `ChallengeKind` (the table under [Challenges](#challenges-122)).
+  - `Marker`: a kind, where it looks (`header`, `status`, `title`, `markup`, `url`, `cookie`), what it
+    matches, and whether it is enough alone or needs another marker (`server: cloudflare` is on every page
+    Cloudflare serves; with a 403 and "Just a moment..." it is a challenge).
+  - `MARKERS` is a table rather than code, so a new vendor is a row.
+  - `detect(status, headers, html, url) -> Detection | None`: `kind`, `passable` (a check a person can pass,
+    as against a block with nothing to pass) and `evidence` (the markers that matched, kept in the URL's
+    attempts and logged).
+  - It reads at most the first 512 KiB of the page, and only its markup (`<title>`, scripts, iframes, forms,
+    classes), not its readable text, so an article about CAPTCHAs isn't one. A widget (hCaptcha,
+    reCAPTCHA) counts only on a page that holds little else, or with a 4xx.
+- Tests first: `tests/unit/fetch/test_challenges.py`: a table of minimal pages and headers per kind, each
+  written for the test; the phase's first bullet.
+- Done when: every row of the table is recognised, and `unknown` matches only "verify you are human" pages
+  that no vendor's markers do.
+
+**12.3 Page content** · needs nothing
+- Build: `udl/fetch/content.py`.
+  - `FetchedPage`: `url`, `final_url`, `status`, `content_type`, `charset`, `title`, `headers` (a few:
+    `content-type`, `content-language`, `last-modified`, `etag`), `via` and `body` (bytes, at most
+    `[fetch] max_page`).
+  - `PageFormat`: `markdown`, `text`, `html` (as served, or as the browser rendered it) or `raw` (the bytes,
+    for the CLI's `--out`).
+  - `PageText.render(page, format, *, main_only, select) -> RenderedPage`:
+    - Markdown or text of the main content (or the whole page), with links and images made absolute
+      against `final_url`;
+    - `select` (a CSS selector) keeps only the elements it matches, converted whole;
+    - JSON, XML and plain text are given as they are;
+    - anything else is not converted: the answer gives its type and size, and the CLI saves it.
+  - The charset is the `Content-Type`'s, else the page's `<meta>`, else a guess.
+  - Library: `trafilatura` (Apache-2.0 from 1.8 on; main content and Markdown in one), unless when the task
+    starts it has stalled or its Markdown loses links or tables; then selectolax (already a dependency)
+    cleans the page and `markdownify` writes it. Either is untyped, so it stays behind `PageText`'s typed
+    façade, as gallery-dl does.
+- Tests first: `tests/unit/fetch/test_content.py`, on 12.1's content pages: the phase's content bullet.
+- Done when: `/docs` comes out as Markdown a person might have written (headings, a list, a table, a code
+  block, absolute links) without its menu.
+
+**12.4 The ladder** · needs 12.2, 12.3, 8.7
+- Build: `udl/fetch/ladder.py`, and `FetchSettings` (`[fetch]`, see the
+  [Configuration example](#configuration-example)) in `config.py`.
+  - `Via`: `static`, `cookies`, `browser`, then `person` (12.7). `FetchOptions`: `via` (`auto`, or the rung
+    to start on), `format`, `main_only`, `select`, `wait_for` (a selector the browser waits for) and
+    `headers`.
+  - `Fetcher(settings, auth, tabs, sites, clock)` has `fetch(url, options, *, cancel) -> FetchOutcome`: the
+    page or the error, and each `FetchAttempt` (rung, status, error, challenge, time taken).
+  - The rungs:
+    - `static`: `http_client()` with a browser's headers and the User-Agent of udl's Chromium (asked once,
+      else a pinned one), over HTTP/2; no cookies.
+    - `cookies`: the same, with the site's cookies from `AuthCookies` (the user's browser, then udl's
+      profile, which holds imported ones too) and the User-Agent imported with them, if one was (12.5).
+    - `browser`: a tab from `tabs` (12.6's browser lane; until then, a Chromium per fetch through
+      `chromium()`) on udl's profile. It waits for `load`, then for `wait_for` or 500 ms of a quiet network
+      (within `timeout`), and the page is the rendered DOM. A challenge gets `challenge_grace` to clear
+      itself (many JavaScript checks do in a real browser) before it needs a person.
+  - After each rung:
+    - a page is the answer, unless it is a JavaScript shell (little text, scripts, an "enable JavaScript"
+      notice), which goes to `browser`;
+    - `NetworkError` (a 5xx, a timeout, a dropped connection) is tried once more on the same rung after
+      1 s, then the next rung;
+    - `AuthRequired` (401, 403) or a challenge goes to the next rung at once;
+    - `RateLimited` waits its `Retry-After` (at most `max_retry_after`) and tries the same rung, twice at
+      most;
+    - `NotFound` is the end;
+    - on the browser rung, a block is `AuthRequired` with a hint (import your browser's cookies, or try
+      from another network), and a passable challenge goes to the person (12.6, 12.7).
+  - `FetchSite`, a `runtime` record (unique `site`): `start_at` (the rung that last worked), `learned_at`,
+    `user_agent` (imported with cookies), `last_challenge` (kind, time) and `cleared_at`. `via: auto`
+    starts at `start_at`, or at `static` again once `relearn_after` has passed, so a site that stopped
+    blocking is noticed. A rung the caller names is where it starts, whatever was learned.
+- Tests first: `tests/unit/fetch/test_ladder.py`, each rule above with fake rungs on a `FakeClock`; and
+  `tests/integration/fetch/test_ladder.py` against `AntiBotSite`: the phase's ladder bullet.
+- Done when: `/plain-500/` is read in the browser after a static try and its retry, and the next fetch on
+  that host starts in the browser.
+
+**12.5 Cookies** · needs 12.4
+- Build: `udl/fetch/cookies.py`.
+  - `parse_cookies(text, *, site) -> list[Cookie]` reads Netscape `cookies.txt` (with `#HttpOnly_` lines),
+    JSON (an array, as browser extensions export cookies, or Playwright's `storageState`) and a `Cookie:`
+    header (which needs `site`, and gives session cookies for its domain). The form is told by the text's
+    start; anything else is a `ConfigError` naming the forms udl reads.
+  - `import_cookies` adds them to udl's browser profile (`add_cookies` on the persistent context), where
+    fetches, downloads and `udl browser login` all find them. `from_browser` copies a site's cookies from
+    the user's own browser (read as `cookies_from_browser` reads them) instead of a text. `user_agent` is
+    kept on the site's `FetchSite` and sent with its cookies by the static rungs: a `cf_clearance` only
+    works with the User-Agent it was issued to. (The browser rung keeps Chromium's own User-Agent, so it
+    earns its own clearance, through a person if need be.)
+  - `list_cookies` gives each site's cookies by name, domain, path, expiry and flags, never their values.
+    `delete_cookies` removes a site's (`clear_cookies(domain=…)`) and its User-Agent.
+  - The profile is held across processes: `chromium()` takes an `fcntl` lock on `<profile>.lock` as well
+    as its thread lock, so a second udl (`udl fetch solve` while `udl serve` fetches) waits its turn, and
+    says so, rather than Chromium refusing a profile that is in use.
+- Tests first: `tests/unit/fetch/test_cookies.py` (each form, the round trip, a canary value never in
+  `caplog`, a `repr` or `--json`); `tests/integration/fetch/test_cookies.py`: imported cookies get past
+  `/members/` in the browser and statically, and two processes take turns with the profile.
+- Done when: `udl browser cookies import cookies.txt` lets `udl fetch` read `/members/`.
+
+**12.6 Batches and the queue** · needs 12.4, 9.6
+- Build: `udl/fetch/models.py` and `udl/fetch/queue.py`.
+  - Records (`runtime`, never synced):
+    - `FetchBatch`: `label`, `options` (the request; requests hold no secrets), `status` (`queued`,
+      `running`, `waiting` (only challenges left), `finished`, `cancelled` or `interrupted`), `counts`,
+      `runner` and `finished_at`. Indexed: `status`.
+    - `FetchItem`: `batch_id`, `url`, `site`, `position`, `status` (`queued`, `running`, `challenge`,
+      `succeeded`, `failed`, `cancelled` or `interrupted`), `via`, `attempts`, `challenge`, `error`,
+      `title`, `final_url`, `http_status`, `content_type`, `size`, `body` (its stored file) and `note`.
+      Indexed: `batch_id`, `site`, `status`.
+  - `PersonMode`: `ask` (open a window, 12.7), `wait` (until someone runs `udl fetch solve`) or `fail`
+    (`ChallengeRequired` at once). `[fetch] person` is the default; a request may say otherwise. Until 12.7,
+    `ask` behaves as `wait`.
+  - `FetchQueue(db, fetcher, bus, clock, settings)`, one per service, as the `JobManager` is:
+    - `submit(request) -> FetchBatch`: URLs normalised (Phase 3's rules), repeats dropped, at most
+      `max_urls`;
+    - at most `max_concurrent` fetches at once and `max_per_site` per site, one site's requests
+      `site_delay` apart (± 10 %), sites taking turns so one big site doesn't hold up the rest;
+    - the browser lane: one Chromium on udl's profile, opened when a URL needs it, with at most
+      `browser_tabs` tabs, and closed after `browser_idle` without work, so downloads, logins and other udls
+      get the profile back;
+    - the first passable challenge on a site holds that site's other URLs (`challenge`) instead of letting
+      each meet it, and hands the site to the person;
+    - waiting URLs fail with `ChallengeRequired` after `challenge_expiry`, so every batch ends;
+    - `cancel(batch)`; `retry(batch, items=None, via=None)` puts failed, cancelled and interrupted URLs
+      back;
+    - `recover()` at start, when this udl is the only one (`InstanceLock`, as for downloads): batches left
+      `queued`, `running` or `waiting` become `interrupted`;
+    - retention: batches older than `keep` go, with their files, at start and every hour.
+  - Bodies are files in `store_dir` (`<data dir>/fetched/<batch id>/<item id>`), `0600` in `0700`
+    folders: a page read with the user's cookies is theirs.
+  - Events, udl's own types (their data models beside the others in `udl.automations.events`):
+    - `udl.fetch.challenge`: a site waits for a person (`batch`, `site`, `url`, `kind`, `waiting` (how many
+      of its URLs), `mode`, `hint`), once per site per streak (dedupe key
+      `fetch-challenge:<site>:<streak start>`);
+    - `udl.fetch.finished`: a batch ended (`batch`, `label`, `succeeded`, `failed`, `cancelled`,
+      `failures` (each URL with its error's code)), dedupe key `fetch:<batch id>`.
+  - `udl.fetch` joins 8.7's list of packages that never call `datetime.now(` or `asyncio.sleep(`.
+- `ChallengeRequired(AuthRequired)` (`challenge_required`, 409): a URL's error in `fail` mode, or once it has
+  waited past `challenge_expiry`.
+- Tests first: `tests/unit/fetch/test_queue.py` on a `FakeClock` with a fake fetcher (the phase's queue
+  bullet, and each event once); the record contract's round trip covers the three kinds.
+- Done when: a batch of 30 URLs over five fake sites keeps every limit and ends with one
+  `udl.fetch.finished`.
+
+**12.7 Passing challenges** · needs 12.6, 12.5
+- Build: `udl/fetch/window.py`.
+  - `ChallengeWindow(profile, clock)`: a headed Chromium on udl's profile. Its first tab is a page udl writes
+    (`set_content`) listing the sites that wait, ticking each off as it passes; then a tab per site, on its
+    first waiting URL. A challenge that comes while the window is open gets a tab of its own.
+  - Each tab is looked at every second. A site has passed when its tab is on the site, loaded, quiet for
+    2 s and `detect()` finds nothing. Then:
+    - the tab's page is that URL's answer;
+    - the site's other waiting URLs go back to `queued`;
+    - `FetchSite.cleared_at` is saved; the clearance (the cookies the check set) stays in udl's profile, so
+      later fetches need nobody until it expires.
+  - The window closes when every site has passed, when the person closes it, or after
+    `challenge_timeout`. Sites not passed go on waiting, as in `wait` mode.
+  - A window needs a display (`$WAYLAND_DISPLAY` or `$DISPLAY`). Without one, `ask` behaves as `wait`, and
+    the URL's `note` says why.
+  - A run of an automation never asks (`current_caller` is `automation`): nobody is looking out for a
+    window then, so it waits, and `udl.fetch.challenge` tells the user (a subscription with a `notify`
+    action, say).
+  - The window and the browser lane share the profile: the lane stops taking URLs, lets its open tabs
+    finish and closes before the window opens, and starts again, headless, once it has closed.
+  - `solve(sites=None)` opens the window for the challenges waiting now, in whichever udl process asks.
+    For a batch another process runs, the window still writes the challenged URL's answer (its record and
+    body), and puts the site's other URLs back to `queued`; the batch's process picks them up within
+    `recheck` (5 s), as it checks its waiting URLs that often.
+  - Tests run the window headless, with `FakePerson` for the person.
+- Tests first: `tests/integration/fetch/test_window.py`, against `/checked/`: the phase's person bullet; one
+  window passing two sites; a solve from a second service on the same database.
+- Done when: a batch of six `/checked/` URLs on two hosts asks once per host, then finishes.
+
+**12.8 Operations** · needs 12.7
+- Build: these operations, with the Feature Matrix's names:
+
+  | Operation | Request → response | Hints |
+  |---|---|---|
+  | `fetch_pages` | `FetchRequest` (`urls`, `via`, `format`, `main_only`, `select`, `wait_for`, `headers`, `person`, `label`, `wait` (true), `timeout` (90 s), `max_chars` (20,000 per page)) → `FetchBatchInfo` (the batch; each URL's status, rung and content when done, from the start up to `max_chars`, with `next_offset`; and a `hint` when a person is needed) | read-only, open-world |
+  | `list_fetches` | `ListFetchesRequest` (`status`, `since`, `limit`, `offset`) → `FetchBatchList` | read-only |
+  | `get_fetch` | `FetchBatchRequest` (`id`, `max_chars`) → `FetchBatchInfo` | read-only |
+  | `get_fetched_page` | `FetchedPageRequest` (`id` (the URL's), `format`, `main_only`, `select`, `offset`, `max_chars`) → `FetchedPageInfo` (what was fetched, its attempts, the content from `offset`) | read-only |
+  | `cancel_fetch` | `FetchBatchRequest` → `FetchBatchInfo` | destructive, idempotent |
+  | `retry_fetch` | `RetryFetchRequest` (`id`, `items`, `via`) → `FetchBatchInfo` | open-world |
+  | `list_challenges` | `ListChallengesRequest` → `ChallengeList` (each site that waits: its kind, its URLs and batches, since when) | read-only |
+  | `solve_challenges` | `SolveChallengesRequest` (`sites`) → `SolveReport` (the sites passed, those still waiting) | open-world |
+  | `import_cookies` | `ImportCookiesRequest` (`cookies` (secret: a file's text), `site`, `from_browser`, `user_agent`) → `CookieImport` (how many per site, never values) | admin, idempotent |
+  | `list_cookies` | `ListCookiesRequest` (`site`) → `CookieList` | read-only |
+  | `delete_cookies` | `CookiesRequest` (`site`) → `Deleted` | admin, destructive, idempotent |
+
+  - An answer holds at most `max_answer` characters of pages in all; past that a URL's content is left out
+    (`truncated`), for `get_fetched_page` to page through. Formats are rendered from the stored body, so
+    another format needs no second fetch.
+  - `fetch_pages` is read-only, as `probe_url` is: it reads the web, and what it keeps is its own history.
+    Its pages are untrusted content (see the [Security model](#security-model)), handed to agents and AI
+    actions as data.
+  - `headers` refuses `Cookie` and `Authorization`, pointing to `import_cookies`, so no secret sits in a
+    batch's record.
+  - The tool's description is written for agents: use it when your own fetch failed (a 5xx, a 403, an
+    anti-bot page) or the page needs JavaScript or a login; give several URLs at once; a check may need the
+    user, who is shown a window, so call `get_fetch` later for what isn't done.
+  - `/fetches/challenges` and `/fetches/pages/{id}` are routed before `/fetches/{id}` (ids are UUIDs).
+  - Written by hand: `udl fetch <url>…` (`@runs("fetch_pages")`, the `fetch` group's default command, as
+    `udl <url>` is `udl get`), which waits to the end unless given `--timeout`, shows each URL's progress on
+    stderr, prints a single page to stdout or writes each to `--out DIR` (`<site>/<name>.md`; `raw` keeps
+    the bytes), and exits 1 when any failed; and `udl browser cookies import <file|->`
+    (`@runs("import_cookies")`), which reads the file rather than prompting for a secret. The rest are
+    generated. `udl fetch solve` also prints each site as it passes.
+- Tests first: an interface test for each operation and its `MATRIX` row, its `admin` choice in
+  `test_operations.py`, and `udl fetch --out`.
+- Done when: the parity test lists all eleven.
+
+**12.9 End to end** · needs 12.8
+- Tests first: `tests/integration/test_fetch.py`:
+  - an MCP client's `fetch_pages` with six URLs on three hosts of the fixture site (`/plain-500/`,
+    `/checked/` passed by `FakePerson`, `/members/` after `import_cookies`) gets all six as Markdown;
+  - asking again on the `/checked/` host needs no person and starts in the browser;
+  - a subscription on `udl.fetch.challenge` with a `FakeAction` runs once for a batch in `wait` mode, and
+    again only once the site has been passed and challenged anew.
+- Done when: the test passes and Phase 12's decisions are written.
+
+**Phase 12 is done when:** against a real site that answers a plain fetch with a 5xx or an anti-bot page,
+`udl fetch` with three of its URLs and two from other sites opens one window for the check, and once it is
+passed all five come back as Markdown; asking again needs no window. An agent with udl's MCP server, whose
+own fetch tool failed on that site, gets the page through `fetch_pages`.
+
+### The ladder and the queue
+
+```
+ fetch_pages(urls) ─► FetchQueue ─► a lane per site (`max_per_site`, `site_delay` apart) ─► Fetcher, per URL:
+
+     static ───────► cookies ───────► browser ───────► person
+       climbs on: a 5xx (after one more try), 401/403, a challenge, a JavaScript shell
+       stays on:  a 429 (after its Retry-After)        ends on: a page, a 404/410, a block
+```
+
+- A site's first challenge holds its other URLs. One window shows every site that waits, a tab each; once
+  a site is passed, its URLs go on with the clearance, headless.
+- The rung that worked is the site's `start_at` next time (`FetchSite`), until `relearn_after`.
+- Fetches run in the process that asked for them, as downloads do: the CLI's until they end, `udl mcp`'s
+  while the agent's session lasts, `udl serve`'s for as long as it runs. A batch a process leaves behind is
+  `interrupted`; `retry_fetch` runs the rest.
+
+### Challenges (12.2)
+
+Markers drift, so each row is checked against the vendor's documentation when 12.2 starts, and gets a test
+page of its own.
+
+| Kind | Recognised by | Passable? |
+|---|---|---|
+| `cloudflare` | `cf-mitigated: challenge`; a 403 or 503 from `server: cloudflare` titled "Just a moment..."; `/cdn-cgi/challenge-platform/` | yes (often clears itself in a browser) |
+| `turnstile` | an iframe or script from `challenges.cloudflare.com/turnstile` on a page with little else | yes |
+| `hcaptcha`, `recaptcha` | their widgets (`h-captcha`, `g-recaptcha`, their scripts) on a page with little else, or with a 4xx | yes |
+| `datadome` | an `x-datadome` header; an iframe from `captcha-delivery.com` | yes |
+| `perimeterx` | `px-captcha` ("Press & Hold"), `_pxCaptcha` | yes |
+| `aws_waf` | `x-amzn-waf-action: captcha` or `challenge` | yes |
+| `imperva` | `_Incapsula_Resource` with a 403 | yes |
+| `sucuri` | Sucuri's JavaScript check (`sucuri_cloudproxy_js`) | yes (often clears itself) |
+| `akamai` | a 403 "Access Denied" with a `Reference #` | no: blocked |
+| `unknown` | "verify you are human", "checking your browser" in the title or the few words of a page with little else | yes |
+
+### From an agent
+
+An agent's fetch tool fails on two pages of `a.example`; it hands them to udl with a third:
+
+```
+→ fetch_pages {"urls": ["https://a.example/1", "https://a.example/2", "https://b.example/x"]}
+← {"id": "…", "status": "waiting",
+   "items": [{"url": "https://b.example/x", "status": "succeeded", "via": "browser", "content": "# …"},
+             {"url": "https://a.example/1", "status": "challenge", "challenge": "cloudflare"}, …],
+   "hint": "2 pages on a.example wait for the user to pass a Cloudflare check in udl's browser window. Call get_fetch with this id for them later."}
+```
+
+The user passes the check in the window that opened; the agent's `get_fetch` then has both pages. From the
+CLI:
+
+```console
+$ udl fetch https://a.example/1 https://a.example/2 https://b.example/x --out pages/
+$ udl browser cookies import ~/Downloads/cookies.txt --user-agent "Mozilla/5.0 (X11; Linux x86_64) …"
+$ udl fetch challenges          # sites waiting for you (a batch in `wait` mode, or run by `udl serve`)
+$ udl fetch solve               # one window, a tab per site
+```
+
+---
+
+## Phase 13: Gmail plugin
 
 ### Tests first
 - Against the fake Google servers: connecting (scopes by access, `login_hint`, PKCE); a new message in a
@@ -2135,7 +2529,7 @@ Where the build differs from a card, it is on purpose, as below.
 
 ### Tasks
 
-**12.1 Fake Google** · needs 8.9
+**13.1 Fake Google** · needs 8.9
 - Build: `tests/support/google.py`: `FakeGoogle`, one ASGI app. It has OAuth (8.9's fake), Google's
   OpenID userinfo, and Gmail's REST API under `/gmail/v1/users/me/`:
   - `profile`;
@@ -2148,11 +2542,11 @@ Where the build differs from a card, it is on purpose, as below.
   - `threads/{id}`, `drafts` and `labels`.
 
   A test drives it with `deliver(message)`, `expire_history()` and `fail(next=429 | 401 | 500)`.
-- Tests first: the Gmail client's tests (12.3) are its tests.
-- Done when: it is enough for 12.2–12.6, and for 18.10's e2e test (where `tests/support/e2e.py` serves it
+- Tests first: the Gmail client's tests (13.3) are its tests.
+- Done when: it is enough for 13.2–13.6, and for 19.10's e2e test (where `tests/support/e2e.py` serves it
   on a port).
 
-**12.2 Connecting Gmail** · needs 12.1, 11.3
+**13.2 Connecting Gmail** · needs 13.1, 11.3
 - Build: `udl/plugins/integrations/gmail/plugin.py`.
   - `GmailIntegration`, which connects with `oauth`.
   - `GmailSettings`:
@@ -2173,9 +2567,9 @@ Where the build differs from a card, it is on purpose, as below.
   scopes, `login_hint`, PKCE).
 - Done when: `udl accounts add gmail work --access read,send` connects to the fake.
 
-**12.3 The Gmail client** · needs 12.2
+**13.3 The Gmail client** · needs 13.2
 - Build: `gmail/client.py`: `GmailClient(handle, settings, http)`.
-  - It has one method per REST call udl makes (12.1's list), typed with the API's shapes in
+  - It has one method per REST call udl makes (13.1's list), typed with the API's shapes in
     `gmail/models.py` (`extra="ignore"`).
   - Bodies are decoded (base64url, then their charset).
   - Errors are mapped:
@@ -2191,9 +2585,9 @@ Where the build differs from a card, it is on purpose, as below.
   and each error.
 - Done when: every call udl needs is typed and its errors mapped.
 
-**12.4 `gmail.message.received`** · needs 12.3, 11.5
+**13.4 `gmail.message.received`** · needs 13.3, 11.5
 - Build: `gmail/events.py`.
-  - `GmailMessage` (its data is listed under [Watching](#watching-124) below) and the event type, whose
+  - `GmailMessage` (its data is listed under [Watching](#watching-134) below) and the event type, whose
     subject is "Mail from <from>: <subject>".
   - The text of an HTML-only mail comes from `selectolax`, capped at 256 KiB.
   - `sent_by_udl` comes from the `X-UDL-Run` header, and that run becomes the event's `caused_by`.
@@ -2203,7 +2597,7 @@ Where the build differs from a card, it is on purpose, as below.
   bullets.
 - Done when: a message `FakeGoogle` delivers fires once, however the polls fall.
 
-**12.5 The Gmail-search source filter** · needs 12.4, 11.6
+**13.5 The Gmail-search source filter** · needs 13.4, 11.6
 - Build: `GmailSourceFilter` (`query`). It is checked with
   `messages.list(q="(<query>) rfc822msgid:<id>", maxResults=1)`, and the answer is cached per message and
   query for an hour.
@@ -2211,7 +2605,7 @@ Where the build differs from a card, it is on purpose, as below.
   mail, and asks Gmail once per message.
 - Done when: the test passes.
 
-**12.6 Operations** · needs 12.3
+**13.6 Operations** · needs 13.3
 - Build: the operations in the table below.
 
   | Operation | Request → response | Access | Hints |
@@ -2239,7 +2633,7 @@ Where the build differs from a card, it is on purpose, as below.
   - a fan-out over two fake accounts.
 - Done when: every operation passes the integration contract.
 
-**12.7 Smoke tests** · needs 12.6
+**13.7 Smoke tests** · needs 13.6
 - Build: `tests/smoke/test_gmail.py` (`-m network`), run with `UDL_SMOKE_GMAIL=<account>` (an account
   connected on this machine). It:
   1. sends a mail to the account itself, with a unique subject;
@@ -2250,11 +2644,11 @@ Where the build differs from a card, it is on purpose, as below.
   Without the variable it skips, giving the reason.
 - Done when: it has passed once against a real account (noted in the phase's decisions).
 
-**Phase 12 is done when:** `udl accounts add gmail personal --access read,send` connects a real account,
+**Phase 13 is done when:** `udl accounts add gmail personal --access read,send` connects a real account,
 `udl gmail list --account '*' --query 'newer_than:1d'` lists its mail, and a subscription on
 `gmail.message.received` runs for a mail sent to it.
 
-### Setup (documented in 19.4)
+### Setup (documented in 20.4)
 
 1. A Google Cloud project with the Gmail API enabled and an OAuth consent screen (External).
 2. An OAuth client of type **Desktop app**; its id and secret go in `[integrations.gmail]`, or are pasted
@@ -2262,7 +2656,7 @@ Where the build differs from a card, it is on purpose, as below.
    client's secret is not confidential (Google says so), but udl keeps it with the other secrets.
 3. **Publish the consent screen** ("In production"; unverified is fine for personal use, with Google's
    warning screen). While it is in "Testing", refresh tokens expire after 7 days and every account has to
-   be connected again each week. Check this against Google's docs when 12.2 starts.
+   be connected again each week. Check this against Google's docs when 13.2 starts.
 
 | Access | Scope | Allows |
 |---|---|---|
@@ -2271,7 +2665,7 @@ Where the build differs from a card, it is on purpose, as below.
 | `drafts` | `gmail.compose` | drafts |
 | `organise` | `gmail.modify` | labels, read / unread, archive |
 
-### Watching (12.4)
+### Watching (13.4)
 
 - On connecting, the cursor is the mailbox's current `historyId` (`users.getProfile`), so old mail never
   fires. Every `poll_interval` (default 60 s, at least 15 s), `users.history.list` with
@@ -2287,13 +2681,13 @@ RFC 822 one), from / to / cc / reply_to (name, address), subject, date, snippet,
 text part, else the HTML as text via `selectolax`, at most 256 KiB), has_attachments, attachments (name,
 type, size, id), list_id (mailing lists and newsletters), in_reply_to, sent_by_udl.
 
-### Source filter (12.5)
+### Source filter (13.5)
 
 `{"query": "from:bank.com has:attachment"}`: Gmail's own search syntax, checked by asking Gmail
 (`messages.list` with `q="(<query>) rfc822msgid:<id>"`, one result at most), after the generic filter
 passed, cached per message and query.
 
-### Operations (12.6)
+### Operations (13.6)
 
 | MCP tool | CLI | Access | Hints |
 |---|---|---|---|
@@ -2318,7 +2712,7 @@ passed, cached per message and query.
 
 ---
 
-## Phase 13: Slack plugin
+## Phase 14: Slack plugin
 
 ### Tests first
 - Against the fake Slack: tokens are checked with `auth.test` and give the team and user; a missing scope
@@ -2334,7 +2728,7 @@ passed, cached per message and query.
 
 ### Tasks
 
-**13.1 Fake Slack** · needs 11.1
+**14.1 Fake Slack** · needs 11.1
 - Build: `tests/support/slack.py`: `FakeSlack`.
   - An ASGI app with the Web API methods udl calls:
     - `auth.test` (with `x-oauth-scopes`) and `apps.connections.open`;
@@ -2350,9 +2744,9 @@ passed, cached per message and query.
     `refresh_requested`, and a dropped socket.
 
   A test drives it with `post(message)`, `react(…)`, `drop()` and `refresh()`.
-- Done when: it is enough for 13.2–13.6, and for Phase 18's approvals e2e test.
+- Done when: it is enough for 14.2–14.6, and for Phase 19's approvals e2e test.
 
-**13.2 Connecting Slack** · needs 13.1, 11.3
+**14.2 Connecting Slack** · needs 14.1, 11.3
 - Build: `udl/plugins/integrations/slack/plugin.py`.
   - `SlackIntegration`, which connects with `tokens`.
   - `SlackTokens`: `user_token` (`xoxp-`), `app_token` (`xapp-`), and optionally `bot_token` (`xoxb-`),
@@ -2370,7 +2764,7 @@ passed, cached per message and query.
   - a token of the wrong kind is refused before any call is made.
 - Done when: `udl accounts add slack acme` connects to the fake.
 
-**13.3 The Web API client** · needs 13.2
+**14.3 The Web API client** · needs 14.2
 - Build: `slack/client.py`: `SlackClient(tokens, settings, http)`.
   - It has a typed method per call, with the models in `slack/models.py`.
   - `ok: false` errors are mapped:
@@ -2389,7 +2783,7 @@ passed, cached per message and query.
   fourth bullet, and each mapped error.
 - Done when: every call udl needs is typed and its errors mapped.
 
-**13.4 Socket Mode** · needs 13.3
+**14.4 Socket Mode** · needs 14.3
 - Build: `slack/socket.py`: `SocketModeClient(app_token)`.
   - It calls `apps.connections.open`, then connects with `websockets`.
   - It acknowledges each envelope (`{"envelope_id"}`) before handling it.
@@ -2403,7 +2797,7 @@ passed, cached per message and query.
   - acknowledgements go out within 3 s even while a handler is slow.
 - Done when: an hour of fake refreshes and drops loses no event.
 
-**13.5 `slack.message.posted` and `slack.reaction.added`** · needs 13.4, 11.5
+**14.5 `slack.message.posted` and `slack.reaction.added`** · needs 14.4, 11.5
 - Build: `slack/events.py`: `SlackMessage` and `SlackReaction` (their data is in the table below), with
   their event types, and the watcher, which turns Socket Mode payloads into events.
   - A `message` with a `subtype` (edits, joins, `bot_message`) or a `bot_id` is skipped.
@@ -2416,7 +2810,7 @@ passed, cached per message and query.
 - Tests first: `tests/unit/plugins/integrations/slack/test_events.py`: the phase's third bullet.
 - Done when: a DM to the account in `FakeSlack` fires one event, with `channel.kind == "dm"`.
 
-**13.6 Operations** · needs 13.3
+**14.6 Operations** · needs 14.3
 - Build: the operations in the table below.
 
   | Operation | Request → response | Hints |
@@ -2434,11 +2828,11 @@ passed, cached per message and query.
   - `@user` is looked up in the cache, and a DM is opened with `conversations.open`.
   - `as_bot` needs the bot token.
   - Files are fetched from `url_private_download` with the token, into `download_dir/slack/<account>/`,
-    named safely. `output_dir` is checked as in 12.6.
+    named safely. `output_dir` is checked as in 13.6.
 - Tests first: one test for each operation, against `FakeSlack`; a fan-out over two workspaces.
 - Done when: every operation passes the integration contract.
 
-**13.7 Smoke tests** · needs 13.5, 13.6
+**14.7 Smoke tests** · needs 14.5, 14.6
 - Build: `tests/smoke/test_slack.py`, run with `UDL_SMOKE_SLACK=<account>`. It:
   1. sends a DM to the account's own user;
   2. sees `slack.message.posted` fire once, with `sent_by_udl`;
@@ -2447,7 +2841,7 @@ passed, cached per message and query.
   Without the variable it skips, giving the reason.
 - Done when: it has passed once against a real workspace.
 
-**Phase 13 is done when:** a real workspace is connected, `udl slack send @me "hi"` arrives, and a
+**Phase 14 is done when:** a real workspace is connected, `udl slack send @me "hi"` arrives, and a
 subscription on `slack.message.posted where channel.kind == "dm" and not sent_by_udl` runs for a DM
 someone else sends.
 
@@ -2496,14 +2890,15 @@ Users and channels are looked up once an hour (cached), so filters can say `chan
 
 ---
 
-## Phase 14: Web-page watcher
+## Phase 15: Web-page watcher
 
 The first watcher for something that publishes no events: any web page. "A new post on a blog without RSS",
 "the price dropped" and "the page changed" become events, built on what udl already has for downloads: tag
-chains (Phase 5), the scraper and the browser, and the site's logins (Phase 2).
+chains (Phase 5), the scraper and the browser, and the site's logins (Phase 2), all reached through Phase
+12's fetcher.
 
 ### Tests first
-- Chains for values (14.2): a chain gives the same values static or in the browser; values are the text as
+- Chains for values (15.2): a chain gives the same values static or in the browser; values are the text as
   found (whitespace normalised), with `@href` / `@src` resolved against the page; a chain run within an item
   sees only that item.
 - Against the fixture site's changing pages, on a `FakeClock`:
@@ -2525,7 +2920,7 @@ chains (Phase 5), the scraper and the browser, and the site's logins (Phase 2).
 
 ### Tasks
 
-**14.1 Pages that change** · needs nothing
+**15.1 Pages that change** · needs nothing
 - Build:
   - `tests/fixtures/site/watch/`: `blog.html`, `shop.html`, `article.html`, and a list built by
     JavaScript (for `fetch: browser`).
@@ -2536,21 +2931,21 @@ chains (Phase 5), the scraper and the browser, and the site's logins (Phase 2).
     `304`.
 - Done when: the fixture site serves the pages, both statically and in the browser.
 
-**14.2 Chains that give values** · needs nothing
+**15.2 Chains that give values** · needs 12.4
 - Build:
   - `run_values(chain, document, reader) -> list[str]` in `udl/chains/executor.py`. It runs `run_chain`'s
     steps, but the last step's values are the result: text with its whitespace collapsed, attributes or
     JSON values. `@href` and `@src` are resolved against the page, and nothing has to be a URL.
   - `ElementDocument`: one element's outer HTML as a `Document`, with its page's URL as its base, so a
     field's chain runs within one item.
-  - `read_page(ctx) -> Document` on the scraper and the browser: statically through `http_client()` with
-    the site's cookies, or rendered on udl's browser profile.
+  - `read_page(ctx) -> Document` on the scraper and the browser, through Phase 12's `Fetcher`: static
+    with the site's cookies, rendered on udl's browser profile, or (`fetch: auto`) up its ladder.
 - Tests first: `tests/unit/chains/test_values.py` and `tests/integration/chains/test_values.py`: the
   phase's first bullet.
 - Done when: `price: ".price::text >> regex:([\d.,]+)"` gives the price's text, both statically and in
   the browser.
 
-**14.3 `PageWatch`** · needs 14.2, 11.3
+**15.3 `PageWatch`** · needs 15.2, 11.3
 - Build: `udl/plugins/integrations/pages/plugin.py`.
   - `PagesIntegration` connects with `none`. Of its operations, only `pages_preview` and `pages_poll` need
     an account.
@@ -2573,7 +2968,7 @@ chains (Phase 5), the scraper and the browser, and the site's logins (Phase 2).
   `parse_number`.
 - Done when: `udl accounts add pages blog -O url=… -O items=… -O fields=…` saves a watch.
 
-**14.4 The watcher** · needs 14.3, 14.1, 11.5
+**15.4 The watcher** · needs 15.3, 15.1, 11.5
 - Build: `pages/watch.py`. Each watch is a loop of `clock.sleep(every ± 10 %)`, then a check, within the
   per-site and `max_concurrent` limits. A check:
   1. fetches conditionally (`If-None-Match`, `If-Modified-Since`); a `304` ends the check;
@@ -2595,7 +2990,7 @@ chains (Phase 5), the scraper and the browser, and the site's logins (Phase 2).
   phase's second list.
 - Done when: each change fires once and nothing else fires.
 
-**14.5 A broken watch says so** · needs 14.4
+**15.5 A broken watch says so** · needs 15.4
 - Build:
   - A check whose chain finds nothing counts in `empty_checks`. At `broken_after`, one
     `udl.account.error` names the watch, the field and the step that found nothing (from the chain's
@@ -2603,12 +2998,15 @@ chains (Phase 5), the scraper and the browser, and the site's logins (Phase 2).
   - A check that works again clears both.
   - A login wall (the site's `AuthRequired`) marks the account `needs_reauth`, with the
     `udl browser login <url>` hint.
+  - An anti-bot check waits for a person as any fetch's does (12.6; a watcher never opens a window), and
+    the watch waits with it rather than counting a failure.
 - Tests first: in `test_pages_watch.py`: the phase's layout-change bullet and its login bullet.
 - Done when: "my watch broke" can be subscribed to.
 
-**14.6 `pages_suggest`** · needs 14.2
+**15.6 `pages_suggest`** · needs 15.2
 - Build: `pages/suggest.py`.
-  1. Fetch the page statically, or in the browser when nothing is found or `fetch: browser`.
+  1. Fetch the page through the `Fetcher` (12.4): statically, or in the browser when nothing is found or
+     `fetch: browser`.
   2. Find the groups of three or more siblings with the same tag and classes.
   3. For each group, propose an `items` selector made with Phase 5's `selector_for()`, avoiding
      `nth-child` when a class or attribute will do.
@@ -2627,7 +3025,7 @@ chains (Phase 5), the scraper and the browser, and the site's logins (Phase 2).
   phase's suggest bullet.
 - Done when: the blog's post list and the shop's product grid rank first.
 
-**14.7 Operations and the wizard** · needs 14.4, 14.6
+**15.7 Operations and the wizard** · needs 15.4, 15.6
 - Build: the operations in the table below.
 
   | Operation | Request → response | Hints |
@@ -2643,7 +3041,7 @@ chains (Phase 5), the scraper and the browser, and the site's logins (Phase 2).
   - the wizard, driven through its prompts as `chain wizard`'s tests drive it.
 - Done when: `udl pages wizard <fixture blog>` saves a watch and a subscription in one go.
 
-**Phase 14 is done when:** a watch on a real blog that has no RSS fires `pages.item.added` for its next
+**Phase 15 is done when:** a watch on a real blog that has no RSS fires `pages.item.added` for its next
 post, and a subscription posts that post to Slack.
 
 ### A watch
@@ -2653,7 +3051,7 @@ a watcher and state like any other account:
 
 ```yaml
 url: https://example.com/blog
-fetch: static                   # static | browser (for pages built by JavaScript)
+fetch: static                   # static | browser (for pages built by JavaScript) | auto (Phase 12's ladder)
 every: 15m                      # at least 1m; with jitter
 # Watch one of:
 items: "article.post"           # each item: a selector (or a chain)
@@ -2680,8 +3078,8 @@ fire_existing: false            # fire for what is already there at the first ch
 - Each watch is checked every `every` (with jitter), at most `[integrations.pages] max_concurrent`
   (default 2) at once and one at a time per site. Requests are conditional (`If-None-Match`,
   `If-Modified-Since`), so an unchanged page costs a `304`.
-- A static watch fetches like the scraper (a browser's User-Agent, the site's cookies); a browser watch
-  renders on udl's profile like the browser downloader (one Chromium at a time).
+- A watch fetches through Phase 12's `Fetcher`: statically with a browser's User-Agent and the site's
+  cookies, or rendered on udl's profile (one Chromium at a time). An anti-bot check waits for a person.
 - Its state (`PluginState`) is the seen keys (the last `keep_seen`, default 1000), the last value, the last
   text (at most 256 KiB, for diffs), the validators (`ETag`, `Last-Modified`) and the failures in a row.
 - Failing checks go through the account machinery (11.5): backoff, `needs_reauth` at a login wall, and
@@ -2717,7 +3115,7 @@ the wizard. Examples for `docs/automations.md`:
 
 ---
 
-## Phase 15: Local AI
+## Phase 16: Local AI
 
 ### Tests first
 - AI provider contract suite (`fake`, `ollama` and `openai-compatible` against fake servers): models are
@@ -2737,7 +3135,7 @@ the wizard. Examples for `docs/automations.md`:
 
 ### Tasks
 
-**15.1 The `udl.ai` plugin kind** · needs 8.5, 8.6
+**16.1 The `udl.ai` plugin kind** · needs 8.5, 8.6
 - Build: `udl/plugins/ai/base.py`.
   - `AIProvider` (below) and `ProviderOptions`.
   - The chat models:
@@ -2756,11 +3154,11 @@ the wizard. Examples for `docs/automations.md`:
     `max_concurrent` (1) and `enabled`.
   - `tests/support/ai.py`: `FakeAI`, which is scripted with a list of `ChatResponse`s or a function of the
     request, and records the requests it gets.
-- Tests first: `tests/contract/test_ai_provider_contract.py`, over `fake` (15.2 and 15.3 add theirs): the
+- Tests first: `tests/contract/test_ai_provider_contract.py`, over `fake` (16.2 and 16.3 add theirs): the
   phase's first bullet.
 - Done when: `FakeAI` passes the contract.
 
-**15.2 `ollama`** · needs 15.1
+**16.2 `ollama`** · needs 16.1
 - Build: `udl/plugins/ai/ollama.py`.
   - It uses:
     - `/api/chat`: unstreamed for `chat()` and streamed for `stream()`, with `tools`, `format` and
@@ -2776,7 +3174,7 @@ the wizard. Examples for `docs/automations.md`:
   real one.
 - Done when: `udl ai models --provider local` lists the models Ollama has here.
 
-**15.3 `openai-compatible`; providers that start on demand** · needs 15.1
+**16.3 `openai-compatible`; providers that start on demand** · needs 16.1
 - Build: `udl/plugins/ai/openai.py` and `udl/plugins/ai/process.py`.
   - `openai-compatible` uses `/v1/chat/completions` and `/v1/models`:
     - tools are sent as `{"type": "function", "function": …}`;
@@ -2799,19 +3197,19 @@ the wizard. Examples for `docs/automations.md`:
     provider is saved.
 - Done when: a `llama-server` command in `allowed_commands` starts on the first chat and stops when idle.
 
-**15.4 Tools from operations: `ToolPolicy`** · needs 8.1, 15.1
+**16.4 Tools from operations: `ToolPolicy`** · needs 8.1, 16.1
 - Build: `udl/ai/agent.py`.
   - `ToolPolicy`: `tools` (names and globs), `approval` (`ask` or `auto`) and `auto_approve`.
   - `offered(registry) -> list[ToolSpec]`. It never offers an `admin` operation, even when one is named.
     A tool's parameters are its request model's JSON Schema, with `$defs` inlined, and its description is
     the operation's.
-  - `decide(call) -> run | ask | refuse`, following the table under [The agent](#the-agent-154156).
+  - `decide(call) -> run | ask | refuse`, following the table under [The agent](#the-agent-164166).
 - Tests first: `tests/unit/ai/test_tool_policy.py`:
   - the phase's second bullet;
   - every operation in a fully loaded registry is checked: none marked `admin` can be offered.
 - Done when: the policy is a pure function of the registry and the action's options.
 
-**15.5 The agent loop** · needs 15.4
+**16.5 The agent loop** · needs 16.4
 - Build: `Agent(provider, model, policy, service, clock, limits).run(messages) -> AgentResult` (the
   answer, the transcript, the steps).
   - Each tool call goes through `decide()`, then `service.call()` with `current_caller = automation`. Its
@@ -2830,7 +3228,7 @@ the wizard. Examples for `docs/automations.md`:
 - Tests first: `tests/unit/ai/test_agent.py`, with `FakeAI` and a `FakeClock`: the phase's third bullet.
 - Done when: every way the loop can stop is tested.
 
-**15.6 Approvals** · needs 15.5, 9.7
+**16.6 Approvals** · needs 16.5, 9.7
 - Build:
   - In `ask` mode, a call the policy says to ask about puts the run in `awaiting_approval`, with
     `pending_call` set, and publishes `udl.action.awaiting_approval`. A waiting run holds no concurrency
@@ -2845,7 +3243,7 @@ the wizard. Examples for `docs/automations.md`:
   - a restart while a run is waiting, then an approval, finishes the run.
 - Done when: `udl runs approve <id>` finishes a waiting run.
 
-**15.7 Prompts and guidance** · needs 15.1
+**16.7 Prompts and guidance** · needs 16.1
 - Build: `udl/ai/prompts.py`.
   - `Prompt` and `Guidance` (below), with `GuidanceScope` (`everywhere`, `event_types` (globs),
     `subscriptions`, `actions`).
@@ -2861,7 +3259,7 @@ the wizard. Examples for `docs/automations.md`:
   - the injection regression test, kept for good.
 - Done when: what reaches the model is a pure function, tested to the byte.
 
-**15.8 The `ai` action** · needs 15.5–15.7, 9.4
+**16.8 The `ai` action** · needs 16.5–16.7, 9.4
 - Build: `udl/plugins/actions/ai.py`.
   - `AIActionOptions` (the YAML below), and `check()`:
     - the provider and the prompt exist;
@@ -2873,8 +3271,8 @@ the wizard. Examples for `docs/automations.md`:
 - Tests first: in the action contract, and `tests/unit/plugins/actions/test_ai.py`, with `FakeAI`.
 - Done when: the `summarise-bank-mail` example below runs on `FakeAI`.
 
-**15.9 Operations** · needs 15.8
-- Build: the operations below, with the Feature Matrix's names. `decide_run` is 15.6's.
+**16.9 Operations** · needs 16.8
+- Build: the operations below, with the Feature Matrix's names. `decide_run` is 16.6's.
 
   | Operation | Request → response | Hints |
   |---|---|---|
@@ -2894,11 +3292,11 @@ the wizard. Examples for `docs/automations.md`:
 - Tests first: an interface test for each operation and its `MATRIX` row.
 - Done when: the parity test lists them all.
 
-**Phase 15 is done when:** with Ollama here, `udl ai providers set local --plugin ollama` and an `ai`
+**Phase 16 is done when:** with Ollama here, `udl ai providers set local --plugin ollama` and an `ai`
 action subscribed to `gmail.message.received` summarise a real mail. The action is in `ask` mode, so its
 Slack message waits for `udl runs approve`.
 
-### Providers (15.1–15.3)
+### Providers (16.1–16.3)
 
 ```python
 class AIProvider[O: ProviderOptions](ABC):
@@ -2927,7 +3325,7 @@ class AIProvider[O: ProviderOptions](ABC):
   each provider or action names one.
 - Over httpx, no vendor SDKs, like the integrations.
 
-### The agent (15.4–15.6)
+### The agent (16.4–16.6)
 
 1. **Messages:** a system message made of the guidance that applies (everywhere, then the event type's, the
    subscription's and the action's, by priority) and the prompt's `system`; a user message that is the
@@ -2958,7 +3356,7 @@ publishes `udl.action.awaiting_approval`, so a subscription can send you a Slack
 notification about it. `decide_run` (CLI, API, MCP, the UI's inbox) approves or denies it, with an optional
 note for the model; after `[ai] approval_timeout` (default 24 h) it is denied.
 
-### Prompts and guidance (15.7)
+### Prompts and guidance (16.7)
 
 ```python
 class Prompt(Record):
@@ -2976,7 +3374,7 @@ class Guidance(Record):
     enabled: bool = True
 ```
 
-The `ai` action (15.8):
+The `ai` action (16.8):
 
 ```yaml
 name: summarise-bank-mail
@@ -2995,7 +3393,7 @@ timeout: 5m
 
 ---
 
-## Phase 16: Web UI foundations & UI plugins
+## Phase 17: Web UI foundations & UI plugins
 
 ### Tests first
 - Serving (pytest): `/ui/` and any client route under it answer `index.html`; hashed assets are cached as
@@ -3015,7 +3413,7 @@ timeout: 5m
 
 ### Tasks
 
-**16.1 The `web/` workspace and the e2e harness** · needs nothing
+**17.1 The `web/` workspace and the e2e harness** · needs nothing
 - Build: `web/`, as in [Project layout](#project-layout-additions).
   - `package.json`: `packageManager` pins pnpm, and its scripts are `dev`, `build`, `check` and `e2e`.
   - `pnpm-workspace.yaml`: `packages: [packages/*, plugins/*, examples/*]` and
@@ -3038,7 +3436,7 @@ timeout: 5m
 - Done when: `make check` runs the web checks, `make e2e` runs that test, and `btrfs filesystem du` shows
   `web/node_modules` reflinked.
 
-**16.2 The typed API client** · needs 16.1, 8.3
+**17.2 The typed API client** · needs 17.1, 8.3
 - Build:
   - `udl/interfaces/api/openapi.py` (`python -m udl.interfaces.api.openapi [--check] PATH`) writes the
     schema of `create_app()`, with sorted keys. It uses the default settings (no config file, `UDL_*`
@@ -3056,7 +3454,7 @@ timeout: 5m
   - `web/packages/api/src/*.test.ts`: the headers, the errors, and `FakeUdl`'s typing.
 - Done when: `make check` fails if `openapi.json` or `schema.d.ts` is out of date.
 
-**16.3 Serving the UI** · needs 16.1
+**17.3 Serving the UI** · needs 17.1
 - Build: `udl/interfaces/web/app.py`, added by `create_app()` when `[web] enabled`. It serves:
   - `/ui/assets/*`, with `Cache-Control: max-age=31536000, immutable`;
   - `/ui/plugins/<name>/*`, from that UI plugin's bundle dir, with `no-cache` and an `ETag`, refusing any
@@ -3065,14 +3463,14 @@ timeout: 5m
   - `/`, which redirects to `/ui/` (307) when the request accepts HTML.
 
   Every `/ui` response carries the headers listed under
-  [Serving and signing in](#serving-and-signing-in-163164). Without a build, `/ui/` answers a page saying
+  [Serving and signing in](#serving-and-signing-in-173174). Without a build, `/ui/` answers a page saying
   to run
   `make web`. Static files need no API key, since they hold no data, and none of these routes are in the
   OpenAPI schema. `uv build` must put the built files in the wheel; check it here.
 - Tests first: `tests/interface/web/test_serving.py`: the phase's first bullet.
 - Done when: `udl serve` shows the built shell at `/ui/`.
 
-**16.4 Web sessions** · needs 16.3
+**17.4 Web sessions** · needs 17.3
 - Build: `udl/interfaces/web/sessions.py`.
   - `SessionStore`: in memory, token → expiry, with tokens from `secrets.token_urlsafe(32)`.
   - `POST /session` takes `SignInRequest(api_key)` and answers 204 with the cookie. A wrong key is a 401,
@@ -3086,13 +3484,13 @@ timeout: 5m
   with and without an API key.
 - Done when: the API is as safe from other web pages with a session as it is without one.
 
-**16.5 The shell** · needs 16.2, 16.4
+**17.5 The shell** · needs 17.2, 17.4
 - Build: `web/packages/shell`.
-  - The layout, routing and state described under [The shell](#the-shell-165166) below.
+  - The layout, routing and state described under [The shell](#the-shell-175176) below.
   - Routes in `src/routes/`: `__root.tsx`, `login.tsx`, `index.tsx` (the dashboard), and folders for
     `downloads`, `sites`, `chains`, `events`, `subscriptions`, `actions`, `runs`, `schedules`, `ai` and
     `accounts`, then `plugins.tsx`, `databases.tsx`, `settings.tsx` and `p/$plugin/$.tsx`. Pages that
-    Phases 17 and 18 fill say so for now.
+    Phases 18 and 19 fill say so for now.
   - Stores in `src/stores/`: `session`, `theme`, `live`, `plugins` and `toasts`. Each is a vanilla
     `createStore`, with a hook.
   - Shared components: `JsonTree` (untrusted JSON shown as text, never as HTML), `ConfirmDialog`,
@@ -3101,7 +3499,7 @@ timeout: 5m
   `web/e2e/navigation.spec.ts`: sign in, follow each nav item, switch the theme, sign out.
 - Done when: every page is reachable in both themes, down to phone width.
 
-**16.6 Live data** · needs 16.5, 9.10
+**17.6 Live data** · needs 17.5, 9.10
 - Build: `src/live/connection.ts`: `LiveConnection`, one `EventSource` per stream (`/events/stream`, and
   each `/downloads/{id}/events` in use).
   - It reconnects after 1 s, doubling to 30 s with jitter, and calls `router.invalidate()` once it is back.
@@ -3112,7 +3510,7 @@ timeout: 5m
   reconnect.
 - Done when: a run started from the CLI shows up live in the shell.
 
-**16.7 UI manifests and the `udl.ui` kind** · needs 16.3
+**17.7 UI manifests and the `udl.ui` kind** · needs 17.3
 - Build: `udl/plugins/ui.py`.
   - `UIManifest`: the manifest shown below, with `contributes` checked against a closed set of points.
     `sdk` is `^MAJOR.MINOR` only, so Python checks it without an npm semver library: the major must match
@@ -3130,7 +3528,7 @@ timeout: 5m
 - Tests first: `tests/unit/plugins/test_ui.py`: the phase's manifests bullet.
 - Done when: a folder in `ui_plugin_dirs` is listed in `/ui/plugins.json`, or among the problems.
 
-**16.8 `@udl/ui-sdk`** · needs 16.7
+**17.8 `@udl/ui-sdk`** · needs 17.7
 - Build: `web/packages/sdk`, built with Vite's library mode as ES modules.
   - `defineUIPlugin(spec)`, the `Mount<P>` type, and the `UIContext` type.
   - A props type for each contribution point:
@@ -3146,9 +3544,9 @@ timeout: 5m
     plugin that doesn't use React doesn't pull it in. It creates a root in the target, re-renders on
     `update`, and unmounts on `unmount`.
 - Tests first: Vitest: the mount contract with `react()` and with a plain-DOM mount.
-- Done when: the template (16.10) builds against the SDK.
+- Done when: the template (17.10) builds against the SDK.
 
-**16.9 The plugin host** · needs 16.8, 16.6
+**17.9 The plugin host** · needs 17.8, 17.6
 - Build: `web/packages/shell/src/plugins/`.
   - `<PluginSlot point props>`, which looks contributions up in the contribution registry. udl's own pages
     are registered there too.
@@ -3166,20 +3564,20 @@ timeout: 5m
   in Playwright (the real thing).
 - Done when: a UI plugin that throws shows its error card, and the shell carries on.
 
-**16.10 The proof, and a template** · needs 16.9
+**17.10 The proof, and a template** · needs 17.9
 - Build:
   - `web/examples/shadcn`: Tailwind 4 with a config of its own (scanning only its own files), and
     shadcn/ui's `button` and `card` generated with `pnpm dlx shadcn@latest`. Its CSS variables are mapped
     onto daisyUI's tokens. It contributes a route and a dashboard widget.
   - `web/packages/template`: React, daisyUI and the SDK, with its own `vite.config.ts` and a README that
-    `docs/ui-plugins.md` (19.4) grows from.
-- Tests first: `web/e2e/ui-plugins.spec.ts`: what "16.10's proof" (below) describes, in both themes.
+    `docs/ui-plugins.md` (20.4) grows from.
+- Tests first: `web/e2e/ui-plugins.spec.ts`: what "17.10's proof" (below) describes, in both themes.
 - Done when: the e2e test passes.
 
-**Phase 16 is done when:** `make web && udl serve` serves the shell at `/ui/` with sign-in, live status
+**Phase 17 is done when:** `make web && udl serve` serves the shell at `/ui/` with sign-in, live status
 and both themes, and the shadcn example plugin renders in it, isolated.
 
-### The stack (16.1)
+### The stack (17.1)
 
 | Concern | Choice |
 |---|---|
@@ -3196,16 +3594,16 @@ and both themes, and the shadcn example plugin renders in it, isolated.
 | Lint and format | Biome |
 | Packages | a pnpm workspace |
 
-Versions are whatever `pnpm add` gives when 16.1 starts (pinned by `pnpm-lock.yaml`), as `uv add` did.
+Versions are whatever `pnpm add` gives when 17.1 starts (pinned by `pnpm-lock.yaml`), as `uv add` did.
 
-### Serving and signing in (16.3–16.4)
+### Serving and signing in (17.3–17.4)
 
 - `udl serve` serves the built shell at **`/ui/`** (static files, falling back to `index.html` for client
   routes). `/` redirects to `/ui/` when a browser asks for HTML. The API keeps its paths: they are
   documented and scripts and MCP clients use them, while the UI needs only one prefix. UI plugins are at
   `/ui/plugins/<name>/` from each plugin's bundle dir.
 - Headers on `/ui`: `Content-Security-Policy: default-src 'self'; connect-src 'self'; frame-ancestors
-  'none'` (styles are adopted stylesheets, so `style-src 'self'` should hold; 16.9 settles it),
+  'none'` (styles are adopted stylesheets, so `style-src 'self'` should hold; 17.9 settles it),
   `Referrer-Policy: same-origin`, `X-Content-Type-Options: nosniff`.
 - The build (`src/udl/interfaces/web/dist/`, and each built-in UI plugin's `ui/`) is package data, built by
   `make web` and not committed. Without it, `/ui/` says "run `make web`".
@@ -3216,7 +3614,7 @@ Versions are whatever `pnpm add` gives when 16.1 starts (pinned by `pnpm-lock.ya
   browser's `EventSource` works without headers, and other sites still can't drive udl. Sessions live in
   the server process: restarting it means signing in again.
 
-### The shell (16.5–16.6)
+### The shell (17.5–17.6)
 
 - **Layout:** a daisyUI drawer (Dashboard, Downloads, Sites, Chains, Events, Subscriptions, Actions, Runs,
   Schedules, AI, Accounts, Plugins, Databases, Settings, and the plugins' nav items) and a navbar (theme
@@ -3233,7 +3631,7 @@ Versions are whatever `pnpm add` gives when 16.1 starts (pinned by `pnpm-lock.ya
 - **Dev:** Vite on :5173 serves `/ui/` with HMR and proxies every other path to `udl serve` on :8765. The
   proxied Host stays `localhost`, so `LocalHostsOnly` lets it through.
 
-### UI plugins (16.7–16.10)
+### UI plugins (17.7–17.10)
 
 Any plugin (an integration, an action kind, a site or downloader plugin) can bring a UI plugin through its
 `ui` class attribute. A UI-only plugin (a dashboard, a theme) is a `udl.ui` entry point, or a folder with a
@@ -3301,12 +3699,12 @@ shared live connection; `theme` (mode, name, tokens, `onChange`); `stores` (read
   account setup in the web UI until someone writes a UI plugin for it (the Plugins page only notes "no web
   UI"). Its events still show in the event log (as JSON), and can be subscribed to, because events and
   subscriptions are udl's own pages.
-- **16.10's proof:** `web/examples/shadcn` is a UI plugin built with shadcn/ui and its own Tailwind setup. It
+- **17.10's proof:** `web/examples/shadcn` is a UI plugin built with shadcn/ui and its own Tailwind setup. It
   adds a route and a dashboard widget, and an e2e test checks it renders with its own styles, follows the
   theme switch, and leaves the shell's styles alone, as Phase 7's MongoDB plugin proved the database
   abstraction. `web/packages/template` is the starting point that `docs/ui-plugins.md` walks through.
 
-### The API client (16.2)
+### The API client (17.2)
 
 `python -m udl.interfaces.api.openapi` writes `create_app()`'s schema (default settings, the built-in
 plugins) to `web/packages/api/openapi.json` (committed); `openapi-typescript` turns it into types and
@@ -3316,12 +3714,14 @@ plugins) to `web/packages/api/openapi.json` (committed); `openapi-typescript` tu
 
 ---
 
-## Phase 17: Web UI for the downloader
+## Phase 18: Web UI for the downloader and the fetcher
 
 ### Tests first
 - Vitest per page against `FakeUdl`; Playwright per flow against `udl serve` on the fixture site:
   download a page's video and watch its progress to the end; cancel a download; save a strategy and see it
-  used; suggest, test and save a chain for `json.html`; sync two databases with a dry run first.
+  used; suggest, test and save a chain for `json.html`; sync two databases with a dry run first; fetch a
+  batch from the anti-bot fixture site, see a site wait for a person, solve it (`tests/support/e2e.py`
+  gives `udl serve` a `FakePerson`) and read a page.
 
 ### Tasks
 
@@ -3329,18 +3729,19 @@ Each page is a route folder in `web/packages/shell/src/routes/`. It loads its da
 the typed client. It has Vitest tests against `FakeUdl` (the loading, error and empty states, and what
 each control sends), and a Playwright flow in `web/e2e/` in both themes.
 
-**17.1 Dashboard** · needs Phase 16
+**18.1 Dashboard** · needs Phase 17
 - Build: `routes/index.tsx`, with these widgets:
   - `RecentDownloads` (`list_downloads`, the last 5), `RecentRuns` (`list_runs`, then live) and
     `RecentEvents` (the `live` store);
   - `NextSchedules` (`list_schedules`, by `next_run_at`);
   - `AccountsNeedingAttention` (`list_accounts`, those that aren't `connected`);
-  - `Approvals` (`list_runs` with `status=awaiting_approval`).
+  - `Approvals` (`list_runs` with `status=awaiting_approval`);
+  - `ChallengesWaiting` (`list_challenges`), from 18.6.
 
   Then `<PluginSlot point="widgets" slot="dashboard">`. Each widget links to its page.
 - Done when: an empty udl shows a helpful dashboard, and a busy one stays live.
 
-**17.2 Downloads** · needs 17.1
+**18.2 Downloads** · needs 18.1
 - Build:
   - `routes/downloads/index.tsx` has three parts:
     - a form (URLs, output dir, tool from `list_plugins`, template, re-probe) that calls `download` with
@@ -3352,7 +3753,7 @@ each control sends), and a Playwright flow in `web/e2e/` in both themes.
   - `routes/downloads/$id.tsx`: a job, with each attempt (its tool and error) and its files.
 - Done when: the phase's first two e2e flows pass.
 
-**17.3 Sites and strategies** · needs 17.1
+**18.3 Sites and strategies** · needs 18.1
 - Build:
   - `routes/sites/index.tsx`: a search, and `list_sites`.
   - `routes/sites/$key.tsx`: `get_site`, its strategies (successes, failures, last error, enabled),
@@ -3362,7 +3763,7 @@ each control sends), and a Playwright flow in `web/e2e/` in both themes.
   - The server validates the strategy, and its errors appear by their fields.
 - Done when: the phase's strategy flow passes.
 
-**17.4 Tag chains** · needs 17.3
+**18.4 Tag chains** · needs 18.3
 - Build: `routes/chains/wizard.tsx`.
   1. A URL goes to `suggest_chain`.
   2. The suggestions are shown with their previews.
@@ -3373,7 +3774,7 @@ each control sends), and a Playwright flow in `web/e2e/` in both themes.
   as a downloaded file with `export_chain`.
 - Done when: the phase's chain flow for `json.html` passes.
 
-**17.5 Databases, plugins and config** · needs 17.1
+**18.5 Databases, plugins and config** · needs 18.1
 - Build:
   - `routes/databases.tsx`: `list_databases` with each connection's health, and `sync_databases` as a dry
     run first, then a confirm.
@@ -3383,32 +3784,49 @@ each control sends), and a Playwright flow in `web/e2e/` in both themes.
   - `routes/settings.tsx`: `get_config` as a read-only tree, with secrets hidden.
 - Done when: the phase's sync flow passes.
 
-**17.6 End to end** · needs 17.2–17.5
-- Tests first: the phase's flows, run together against `udl serve` on the fixture site, plus an axe check
-  of each page (19.2 widens it to every page).
-- Done when: `make e2e` passes, and Phase 17's decisions are written.
+**18.6 Fetches** · needs 18.1, Phase 12
+- Build:
+  - `routes/fetches/index.tsx`: a form (URLs, one per line; format; `via`; `person`) that calls
+    `fetch_pages` with `wait: false`; the batches (`list_fetches`), live, each URL with its status and
+    rung; cancel and retry.
+  - `routes/fetches/$id.tsx`: a batch, and a page from `get_fetched_page`, its Markdown shown rendered
+    (`react-markdown`, without raw HTML: it is someone else's page) or as source, with a copy button.
+  - `ChallengesWaiting` (also on the dashboard): each site that waits, and "Solve", which calls
+    `solve_challenges`. The window opens on udl's machine, so a UI on another machine says to run
+    `udl fetch solve` there.
+  - `routes/cookies.tsx`: `list_cookies` by site; import (a file's text, read in the browser, and a
+    User-Agent, prefilled with the browser's own) and delete.
+- Done when: the phase's fetch flow passes.
 
-**Phase 17 is done when:** everything Phases 0–7 can do from the CLI can also be done from `/ui`.
+**18.7 End to end** · needs 18.2–18.6
+- Tests first: the phase's flows, run together against `udl serve` on the fixture site, plus an axe check
+  of each page (20.2 widens it to every page).
+- Done when: `make e2e` passes, and Phase 18's decisions are written.
+
+**Phase 18 is done when:** everything Phases 0–7 and Phase 12 can do from the CLI can also be done from
+`/ui`, except passing a check from another machine.
 
 ### Pages
-- **Dashboard (17.1):** recent downloads, runs and events; the next schedules; accounts that need
+- **Dashboard (18.1):** recent downloads, runs and events; the next schedules; accounts that need
   attention; approvals waiting; a `dashboard` widget slot for plugins.
-- **Downloads (17.2):** a form (URLs, output dir, tool, template, re-probe); live jobs with progress bars
+- **Downloads (18.2):** a form (URLs, output dir, tool, template, re-probe); live jobs with progress bars
   from `/downloads/{id}/events`; cancel; history with filters in the URL (status, site, since) and paging.
-- **Sites (17.3):** search; a site's strategies (successes, failures, last error, enabled); set a strategy
+- **Sites (18.3):** search; a site's strategies (successes, failures, last error, enabled); set a strategy
   (tool and its options, validated by the server); delete.
-- **Chains (17.4):** the wizard on the web: a URL → suggestions with previews → pick → test (what each step
+- **Chains (18.4):** the wizard on the web: a URL → suggestions with previews → pick → test (what each step
   found) → save; import a YAML file, export a site's.
-- **Databases, Plugins, Config (17.5):** connections and their health, sync with a dry run; every plugin's
+- **Fetches (18.6):** a batch of URLs and its live progress; a page as rendered Markdown or its source;
+  the checks waiting for you, with Solve; cookies by site (import, delete; never their values).
+- **Databases, Plugins, Config (18.5):** connections and their health, sync with a dry run; every plugin's
   kind, availability, what's missing, problems, whether it has a UI and its settings panel; the config,
   read-only, secrets hidden.
 
 ---
 
-## Phase 18: Web UI for automations
+## Phase 19: Web UI for automations
 
 ### Tests first
-- 18.10's e2e, written first: in the UI, connect a Gmail account (udl's `gmail` plugin, pointed at the fake
+- 19.10's e2e, written first: in the UI, connect a Gmail account (udl's `gmail` plugin, pointed at the fake
   Google servers), add a `script` action, subscribe it to mail from one sender with the filter builder, have
   the fake server deliver a matching and a non-matching message, then see exactly one run appear live, open
   it, and read its output.
@@ -3417,11 +3835,11 @@ each control sends), and a Playwright flow in `web/e2e/` in both themes.
 
 ### Tasks
 
-Start with 18.10's e2e test. It stays red until 18.7 is done, so commit it marked `test.fixme` and
-unmark it in 18.10. Each page follows 17's pattern: a route folder, Vitest tests against `FakeUdl`, and a
+Start with 19.10's e2e test. It stays red until 19.7 is done, so commit it marked `test.fixme` and
+unmark it in 19.10. Each page follows 18's pattern: a route folder, Vitest tests against `FakeUdl`, and a
 Playwright flow in both themes.
 
-**18.1 Events** · needs Phase 16, 9.10
+**19.1 Events** · needs Phase 17, 9.10
 - Build:
   - `routes/events/index.tsx` has two tabs. Live comes from the `live` store; history comes from
     `list_events`, with `type`, `source`, `account`, `status`, `since` and `page` in the URL.
@@ -3433,7 +3851,7 @@ Playwright flow in both themes.
 - Tests first: Vitest checks that event data containing HTML is shown as text.
 - Done when: an emitted event appears live, and its detail opens.
 
-**18.2 Subscriptions** · needs 18.1
+**19.2 Subscriptions** · needs 19.1
 - Build: `routes/subscriptions/index.tsx`, and `routes/subscriptions/$name.tsx`, which is also `new`.
   - `EventTypePicker`: types from `list_event_types`, globs allowed.
   - `FilterBuilder`: groups (`all`, `any`, `not`) and conditions, with:
@@ -3447,9 +3865,9 @@ Playwright flow in both themes.
   - "Would have matched": `test_subscription` over the last 50 events, as you edit.
 - Tests first: Vitest for builder ↔ shorthand round trips on `FakeUdl`, and the operators offered for each
   type.
-- Done when: the phase's 18.10 flow can make its subscription with the builder alone.
+- Done when: the phase's 19.10 flow can make its subscription with the builder alone.
 
-**18.3 Actions, runs and approvals** · needs 18.2
+**19.3 Actions, runs and approvals** · needs 19.2
 - Build:
   - `routes/actions/index.tsx`, and `routes/actions/$name.tsx` (an editor by kind):
     - `ScriptEditor` picks the program from `list_scripts`;
@@ -3468,7 +3886,7 @@ Playwright flow in both themes.
 - Tests first: Vitest for each editor; the phase's approvals e2e test.
 - Done when: the approvals e2e test passes.
 
-**18.4 Schedules** · needs 18.3
+**19.4 Schedules** · needs 19.3
 - Build: `routes/schedules/index.tsx` and `routes/schedules/$name.tsx`:
   - tabs for `cron`, `every` and `at`, with the next times from `preview_schedule`, debounced as you type;
   - the timezone, from `Intl.supportedValuesOf("timeZone")`;
@@ -3476,7 +3894,7 @@ Playwright flow in both themes.
   - "run now" (`run_schedule`).
 - Done when: a schedule made in the UI fires on the e2e server's clock.
 
-**18.5 AI** · needs 18.3
+**19.5 AI** · needs 19.3
 - Build:
   - `routes/ai/providers.tsx`: each provider's health and models, adding a detected Ollama in one click,
     and pulling a model with progress.
@@ -3486,7 +3904,7 @@ Playwright flow in both themes.
     POST), and the tool calls the model asked for are shown, not run.
 - Done when: the playground streams an answer from the e2e server's fake AI.
 
-**18.6 Accounts** · needs 18.1
+**19.6 Accounts** · needs 19.1
 - Build:
   - `routes/accounts/index.tsx`: accounts by integration, with status badges.
   - `routes/accounts/$account.tsx`: its status, identity and watcher; `check_account`; reconnect and
@@ -3495,7 +3913,7 @@ Playwright flow in both themes.
     command.
 - Done when: a `FakeIntegration` account can be checked and disconnected from the UI.
 
-**18.7 The `gmail` UI plugin** · needs 18.6, Phase 12
+**19.7 The `gmail` UI plugin** · needs 19.6, Phase 13
 - Build: `web/plugins/gmail`, built into `src/udl/plugins/integrations/gmail/ui/`, and
   `GmailIntegration.ui`. Its contributions:
   - `settings`: the OAuth client's id and secret, with the consent-screen steps;
@@ -3510,9 +3928,9 @@ Playwright flow in both themes.
   - `filterEditors` for `gmail`: a query box, with a "test" that runs `gmail_list_messages` with that
     query.
 - Tests first: Vitest for each contribution, against `FakeUdl`.
-- Done when: 18.10's flow gets as far as subscribing.
+- Done when: 19.10's flow gets as far as subscribing.
 
-**18.8 The `slack` UI plugin** · needs 18.6, Phase 13
+**19.8 The `slack` UI plugin** · needs 19.6, Phase 14
 - Build: `web/plugins/slack`, built into `src/udl/plugins/integrations/slack/ui/`. Its contributions:
   - `accountSetup`: copy the manifest (`slack_app_manifest`), paste the tokens, then a check
     (`connect_account`);
@@ -3521,7 +3939,7 @@ Playwright flow in both themes.
 - Tests first: Vitest for each contribution.
 - Done when: the approvals e2e test's Slack message shows in its channel view.
 
-**18.9 The `pages` UI plugin** · needs 18.6, Phase 14
+**19.9 The `pages` UI plugin** · needs 19.6, Phase 15
 - Build: `web/plugins/pages`, built into `src/udl/plugins/integrations/pages/ui/`. Its contributions:
   - `accountSetup`, which is the wizard on the web:
     1. `pages_suggest`;
@@ -3535,34 +3953,34 @@ Playwright flow in both themes.
   after `add_post()`.
 - Done when: that e2e test passes.
 
-**18.10 End to end** · needs 18.7
-- Tests first: the phase's first e2e test, written before 18.1.
-- Done when: it passes unmarked, `make e2e` passes, and Phase 18's decisions are written.
+**19.10 End to end** · needs 19.7
+- Tests first: the phase's first e2e test, written before 19.1.
+- Done when: it passes unmarked, `make e2e` passes, and Phase 19's decisions are written.
 
-**Phase 18 is done when:** everything in Phases 9–15 can be set up and watched from `/ui`, and a plugin
+**Phase 19 is done when:** everything in Phases 9–16 can be set up and watched from `/ui`, and a plugin
 without a UI plugin is still usable through the CLI, the API and MCP.
 
 ### Pages
-- **Events (18.1):** live (from the `live` store) and history (filters in the URL); detail through the
+- **Events (19.1):** live (from the `live` store) and history (filters in the URL); detail through the
   plugin's `eventViews`, else a JSON tree; emit a `custom.*` event; replay one to all or one subscription.
-- **Subscriptions (18.2):** pick event types from `list_event_types`; build the filter from the type's
+- **Subscriptions (19.2):** pick event types from `list_event_types`; build the filter from the type's
   schema (field paths with their types, operators by type, nested all / any / not), or edit it as the
   shorthand (the two stay in step through `test_subscription`); pick accounts and actions; the plugin's
   `filterEditors` for its source filter; "would have matched" over recent events as you edit.
-- **Actions and runs (18.3):** editors for the built-in kinds (`script` picks from `scripts_dir`,
+- **Actions and runs (19.3):** editors for the built-in kinds (`script` picks from `scripts_dir`,
   `operation` builds arguments from the operation's schema, `ai` from providers, models, prompts and tools),
   plugins' `actionEditors` for theirs, a dry run that renders the templates against a chosen event; runs
   with live status, output, errors and the AI transcript (each tool call and its result); the approvals
   inbox.
-- **Schedules (18.4):** cron / every / at with the next times from `preview_schedule` as you type, the
+- **Schedules (19.4):** cron / every / at with the next times from `preview_schedule` as you type, the
   timezone, the actions to run (the linked subscription), run now.
-- **AI (18.5):** providers (Ollama offered when detected), their health and models, pulling a model; prompts
+- **AI (19.5):** providers (Ollama offered when detected), their health and models, pulling a model; prompts
   and guidance; a playground that renders a prompt against an event and streams the model's answer
   (`POST /ai/try/stream`), with tool calls shown and not run.
-- **Accounts (18.6):** every integration's accounts and their status; connect, reconnect and settings
+- **Accounts (19.6):** every integration's accounts and their status; connect, reconnect and settings
   through the integration's UI plugin; disconnect.
 
-### The Gmail, Slack and pages UI plugins (18.7–18.9)
+### The Gmail, Slack and pages UI plugins (19.7–19.9)
 
 Built with React and daisyUI on the SDK, isolated like any other plugin, so they use only what a third
 party could:
@@ -3578,28 +3996,30 @@ party could:
 
 ---
 
-## Phase 19: Hardening & docs
+## Phase 20: Hardening & docs
 
-- **Security review (19.1)** against the [security model](#security-model), as Phase 7's was: what it finds
+- **Security review (20.1)** against the [security model](#security-model), as Phase 7's was: what it finds
   gets a regression test and a fix, or is documented in the README's Security section.
-- **Resilience (19.2):** kill the runtime mid-run, take the database or a provider away, drop the Socket
+- **Resilience (20.2):** kill the runtime mid-run, take the database or a provider away, drop the Socket
   Mode connection, expire tokens; each recovers as designed (tests on the fakes). An accessibility pass
   with axe (`@axe-core/playwright`) over every page, in both themes.
-- **Always on (19.3):** `udl service install` writes a systemd user unit for `udl serve` (and
+- **Always on (20.3):** `udl service install` writes a systemd user unit for `udl serve` (and
   `udl service uninstall` removes it), since the runtime only runs while the server does.
-- **Docs (19.4):** the README (accounts, automations, schedules, AI, the web UI, the new security notes);
+- **Docs (20.4):** the README (accounts, automations, schedules, AI, fetching pages, the web UI, the new
+  security notes); `docs/fetch.md` (the ladder, batches, cookies, challenges, and udl's MCP server as the
+  fallback for an agent whose own fetch fails);
   `docs/automations.md` (events, filters, subscriptions, actions, schedules, AI, with worked examples: bank
   mail summarised to Slack, a morning digest, downloading links mailed to yourself, a blog without RSS
   posted to Slack, a watched channel downloaded); `docs/plugins.md` gains
   integrations, action kinds, AI providers and secret stores; `docs/ui-plugins.md` (the manifest, the SDK,
   isolation and theming, using another component library, testing).
-- **Smoke tests (19.5),** opt-in like Phase 7's: a real Gmail account receives a mail udl sends to itself and
+- **Smoke tests (20.5),** opt-in like Phase 7's: a real Gmail account receives a mail udl sends to itself and
   fires once; a real Slack workspace does the same with a DM; Ollama answers a prompt with a tool call; a
-  `pages` watch reads a real site's list.
+  `pages` watch reads a real site's list; a page that turns plain clients away is fetched.
 
 ### Tasks
 
-**19.1 Security review** · needs Phases 8–18
+**20.1 Security review** · needs Phases 8–19
 - Build: go through the [security model](#security-model) row by row, as Phase 7's review did. Each
   finding gets a regression test and a fix, or a note in the README's Security section. At least check
   that:
@@ -3607,7 +4027,7 @@ party could:
     examples once);
   - a script can't be named outside `scripts_dir` (by links, `..` or `PATH`), and udl's environment
     doesn't leak into it;
-  - the prompt-injection regression test (15.7) holds for every built-in event type's text fields;
+  - the prompt-injection regression test (16.7) holds for every built-in event type's text fields;
   - no `admin` operation is reachable from an AI action or an `operation` action, by any route:
     `run_action`, `replay_event`, `emit_event`, globs;
   - approvals can't be skipped by replaying or re-running;
@@ -3617,10 +4037,13 @@ party could:
   - a canary secret never shows in logs, errors, `get_config`, `get_account`, `get_action`, run output
     or transcripts;
   - every file udl makes has the right mode;
-  - webhook and page-watch SSRF are documented.
+  - fetched pages and cookies: a cookie's value never shows in an answer, a log, a `repr` or the UI; pages
+    are `0600` in `0700`; `import_cookies` is out of reach of AI and `operation` actions; a fetched page's
+    text gets the prompt-injection test (16.7) as an email's does; an automation never opens a window;
+  - webhook, page-watch and fetch SSRF are documented.
 - Done when: every row has a test or a documented reason.
 
-**19.2 Resilience and accessibility** · needs 19.1
+**20.2 Resilience and accessibility** · needs 20.1
 - Build: `tests/integration/test_resilience.py`:
   - kill `udl serve` (SIGKILL) mid-run, then restart it: the run is `failed: interrupted`, and its pending
     events are dispatched once;
@@ -3634,7 +4057,7 @@ party could:
   violations.
 - Done when: all of it passes.
 
-**19.3 `udl service install`** · needs nothing
+**20.3 `udl service install`** · needs nothing
 - Build: `udl/interfaces/cli/commands/service.py`.
   - `udl service install [--now]` writes `~/.config/systemd/user/udl.service`:
     `ExecStart=<the absolute udl> serve`, `Restart=on-failure`, `RestartSec=5`, and `UDL_CONFIG` when
@@ -3647,9 +4070,12 @@ party could:
   `XDG_CONFIG_HOME` in a temp dir.
 - Done when: the unit starts `udl serve` here and survives a logout (with linger).
 
-**19.4 Docs** · needs Phases 8–18
+**20.4 Docs** · needs Phases 8–19
 - Build:
-  - README: accounts, automations, schedules, AI, the web UI, and the new security notes.
+  - README: accounts, automations, schedules, AI, fetching pages, the web UI, and the new security notes.
+  - `docs/fetch.md`: the ladder, batches, `person` modes, cookies (and exporting them from a browser, with
+    its User-Agent), the challenge window and `udl fetch solve`, and an agent's MCP configuration that
+    makes `fetch_pages` its fallback.
   - `docs/automations.md`: events, the filter shorthand (copied from 9.2), subscriptions, actions,
     schedules and AI, with the worked examples above; Google's setup, including a Web client for a UI
     served to other machines; Slack's.
@@ -3661,15 +4087,17 @@ party could:
 - Done when: a new user can go from `uv tool install` to a working Gmail → AI → Slack automation using the
   docs alone.
 
-**19.5 Smoke tests** · needs Phases 12–15
-- Build: the opt-in smoke tests from 12.7 and 13.7, plus:
+**20.5 Smoke tests** · needs Phases 12–16
+- Build: the opt-in smoke tests from 13.7 and 14.7, plus:
   - `tests/smoke/test_ollama.py`: a prompt that has to call a tool;
   - `tests/smoke/test_pages.py`: a watch on a stable real list page;
+  - `tests/smoke/test_fetch.py`: `UDL_SMOKE_FETCH_URL`, a page that turns plain clients away, read through
+    the ladder (skipped when unset);
   - one run of `make smoke` with them all.
 - Done when: `make smoke` passes on this machine (or skips each test with its reason), noted in the
   decisions.
 
-**Phase 19 is done when:** `make check`, `make e2e` and `make smoke` pass, this plan is archived as
+**Phase 20 is done when:** `make check`, `make e2e` and `make smoke` pass, this plan is archived as
 `planning/02-automations.md` (with a "Done" note at its top), and the README points to it.
 
 ---
@@ -3677,7 +4105,7 @@ party could:
 ## Security model
 
 What changes: udl now reads content written by strangers (email, Slack), holds long-lived credentials, can
-run programs, and talks to a browser. Each risk has its answer, and 19.1 checks them.
+run programs, and talks to a browser. Each risk has its answer, and 20.1 checks them.
 
 | Risk | Where | Answer |
 |---|---|---|
@@ -3692,7 +4120,10 @@ run programs, and talks to a browser. Each risk has its answer, and 19.1 checks 
 | Credentials leak | Tokens, keys | The secret store only (never a database, the config or a log); `0600` files; redacted in `get_config` and errors; revoked on disconnect |
 | A web page drives udl | The UI | Same origin only; `SameSite=Strict`, `HttpOnly` session; CSRF header and Origin check on writes; `LocalHostsOnly` (Phase 4); CSP; `frame-ancestors 'none'` |
 | A UI plugin misbehaves | The UI | UI plugins are code you install, like Python plugins (documented). Shadow DOM isolates styles, not trust |
-| Requests to internal services | `webhook` actions | As for downloads, anyone who can use the API can make udl fetch a URL (accepted in Phase 7); documented |
+| A fetched page steers an agent or udl's AI | `fetch_pages` | A page is untrusted data, as an email is: fenced for udl's AI (16.7), never a template or shell; what an agent does with it is the agent's policy |
+| Cookies leak, or are planted | `import_cookies`, udl's browser profile | Cookies come in only through `import_cookies` (`admin`, so no AI or `operation` action can sign udl in somewhere), never in a fetch request or a batch's record; values are never shown; the profile is `0700`, fetched pages `0600` |
+| Windows open unasked | Challenges | Only for a request a person or an agent made (`ask`); automations wait and fire `udl.fetch.challenge` |
+| Requests to internal services | `webhook` actions, `fetch_pages` | As for downloads, anyone who can use the API can make udl fetch a URL (accepted in Phase 7); documented |
 | Slow regexes on attacker text | Filters | 64 KiB per field; `google-re2` where available |
 | Two runtimes run the same action | A shared database | The `automations` lease |
 | Quotas and bans | Gmail, Slack | Watchers only for accounts a subscription needs; `Retry-After` honoured; backoff |
@@ -3730,6 +4161,25 @@ approval_timeout = "24h"
 detect_ollama = true                      # offer an Ollama on 127.0.0.1:11434 before one is added
 allowed_commands = []                     # file-only: programs outside scripts_dir a provider's `command` may run
 
+[fetch]
+person = "ask"                            # at an anti-bot check: ask (open a window) | wait (for `udl fetch solve`) | fail
+max_concurrent = 4
+max_per_site = 1                          # one site's URLs one at a time,
+site_delay = "1s"                         # this far apart
+max_urls = 200                            # in one batch
+timeout = "30s"                           # a request, or a page's load
+browser_tabs = 3
+browser_idle = "30s"                      # then udl's browser profile is free for others
+challenge_grace = "15s"                   # for a check that clears itself in the browser
+challenge_timeout = "10m"                 # how long a window waits for you
+challenge_expiry = "24h"                  # then waiting URLs fail
+relearn_after = "7d"                      # then a site's fetches start at the bottom rung again
+max_retry_after = "2m"
+max_page = "10MiB"
+max_answer = 200000                       # characters of pages in one answer
+keep = "7d"                               # batches and their pages
+store_dir = ""                            # empty = <data dir>/fetched
+
 [web]
 enabled = true
 session_hours = 12
@@ -3759,17 +4209,19 @@ $ udl schedules set digest --cron "0 8 * * 1-5" --action morning-digest
 | Slack's Socket Mode | `websockets` |
 | Gmail, Slack's Web API, OAuth, AI providers | `httpx` (already a dependency) |
 | HTML mail to text | `selectolax` (already) |
+| Pages as Markdown | `trafilatura` (or `markdownify` over selectolax, 12.3) |
+| HTTP/2 for the fetcher's plain requests | `h2` (httpx's `http2` extra) |
 | Linear-time regexes (if it has wheels) | `google-re2` |
 | Checking an AI's structured answer against a prompt's `output_schema` | `jsonschema` |
-| Web: app | `react`, `react-dom`, `@tanstack/react-router`, `zustand`, `tailwindcss`, `@tailwindcss/vite`, `daisyui`, `openapi-fetch`, `lucide-react` |
-| Web: dev | `vite`, `@vitejs/plugin-react-swc`, `@tanstack/router-plugin`, `typescript`, `openapi-typescript`, `vitest`, `@vitest/coverage-v8`, `@testing-library/react`, `@testing-library/user-event`, `jsdom`, `@playwright/test`, `@axe-core/playwright`, `@biomejs/biome`, `json-schema-to-typescript` (the UI manifest's type, 16.7) |
+| Web: app | `react`, `react-dom`, `@tanstack/react-router`, `zustand`, `tailwindcss`, `@tailwindcss/vite`, `daisyui`, `openapi-fetch`, `lucide-react`, `react-markdown` (a fetched page, 18.6) |
+| Web: dev | `vite`, `@vitejs/plugin-react-swc`, `@tanstack/router-plugin`, `typescript`, `openapi-typescript`, `vitest`, `@vitest/coverage-v8`, `@testing-library/react`, `@testing-library/user-event`, `jsdom`, `@playwright/test`, `@axe-core/playwright`, `@biomejs/biome`, `json-schema-to-typescript` (the UI manifest's type, 17.7) |
 | Web: the shadcn/ui example | shadcn/ui's generated components and their dependencies, in `web/examples/shadcn` only |
 
 ## Decisions (defaults that can be revisited)
 
 Settled on 2026-10-24: the bus and the scheduler before Gmail and Slack; isolated UI plugins; the UI at
 `/ui`; a plugin appears in the web UI only through a UI plugin; AI actions may run unattended (`auto`), but
-none may change automations or accounts yet; a web-page watcher (Phase 14) is part of this plan.
+none may change automations or accounts yet; a web-page watcher (Phase 15) is part of this plan.
 
 - **Numbering continues at Phase 8**, so branches (`phase-8`…) and commit history don't collide with
   Phases 0–7.
@@ -3789,8 +4241,8 @@ none may change automations or accounts yet; a web-page watcher (Phase 14) is pa
 - **Slack accounts connect with tokens** from the user's own app.
 - **Gmail and Slack are built in** (entry points, like `youtube`) but use only the public plugin API (a test
   checks their imports), so either could move to a package of its own.
-- **The first generic watcher is web pages, built on tag chains** (Phase 14): it reuses the extraction,
-  logins and browser udl already has, and comes after Gmail and Slack, so the integration machinery is
+- **The first generic watcher is web pages, built on tag chains** (Phase 15): it reuses the extraction,
+  logins and browser udl already has (through Phase 12's fetcher), and comes after Gmail and Slack, so the integration machinery is
   proven on APIs first.
 - **One runtime per database**, in `udl serve`, held by a lease.
 - **Scripts only from `scripts_dir`, never through a shell.**
@@ -3805,6 +4257,23 @@ none may change automations or accounts yet; a web-page watcher (Phase 14) is pa
   considered (it pairs well with the router); revisit if caching and invalidation get complicated.
 - **Biome** rather than ESLint + Prettier: one fast tool, as ruff is for Python.
 - **The built UI isn't committed;** `make web` builds it into the package.
+
+Settled on 2026-10-25, when the page fetcher was added (asked for as early in the plan as possible):
+
+- **The page fetcher is Phase 12,** straight after Phase 11 (which was being finished then): it needs only
+  Phases 8–9, and the page watcher (Phase 15) reads through it. Gmail and everything after moved down one.
+- **A person passes anti-bot checks.** udl recognises a challenge, shows it to the user in its own browser
+  and keeps the clearance. It never solves one itself (no CAPTCHA-solving services) and never disguises
+  itself (no stealth patches, no forged TLS fingerprints); a site that blocks outright is reported as
+  blocked.
+- **Cookies live in udl's browser profile,** where downloads and `udl browser login` already look, and come
+  in only through `import_cookies` (`admin`), never inside a fetch request.
+- **Fetches run in the process that asked,** as downloads do. A window opened by one udl hands what it
+  read to the batch's own process through the database.
+- **Pages are kept as their bodies,** and formats are rendered when asked for, so another format needs no
+  second fetch.
+- **The fetcher is udl's own (`udl.fetch`), not a plugin kind:** its rungs are built from what downloads
+  already have. A plugin kind can come if other ways to fetch appear.
 
 Defaults chosen on 2026-10-24 while the tasks were being detailed. They can be revisited like the ones
 above:
@@ -3877,4 +4346,7 @@ Things that bit before and will bite again:
   channel's or gallery's page) already work through `pages` and a `download` action, each item once; the
   archive would also catch the same media reached another way.
 - Sharing React between UI plugins (an import map), if bundle size ever matters.
+- Downloads that meet an anti-bot check using the fetcher's window (today the resolver's `browser` fallback
+  fails with the challenge hint). PDFs and other documents as text. Fetching through a proxy, for a site
+  that blocks this machine's address.
 - Translations.
