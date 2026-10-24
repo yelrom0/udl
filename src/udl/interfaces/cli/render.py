@@ -80,7 +80,9 @@ from udl.core.models import (
 )
 from udl.db.models import JobStatus, Strategy
 from udl.errors import ErrorInfo
+from udl.integrations.models import AccountInfo
 from udl.plugins.downloaders.base import MediaCandidate, MediaKind
+from udl.plugins.integrations.base import AccountStatus
 from udl.plugins.registry import ACTIONS, DATABASES, DOWNLOADERS, INTEGRATIONS, SECRETS, SITES
 
 _STATUS: Final[dict[JobStatus, tuple[str, str]]] = {
@@ -877,6 +879,33 @@ def schedules(console: Console, listed: ScheduleList) -> None:
     console.print(table)
     if not listed.schedules:
         console.print("No schedules: `udl schedules set` makes one.")
+
+
+_ACCOUNT_STATUS: Final[dict[AccountStatus, str]] = {
+    AccountStatus.PENDING: "[yellow]pending[/] (waiting for the authorization's answer)",
+    AccountStatus.CONNECTED: "[green]connected[/]",
+    AccountStatus.NEEDS_REAUTH: "[red]needs connecting again[/]",
+    AccountStatus.ERROR: "[red]error[/]",
+}
+
+
+def account(console: Console, info: AccountInfo) -> None:
+    """An account: who it is, what it is connected for, and what went wrong with it."""
+    rows = [
+        ("Account", escape(info.account)),
+        ("Status", _ACCOUNT_STATUS[info.status]),
+        ("Login", escape(info.identity.display) if info.identity is not None else "-"),
+        ("Connected", f"{info.method}, for {', '.join(info.access) or 'nothing in particular'}"),
+    ]
+    if info.options:
+        rows.append(("Options", _json(info.options)))
+    if not info.enabled:
+        rows.append(("Enabled", _yes(info.enabled)))
+    if info.pending_until is not None:
+        rows.append(("Until", _when(info.pending_until)))
+    if info.last_error is not None:
+        rows.append(("Error", _error(info.last_error)))
+    _lines(console, rows)
 
 
 def schedule(console: Console, info: ScheduleInfo) -> None:

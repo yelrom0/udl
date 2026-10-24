@@ -25,6 +25,7 @@ from udl.core.service import UDLService
 from udl.errors import ConfigError
 from udl.interfaces.adapters import add_commands, cli_groups
 from udl.interfaces.cli.commands import (
+    accounts,
     automations,
     browser,
     chains,
@@ -182,6 +183,7 @@ app.add_typer(system.config, name="config")
 app.command("serve")(servers.serve)
 app.command("mcp")(servers.mcp)
 app.add_typer(browser.app, name="browser")
+app.add_typer(accounts.app, name="accounts")
 # (The automations': events, subs, actions, runs, schedules and status.)
 add_commands(app, operations().values(), renderers=automations.RENDERERS, helps=automations.HELPS)
 

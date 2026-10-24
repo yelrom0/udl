@@ -10,7 +10,8 @@ operationId), and a download's events as server-sent events. The MCP server is a
 
 udl's errors are answered as ErrorInfo, with a status that fits (404 for what does not exist,
 400 for a tool or options that cannot work...). When api.api_key is set, every route but the
-docs (/docs, /openapi.json) needs it, in the X-API-Key header, /mcp too. Served on localhost (the
+docs (/docs, /openapi.json) and OAuth's /accounts/callback (checked by its one-time state) needs
+it, in the X-API-Key header, /mcp too. Served on localhost (the
 default), it answers only requests for localhost: a web page that points its own name at
 127.0.0.1 (DNS rebinding) sends that name as the Host, and is refused.
 """
@@ -32,15 +33,15 @@ from starlette.datastructures import Headers
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from udl.automations.runtime import AutomationRuntime
-
 # Local Imports
+from udl.automations.runtime import AutomationRuntime
 from udl.config import Settings
 from udl.core.operations import Caller, current_caller
 from udl.core.service import ServiceFactory, UDLService
 from udl.errors import ErrorCode, ErrorInfo, UDLError, Unauthorized
+from udl.integrations.accounts import CALLBACK_PATH
 from udl.interfaces.adapters import add_routes
-from udl.interfaces.api.routes import chains, downloads, events, sites, system
+from udl.interfaces.api.routes import accounts, chains, downloads, events, sites, system
 from udl.interfaces.mcp.server import create_server
 from udl.interfaces.security import API_KEY_HEADER, check_api_key
 
@@ -89,6 +90,8 @@ def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService)
     The service is made first: the operations its plugins add are routes too."""
 
     service = make_service(settings)
+    base = settings.web.public_url or f"http://127.0.0.1:{settings.api.port}"
+    service.accounts.callback_url = f"{base.rstrip('/')}{CALLBACK_PATH}"  # (OAuth's answers)
     mcp = create_server(lambda: service, service.operations)
     mcp_app = mcp.streamable_http_app(streamable_http_path=MCP_PATH, host=settings.api.host)
 
@@ -116,6 +119,9 @@ def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService)
     add_routes(app, service.operations)  # (the operations plugins add)
     # (A route rather than a mount, which would answer only /mcp/...)
     app.router.routes.append(Route(MCP_PATH, KeyRequired(mcp_app, settings)))
+    # (Before /accounts/{account}; and a route of Starlette's, so no API key is asked for: the
+    # authorization's one-time state is what it is checked by.)
+    app.router.routes.insert(0, Route(CALLBACK_PATH, accounts.callback, methods=["GET"]))
 
     @app.exception_handler(UDLError)
     async def udl_error(request: Request, error: UDLError) -> JSONResponse:

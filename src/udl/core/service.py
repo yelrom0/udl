@@ -144,6 +144,7 @@ from udl.errors import (
 )
 from udl.http import HttpClientFactory, api_client
 from udl.integrations.accounts import AccountManager, Integrations
+from udl.integrations.models import ConnectAccountRequest, Connection
 from udl.plugins.downloaders.auth import AuthCookies
 from udl.plugins.downloaders.base import Cookie, ProbeContext, ProbeResult
 from udl.plugins.registry import (
@@ -298,6 +299,7 @@ class UDLService:
         """Cancel the downloads and runs still running, then close the databases."""
         await self.jobs.shutdown()
         await self.runner.shutdown()
+        await self.accounts.close()
         await self.db.close()
         self._lock.release()
 
@@ -1343,6 +1345,27 @@ class UDLService:
         """Delete a schedule, and the subscription it runs its actions through (the actions,
         its events and their runs are kept)."""
         return await self.automations.delete_schedule(request)
+
+    # -- accounts ------------------------------------------------------------------------------
+
+    @operation(
+        "connect_account",
+        title="Connect an account",
+        hints=OperationHints(open_world=True, admin=True),
+        api=APISpec(method="POST", path="/accounts", status=201),
+    )
+    async def connect_account(self, request: ConnectAccountRequest) -> Connection:
+        """Connect an account of an integration (e.g. a Gmail login), named so its operations,
+        events and subscriptions can say which (e.g. work: gmail:work).
+
+        With OAuth, the answer has the page for the user to open in a browser
+        (authorization_url): the account is pending until they answer it (within 10 minutes),
+        then connected (get_account shows it). With tokens (e.g. a Slack app's), they are kept
+        in the secret store, never in a database. A source that needs no login is connected
+        with its options. A name that is taken is refused unless reconnect is set: the account
+        is then connected again, keeping its options and subscriptions.
+        """
+        return await self.accounts.connect(request)
 
     @operation("get_config", title="Show the settings", hints=OperationHints(read_only=True))
     async def get_config(self, request: GetConfigRequest) -> ConfigInfo:

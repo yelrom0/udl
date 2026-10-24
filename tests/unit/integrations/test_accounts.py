@@ -16,6 +16,7 @@ import json
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
+from uuid import uuid4
 
 # Package Imports
 import pytest
@@ -34,7 +35,13 @@ from udl.automations.subscriptions import Subscription
 from udl.core.models import SetPluginSettingsRequest
 from udl.core.service import UDLService
 from udl.db.records import RecordQuery
-from udl.errors import ConfigError, DoesNotExist, DuplicateKey, ReauthRequired
+from udl.errors import (
+    ConfigError,
+    DatabaseError,
+    DoesNotExist,
+    DuplicateKey,
+    ReauthRequired,
+)
 from udl.integrations.accounts import AccountRef
 from udl.plugins.actions.base import Action
 from udl.plugins.integrations.base import Account, AccountStatus, ConnectMethod
@@ -458,3 +465,32 @@ async def test_an_unknown_integration_does_not_exist(service: UDLService) -> Non
 
     assert raised.value.hint is not None
     assert "fake" in raised.value.hint
+
+
+async def test_an_account_that_is_gone_has_no_name(service: UDLService) -> None:
+    assert await service.accounts.name_of(uuid4()) is None
+    assert await service.accounts.name_of(None) is None
+
+
+async def test_marking_an_account_that_is_gone_needs_reauth_does_nothing(
+    service: UDLService,
+) -> None:
+    account = await connected(service)
+    await service.accounts.remove(account)
+
+    await service.accounts.needs_reauth(account, ReauthRequired("Refused"))
+
+    assert await needs_reauth_events(service) == []
+
+
+async def test_what_happens_to_an_account_is_said_if_it_can_be(
+    service: UDLService, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def fail(new: NewEvent) -> EventRecord | None:
+        raise DatabaseError("The database went away")
+
+    monkeypatch.setattr(service.bus, "publish", fail)
+
+    await service.accounts.tell("udl.account.connected", await connected(service))
+
+    assert "Could not publish udl.account.connected for fake:work" in caplog.text

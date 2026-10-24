@@ -149,7 +149,8 @@ def slow_settings(tmp_path: Path) -> Settings:
 
 def test_the_operations_are_the_feature_matrix_s() -> None:
     # planning/01-core.md's Feature Matrix (syncing databases comes in Phase 7), then
-    # planning.md's (plugin settings in Phase 8, the automations in Phase 9).
+    # planning.md's (plugin settings in Phase 8, the automations in Phases 9 and 10, accounts
+    # in Phase 11).
     assert set(operations()) == {
         "download",
         "get_download",
@@ -197,6 +198,7 @@ def test_the_operations_are_the_feature_matrix_s() -> None:
         "run_schedule",
         "preview_schedule",
         "delete_schedule",
+        "connect_account",
     }
 
 
