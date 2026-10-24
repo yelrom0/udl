@@ -54,7 +54,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 11.1 `udl.integrations` plugin kind: `Integration` base class + contract suite + `FakeIntegration`
   - [x] 11.2 `Account` record (any number per integration, each named), `AccountHandle` (credentials from the secret store, refreshed when they expire; `needs_reauth`)
   - [x] 11.3 Connecting: `oauth` (a loopback listener for the CLI and stdio MCP; the server's own callback for the API and UI), `tokens`, and `none` (a source that needs no login)
-  - [ ] 11.4 Integration operations join the registry (8.1) with an `account` argument (optional while one account is connected), through the generated adapters (8.3); read-only ones that list things fan out over several accounts (`account: "*"` or a list), results tagged by account
+  - [x] 11.4 Integration operations join the registry (8.1) with an `account` argument (optional while one account is connected), through the generated adapters (8.3); read-only ones that list things fan out over several accounts (`account: "*"` or a list), results tagged by account
   - [ ] 11.5 Watchers: one per connected account that a subscription could match, in the runtime, restarted with backoff; cursors in `PluginState`; `udl.account.*` events
   - [ ] 11.6 Source filters: criteria only the integration can check (e.g. a Gmail search), checked after the generic filter
   - [ ] 11.7 Account operations via CLI, API and MCP

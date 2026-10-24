@@ -84,6 +84,7 @@ async def connected(
 ) -> Account:
     """An account stored as connected (with `credentials` kept), as connecting leaves one."""
     fields.setdefault("access", ["read"])
+    fields.setdefault("connected_at", service.clock.now())
     account = Account.model_validate(
         {
             "integration": integration,

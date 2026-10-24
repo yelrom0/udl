@@ -38,7 +38,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstrai
 from udl.automations.events import Event, EventType
 from udl.clock import Clock
 from udl.config import Duration
-from udl.core.operations import APISpec, CLISpec, OperationHints, valid_name
+from udl.core.operations import APISpec, CLISpec, Operation, OperationHints, valid_name
 from udl.db.models import JsonObject, utcnow
 from udl.db.records import Record
 from udl.errors import ErrorInfo, PluginError
@@ -393,6 +393,14 @@ class Integration[S: IntegrationSettings, A: AccountOptions](ABC):
                 elif attribute in marked:  # (overridden, unmarked)
                     del marked[attribute]
         return [_resolved(cls, spec) for spec in marked.values()]
+
+    @classmethod
+    def operations(cls) -> list[Operation]:
+        """The operations it adds (one for each of its marked methods, as
+        udl.integrations.operations makes them). Raises PluginError for one that is not right."""
+        from udl.integrations.operations import operations_of  # (which imports this module)
+
+        return operations_of(cls)
 
     def oauth_request(self, access: frozenset[str]) -> OAuthRequest:
         """What an account connected for `access` (e.g. {"read", "send"}) is authorized with:
