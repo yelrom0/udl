@@ -56,6 +56,22 @@ def own_user_agent(agent: str) -> str:
     return agent.replace("HeadlessChrome/", "Chrome/")
 
 
+_agent: str | None = None
+
+
+async def browser_user_agent() -> str:
+    """The User-Agent udl's browser sends, headless or in a window: its own, as a browser on a
+    screen sends it (asked of a Chromium of its own, once a process). A clearance a check gives
+    is bound to it, so one passed in the window works in the fetcher's browser, and the other
+    way round."""
+    global _agent
+    if _agent is None:
+        async with chromium(profile_dir=None, headless=True, cancel=CancelToken()) as context:
+            page = await context.new_page()
+            _agent = own_user_agent(await page.evaluate(_USER_AGENT))
+    return _agent
+
+
 class PlaywrightTab:
     """A tab: its page, the document it shows (the main frame's last navigation) and its
     network's comings and goings."""
@@ -79,6 +95,10 @@ class PlaywrightTab:
     def _ended(self, request: Request) -> None:
         self._inflight.discard(request)
         self._active_at = self._clock.now()
+
+    def quiet_for(self, delay: timedelta) -> bool:
+        """Whether the tab's network has been quiet for `delay`."""
+        return not self._inflight and self._clock.now() - self._active_at >= delay
 
     def _responded(self, response: Response) -> None:
         if response.request.is_navigation_request() and response.frame == self._page.main_frame:
@@ -202,6 +222,10 @@ class BrowserLane:
         self._active = 0
         self._idle: asyncio.Task[None] | None = None
         self._user_agent: str | None = None
+        self._open_to_tabs = asyncio.Event()  # (cleared while the window has the profile)
+        self._open_to_tabs.set()
+        self._no_tabs = asyncio.Event()
+        self._no_tabs.set()
 
     @property
     def context(self) -> BrowserContext | None:
@@ -220,9 +244,16 @@ class BrowserLane:
     async def tab(
         self, *, headers: Mapping[str, str], cancel: CancelToken
     ) -> AsyncGenerator[PlaywrightTab]:
-        async with self._slots:
+        while True:  # (a tab waits while the window has the profile)
+            await self._open_to_tabs.wait()
+            await self._slots.acquire()
+            if self._open_to_tabs.is_set():
+                break
+            self._slots.release()
+        try:
             context = await self._opened()
             self._active += 1
+            self._no_tabs.clear()
             if self._idle is not None:
                 self._idle.cancel()
                 self._idle = None
@@ -230,13 +261,26 @@ class BrowserLane:
                 async with opened(
                     context, headers, loads_within=self.settings.timeout, clock=self.clock
                 ) as tab:
-                    if self._user_agent is None:
-                        self._user_agent = await tab.user_agent()
                     yield tab
             finally:
                 self._active -= 1
                 if self._active == 0:
-                    self._idle = asyncio.create_task(self._close_when_idle())
+                    self._no_tabs.set()
+                    if self._open_to_tabs.is_set():
+                        self._idle = asyncio.create_task(self._close_when_idle())
+        finally:
+            self._slots.release()
+
+    async def pause(self) -> None:
+        """Take no more tabs, let those open finish, and close (the window wants the
+        profile)."""
+        self._open_to_tabs.clear()
+        await self._no_tabs.wait()
+        await self.close()
+
+    def resume(self) -> None:
+        """Take tabs again (headless, on the profile, when one is wanted)."""
+        self._open_to_tabs.set()
 
     async def _opened(self) -> BrowserContext:
         """The browser's context, opening it if it is closed."""
@@ -252,8 +296,12 @@ class BrowserLane:
     async def _hold(self, ready: asyncio.Future[BrowserContext]) -> None:
         """Hold the browser open until it is released."""
         try:
+            self._user_agent = await browser_user_agent()
             async with chromium(
-                profile_dir=self.profile_dir, headless=True, cancel=CancelToken()
+                profile_dir=self.profile_dir,
+                headless=True,
+                user_agent=self._user_agent,
+                cancel=CancelToken(),
             ) as context:
                 self.launches += 1
                 self._context = context

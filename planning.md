@@ -68,7 +68,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 12.4 The ladder: static → with the site's cookies → udl's browser → a person, climbing on a 5xx (after one more try), 401/403, a challenge or a JavaScript shell; the rung that worked remembered per site (`FetchSite`)
   - [x] 12.5 Cookies, both ways: import `cookies.txt`, JSON exports, a `Cookie:` header or the user's browser into udl's profile, with the User-Agent they belong to; what sites set written back; list (never values) and delete; the profile held across processes
   - [x] 12.6 Batches and the queue: `FetchBatch` / `FetchItem` records, a lane per site with limits and delays, one browser lane, a site's challenge holding its other URLs, cancel, retry, recovery, retention; `udl.fetch.challenge` and `udl.fetch.finished`
-  - [ ] 12.7 Passing challenges: one headed window on udl's profile, a tab per waiting site; `ask` / `wait` / `fail`; the clearance kept; `udl fetch solve` from any udl process
+  - [x] 12.7 Passing challenges: one headed window on udl's profile, a tab per waiting site; `ask` / `wait` / `fail`; the clearance kept; `udl fetch solve` from any udl process
   - [ ] 12.8 Operations (fetch, batches, pages, challenges, cookies) via CLI, API and MCP; `udl fetch <url>…`
   - [ ] 12.9 End to end: an MCP client's batch over three fixture hosts, each check passed once
 

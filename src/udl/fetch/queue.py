@@ -58,8 +58,16 @@ from udl.errors import (
     UDLError,
 )
 from udl.fetch.challenges import ChallengeKind
+from udl.fetch.content import FetchedPage
 from udl.fetch.ladder import FetchOptions, FetchOutcome, Via
-from udl.fetch.models import BatchStatus, FetchBatch, FetchItem, ItemStatus
+from udl.fetch.models import (
+    BatchStatus,
+    FetchBatch,
+    FetchItem,
+    ItemStatus,
+    Passed,
+    WaitingSite,
+)
 from udl.plugins.downloaders.base import CancelToken, cancellable
 
 log = logging.getLogger(__name__)
@@ -69,6 +77,10 @@ RECHECK: Final = timedelta(seconds=5)
 RETENTION_EVERY: Final = timedelta(hours=1)
 JITTER: Final = 0.1
 """A site's starts are site_delay apart, give or take this share of it."""
+_WINDOW_HINT: Final = (
+    "A window opened in udl's browser, with a tab for the site: pass its check there, and its "
+    "URLs go on by themselves."
+)
 _SOLVE_HINT: Final = (
     "Run `udl fetch solve` (solve_challenges) on udl's machine to pass the check in a browser "
     "window; the URLs then go on by themselves."
@@ -84,6 +96,27 @@ class PageFetcher(Protocol):
 
     async def settle(self) -> None:
         """Write back what a batch's plain requests kept (a batch ended)."""
+        ...
+
+    async def cleared(self, site: str) -> None:
+        """A person passed the site's check: its fetches start in the browser."""
+        ...
+
+
+class Asker(Protocol):
+    """Shows the sites that wait to the person (udl.fetch.window, through udl.fetch.kit)."""
+
+    def unavailable(self) -> str | None:
+        """Why no window can open (None when one can)."""
+        ...
+
+    def also(self, waiting: WaitingSite) -> bool:
+        """Add a site to the window that is open (False when none is)."""
+        ...
+
+    async def ask(self, sites: Sequence[WaitingSite], passed: Passed) -> list[str]:
+        """Show `sites` until the person passed them, closed the window, or the time is up.
+        Returns the sites passed."""
         ...
 
 
@@ -169,6 +202,7 @@ class FetchQueue:
         *,
         runner: str,
         store: PageStore,
+        asker: Asker | None = None,
         rng: random.Random | None = None,
     ) -> None:
         self.db = db
@@ -178,6 +212,8 @@ class FetchQueue:
         self.settings = settings
         self.runner = runner
         self.store = store
+        self.asker = asker
+        self._showing: set[asyncio.Task[None]] = set()  # (windows shown)
         self._rng = rng or random.Random()  # noqa: S311 - (a delay's jitter, no secret)
         self._running: dict[UUID, _Running] = {}
         self._holds: dict[str, _Hold] = {}
@@ -270,8 +306,10 @@ class FetchQueue:
         return running.record
 
     def _settled(self, running: _Running) -> bool:
+        """Whether a batch has ended, or only waits for a person nobody is being shown its
+        check."""
         status = running.record.status
-        return status.ended or status is BatchStatus.WAITING
+        return status.ended or (status is BatchStatus.WAITING and not self._showing)
 
     # -- cancelling, stopping, retrying ----------------------------------------------------
 
@@ -410,6 +448,10 @@ class FetchQueue:
     async def shutdown(self) -> None:
         """Stop: the batches this queue runs are left interrupted (retry_fetch runs the rest)."""
         self._closing = True
+        for showing in list(self._showing):
+            showing.cancel()
+        if self._showing:
+            await asyncio.wait(self._showing)
         if self._maintainer is not None:
             self._maintainer.cancel()
             await asyncio.wait([self._maintainer])
@@ -569,7 +611,7 @@ class FetchQueue:
                 error=error.to_info(),
             )
             return
-        await self._update(
+        item = await self._update(
             running,
             item,
             status=ItemStatus.CHALLENGE,
@@ -580,9 +622,95 @@ class FetchQueue:
         hold = self._holds.get(item.site)
         if hold is not None and not hold.told:
             hold.told = True
-            await self._tell(running, item, hold)
+            mode = await self._ask(running, item, hold)
+            await self._tell(running, item, hold, mode)
 
-    async def _tell(self, running: _Running, item: FetchItem, hold: _Hold) -> None:
+    async def _ask(self, running: _Running, item: FetchItem, hold: _Hold) -> PersonMode:
+        """Show the site to the person, when the batch says to ask and a window can open.
+        Returns what was done: ask (a window shows it), or wait (and the URL's note says why
+        no window opened)."""
+        if running.record.person is not PersonMode.ASK:
+            return PersonMode.WAIT
+        problem = self.asker.unavailable() if self.asker else "this udl cannot open a window"
+        if self.asker is None or problem is not None:
+            await self._update(
+                running,
+                item,
+                note=f"No window opened for its check ({problem}): it waits for `udl fetch solve`",
+            )
+            return PersonMode.WAIT
+        waiting = WaitingSite(site=item.site, url=item.url, item=item.id, kind=hold.kind)
+        if not self.asker.also(waiting):
+            showing = asyncio.create_task(self._show(self.asker, waiting), name="udl fetch window")
+            self._showing.add(showing)
+            showing.add_done_callback(self._shown)
+        return PersonMode.ASK
+
+    async def _show(self, asker: Asker, waiting: WaitingSite) -> None:
+        try:
+            await asker.ask([waiting], self.passed)
+        except UDLError as e:
+            log.warning("udl could not show you the check of %s: %s", waiting.site, e)
+
+    def _shown(self, showing: asyncio.Task[None]) -> None:
+        """A window closed: batches that only wait are settled now."""
+        self._showing.discard(showing)
+        for running in self._running.values():
+            running.changed.set()
+
+    async def passed(self, waiting: WaitingSite, page: FetchedPage) -> None:
+        """A person passed a site's check: `page` is its waiting URL's (written to its record,
+        whichever udl runs its batch), the site's other waiting URLs go back in the queue
+        (this udl's at once; another udl's at its next recheck), and the site's fetches start
+        in the browser."""
+        owner = next((r for r in self._running.values() if waiting.item in r.items), None)
+        item = (
+            owner.items[waiting.item]
+            if owner
+            else await self.db.get_record(FetchItem, waiting.item)
+        )
+        if item is not None and not item.status.ended:
+            body = await self.store.write(item.batch_id, item.id, page.body)
+            answer: dict[str, Any] = {
+                "status": ItemStatus.SUCCEEDED,
+                "via": Via.PERSON,
+                "title": page.title,
+                "final_url": page.final_url,
+                "http_status": page.status,
+                "content_type": page.content_type,
+                "charset": page.charset,
+                "headers": page.headers,
+                "size": len(page.body),
+                "truncated": page.truncated,
+                "body": str(body),
+                "error": None,
+                "note": None,
+            }
+            if owner is not None:
+                await self._update(owner, item, **answer)
+            else:
+                answer["finished_at"] = self.clock.now()
+                await self.db.upsert_record(item.model_copy(update=answer))
+        self._holds.pop(waiting.site, None)
+        again = {"status": ItemStatus.QUEUED, "challenged_at": None}
+        ours: set[UUID] = set()
+        for running in self._running.values():
+            for found in list(running.items.values()):
+                if found.site == waiting.site and found.status is ItemStatus.CHALLENGE:
+                    ours.add(found.id)
+                    await self._update(running, found, **again)
+                    self._start(running, found.id)
+        query = RecordQuery(where={"site": waiting.site, "status": ItemStatus.CHALLENGE})
+        for found in await self.db.list_records(FetchItem, query):
+            if found.id not in ours:  # (another udl's: it picks them up at its next recheck)
+                await self.db.upsert_record(found.model_copy(update=again))
+        await self.fetcher.cleared(waiting.site)
+        for running in list(self._running.values()):
+            await self._refresh(running)
+
+    async def _tell(
+        self, running: _Running, item: FetchItem, hold: _Hold, mode: PersonMode
+    ) -> None:
         """Publish udl.fetch.challenge: the site waits for a person (once a streak)."""
         waiting = sum(
             1
@@ -596,8 +724,8 @@ class FetchQueue:
             url=item.url,
             kind=hold.kind,
             waiting=waiting,
-            mode=PersonMode.WAIT,
-            hint=_SOLVE_HINT,
+            mode=mode,
+            hint=_WINDOW_HINT if mode is PersonMode.ASK else _SOLVE_HINT,
         )
         try:
             await self.bus.publish(

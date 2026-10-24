@@ -66,6 +66,7 @@ class FakeFetcher:
     most_per_site: int = 0
     settled: int = 0
     blocks: bool = False  # (a fetch never ends unless cancelled)
+    cleared_sites: list[str] = field(default_factory=list[str])
 
     async def fetch(self, url: URL, options: FetchOptions, *, cancel: CancelToken) -> FetchOutcome:
         self.started.append((self.clock.now(), url.value))
@@ -97,6 +98,9 @@ class FakeFetcher:
 
     async def settle(self) -> None:
         self.settled += 1
+
+    async def cleared(self, site: str) -> None:
+        self.cleared_sites.append(site)
 
 
 class InlineStore(PageStore):

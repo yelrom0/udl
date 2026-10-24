@@ -10,12 +10,14 @@ tool).
 """
 
 # System Imports
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Self
 from uuid import UUID
 
 # Package Imports
-from pydantic import AwareDatetime, Field, NonNegativeInt
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, NonNegativeInt
 
 # Local Imports
 from udl.config import PersonMode
@@ -23,6 +25,7 @@ from udl.db.models import utcnow
 from udl.db.records import Record, RecordScope, SyncRule
 from udl.errors import ErrorInfo
 from udl.fetch.challenges import ChallengeKind
+from udl.fetch.content import FetchedPage
 from udl.fetch.ladder import FetchAttempt, FetchOptions, Via
 
 
@@ -140,3 +143,51 @@ class FetchItem(Record):
             body="fetched/00000000-0000-4000-8000-000000000005/x",
             finished_at=utcnow(),
         )
+
+
+# ---------------------------------------------------------------------------------------------
+# Checks that wait for a person
+# ---------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class WaitingSite:
+    """A site whose URLs wait for a person to pass its check: the waiting URL its tab opens on
+    (`item`, whose page passing it gives), and the check's kind."""
+
+    site: str
+    url: str
+    item: UUID
+    kind: ChallengeKind | None = None
+
+
+type Passed = Callable[[WaitingSite, FetchedPage], Awaitable[None]]
+"""What is done with a site's page once the person passed its check (FetchQueue.passed)."""
+
+
+class _Shown(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
+
+
+class WaitingChallenge(_Shown):
+    """A site whose URLs wait for a person to pass its anti-bot check."""
+
+    site: str
+    """The site."""
+    kind: ChallengeKind | None
+    """Whose check it is (cloudflare, recaptcha...)."""
+    urls: list[str]
+    """The URLs that wait for it."""
+    batches: list[UUID]
+    """The fetches they are of."""
+    since: AwareDatetime | None
+    """Since when they have waited."""
+
+
+class SolveReport(_Shown):
+    """What came of showing the checks to the person."""
+
+    passed: list[str]
+    """The sites whose checks were passed: their URLs go on."""
+    waiting: list[str]
+    """The sites still waiting (the window closed, or the time was up)."""

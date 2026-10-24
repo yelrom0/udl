@@ -64,7 +64,6 @@ from udl.fetch.content import (
     KEPT_HEADERS,
     FetchedPage,
     PageFormat,
-    decode,
     html_title,
     is_javascript_shell,
     media_type,
@@ -446,6 +445,13 @@ class Fetcher:
         ended)."""
         await self.jar.flush()
 
+    async def cleared(self, site: str) -> None:
+        """A person passed the site's check (its clearance is in the profile): its fetches start
+        in the browser, and its cookies are read afresh."""
+        now = self.clock.now()
+        await self.sites.update(site, cleared_at=now, start_at=Via.BROWSER, learned_at=now)
+        self.jar.forget(site)
+
     async def fetch(self, url: URL, options: FetchOptions, *, cancel: CancelToken) -> FetchOutcome:
         """Read `url`'s page, climbing the ladder as far as it has to. Raises Cancelled."""
         known = await self.sites.get(url.site_key)
@@ -615,8 +621,8 @@ class Fetcher:
             self.jar.forget(url.value)  # (what the browser set is what plain requests send next)
 
 
-def _read(url: URL, seen: Snapshot, rung: Via) -> _Seen:
-    """What a rung's Snapshot is: a page, a check (or block), or an HTTP error."""
+def page_of(url: URL, seen: Snapshot, via: Via) -> FetchedPage:
+    """A Snapshot as the page of `url` that `via` got."""
     kind, charset = media_type(seen.headers.get("content-type"))
     page = FetchedPage(
         url=url.value,
@@ -625,11 +631,18 @@ def _read(url: URL, seen: Snapshot, rung: Via) -> _Seen:
         content_type=kind,
         charset=charset,
         headers={name: seen.headers[name] for name in KEPT_HEADERS if name in seen.headers},
-        via=rung.value,
+        via=via.value,
         body=seen.body,
         truncated=seen.truncated,
     )
-    text = decode(seen.body, charset, html=page.is_html)[0] if page.is_text else ""
+    title = html_title(page.text()) if page.is_html else None
+    return page.model_copy(update={"title": title})
+
+
+def _read(url: URL, seen: Snapshot, rung: Via) -> _Seen:
+    """What a rung's Snapshot is: a page, a check (or block), or an HTTP error."""
+    page = page_of(url, seen, rung)
+    text = page.text() if page.is_text else ""
     if found := detect(seen.status, seen.headers, text, seen.url):
         return _Check(found, seen.status)
     error = http_status_error(
@@ -640,8 +653,7 @@ def _read(url: URL, seen: Snapshot, rung: Via) -> _Seen:
     if seen.missing is not None:
         missing = f"No element matching {seen.missing!r} came on {seen.url}"
         return _Failed(ExtractionFailed(missing, tool=rung.value), seen.status)
-    title = html_title(text) if page.is_html else None
-    return _Page(page.model_copy(update={"title": title}))
+    return _Page(page)
 
 
 def _attempt(rung: Via, seen: _Seen, seconds: float) -> FetchAttempt:
