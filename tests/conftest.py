@@ -26,6 +26,7 @@ from pymongo.errors import PyMongoError
 from sqlalchemy.engine import make_url
 
 # Local Imports
+from support.antibot import AntiBotSite
 from support.fixture_site import FixtureSite
 from support.servers import MONGODB, POSTGRES, serving
 
@@ -102,6 +103,20 @@ def fixture_site() -> Iterator[FixtureSite]:
     """The local fixture site (tests/support/fixture_site.py), served for the whole run."""
     with FixtureSite.serve() as site:
         yield site
+
+
+@pytest.fixture(scope="session")
+def _antibot_server() -> Iterator[AntiBotSite]:
+    with AntiBotSite.serve() as site:
+        yield site
+
+
+@pytest.fixture
+def antibot(_antibot_server: AntiBotSite) -> AntiBotSite:
+    """The anti-bot fixture site (tests/support/antibot.py), served for the whole run, as new
+    for each test."""
+    _antibot_server.reset()
+    return _antibot_server
 
 
 # ---------------------------------------------------------------------------------------------

@@ -62,7 +62,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 11.7 Account operations via CLI, API and MCP
 
 - [ ] **Phase 12: Page fetcher (`udl fetch`)**
-  - [ ] 12.1 Anti-bot fixture site in `tests/support/`: pages that turn plain clients away with a 500, a Cloudflare-style check a person passes (its clearance bound to the User-Agent), a hard block, a 429, a page built by JavaScript, a login wall; `FakePerson`
+  - [x] 12.1 Anti-bot fixture site in `tests/support/`: pages that turn plain clients away with a 500, a Cloudflare-style check a person passes (its clearance bound to the User-Agent), a hard block, a 429, a page built by JavaScript, a login wall; `FakePerson`
   - [ ] 12.2 Recognising challenges: a table of markers per kind (Cloudflare, Turnstile, hCaptcha, reCAPTCHA, DataDome, PerimeterX, AWS WAF, Imperva, Sucuri, Akamai); a check a person can pass vs a block
   - [ ] 12.3 Page content: the main content as Markdown (or text, or the HTML), links made absolute, `select`, charsets; other types kept as files
   - [ ] 12.4 The ladder: static → with the site's cookies → udl's browser → a person, climbing on a 5xx (after one more try), 401/403, a challenge or a JavaScript shell; the rung that worked remembered per site (`FetchSite`)

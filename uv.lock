@@ -1856,6 +1856,7 @@ dev = [
     { name = "types-pyyaml" },
     { name = "types-yt-dlp" },
     { name = "udl", extra = ["browser", "mongodb", "postgres"] },
+    { name = "uvicorn" },
 ]
 
 [package.metadata]
@@ -1898,6 +1899,7 @@ dev = [
     { name = "types-pyyaml", specifier = ">=6.0.12.20260906" },
     { name = "types-yt-dlp", specifier = ">=2026.8.19.20261008" },
     { name = "udl", extras = ["browser", "postgres", "mongodb"], editable = "." },
+    { name = "uvicorn", specifier = ">=0.54.0" },
 ]
 
 [[package]]
