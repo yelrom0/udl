@@ -33,6 +33,7 @@ from udl.core.service import UDLService
 from udl.db.models import JsonObject
 from udl.errors import ActionFailed, Cancelled, ConfigError
 from udl.plugins.actions.base import ActionContext, ActionPlugin, RunLog
+from udl.plugins.actions.emit import EmitAction
 from udl.plugins.actions.notify import NotifyAction
 from udl.plugins.actions.operation import OperationAction
 from udl.plugins.actions.script import ScriptAction
@@ -54,8 +55,8 @@ class Case:
     plugin: type[ActionPlugin[Any]]
     good: JsonObject  # it succeeds
     bad: JsonObject  # its options are not valid
-    failing: JsonObject  # it fails
-    waiting: JsonObject  # it runs until it is cancelled
+    failing: JsonObject | None  # it fails (None: nothing it is given makes it fail)
+    waiting: JsonObject | None  # it runs until it is cancelled (None: it never waits)
     prepare: Prepare = _nothing  # (what the plugin needs around it: files, a server...)
     harness: Callable[[Path], Harness] = Harness  # (the udl it runs in)
 
@@ -133,6 +134,13 @@ CASES = [
         prepare=_hooks,
     ),
     Case(
+        plugin=EmitAction,
+        good={"type": "custom.done", "data": {"a": 1}},
+        bad={"type": "udl.download.finished"},
+        failing=None,
+        waiting=None,
+    ),
+    Case(
         plugin=NotifyAction,
         good={"title": "Hello", "body": "There"},
         bad={"title": "x", "urgency": "screaming"},
@@ -198,6 +206,8 @@ async def test_its_output_is_json(case: Case, plugin: ActionPlugin[Any]) -> None
 
 
 async def test_a_failure_is_an_action_failed(case: Case, plugin: ActionPlugin[Any]) -> None:
+    if case.failing is None:
+        pytest.skip(f"Nothing makes the {case.plugin.name} action fail")
     with pytest.raises(ActionFailed) as raised:
         await plugin.run(context(plugin, case.failing))
 
@@ -205,6 +215,8 @@ async def test_a_failure_is_an_action_failed(case: Case, plugin: ActionPlugin[An
 
 
 async def test_a_cancelled_run_ends_within_a_second(case: Case, plugin: ActionPlugin[Any]) -> None:
+    if case.waiting is None:
+        pytest.skip(f"The {case.plugin.name} action never waits")
     ctx = context(plugin, case.waiting)
     running = asyncio.create_task(plugin.run(ctx))
     await asyncio.sleep(0.2)

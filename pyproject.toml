@@ -62,6 +62,7 @@ keyring = "udl.plugins.secrets.keyring:KeyringSecretStore"
 memory = "udl.plugins.secrets.memory:MemorySecretStore"
 
 [project.entry-points."udl.actions"]
+emit = "udl.plugins.actions.emit:EmitAction"
 notify = "udl.plugins.actions.notify:NotifyAction"
 operation = "udl.plugins.actions.operation:OperationAction"
 script = "udl.plugins.actions.script:ScriptAction"

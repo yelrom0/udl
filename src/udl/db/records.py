@@ -80,6 +80,7 @@ _UDL_KINDS: Final = (
     "udl.automations.events",
     "udl.automations.subscriptions",
     "udl.plugins.actions.base",
+    "udl.automations.runs",
 )
 
 type Name = Annotated[

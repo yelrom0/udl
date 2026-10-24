@@ -27,6 +27,8 @@ from uuid import UUID
 from pydantic import BaseModel, JsonValue
 
 # Local Imports
+from udl.automations.bus import EventBus
+from udl.automations.events import EventTypes
 from udl.chains.executor import ChainRun, ChainRunner
 from udl.chains.files import read_chains, write_chains
 from udl.chains.models import FetchMode, SiteChain, StepTrace, TagChain
@@ -169,6 +171,8 @@ class UDLService:
         )
         # (Known as soon as the service is made, so the interfaces can offer them before it starts.)
         self.operations = OperationRegistry.discover(registry)
+        self.event_types = EventTypes.discover(registry)
+        self.bus = EventBus(self.db, self.event_types, self.clock, settings.automations)
         self.jobs = JobManager(
             self.executor,
             max_concurrent=settings.max_concurrent,

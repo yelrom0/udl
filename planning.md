@@ -35,8 +35,8 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 9.2 `Filter`: conditions on an event's data, checked against its type's schema when saved; a one-line shorthand with round-trip property tests; the evaluator
   - [x] 9.3 `Subscription`: event types (globs), accounts, filter, source filter (11.6), actions, throttle; matching
   - [x] 9.4 `udl.actions` plugin kind: `ActionPlugin` base + contract suite + `FakeAction`; the `Action` record
-  - [ ] 9.5 Built-in actions: `script`, `operation`, `webhook`, `emit`, `notify`
-  - [ ] 9.6 `EventBus`: publish (persist, dedupe, causation depth), match subscriptions, queue runs; events other udl processes publish are picked up
+  - [x] 9.5 Built-in actions: `script`, `operation`, `webhook`, `emit`, `notify`
+  - [x] 9.6 `EventBus`: publish (persist, dedupe, causation depth), match subscriptions, queue runs; events other udl processes publish are picked up
   - [ ] 9.7 `ActionRunner`: persisted runs, concurrency limits, timeouts, retries, cancelling, crash recovery; a run's end is an event
   - [ ] 9.8 Loop protection: `max_event_depth`, per-subscription throttles, udl's own messages marked (used by 12 and 13)
   - [ ] 9.9 `AutomationRuntime` in `udl serve`: dispatcher, runner, retention, a lease so one runtime runs per database; finished downloads publish `udl.download.*`

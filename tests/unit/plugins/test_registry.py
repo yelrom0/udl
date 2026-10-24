@@ -369,6 +369,7 @@ def test_udls_own_plugins_are_registered_as_builtins() -> None:
     assert registry.get(DATABASES, "sqlite") is SQLitePlugin
     assert {info.source for info in registry.plugins(DATABASES)} == {PluginSource.BUILTIN}
     assert {info.name for info in registry.plugins(ACTIONS)} >= {
+        "emit",
         "notify",
         "operation",
         "script",
