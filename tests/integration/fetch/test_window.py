@@ -180,6 +180,12 @@ async def test_wait_mode_opens_nothing_until_someone_solves(
             batch = await fetched(kit, [checked(antibot, HOSTS[0], 1)], person=PersonMode.WAIT)
             assert batch.status is BatchStatus.WAITING
             assert person.attended == []
+            hint = (await kit.info(batch, max_chars=0)).hint
+            assert hint == (
+                f"1 page on {HOSTS[0]} waits for someone to pass a cloudflare check (`udl fetch "
+                "solve`, solve_challenges, on udl's machine). Call get_fetch with this id for "
+                "them later."
+            )
 
             report = await kit.solve()
             done = await ended(kit, batch)
@@ -199,7 +205,7 @@ async def test_without_a_display_ask_waits_and_says_why(
             batch = await fetched(kit, [checked(antibot, HOSTS[0], 1)], person=PersonMode.ASK)
             [item] = await kit.queue.items(batch.id)
             told = await challenge_events(db)
-            with pytest.raises(ToolUnavailable, match="no display"):
+            with pytest.raises(ToolUnavailable, match="no display") as refused:
                 await kit.solve()
         finally:
             await kit.close()
@@ -207,6 +213,8 @@ async def test_without_a_display_ask_waits_and_says_why(
     assert batch.status is BatchStatus.WAITING
     assert item.note is not None
     assert "there is no display" in item.note
+    assert refused.value.hint is not None
+    assert "desktop" in refused.value.hint
     assert [str(event.data["mode"]) for event in told] == ["wait"]
 
 

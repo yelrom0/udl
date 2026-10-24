@@ -494,7 +494,8 @@ class FetchKit:
             raise ToolUnavailable(
                 f"udl cannot show you the checks here: {problem}",
                 tool="browser",
-                hint="Run `udl fetch solve` on udl's machine, where its browser can open a window.",
+                hint="Run `udl fetch solve` in a desktop session on udl's machine, where its "
+                "browser can open a window.",
             )
         shown = [
             WaitingSite(site=site, url=items[0].url, item=items[0].id, kind=items[0].challenge)
@@ -562,11 +563,12 @@ def _hint(batch: FetchBatch, items: list[FetchItem]) -> str | None:
         kinds = sorted({str(item.challenge) for item in waiting if item.challenge})
         check = f"a {' or '.join(kinds)} check" if kinds else "an anti-bot check"
         where = " and ".join(f"{_pages(n)} on {site}" for site, n in sites.items())
+        verb = "waits" if len(waiting) == 1 else "wait"
         windowed = batch.person.value == "ask" and not any(item.note for item in waiting)
         how = (
-            f"wait for the user to pass {check} in udl's browser window"
+            f"{verb} for the user to pass {check} in udl's browser window"
             if windowed
-            else f"wait for someone to pass {check} (`udl fetch solve`, solve_challenges, on "
+            else f"{verb} for someone to pass {check} (`udl fetch solve`, solve_challenges, on "
             "udl's machine)"
         )
         return f"{where[0].upper()}{where[1:]} {how}. Call get_fetch with this id for them later."

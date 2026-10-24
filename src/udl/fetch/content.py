@@ -332,23 +332,35 @@ _NEEDS_JS: Final = re.compile(
 # Where a single-page app's scripts put it (React's, Vue's, Next's, Nuxt's, Angular's...).
 _APP_ROOT: Final = "#root, #app, #__next, #__nuxt, [ng-app], app-root"
 _NOTICE_WORDS: Final = 80  # (an "enable JavaScript" notice on a page of fewer words)
+_FEW_WORDS: Final = 20  # (a page this short, its scripts far heavier than its text...)
+_HEAVY: Final = 1000  # (...holding at least this many characters of code...)
+_HEAVIER: Final = 20  # (...and this many times its text's, is what its scripts write)
+_EXTERNAL: Final = 2000  # (what a script from a file is reckoned to weigh)
 
 
 def is_javascript_shell(page: FetchedPage) -> bool:
     """Whether an HTML page is a shell its scripts fill in (so it reads only in a browser): it
-    has scripts, and no words at all, or an app's root with nothing in it, or an "enable
-    JavaScript" notice and few words besides."""
+    has scripts, and no words at all, or an app's root with nothing in it, or few words and
+    scripts far heavier than them (its content is in their data), or an "enable JavaScript"
+    notice and few words besides."""
     if not page.is_html:
         return False
     parsed = LexborHTMLParser(page.text())
     body = parsed.body
-    if not parsed.css_first("script") or body is None:
+    scripts = parsed.css("script")
+    if not scripts or body is None:
         return False
+    weight = sum(
+        len(node.text()) if not node.attributes.get("src") else _EXTERNAL for node in scripts
+    )
     notice = " ".join(node.text() for node in parsed.css("noscript"))
     for dropped in body.css(_DROPPED):
         dropped.decompose()
     words = body.text(separator=" ").split()
     if not words or any(not node.text().strip() for node in body.css(_APP_ROOT)):
+        return True
+    text = sum(len(word) + 1 for word in words)
+    if len(words) < _FEW_WORDS and weight >= _HEAVY and weight >= _HEAVIER * text:
         return True
     return (
         len(words) < _NOTICE_WORDS and _NEEDS_JS.search(f"{notice} {' '.join(words)}") is not None

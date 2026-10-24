@@ -374,6 +374,18 @@ def test_a_page_of_scripts_and_no_words_is_one() -> None:
     assert is_javascript_shell(html('<script src="/bundle.js"></script>'))
 
 
+def test_a_page_of_a_few_words_around_a_script_that_writes_it_is_one() -> None:
+    # (As quotes.toscrape.com/js/: a header and a footer, and its content in a script's data.)
+    data = ", ".join(f'{{"text": "Quote {n}", "author": "Someone {n}"}}' for n in range(60))
+    page = html(
+        "<div class='header'><h1>Quotes</h1><a href='/login'>Login</a></div>"
+        f"<div class='quotes'></div><script>var data = [{data}]; render(data);</script>"
+        "<footer>Made by us</footer>"
+    )
+
+    assert is_javascript_shell(page)
+
+
 def test_an_apps_empty_root_makes_a_page_one_whatever_else_it_says() -> None:
     words = " ".join(["A footer with links and words in it, as many have."] * 10)
     page = html(f'<div id="root"></div><footer>{words}</footer><script src="/app.js"></script>')
