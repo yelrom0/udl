@@ -56,6 +56,7 @@ _STATUS: Final[dict[ErrorCode, int]] = {
     ErrorCode.TEMPLATE_FAILED: 400,
     ErrorCode.REAUTH_REQUIRED: 409,  # (the account needs connecting again)
     ErrorCode.INVALID_FILTER: 400,
+    ErrorCode.ALREADY_EXISTS: 409,
 }
 
 _LOCAL_HOSTS: Final = frozenset({"localhost"})

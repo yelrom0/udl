@@ -22,11 +22,13 @@ from support.records import Note, NoteStatus, Scratch, Tally
 from udl.db.records import (
     RECORD_KINDS,
     Lease,
+    Name,
     PluginSettings,
     Record,
     RecordQuery,
     RecordScope,
     SyncRule,
+    indexed_type,
     record_kind,
     record_kinds,
 )
@@ -102,6 +104,22 @@ def test_a_kind_s_indexed_fields_are_ones_every_database_can_compare(
 
     with pytest.raises(TypeError, match=problem):
         type("Bad", (Record,), namespace)
+
+
+def test_an_indexed_field_may_be_typed_with_an_alias() -> None:
+    class Named(Record):
+        kind = "test_named"
+        indexed = ("name", "other")
+
+        name: Name
+        other: Name | None = None
+
+        @classmethod
+        def example(cls) -> Named:
+            return cls(name="x")
+
+    assert indexed_type(Named, "name") == (str, False)
+    assert indexed_type(Named, "other") == (str, True)
 
 
 def test_another_class_cannot_be_a_kind_that_is_taken() -> None:

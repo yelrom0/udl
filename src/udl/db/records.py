@@ -33,11 +33,19 @@ import uuid
 from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, ClassVar, Final, Self, cast
+from typing import Annotated, Any, ClassVar, Final, Self, cast
 
 # Package Imports
 import pydantic
-from pydantic import AwareDatetime, BaseModel, ConfigDict, NonNegativeInt, PositiveInt, TypeAdapter
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    NonNegativeInt,
+    PositiveInt,
+    StringConstraints,
+    TypeAdapter,
+)
 from sqlmodel import Field, SQLModel
 
 # Local Imports
@@ -68,7 +76,13 @@ RECORD_KINDS: Final[dict[str, type[Record]]] = {}
 
 # The modules that define udl's own kinds (each kind registers itself as it is defined), loaded
 # as soon as the kinds are asked for, so a database knows them all.
-_UDL_KINDS: Final = ("udl.automations.events",)
+_UDL_KINDS: Final = ("udl.automations.events", "udl.automations.subscriptions")
+
+type Name = Annotated[
+    str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$", max_length=100)
+]
+"""What names a record the user names (a subscription, an action...): letters, digits, `_`,
+`.`, `:` and `-`, starting with a letter or digit."""
 
 
 class Record(SQLModel):
@@ -156,12 +170,23 @@ def _load_udl_kinds() -> None:
         importlib.import_module(module)
 
 
+def _plain(annotation: Any) -> Any:
+    """`annotation` without its aliases (`type X = ...`) and Annotated's constraints."""
+    while True:
+        if isinstance(annotation, typing.TypeAliasType):
+            annotation = annotation.__value__
+        elif typing.get_origin(annotation) is Annotated:
+            annotation = typing.get_args(annotation)[0]
+        else:
+            return annotation
+
+
 def indexed_type(cls: type[Record], name: str) -> tuple[type, bool]:
     """The type an indexed field holds (an enum's is str), and whether it can be None."""
-    annotation = cls.model_fields[name].annotation
+    annotation = _plain(cls.model_fields[name].annotation)
     nullable = False
     if isinstance(annotation, types.UnionType) or typing.get_origin(annotation) is typing.Union:
-        args = [arg for arg in typing.get_args(annotation) if arg is not type(None)]
+        args = [_plain(arg) for arg in typing.get_args(annotation) if arg is not type(None)]
         nullable = len(args) < len(typing.get_args(annotation))
         annotation = args[0] if len(args) == 1 else None
     if inspect.isclass(annotation) and issubclass(annotation, enum.Enum):

@@ -41,6 +41,7 @@ class ErrorCode(StrEnum):
     TEMPLATE_FAILED = "template_failed"
     REAUTH_REQUIRED = "reauth_required"
     INVALID_FILTER = "invalid_filter"
+    ALREADY_EXISTS = "already_exists"
 
 
 class ErrorInfo(BaseModel):
@@ -240,6 +241,13 @@ class InvalidFilter(ConfigError):
     field they lack, or compares a field with what it cannot be."""
 
     code = ErrorCode.INVALID_FILTER
+
+
+class AlreadyExists(UDLError):
+    """What was asked to be made has a name that is taken (an account's), or that is kept for
+    udl's own (a subscription named schedule:<name>, which belongs to that schedule)."""
+
+    code = ErrorCode.ALREADY_EXISTS
 
 
 class ReauthRequired(UDLError):
