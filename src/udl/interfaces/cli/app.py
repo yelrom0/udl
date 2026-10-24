@@ -30,6 +30,7 @@ from udl.interfaces.cli.commands import (
     browser,
     chains,
     downloads,
+    fetch,
     probe,
     servers,
     sites,
@@ -184,13 +185,20 @@ app.command("serve")(servers.serve)
 app.command("mcp")(servers.mcp)
 app.add_typer(browser.app, name="browser")
 app.add_typer(accounts.app, name="accounts")
-# (The automations': events, subs, actions, runs, schedules and status; and the accounts'.)
+app.add_typer(fetch.app, name="fetch")
+# (The automations': events, subs, actions, runs, schedules and status; the accounts', the
+# fetches' and the browser's cookies'.)
 add_commands(
     app,
     operations().values(),
-    renderers=automations.RENDERERS,
+    renderers={**automations.RENDERERS, **fetch.RENDERERS},
     helps=automations.HELPS,
-    groups={("accounts",): accounts.app},
+    groups={
+        ("accounts",): accounts.app,
+        ("fetch",): fetch.app,
+        ("browser",): browser.app,
+        ("browser", "cookies"): browser.cookies,
+    },
 )
 
 

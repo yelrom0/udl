@@ -23,8 +23,9 @@ from pydantic import SecretStr
 from support.clock import FakeClock
 from support.engine import StaticCookies, databases, registry, settings
 from udl.db.manager import DBManager
-from udl.errors import ConfigError
+from udl.errors import ConfigError, ToolUnavailable
 from udl.fetch.cookies import (
+    BrowserThenProfile,
     CookieInfo,
     CookieStore,
     ImportedCookies,
@@ -510,3 +511,29 @@ async def test_deleting_a_sites_cookies_leaves_the_others(store: Store) -> None:
     assert known is not None
     assert known.user_agent is None
     assert await store.store.delete_cookies("example.com") is False
+
+
+async def test_the_cookies_rung_reads_the_users_browser_then_udls_profile() -> None:
+    browser = StaticCookies([cookie("theirs", "1"), cookie("both", "browser")])
+    profile = MemoryProfile([cookie("ours", "2"), cookie("both", "profile")])
+
+    found = await BrowserThenProfile(browser, profile).for_url(URL)
+
+    assert {c.name: c.value.get_secret_value() for c in found} == {
+        "theirs": "1",
+        "ours": "2",
+        "both": "profile",
+    }
+
+
+async def test_a_profile_that_cannot_be_read_leaves_the_browsers_cookies(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class Broken(MemoryProfile):
+        async def cookies(self) -> list[Cookie]:
+            raise ToolUnavailable("no Playwright", tool="browser")
+
+    found = await BrowserThenProfile(StaticCookies([cookie("theirs", "1")]), Broken()).for_url(URL)
+
+    assert [c.name for c in found] == ["theirs"]
+    assert "no Playwright" in caplog.text

@@ -28,12 +28,12 @@ from typing import Any, Final, Protocol, cast
 from pydantic import AwareDatetime, BaseModel, ConfigDict, NonNegativeInt, SecretStr
 
 # Local Imports
-from udl.core.executor import CookieSource
+from udl.core.executor import CookieSource, site_cookies
 from udl.core.urls import site_key
-from udl.errors import ConfigError
+from udl.errors import ConfigError, UDLError
 from udl.fetch.ladder import FetchSites
-from udl.plugins.downloaders.auth import BrowserCookieSource, cookies_from_browser
-from udl.plugins.downloaders.base import Cookie
+from udl.plugins.downloaders.auth import BrowserCookieSource, cookies_from_browser, for_site
+from udl.plugins.downloaders.base import Cookie, merge_cookies
 
 log = logging.getLogger(__name__)
 
@@ -308,6 +308,25 @@ class Profile(Protocol):
     async def clear(self, site: str) -> int:
         """Remove every cookie of `site` (and its subdomains). Returns how many there were."""
         ...
+
+
+class BrowserThenProfile:
+    """Where the cookies rung reads a site's cookies (udl.core.executor.CookieSource): the
+    user's browser's (`browser`), then udl's profile's, which win (a profile that cannot be read
+    is skipped, with a warning)."""
+
+    def __init__(self, browser: CookieSource, profile: Profile) -> None:
+        self._browser = browser
+        self._profile = profile
+
+    async def for_url(self, url: str) -> list[Cookie]:
+        cookies = await site_cookies(self._browser, url)
+        try:
+            ours = for_site(await self._profile.cookies(), url)
+        except UDLError as e:
+            log.warning("Could not read udl's browser profile's cookies: %s", e)
+            return cookies
+        return merge_cookies(cookies, ours)
 
 
 class SessionJar:

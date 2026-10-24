@@ -76,6 +76,17 @@ MATRIX: dict[str, tuple[str, str]] = {
     "set_account": ("accounts set", "PATCH /accounts/{account}"),
     "check_account": ("accounts check", "POST /accounts/{account}/check"),
     "disconnect_account": ("accounts rm", "DELETE /accounts/{account}"),
+    "fetch_pages": ("fetch get", "POST /fetches"),
+    "list_fetches": ("fetch list", "GET /fetches"),
+    "get_fetch": ("fetch show", "GET /fetches/{id}"),
+    "get_fetched_page": ("fetch page", "GET /fetches/pages/{id}"),
+    "cancel_fetch": ("fetch cancel", "DELETE /fetches/{id}"),
+    "retry_fetch": ("fetch retry", "POST /fetches/{id}/retry"),
+    "list_challenges": ("fetch challenges", "GET /fetches/challenges"),
+    "solve_challenges": ("fetch solve", "POST /fetches/challenges/solve"),
+    "import_cookies": ("browser cookies import", "POST /browser/cookies"),
+    "list_cookies": ("browser cookies list", "GET /browser/cookies"),
+    "delete_cookies": ("browser cookies rm", "DELETE /browser/cookies/{site}"),
 }
 
 # Interface-only, so exempt: they run the other interfaces, need a browser on the user's

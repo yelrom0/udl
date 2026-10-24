@@ -80,6 +80,16 @@ from udl.core.models import (
 )
 from udl.db.models import JobStatus, Strategy
 from udl.errors import ErrorInfo
+from udl.fetch.cookies import ImportedCookies
+from udl.fetch.models import (
+    ChallengeList,
+    CookieList,
+    FetchBatchInfo,
+    FetchBatchList,
+    FetchedPageInfo,
+    ItemStatus,
+    SolveReport,
+)
 from udl.integrations.models import AccountInfo, AccountList, Disconnected
 from udl.integrations.watchers import WatcherState, WatcherStatus
 from udl.plugins.downloaders.base import MediaCandidate, MediaKind
@@ -1007,6 +1017,153 @@ def schedule_preview(console: Console, preview: SchedulePreview) -> None:
     console.print(table)
     if not preview.times:
         console.print("It fires no more.")
+
+
+# ---------------------------------------------------------------------------------------------
+# Fetches
+# ---------------------------------------------------------------------------------------------
+
+_ITEM_STATUS: Final[dict[ItemStatus, tuple[str, str]]] = {
+    ItemStatus.QUEUED: ("·", "dim"),
+    ItemStatus.RUNNING: ("…", "cyan"),
+    ItemStatus.CHALLENGE: ("?", "yellow"),
+    ItemStatus.SUCCEEDED: ("✓", "green"),
+    ItemStatus.FAILED: ("✗", "red"),
+    ItemStatus.CANCELLED: ("-", "dim"),
+    ItemStatus.INTERRUPTED: ("!", "yellow"),
+}
+
+
+def item_status(status: ItemStatus) -> str:
+    """A fetched URL's status, marked."""
+    mark, style = _ITEM_STATUS[status]
+    return f"[{style}]{mark} {status}[/]"
+
+
+def _counts(counts: dict[ItemStatus, int]) -> str:
+    return ", ".join(f"{count} {status}" for status, count in sorted(counts.items())) or "-"
+
+
+def fetch_batch(console: Console, shown: FetchBatchInfo) -> None:
+    """A fetch: each URL's status, how its page was read, or why not."""
+    _lines(
+        console,
+        [
+            ("Fetch", f"{shown.id}" + (f" ({escape(shown.label)})" if shown.label else "")),
+            ("Status", f"{shown.status}: {_counts(shown.counts)}"),
+        ],
+    )
+    table = Table("", _folded("URL"), "Via", _folded("Page"), "Id")
+    for item in shown.items:
+        page = escape(item.title or "") if item.status is ItemStatus.SUCCEEDED else ""
+        if item.error is not None:
+            page = _error(item.error, hint=False)
+        elif item.status is ItemStatus.CHALLENGE:
+            page = f"[yellow]waits behind a {item.challenge or 'anti-bot'} check[/]"
+        if item.note:
+            page += f"\n[dim]{escape(item.note)}[/]"
+        table.add_row(
+            item_status(item.status), escape(item.url), item.via or "", page, str(item.id)
+        )
+    console.print(table)
+    if shown.hint:
+        console.print(escape(shown.hint), style="dim")
+
+
+def fetch_batches(console: Console, listed: FetchBatchList) -> None:
+    """The fetches, newest first."""
+    if not listed.fetches:
+        console.print("No fetches (`udl fetch <url>` reads a page).")
+        return
+    table = Table("Fetch", "Label", "Status", "URLs", "Asked", "Ended")
+    for found in listed.fetches:
+        table.add_row(
+            str(found.id),
+            escape(found.label or ""),
+            found.status,
+            _counts(found.counts),
+            _when(found.created_at),
+            _when(found.finished_at),
+        )
+    console.print(table)
+
+
+def fetched_page(console: Console, shown: FetchedPageInfo) -> None:
+    """A fetched page's content (as it is, for piping), or why there is none."""
+    if shown.content is not None:
+        console.print(shown.content, markup=False, highlight=False, soft_wrap=True, end="")
+        if shown.next_offset is not None:
+            console.print(f"\n[dim](it goes on: --offset {shown.next_offset})[/]")
+        return
+    rows = [("URL", escape(shown.url)), ("Status", item_status(shown.status))]
+    if shown.error is not None:
+        rows.append(("Error", _error(shown.error)))
+    if shown.note:
+        rows.append(("Note", escape(shown.note)))
+    _lines(console, rows)
+
+
+def challenges(console: Console, listed: ChallengeList) -> None:
+    """The sites whose pages wait for a person to pass their check."""
+    if not listed.challenges:
+        console.print("No checks wait for you.")
+        return
+    table = Table("Site", "Check", "URLs", "Since")
+    for found in listed.challenges:
+        table.add_row(
+            escape(found.site),
+            found.kind or "-",
+            escape("\n".join(found.urls)),
+            _when(found.since),
+        )
+    console.print(table)
+    console.print("`udl fetch solve` shows them to you, in a window.", style="dim")
+
+
+def solve_report(console: Console, report: SolveReport) -> None:
+    """What came of showing the checks."""
+    if not report.passed and not report.waiting:
+        console.print("No checks wait for you.")
+        return
+    if report.passed:
+        console.print(f"Passed: {escape(', '.join(report.passed))}: their pages go on.")
+    if report.waiting:
+        console.print(f"Still waiting: {escape(', '.join(report.waiting))}.", style="yellow")
+
+
+def cookie_import(console: Console, done: ImportedCookies) -> None:
+    """How many cookies were imported, of which sites."""
+    for site, count in done.sites.items():
+        console.print(f"{count} cookie{'s' if count != 1 else ''} of {escape(site)}")
+    if done.user_agent:
+        console.print("udl's plain requests send them with the User-Agent given.", style="dim")
+
+
+def cookies(console: Console, listed: CookieList) -> None:
+    """The cookies in udl's browser profile, by site (never their values)."""
+    if not listed.sites:
+        console.print("udl's browser profile has no cookies.")
+        return
+    table = Table("Site", "Name", _folded("Domain"), "Path", "Expires", "Flags")
+    for site in listed.sites:
+        for found in site.cookies:
+            flags = [
+                flag
+                for flag, on in (("secure", found.secure), ("http-only", found.http_only))
+                if on
+            ]
+            table.add_row(
+                escape(site.site),
+                escape(found.name),
+                escape(found.domain),
+                escape(found.path),
+                _when(found.expires) or "session",
+                ", ".join(flags),
+            )
+    console.print(table)
+    for site in listed.sites:
+        if site.user_agent:
+            console.print(f"{escape(site.site)}: sent with {escape(site.user_agent)}", style="dim")
 
 
 def deleted(console: Console, done: Deleted) -> None:

@@ -151,7 +151,7 @@ def slow_settings(tmp_path: Path) -> Settings:
 def test_the_operations_are_the_feature_matrix_s() -> None:
     # planning/01-core.md's Feature Matrix (syncing databases comes in Phase 7), then
     # planning.md's (plugin settings in Phase 8, the automations in Phases 9 and 10, accounts
-    # in Phase 11).
+    # in Phase 11, the page fetcher in Phase 12).
     assert set(operations()) == {
         "download",
         "get_download",
@@ -205,6 +205,17 @@ def test_the_operations_are_the_feature_matrix_s() -> None:
         "set_account",
         "check_account",
         "disconnect_account",
+        "fetch_pages",
+        "list_fetches",
+        "get_fetch",
+        "get_fetched_page",
+        "cancel_fetch",
+        "retry_fetch",
+        "list_challenges",
+        "solve_challenges",
+        "import_cookies",
+        "list_cookies",
+        "delete_cookies",
     }
 
 

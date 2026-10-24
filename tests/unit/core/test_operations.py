@@ -120,6 +120,19 @@ def test_every_operation_says_whether_it_is_admin() -> None:
         "set_account": True,
         "check_account": False,
         "disconnect_account": True,
+        # The page fetcher's: it reads the web (its history its own), but what puts cookies in
+        # udl's browser, or takes them out, signs udl in and out of sites: admin.
+        "fetch_pages": False,
+        "list_fetches": False,
+        "get_fetch": False,
+        "get_fetched_page": False,
+        "cancel_fetch": False,
+        "retry_fetch": False,
+        "list_challenges": False,
+        "solve_challenges": False,
+        "import_cookies": True,
+        "list_cookies": False,
+        "delete_cookies": True,
     }
 
 

@@ -137,20 +137,30 @@ class FetchOptions(_Frozen):
     @field_validator("via")
     @classmethod
     def _a_rung_to_start_on(cls, via: Via) -> Via:
-        if via is Via.PERSON:
-            raise ValueError("a fetch starts at auto, static, cookies or browser, not person")
-        return via
+        return start_rung(via)
 
     @field_validator("headers")
     @classmethod
     def _no_secrets(cls, headers: dict[str, str]) -> dict[str, str]:
-        secret = sorted(name for name in headers if name.lower() in _SECRET_HEADERS)
-        if secret:
-            raise ValueError(
-                f"{', '.join(secret)} cannot be sent with a fetch (a batch keeps its headers): "
-                "import the cookies with import_cookies (`udl browser cookies import`) instead"
-            )
-        return headers
+        return no_secret_headers(headers)
+
+
+def start_rung(via: Via) -> Via:
+    """`via`, as where a fetch starts (never a person). Raises ValueError."""
+    if via is Via.PERSON:
+        raise ValueError("a fetch starts at auto, static, cookies or browser, not person")
+    return via
+
+
+def no_secret_headers(headers: dict[str, str]) -> dict[str, str]:
+    """`headers`, when none is a secret (a batch keeps them). Raises ValueError."""
+    secret = sorted(name for name in headers if name.lower() in _SECRET_HEADERS)
+    if secret:
+        raise ValueError(
+            f"{', '.join(secret)} cannot be sent with a fetch (a batch keeps its headers): "
+            "import the cookies with import_cookies (`udl browser cookies import`) instead"
+        )
+    return headers
 
 
 class FetchAttempt(_Frozen):

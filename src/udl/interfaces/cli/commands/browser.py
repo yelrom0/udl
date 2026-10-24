@@ -3,7 +3,10 @@
 - browser.py -
 --------------
 
-udl browser login: sign in to a site in udl's browser profile, whose cookies udl's downloads send
+udl browser login: sign in to a site in udl's browser profile, whose cookies udl's downloads and
+fetches send; and udl browser cookies: import cookies into it (`import`, from a file or stdin, or
+a site's from your own browser), list them (never their values) and delete a site's (the last
+two made from their operations)
 """
 
 # System Imports
@@ -19,15 +22,35 @@ import typer
 
 # Local Imports
 from udl.core.urls import URL
-from udl.interfaces.cli.common import Runtime, parse_url, run_async, stderr, stdout
+from udl.fetch.models import ImportCookiesRequest
+from udl.interfaces.cli import render
+from udl.interfaces.cli.common import (
+    JsonOption,
+    Runtime,
+    parse,
+    parse_url,
+    run,
+    run_async,
+    runs,
+    show,
+    stderr,
+    stdout,
+    usage_error,
+)
 from udl.plugins.downloaders.auth import browser_login
 from udl.plugins.downloaders.base import Cookie
 
 app = typer.Typer(
-    help="udl's browser profile: where you sign in to sites for udl.",
+    help="udl's browser profile: where you sign in to sites for udl, and its cookies.",
     no_args_is_help=True,
     rich_markup_mode="markdown",
 )
+cookies = typer.Typer(
+    help="The cookies in udl's browser profile, which its fetches and downloads send.",
+    no_args_is_help=True,
+    rich_markup_mode="markdown",
+)
+app.add_typer(cookies, name="cookies")
 
 
 @contextlib.asynccontextmanager
@@ -80,3 +103,57 @@ def login(
     )
     cookies = run_async(login_on(page, profile_dir))
     stdout().print(f"udl's browser profile has {len(cookies)} cookies for {page.site_key}.")
+
+
+@cookies.command("import")
+@runs("import_cookies")
+def import_cookies(
+    ctx: typer.Context,
+    file: Annotated[
+        str | None,
+        typer.Argument(
+            help="A cookies.txt, a JSON export (a browser extension's, or Playwright's storage "
+            "state) or a Cookie header, in a file (- for stdin).",
+            show_default=False,
+        ),
+    ] = None,
+    site: Annotated[
+        str | None,
+        typer.Option(help="Only this site's cookies (a Cookie header and --from-browser need it)."),
+    ] = None,
+    from_browser: Annotated[
+        str | None,
+        typer.Option(
+            help="Copy the site's cookies from your browser instead (e.g. firefox, or "
+            "'chrome:Profile 1').",
+            show_default=False,
+        ),
+    ] = None,
+    user_agent: Annotated[
+        str | None,
+        typer.Option(
+            help="The User-Agent of the browser they came from: udl's plain requests "
+            "send it with them.",
+            show_default=False,
+        ),
+    ] = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Import cookies (a login, a check's clearance) into udl's browser profile, for its
+    fetches and downloads. Their values are never shown."""
+    text: str | None = None
+    if file is not None:
+        try:
+            text = sys.stdin.read() if file == "-" else Path(file).read_text()
+        except (OSError, UnicodeDecodeError) as e:
+            usage_error(f"Cannot read the cookies in {'stdin' if file == '-' else file}: {e}")
+    elif from_browser is None:
+        usage_error("Name a file of cookies (- for stdin), or --from-browser with --site.")
+    request = parse(
+        ImportCookiesRequest,
+        cookies=text,
+        site=site,
+        from_browser=from_browser,
+        user_agent=user_agent,
+    )
+    show(run(ctx, lambda service: service.import_cookies(request)), as_json, render.cookie_import)

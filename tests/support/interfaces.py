@@ -18,6 +18,7 @@ from typing import Any
 from pydantic import JsonValue
 
 # Local Imports
+from support.antibot import FakePerson
 from support.downloaders import FakeMedia
 from support.engine import StaticCookies, databases, registry, script, settings
 from udl.clock import Clock
@@ -64,6 +65,7 @@ class Harness:
         self.secrets = MemorySecretStore(self.settings.secrets)
         self.cookies = StaticCookies()
         self.http: HttpClientFactory | None = None  # (the services' HTTP clients, else udl's)
+        self.person: FakePerson | None = None  # (who passes checks, in a headless window)
         self.loaded: list[Settings] = []  # the settings each service was made with
 
     def service(self, loaded: Settings | None = None) -> UDLService:
@@ -80,6 +82,8 @@ class Harness:
                         "probe_order",
                         "download_dir",
                         "automations",
+                        "fetch",
+                        "browser",
                     )
                 }
             )
@@ -95,6 +99,7 @@ class Harness:
             retry=RetryPolicy(retries=0),
             lock=InstanceLock(self.tmp_path / "udl.lock"),
             progress_interval=0,
+            person=self.person,
         )
 
     def seed(self, work: Callable[[DBManager], Awaitable[object]]) -> None:

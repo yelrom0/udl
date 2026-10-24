@@ -175,6 +175,12 @@ def test_select_with_html_gives_their_html_with_absolute_links() -> None:
     assert shown.content == '<a href="https://a.example/faq.html#sizes">questions people ask</a>'
 
 
+def test_selected_table_cells_are_their_contents() -> None:
+    shown = PageText.render(docs(), PageFormat.MARKDOWN, select="th")
+
+    assert shown.content == "Size\n\nTeeth\n\nPrice"
+
+
 def test_select_that_matches_nothing_says_so() -> None:
     shown = PageText.render(docs(), PageFormat.MARKDOWN, select=".nothing")
 

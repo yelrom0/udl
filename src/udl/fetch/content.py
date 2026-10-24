@@ -39,6 +39,7 @@ _AS_IS_TYPES: Final = frozenset({"application/json", "application/xml", "applica
 _META_CHARSET: Final = re.compile(rb"""<meta[^>]+charset\s*=\s*["']?\s*([\w.:-]+)""", re.IGNORECASE)
 _META_SNIFF: Final = 4096  # (where a <meta> charset must be, as browsers look for it)
 _DROPPED: Final = "script, style, noscript, template"
+_CELLS: Final = frozenset({"td", "th"})
 # trafilatura gives up on what it finds too short to be an article: a fragment is what it is.
 _TRAFILATURA: Final = use_config()
 _TRAFILATURA.set("DEFAULT", "MIN_EXTRACTED_SIZE", "1")
@@ -218,7 +219,11 @@ class PageText:
             _absolute(node, base)
         if kind is PageFormat.HTML:
             return "\n".join(node.html or "" for node in nodes)
-        parts = [_markdown(node.html or "") for node in nodes]
+        # (A table's cell alone is what is in it: as a cell, it would be a row's piece.)
+        parts = [
+            _markdown((node.inner_html if node.tag in _CELLS else node.html) or "")
+            for node in nodes
+        ]
         if kind is PageFormat.TEXT:
             parts = [_plain(part) for part in parts]
         return "\n\n".join(part for part in parts if part)

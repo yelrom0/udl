@@ -204,6 +204,10 @@ class AuthCookies:
         browser = BrowserCookieSource.parse(spec) if spec else None
         return cls(browser=browser, profile=settings.browser.profile_dir)
 
+    def browsers_only(self) -> Self:
+        """These sources but udl's profile: the user's browser's cookies alone."""
+        return type(self)(browser=self.browser)
+
     async def for_url(self, url: str) -> list[Cookie]:
         """The cookies of url's site. A source that fails is skipped, with a warning."""
         cookies: list[Cookie] = []

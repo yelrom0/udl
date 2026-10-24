@@ -175,7 +175,7 @@ async def test_without_playwright_udls_profile_is_unavailable(
 ) -> None:
     # Playwright comes with udl's browser extra; udl works without it.
     monkeypatch.setitem(sys.modules, "playwright.async_api", None)
-    monkeypatch.delitem(sys.modules, "udl.plugins.downloaders.browser")
+    monkeypatch.delitem(sys.modules, "udl.plugins.downloaders.browser", raising=False)
     profile = tmp_path / "profile"
     profile.mkdir()
 

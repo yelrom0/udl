@@ -17,8 +17,10 @@ browser can show one.
 import os
 import secrets
 import socket
+from collections import Counter
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -30,13 +32,27 @@ from udl.core.executor import CookieSource
 from udl.core.urls import site_key
 from udl.db.manager import DBManager
 from udl.db.records import RecordQuery
-from udl.errors import ToolUnavailable
-from udl.fetch.cookies import CookieStore, SessionJar
+from udl.errors import DoesNotExist, ToolUnavailable
+from udl.fetch.content import FetchedPage, PageFormat, PageText, RenderedPage
+from udl.fetch.cookies import BrowserThenProfile, CookieStore, SessionJar
 from udl.fetch.ladder import Fetcher, FetchSites, HttpStatic, Tab
 from udl.fetch.models import (
+    BatchStatus,
+    ChallengeList,
+    FetchBatch,
+    FetchBatchInfo,
+    FetchBatchList,
+    FetchBatchRequest,
+    FetchBatchSummary,
+    FetchedItemInfo,
+    FetchedPageInfo,
+    FetchedPageRequest,
     FetchItem,
+    FetchRequest,
     ItemStatus,
+    ListFetchesRequest,
     Passed,
+    RetryFetchRequest,
     SolveReport,
     WaitingChallenge,
     WaitingSite,
@@ -235,7 +251,7 @@ class FetchKit:
         db: DBManager,
         bus: EventBus,
         clock: Clock,
-        cookies: CookieSource,
+        cookies: CookieSource,  # (the user's browser's: udl's profile's are read here)
         runner: str | None = None,
         person: Person | None = None,
         display: Callable[[], str | None] = no_display,
@@ -248,7 +264,11 @@ class FetchKit:
         self.asker = LazyAsker(self.browser, person=person, display=display)
         self.browser.window_context = lambda: self.asker.context
         self.profile = LazyProfile(self.browser)
-        self.jar = SessionJar(cookies, self.profile, writes_through=lambda: self.browser.open)
+        self.jar = SessionJar(
+            BrowserThenProfile(cookies, self.profile),
+            self.profile,
+            writes_through=lambda: self.browser.open,
+        )
         self.fetcher = Fetcher(
             fetch,
             static=HttpStatic(fetch),
@@ -269,6 +289,164 @@ class FetchKit:
             asker=self.asker,
         )
         self.cookies = CookieStore(self.profile, self.sites)
+
+    # -- the operations' work --------------------------------------------------------------
+
+    async def fetch_pages(self, request: FetchRequest, *, asks: bool) -> FetchBatchInfo:
+        """Fetch a request's URLs, waiting for them as it says (`asks`: whether a window may
+        open for the person, which an automation never asks for)."""
+        batch = await self.queue.submit(
+            request.urls,
+            request.options(),
+            person=request.person,
+            label=request.label,
+            asks=asks,
+        )
+        if request.wait:
+            batch = await self.queue.wait(batch.id, within=timedelta(seconds=request.timeout))
+        return await self.info(batch, max_chars=request.max_chars)
+
+    async def list_fetches(self, request: ListFetchesRequest) -> FetchBatchList:
+        where = {"status": request.status} if request.status is not None else {}
+        query = RecordQuery(
+            where=where, since=request.since, limit=request.limit, offset=request.offset
+        )
+        found = [
+            await self.queue.batch(batch.id)
+            for batch in await self.db.list_records(FetchBatch, query)
+        ]
+        return FetchBatchList(fetches=[_summary(batch) for batch in found])
+
+    async def get_fetch(self, request: FetchBatchRequest) -> FetchBatchInfo:
+        return await self.info(await self.queue.batch(request.id), max_chars=request.max_chars)
+
+    async def cancel_fetch(self, request: FetchBatchRequest) -> FetchBatchInfo:
+        return await self.info(await self.queue.cancel(request.id), max_chars=request.max_chars)
+
+    async def retry_fetch(self, request: RetryFetchRequest) -> FetchBatchInfo:
+        batch = await self.queue.retry(request.id, items=request.items, via=request.via)
+        return await self.info(batch, max_chars=0)
+
+    async def list_challenges(self) -> ChallengeList:
+        return ChallengeList(challenges=await self.waiting())
+
+    async def get_fetched_page(self, request: FetchedPageRequest) -> FetchedPageInfo:
+        item = await self.db.get_record(FetchItem, request.id)
+        if item is None:
+            raise DoesNotExist(
+                f"No fetched page {request.id}",
+                hint="Each URL of a fetch has an id: get_fetch (`udl fetch show`) gives them.",
+            )
+        options = (await self.queue.batch(item.batch_id)).options
+        shown_as = request.format or options.format
+        rendered = await self.rendered(
+            item,
+            shown_as,
+            main_only=options.main_only if request.main_only is None else request.main_only,
+            select=request.select if request.select is not None else options.select,
+        )
+        content = rendered.content if rendered is not None else None
+        end = request.offset + request.max_chars
+        return FetchedPageInfo(
+            id=item.id,
+            batch=item.batch_id,
+            url=item.url,
+            status=item.status,
+            via=item.via,
+            title=item.title,
+            final_url=item.final_url,
+            http_status=item.http_status,
+            content_type=item.content_type,
+            charset=item.charset,
+            size=item.size,
+            truncated=item.truncated,
+            error=item.error,
+            note=_note(item, rendered),
+            attempts=item.attempts,
+            format=shown_as,
+            content=content[request.offset : end] if content is not None else None,
+            offset=request.offset,
+            length=len(content) if content is not None else None,
+            next_offset=end if content is not None and len(content) > end else None,
+        )
+
+    async def rendered(
+        self,
+        item: FetchItem,
+        shown_as: PageFormat,
+        *,
+        main_only: bool,
+        select: str | None,
+    ) -> RenderedPage | None:
+        """A URL's page, as `shown_as` says, from what was kept of it (None when it has none)."""
+        body = await self.body(item)
+        if body is None:
+            return None
+        page = FetchedPage(
+            url=item.url,
+            final_url=item.final_url or item.url,
+            status=item.http_status or 200,
+            content_type=item.content_type,
+            charset=item.charset,
+            title=item.title,
+            headers=item.headers,
+            via=item.via.value if item.via is not None else "static",
+            body=body,
+            truncated=item.truncated,
+        )
+        return PageText.render(page, shown_as, main_only=main_only, select=select)
+
+    async def body(self, item: FetchItem) -> bytes | None:
+        """The body kept of a URL's page, as it was read (None when it has none)."""
+        if item.status is not ItemStatus.SUCCEEDED or item.body is None:
+            return None
+        try:
+            return await self.store.read(item.body)
+        except OSError:  # (deleted meanwhile)
+            return None
+
+    async def info(self, batch: FetchBatch, *, max_chars: int) -> FetchBatchInfo:
+        """A batch as an answer: each URL with its page (at most `max_chars` of it, and at most
+        [fetch] max_answer characters of pages in all)."""
+        items = await self.queue.items(batch.id)
+        options = batch.options
+        budget = self.settings.max_answer
+        shown: list[FetchedItemInfo] = []
+        for item in items:
+            info = _item(item)
+            rendered = (
+                await self.rendered(
+                    item, options.format, main_only=options.main_only, select=options.select
+                )
+                if max_chars
+                else None
+            )
+            if rendered is not None and rendered.content is not None:
+                content = rendered.content[:max_chars]
+                if len(content) > budget:
+                    info = info.model_copy(update={"left_out": True})
+                else:
+                    budget -= len(content)
+                    cut = len(rendered.content) > max_chars
+                    info = info.model_copy(
+                        update={"content": content, "next_offset": max_chars if cut else None}
+                    )
+            if rendered is not None and rendered.note and info.note is None:
+                info = info.model_copy(update={"note": rendered.note})
+            shown.append(info)
+        return FetchBatchInfo(
+            id=batch.id,
+            label=batch.label,
+            status=batch.status,
+            person=batch.person,
+            format=options.format,
+            counts=batch.counts,
+            created_at=batch.created_at,
+            finished_at=batch.finished_at,
+            runner=batch.runner,
+            items=shown,
+            hint=_hint(batch, items),
+        )
 
     async def waiting(self, sites: Sequence[str] | None = None) -> list[WaitingChallenge]:
         """The sites whose URLs wait for a person (or only `sites`), in any udl, by site."""
@@ -300,9 +478,15 @@ class FetchKit:
             for site, items in sorted(grouped.items())
         }
 
-    async def solve(self, sites: Sequence[str] | None = None) -> SolveReport:
+    async def solve(
+        self,
+        sites: Sequence[str] | None = None,
+        *,
+        told: Callable[[str], None] | None = None,
+    ) -> SolveReport:
         """Show the person the checks that wait now (or only `sites`'), in one window here,
-        whichever udl's fetches wait for them. Raises ToolUnavailable when no window can open."""
+        whichever udl's fetches wait for them, telling `told` of each site passed. Raises
+        ToolUnavailable when no window can open."""
         waiting = await self._waiting_items(sites)
         if not waiting:
             return SolveReport(passed=[], waiting=[])
@@ -316,11 +500,78 @@ class FetchKit:
             WaitingSite(site=site, url=items[0].url, item=items[0].id, kind=items[0].challenge)
             for site, items in waiting.items()
         ]
-        passed = await self.asker.ask(shown, self.queue.passed)
+
+        async def passed(waiting: WaitingSite, page: FetchedPage) -> None:
+            await self.queue.passed(waiting, page)
+            if told is not None:
+                told(waiting.site)
+
+        done = await self.asker.ask(shown, passed)
         still = await self._waiting_items(sites)
-        return SolveReport(passed=passed, waiting=list(still))
+        return SolveReport(passed=done, waiting=list(still))
 
     async def close(self) -> None:
         """Stop the fetches this udl runs (they are left interrupted), and close its browser."""
         await self.queue.shutdown()
         await self.browser.close()
+
+
+def _item(item: FetchItem) -> FetchedItemInfo:
+    return FetchedItemInfo(
+        id=item.id,
+        url=item.url,
+        status=item.status,
+        via=item.via,
+        title=item.title,
+        final_url=item.final_url,
+        http_status=item.http_status,
+        content_type=item.content_type,
+        size=item.size,
+        challenge=item.challenge,
+        error=item.error,
+        note=item.note,
+    )
+
+
+def _summary(batch: FetchBatch) -> FetchBatchSummary:
+    return FetchBatchSummary(
+        id=batch.id,
+        label=batch.label,
+        status=batch.status,
+        counts=batch.counts,
+        created_at=batch.created_at,
+        finished_at=batch.finished_at,
+    )
+
+
+def _note(item: FetchItem, rendered: RenderedPage | None) -> str | None:
+    if item.note is not None:
+        return item.note
+    return rendered.note if rendered is not None else None
+
+
+def _pages(count: int) -> str:
+    return "1 page" if count == 1 else f"{count} pages"
+
+
+def _hint(batch: FetchBatch, items: list[FetchItem]) -> str | None:
+    """What to do about a batch's URLs that are not done."""
+    waiting = [item for item in items if item.status is ItemStatus.CHALLENGE]
+    if waiting:
+        sites = Counter(item.site for item in waiting)
+        kinds = sorted({str(item.challenge) for item in waiting if item.challenge})
+        check = f"a {' or '.join(kinds)} check" if kinds else "an anti-bot check"
+        where = " and ".join(f"{_pages(n)} on {site}" for site, n in sites.items())
+        windowed = batch.person.value == "ask" and not any(item.note for item in waiting)
+        how = (
+            f"wait for the user to pass {check} in udl's browser window"
+            if windowed
+            else f"wait for someone to pass {check} (`udl fetch solve`, solve_challenges, on "
+            "udl's machine)"
+        )
+        return f"{where[0].upper()}{where[1:]} {how}. Call get_fetch with this id for them later."
+    if any(item.status in (ItemStatus.QUEUED, ItemStatus.RUNNING) for item in items):
+        return "Some pages are still being read: call get_fetch with this id for them later."
+    if batch.status is BatchStatus.INTERRUPTED:
+        return "The udl that ran this fetch stopped before it ended: retry_fetch runs the rest."
+    return None
