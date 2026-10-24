@@ -61,7 +61,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 11.6 Source filters: criteria only the integration can check (e.g. a Gmail search), checked after the generic filter
   - [x] 11.7 Account operations via CLI, API and MCP
 
-- [ ] **Phase 12: Page fetcher (`udl fetch`)**
+- [x] **Phase 12: Page fetcher (`udl fetch`)**
   - [x] 12.1 Anti-bot fixture site in `tests/support/`: pages that turn plain clients away with a 500, a Cloudflare-style check a person passes (its clearance bound to the User-Agent), a hard block, a 429, a page built by JavaScript, a login wall; `FakePerson`
   - [x] 12.2 Recognising challenges: a table of markers per kind (Cloudflare, Turnstile, hCaptcha, reCAPTCHA, DataDome, PerimeterX, AWS WAF, Imperva, Sucuri, Akamai); a check a person can pass vs a block
   - [x] 12.3 Page content: the main content as Markdown (or text, or the HTML), links made absolute, `select`, charsets; other types kept as files
@@ -70,7 +70,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 12.6 Batches and the queue: `FetchBatch` / `FetchItem` records, a lane per site with limits and delays, one browser lane, a site's challenge holding its other URLs, cancel, retry, recovery, retention; `udl.fetch.challenge` and `udl.fetch.finished`
   - [x] 12.7 Passing challenges: one headed window on udl's profile, a tab per waiting site; `ask` / `wait` / `fail`; the clearance kept; `udl fetch solve` from any udl process
   - [x] 12.8 Operations (fetch, batches, pages, challenges, cookies) via CLI, API and MCP; `udl fetch <url>…`
-  - [ ] 12.9 End to end: an MCP client's batch over three fixture hosts, each check passed once
+  - [x] 12.9 End to end: an MCP client's batch over three fixture hosts, each check passed once
 
 - [ ] **Phase 13: Passing for a person: stealth, solvers and sign-ins**
   - [ ] 13.1 Bot checks in the fixture site: a page running the usual automation and headless checks, a TLS listener measuring JA4 and HTTP/2 fingerprints, checkbox / press-and-hold / audio widgets that want a person's input, a login with a TOTP step and a lockout
@@ -431,7 +431,7 @@ Phases 0–7 rows are in [planning/01-core.md](planning/01-core.md#feature-matri
 | set account options | `udl accounts set <account> -O KEY=VALUE` | `PATCH /accounts/{account}` | `set_account` |
 | check account | `udl accounts check <account>` | `POST /accounts/{account}/check` | `check_account` |
 | disconnect account | `udl accounts rm <account>` | `DELETE /accounts/{account}` | `disconnect_account` |
-| fetch pages | `udl fetch <url>… [--via V] [--format F] [--select CSS] [--person P] [--as ACCOUNT] [--steps FILE] [--out DIR]` | `POST /fetches` | `fetch_pages` |
+| fetch pages | `udl fetch <url>…` (`udl fetch get`) `[--via V] [--format F] [--select CSS] [--person P] [--as ACCOUNT] [--steps FILE] [--out DIR]` | `POST /fetches` | `fetch_pages` |
 | list fetches | `udl fetch list [--status S]` | `GET /fetches` | `list_fetches` |
 | show a fetch | `udl fetch show <batch>` | `GET /fetches/{id}` | `get_fetch` |
 | a fetched page | `udl fetch page <id> [--format F] [--offset N]` | `GET /fetches/pages/{id}` | `get_fetched_page` |
@@ -2541,6 +2541,133 @@ $ udl browser cookies import ~/Downloads/cookies.txt --user-agent "Mozilla/5.0 (
 $ udl fetch challenges          # sites waiting for you (a batch in `wait` mode, or run by `udl serve`)
 $ udl fetch solve               # one window, a tab per site
 ```
+
+### Decisions made while building Phase 12
+
+Where the build differs from a card, it is on purpose, as below.
+
+- **The fixture site (12.1):** `AntiBotSite` is a Starlette app on uvicorn (a dev dependency now,
+  already in the lock through `mcp`), on one port of both 127.0.0.1 and ::1, since `*.localhost`
+  resolves to both; its hosts are `a`, `b` and `c.localhost`. Besides the card's paths it has
+  `/auto-checked/…` (the check, pressed by its own script: one that clears itself),
+  `/notes.txt` and `/cp1252-meta`. Every HTML page reports through a beacon that it ran its
+  JavaScript (`Visit.js`). `issue_session()` and `cleared(user_agent)` stand in for signing in
+  and for passing the check elsewhere; `rotate_sessions` makes `/members/` rotate its session.
+  `FakePerson(manner).attend(tab)` passes, ignores (`Manner.IGNORES`) or closes the window.
+- **Challenges (12.2):** the markers come from what the vendors' pages are known to carry (no
+  vendor's page is copied): Cloudflare's documented `cf-mitigated: challenge`, its check page's
+  `/cdn-cgi/challenge-platform/…orchestrate…` script (normal pages may load the platform's bot
+  detection script, which does not count), and its block ("Attention Required! | Cloudflare",
+  not passable); Sucuri's block too; AWS WAF's `gokuProps`. Two more places to look:
+  `cookie` (the names a response sets) and `text` (the words of a page with little else, 80 at
+  most), which Akamai's "Reference #" is (it is text, not markup). `unknown` counts only on a
+  page with little else, its title included, so an article about CAPTCHAs is never one.
+  `detect(…, markers=)` takes another table.
+- **Content (12.3):** trafilatura (2.3.1, October 2026: not stalled; its Markdown keeps links,
+  tables and code) gives the main content, and markdownify converts the whole page and what
+  `select` matches; both are typed. A page without a `<main>`, `<article>` or `role=main` is
+  framed in a `<main>` first: trafilatura drops such a page's headings otherwise (its recovery
+  of loose text leaves headings out by design). A lone `th`/`td` converts as its contents. HTML
+  that says no charset and is not UTF-8 is read as windows-1252, as browsers read it
+  (charset_normalizer guessed cp1250 for French); other text is guessed. `raw` is the body as
+  served, decoded (the bytes themselves only in the CLI's `--out`). `FetchedPage.truncated` says
+  a body was cut at `max_page`; sizes in the config are a `ByteSize` (`10MiB`), whose schema
+  takes either form (MCP's output schemas are in validation mode).
+- **The ladder (12.4):** `Fetcher(settings, static=, jar=, tabs=, sites=, clock=)`: the rungs'
+  tools are protocols (`StaticClient`, `Tabs`/`Tab`, `SiteJar`) seen through a `Snapshot`, so
+  its unit tests run fake rungs on a `FakeClock` and its integration tests real ones on the
+  system's clock (a real browser keeps real time).
+  - The cookies rung is skipped for a site with neither cookies nor an imported User-Agent. Other
+    4xx climb like a 401; a third 429 is the end (`RateLimited`). A `wait_for` that never comes
+    is `ExtractionFailed`, unless the page is a check.
+  - A JavaScript shell is a page with scripts and no words, or an app's root with nothing in it
+    (`#root`, `#app`, `#__next`…), or fewer than 20 words around scripts that outweigh them
+    twenty times (and 1000 characters; a script from a file counts 2000), or an "enable
+    JavaScript" notice with fewer than 80 words. (A short page with any script was too eager,
+    and the hand check's quotes.toscrape.com/js/ showed words-only was too lax.)
+  - Learning: `learned_at` is set when `start_at` changes or a stale site is relearned, so
+    `relearn_after` comes round; a rung the caller names teaches nothing unless the page came
+    higher. The person's rung is learned as `browser`.
+  - The static rungs send a browser's headers (`BROWSER_HEADERS`; Phase 13 makes the language
+    the user's) and the browser's own User-Agent once it is known (Chromium's, `HeadlessChrome`
+    made `Chrome`), else udl's pinned one.
+- **Cookies (12.5):**
+  - `chromium()` keeps a profile's session cookies when it closes, for 30 days, as Chrome does
+    when it continues where it left off. Chromium forgets them otherwise, so an imported Cookie
+    header, a clearance without an expiry, or a login that a session cookie holds (`udl browser
+    login` included) vanished as soon as udl's browser closed.
+  - The profile's lock across processes is `<profile>.lock` beside it; a udl that waits says so
+    (a warning).
+  - The cookies rung reads its cookies through `BrowserThenProfile` (the user's browser's, then
+    the profile's, `AuthCookies.browsers_only()` giving the first), and `AuthCookies` reads the
+    profile through `reader`, the fetcher's open browser, so downloads do not wait for it.
+  - `SessionJar` keys removals by a domain's exact spelling (a cookie the site sets again as
+    `example.com` replaces the imported `.example.com`), writes what it kept before the browser
+    rung opens the profile and when a batch ends (at once while the lane is open), and reads a
+    site's cookies afresh after the browser has been on it.
+  - `CookieStore` does the three cookie operations; a Cookie header's cookies are for
+    `.<site key>`; `to_cookies_txt()` exists for the round trip.
+- **The queue (12.6):**
+  - Holds are per site, and only a `wait` or `ask` batch makes one: a `fail` batch's other URLs
+    of the site fail at once without one, and tell nothing.
+  - udl.fetch.challenge's dedupe key is the hold's start, its `waiting` the site's URLs not
+    ended in this udl, and its `mode` what was done (`ask` only when a window shows it).
+    udl.fetch.finished's is `fetch:<id>:<finished_at>`, as a retried batch ends again.
+  - `wait()` returns when a batch ends, or when it only waits and no window shows it.
+  - Retention runs every hour while a queue runs, and at start alongside `recover()` when this
+    udl is alone (`UDLService.start`); ended batches leave the queue's memory, their records
+    stay.
+  - `PageStore` has blocking `put`/`get`/`drop` beside the threaded ones (a `FakeClock` cannot
+    wait for a thread). A URL another udl's window passed is noticed within `recheck` (5 s);
+    one whose `challenged_at` is older than `challenge_expiry` fails.
+  - The records are `runtime` and never synced; the events' data models are in
+    `udl.automations.events`. `ChallengeRequired(AuthRequired)` answers 409.
+  - The browser lane is `BrowserLane` in `udl.fetch.browser`, and `FetchKit` (`udl.fetch.kit`,
+    the service's `fetches`) builds the rest, importing Playwright only when a page needs the
+    browser (`LazyBrowser`, `LazyProfile`, `LazyAsker`). A runner is named host:process:random.
+- **The window (12.7):** `ChallengeWindow` and `WindowAsker` are in `udl.fetch.window`.
+  - The lane and the window send one User-Agent (`browser_user_agent()`: asked of a Chromium of
+    its own once a process, without "HeadlessChrome"), so a clearance passed in the headed
+    window works in the headless lane: one bound to the User-Agent would not carry over
+    otherwise.
+  - A site has passed when its tab is on the site, `readyState` is complete, its network has
+    been quiet for 2 s, its status is under 400 and `detect()` finds nothing.
+  - Whether a window can open is the kit's to say (`no_display()`, or a `person` given: tests'
+    `FakePerson`, through `UDLService(person=)`, in a headless window). Without one, the URL's
+    note says why, and `solve` raises `ToolUnavailable`, hinting at a desktop session.
+  - The browser that has the profile open (the lane, else the window) is what the profile's
+    cookies are read through. `FetchQueue.passed()` writes another udl's URL to its records, and
+    `Fetcher.cleared()` sets `cleared_at` and starts the site in the browser.
+- **Operations (12.8):**
+  - `fetch_pages`' command is `udl fetch get` (the parity test's `MATRIX` row), which `udl fetch
+    <url>…` stands for (`FetchGroup`). `udl fetch solve` is written by hand too, to say each
+    site as it passes.
+  - `udl fetch get`'s options: `-F/--format`, `--whole` (not only the main content), `-H 'NAME:
+    VALUE'`, `-i FILE`, `-o/--out DIR` (`<site>/<name>.<md|txt|html>`, or the served type for
+    raw, never overwriting) and `--timeout`. One page goes to stdout (raw: its bytes); it exits 1
+    unless every URL was read.
+  - A URL left out of an answer by `max_answer` has `left_out` (`truncated` is the
+    page's, cut at `max_page`). `list_fetches` gives summaries, without URLs. `fetch_pages`
+    answers 200. `import_cookies` answers `ImportedCookies` (each site's count, and whether a
+    User-Agent was kept), `list_cookies` a `CookieList`.
+  - The MCP server answers arguments a request's own checks refuse (secret headers, say) as a
+    tool error saying why, rather than "Error executing tool"; its instructions describe the
+    fetcher.
+- **Fixed on the way:** `uv tool install --editable '.[browser]' --reinstall` resolves afresh
+  (it took Playwright 1.64, which wants another Chromium), so the global udl is installed with
+  the lock's versions as constraints: `uv tool install --editable '.[browser]' --reinstall -c
+  <(uv export --frozen --no-hashes --extra browser --no-dev --no-emit-project)`. A test of the
+  browser extra's absence depended on another test importing the browser module first.
+- **The phase's hand check**, on 2026-10-25, on a scratch config: example.com was read
+  plainly; quotes.toscrape.com/js/ (an empty shell to a plain request) was read in the browser,
+  quotes and all, once the JavaScript-shell rule was fixed (above); scrapingcourse.com's
+  Cloudflare challenge was recognised and, as Playwright's headless Chromium did not clear it
+  within its grace, waited for a person, listed by `udl fetch challenges` from another udl,
+  while `udl fetch solve` there said to run it in a desktop session; and an MCP client on a
+  real `udl mcp`, whose own fetch of quotes.toscrape.com/js/ had no quotes, got them through
+  `fetch_pages`. **Not done:** passing a real check in the window (this session had no
+  display): the user's to run, as `udl fetch <a challenged site's URLs> <other sites' URLs>`
+  with a display, then once more.
 
 ---
 
