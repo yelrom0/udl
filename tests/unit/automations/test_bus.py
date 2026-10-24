@@ -22,19 +22,25 @@ from uuid import UUID, uuid4
 import pytest
 
 # Local Imports
+from support.accounts import Fakes, connected, with_fake_integration
+from support.actions import fake_action
 from support.clock import T0, FakeClock
 from support.engine import databases, registry
 from support.engine import settings as make_settings
 from support.interfaces import Harness
 from udl.automations.bus import BusNotice, EventBus, NewEvent, NoticeKind
 from udl.automations.events import CurrentRun, EventRecord, EventStatus, EventTypes, current_run
+from udl.automations.models import SetSubscriptionRequest
 from udl.automations.runs import ActionRun, RunStatus
 from udl.automations.subscriptions import Subscription
 from udl.config import AutomationsSettings
+from udl.core.service import UDLService
 from udl.db.manager import DBManager
 from udl.db.records import RecordQuery
-from udl.errors import ConfigError
+from udl.errors import ConfigError, NetworkError
 from udl.plugins.actions.base import Action
+from udl.plugins.integrations.base import Account, ConnectMethod
+from udl.plugins.registry import ACTIONS
 
 
 @pytest.fixture
@@ -486,3 +492,209 @@ async def test_the_bus_remembers_a_bounded_number_of_events_it_told_of(
         EventStatus.PENDING,
         EventStatus.DISPATCHED,
     ]
+
+
+# ---------------------------------------------------------------------------------------------
+# Source filters
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fakes(tmp_path: Path) -> tuple[Harness, Fakes]:
+    harness = Harness(tmp_path)
+    harness.registry.register(ACTIONS, fake_action("fake"))
+    return harness, with_fake_integration(harness)
+
+
+@pytest.fixture
+async def service(fakes: tuple[Harness, Fakes]) -> AsyncIterator[UDLService]:
+    async with fakes[0].service() as found:
+        await found.db.upsert_record(Action(name="hello", plugin="fake"))
+        yield found
+
+
+async def thing(service: UDLService, account: Account, text: str) -> EventRecord:
+    published = await service.bus.publish(
+        NewEvent(
+            type="fake.thing.happened",
+            data={"thing": text, "text": text},
+            source="fake",
+            account_id=account.id,
+            dedupe_key=f"{account.id}:{text}",
+        )
+    )
+    assert published is not None
+    return published
+
+
+async def save_subscription(service: UDLService, **fields: Any) -> None:
+    await service.set_subscription(
+        SetSubscriptionRequest.model_validate(
+            {"name": "x-things", "events": ["fake.thing.happened"], "actions": ["hello"], **fields}
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("source_filter", "problem"),
+    [
+        ({"contains": 1}, "contains"),
+        ({"contains": "x", "more": True}, "more"),
+        ({}, "contains"),
+    ],
+)
+async def test_a_source_filter_is_checked_by_its_integration_when_saved(
+    service: UDLService, source_filter: dict[str, Any], problem: str
+) -> None:
+    with pytest.raises(ConfigError, match=problem):
+        await save_subscription(service, source_filter=source_filter)
+
+
+async def test_a_source_filter_s_events_are_checked_by_their_integration(
+    service: UDLService, fakes: tuple[Harness, Fakes]
+) -> None:
+    work = await connected(service, method=ConnectMethod.NONE, options={"source": "w"})
+    await save_subscription(service, source_filter={"contains": "x"})
+
+    wanted = await service.bus.dispatch(await thing(service, work, "has x"))
+    unwanted = await service.bus.dispatch(await thing(service, work, "has none"))
+
+    assert [run.status for run in wanted] == [RunStatus.QUEUED]
+    assert unwanted == []
+    assert fakes[1].plugin.filtered == ["has x", "has none"]
+
+
+async def test_a_source_filter_is_checked_after_the_filter(
+    service: UDLService, fakes: tuple[Harness, Fakes]
+) -> None:
+    work = await connected(service, method=ConnectMethod.NONE, options={"source": "w"})
+    await save_subscription(
+        service, filter='text startswith "has"', source_filter={"contains": "x"}
+    )
+
+    await service.bus.dispatch(await thing(service, work, "no x"))
+
+    assert fakes[1].plugin.filtered == []  # (the filter said no first)
+
+
+async def test_a_source_filter_s_answer_is_kept_for_its_event(
+    service: UDLService, fakes: tuple[Harness, Fakes]
+) -> None:
+    work = await connected(service, method=ConnectMethod.NONE, options={"source": "w"})
+    await save_subscription(service, source_filter={"contains": "x"})
+    event = await thing(service, work, "has x")
+
+    await service.bus.dispatch(event)
+    again = await service.bus.dispatch(event, replay=True)
+
+    assert len(again) == 1
+    assert fakes[1].plugin.filtered == ["has x"]
+
+
+async def test_a_source_filter_that_cannot_be_checked_skips_the_runs(
+    service: UDLService, fakes: tuple[Harness, Fakes]
+) -> None:
+    work = await connected(service, method=ConnectMethod.NONE, options={"source": "w"})
+    await save_subscription(service, source_filter={"contains": "x"})
+    fakes[1].plugin.source_filter_error = NetworkError("The service is down")
+
+    [run] = await service.bus.dispatch(await thing(service, work, "has x"))
+
+    assert run.status is RunStatus.SKIPPED
+    assert run.skipped_reason == "source filter failed: The service is down"
+
+
+async def test_a_source_filter_is_not_guessed_for_an_event_without_its_account(
+    service: UDLService,
+) -> None:
+    await save_subscription(service, source_filter={"contains": "x"})
+    gone = Account(integration="fake", name="gone", method=ConnectMethod.NONE)
+
+    [run] = await service.bus.dispatch(await thing(service, gone, "has x"))
+
+    assert run.skipped_reason is not None
+    assert run.skipped_reason.startswith("source filter failed: the event's account")
+
+
+async def test_a_bus_that_no_integration_helps_skips_source_filtered_runs(
+    db: DBManager, clock: FakeClock
+) -> None:
+    bus = bus_on(db, clock)
+    await action(db)
+    await subscribe(db, events=["custom.hello"], source_filter={"contains": "x"})
+    event = await bus.publish(hello())
+    assert event is not None
+
+    [run] = await bus.dispatch(event)
+
+    assert run.skipped_reason == "source filter failed: nothing here checks source filters"
+
+
+async def test_a_source_filter_s_answers_are_kept_for_the_latest_events_only(
+    service: UDLService, fakes: tuple[Harness, Fakes], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("udl.automations.bus._REMEMBERED", 1)
+    work = await connected(service, method=ConnectMethod.NONE, options={"source": "w"})
+    await save_subscription(service, source_filter={"contains": "x"})
+    first, second = await thing(service, work, "x 1"), await thing(service, work, "x 2")
+    await service.bus.dispatch(first)
+    await service.bus.dispatch(second)
+
+    await service.bus.dispatch(first, replay=True)
+
+    assert fakes[1].plugin.filtered == ["x 1", "x 2", "x 1"]  # (asked again: forgotten)
+
+
+@pytest.mark.parametrize(
+    ("source_filter", "problem"),
+    [
+        ({"contains": 1}, "it is not valid: contains"),  # (as saved before it changed)
+        ({"contains": "x"}, "The plain integration has no source filter"),
+    ],
+)
+async def test_a_source_filter_its_integration_does_not_take_skips_the_runs(
+    tmp_path: Path, source_filter: dict[str, Any], problem: str
+) -> None:
+    harness = Harness(tmp_path)
+    harness.registry.register(ACTIONS, fake_action("fake"))
+    plain = with_fake_integration(harness, "plain").plugin
+    if "no source filter" in problem:
+        plain.source_filter_model = None
+    async with harness.service() as service:
+        await service.db.upsert_record(Action(name="hello", plugin="fake"))
+        work = await connected(
+            service, integration="plain", method=ConnectMethod.NONE, options={"source": "w"}
+        )
+        await service.db.upsert_record(  # (as saved before it changed)
+            Subscription(
+                name="x", events=["plain.*"], source_filter=source_filter, actions=["hello"]
+            )
+        )
+        event = await service.bus.publish(
+            NewEvent(
+                type="plain.thing.happened",
+                data={"thing": "t", "text": "x"},
+                account_id=work.id,
+            )
+        )
+        assert event is not None
+
+        [run] = await service.bus.dispatch(event)
+
+    assert run.skipped_reason is not None
+    assert problem in run.skipped_reason
+
+
+async def test_a_source_filter_for_an_integration_without_one_is_refused(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    plain = with_fake_integration(harness, "plain").plugin
+    plain.source_filter_model = None
+    async with harness.service() as service:
+        await service.db.upsert_record(Action(name="hello", plugin="fake"))
+
+        with pytest.raises(ConfigError, match="The plain integration has no source filter"):
+            await service.set_subscription(
+                SetSubscriptionRequest(
+                    name="x", events=["plain.*"], source_filter={"contains": "x"}, actions=["hello"]
+                )
+            )

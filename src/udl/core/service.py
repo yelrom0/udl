@@ -233,6 +233,7 @@ class UDLService:
             self.clock,
             settings.automations,
             account_names=self.accounts.names,
+            source_filter=self.integrations.source_filter_matches,
         )
         self.runner = ActionRunner(self)
         self.scheduler = Scheduler(self.db, self.bus, self.clock, settings.automations)

@@ -216,7 +216,8 @@ class Automations:
         )
         actions = await self._actions()
         types = self.service.event_types
-        check_subscription(subscription, types, actions)
+        checks = self.service.integrations.source_filter_checks()
+        check_subscription(subscription, types, actions, source_filters=checks)
         for name in subscription.actions:
             await self._check_action(actions[name], types_of(subscription, types))
         stored = await self.service.db.upsert_record(subscription)

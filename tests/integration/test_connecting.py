@@ -671,3 +671,17 @@ def test_the_cli_refuses_tokens_on_stdin_that_are_not_json(harness: Harness, fak
 
     assert result.exit_code == 2
     assert "The tokens on stdin are not JSON" in result.output
+
+
+async def test_closing_udl_stops_waiting_for_an_authorization(
+    harness: Harness, fakes: Fakes
+) -> None:
+    async with harness.service() as service:
+        connection = await service.connect_account(
+            ConnectAccountRequest(integration="fake", name="work")
+        )
+        assert connection.authorization_url is not None
+
+    async with harness.service() as again:
+        account = await again.accounts.get("fake:work")
+    assert account.status is AccountStatus.PENDING  # (it expires in its time)

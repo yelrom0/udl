@@ -34,10 +34,11 @@ ReauthRequired, nothing in between.
 
 # System Imports
 import asyncio
+import functools
 import logging
 import re
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Final, NoReturn, Self
@@ -49,7 +50,8 @@ from pydantic import BaseModel, SecretStr, ValidationError
 
 # Local Imports
 from udl.automations.bus import NewEvent
-from udl.automations.events import AccountEventData
+from udl.automations.events import AccountEventData, EventRecord
+from udl.automations.subscriptions import Subscription
 from udl.core.operations import valid_name
 from udl.db.models import JsonObject
 from udl.db.records import RecordQuery
@@ -178,6 +180,34 @@ class Integrations:
         changed)."""
         self._made.pop(name, None)
 
+    def source_filter_checks(self) -> dict[str, Callable[[JsonObject], None]]:
+        """What checks a subscription's source filter, by the integration whose events it is
+        for: its source_filter_model (raising ConfigError for what it does not take)."""
+        return {
+            name: functools.partial(_check_source_filter, self.plugin(name))
+            for name in self.names()
+        }
+
+    async def source_filter_matches(self, subscription: Subscription, event: EventRecord) -> bool:
+        """Whether `event` passes `subscription`'s source filter, as its account's integration
+        says. Raises what keeps it from saying (the event has no account, the filter is not
+        valid any more, the integration fails)."""
+        accounts = self._service.accounts
+        account = await accounts.name_of(event.account_id)
+        found = None if account is None else await accounts.get(account)
+        if found is None:
+            raise ConfigError("the event's account is not connected (any more)")
+        integration = await self.get(found.integration)
+        model = integration.source_filter_model
+        if model is None:
+            raise PluginError(f"The {integration.name} integration has no source filter")
+        try:
+            checked = model.model_validate(subscription.source_filter)
+        except ValidationError as e:
+            raise ConfigError(f"it is not valid: {_problems(e)}") from e
+        handle = await accounts.handle(found)
+        return await integration.source_filter_matches(handle, event.event(), checked)
+
 
 # ---------------------------------------------------------------------------------------------
 # Accounts
@@ -207,17 +237,15 @@ class AccountManager:
         self._service = service
         self._locks: defaultdict[UUID, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._flows: dict[str, _Flow] = {}  # (the authorizations waited for, by their state)
-        self._listening: dict[UUID, asyncio.Task[Completed]] = {}  # (by account id)
+        self._listening: dict[UUID, _Listening] = {}  # (by account id)
         self.callback_url: str | None = None
         """Where OAuth authorizations send the browser back to, when this udl serves HTTP (`udl
         serve`): its /accounts/callback. None: a listener on 127.0.0.1, in this process."""
 
     async def close(self) -> None:
         """Stop waiting for the authorizations this process listens for."""
-        for task in self._listening.values():
-            task.cancel()
-        await asyncio.gather(*self._listening.values(), return_exceptions=True)
-        self._listening.clear()
+        for account_id in list(self._listening):
+            await self._stop_listening(account_id)
 
     async def find(self, integration: str, name: str) -> Account | None:
         """The account called `name` of `integration`, if there is one."""
@@ -436,11 +464,11 @@ class AccountManager:
     async def finished(self, account_id: UUID) -> Account:
         """The account this process listens for the authorization of, once it is connected.
         Raises what connecting it failed with, and DoesNotExist when nothing is listened for."""
-        task = self._listening.get(account_id)
-        if task is None:
+        listening = self._listening.get(account_id)
+        if listening is None:
             raise DoesNotExist("This udl is not waiting for that account's authorization")
         try:
-            return (await task).account
+            return (await listening.task).account
         finally:
             self._listening.pop(account_id, None)
 
@@ -471,7 +499,7 @@ class AccountManager:
             if listener is not None:
                 await listener.close()
             raise
-        self._forget(pending.id)  # (an authorization started before for it is no more)
+        await self._forget(pending.id)  # (an authorization started before for it is no more)
         flow = _Flow(
             account_id=pending.id,
             ref=pending.ref,
@@ -487,7 +515,7 @@ class AccountManager:
         if listener is not None:
             task = asyncio.create_task(self._listen(listener, flow), name=f"connecting {flow.ref}")
             task.add_done_callback(_retrieved)
-            self._listening[pending.id] = task
+            self._listening[pending.id] = _Listening(task, listener)
         return Connection(account=AccountInfo.of(pending), authorization_url=authorization.url)
 
     async def _listen(self, listener: LoopbackRedirect, flow: _Flow) -> Completed:
@@ -502,14 +530,19 @@ class AccountManager:
             await listener.close()
         return await self.complete(callback)
 
-    def _forget(self, account_id: UUID) -> None:
+    async def _forget(self, account_id: UUID) -> None:
         """Forget the authorizations waited for for an account."""
         for state, flow in list(self._flows.items()):
             if flow.account_id == account_id:
                 del self._flows[state]
-        task = self._listening.pop(account_id, None)
-        if task is not None:
-            task.cancel()
+        await self._stop_listening(account_id)
+
+    async def _stop_listening(self, account_id: UUID) -> None:
+        listening = self._listening.pop(account_id, None)
+        if listening is not None:
+            listening.task.cancel()
+            await asyncio.wait([listening.task])
+            await listening.listener.close()  # (the task's own, unless it never ran)
 
     async def _connected(
         self,
@@ -568,7 +601,7 @@ class AccountManager:
         until = account.pending_until
         if until is None or until > self._service.clock.now():
             return account
-        self._forget(account.id)
+        await self._forget(account.id)
         return await self._failing(
             account,
             NotAllowed(
@@ -634,6 +667,14 @@ class _Flow:
 
 
 @dataclass(frozen=True)
+class _Listening:
+    """A listener this process waits on for an authorization's answer, and what waits."""
+
+    task: asyncio.Task[Completed]
+    listener: LoopbackRedirect
+
+
+@dataclass(frozen=True)
 class Completed:
     """An account an OAuth authorization connected, and where the browser goes next."""
 
@@ -678,6 +719,23 @@ def _problems(error: ValidationError) -> str:
         f"{'.'.join(map(str, problem['loc'])) or 'it'}: {problem['msg']}"
         for problem in error.errors()
     )
+
+
+def _check_source_filter(plugin: type[Integration[Any, Any]], source_filter: JsonObject) -> None:
+    """Raise ConfigError when `plugin` would not take `source_filter`."""
+    model = plugin.source_filter_model
+    if model is None:
+        raise ConfigError(
+            f"The {plugin.name} integration has no source filter",
+            hint="Leave the source filter out (a filter on the events' data still works).",
+        )
+    try:
+        model.model_validate(source_filter)
+    except ValidationError as e:
+        raise ConfigError(
+            f"The source filter is not a {plugin.name} one: {_problems(e)}",
+            hint=f"Its fields: {', '.join(model.model_fields)}.",
+        ) from e
 
 
 def _again(account: Account) -> str:

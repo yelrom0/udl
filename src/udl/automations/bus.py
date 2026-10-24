@@ -46,7 +46,7 @@ from udl.config import AutomationsSettings
 from udl.db.manager import DBManager
 from udl.db.models import JsonObject
 from udl.db.records import RecordQuery
-from udl.errors import ConfigError, DuplicateKey
+from udl.errors import ConfigError, DuplicateKey, UDLError
 from udl.plugins.actions.base import Action
 
 log = logging.getLogger(__name__)
@@ -136,6 +136,14 @@ async def _no_accounts() -> dict[UUID, str]:
     return {}
 
 
+type SourceFilter = Callable[[Subscription, EventRecord], Awaitable[bool]]
+"""Whether an event passes a subscription's source filter (its integration's check)."""
+
+
+async def _no_source_filters(subscription: Subscription, event: EventRecord) -> bool:
+    raise ConfigError("nothing here checks source filters")
+
+
 class EventBus:
     """Stores events and dispatches them, in `db` (on `clock`'s time)."""
 
@@ -147,12 +155,17 @@ class EventBus:
         settings: AutomationsSettings,
         *,
         account_names: AccountNames | None = None,
+        source_filter: SourceFilter | None = None,
     ) -> None:
         self.db = db
         self.types = types
         self.clock = clock
         self.settings = settings
         self._account_names: AccountNames = account_names or _no_accounts
+        self._source_filter: SourceFilter = source_filter or _no_source_filters
+        # The answers of source filters, by event and subscription (an event replayed is not
+        # asked about again).
+        self._filtered: OrderedDict[tuple[UUID, UUID], bool] = OrderedDict()
         self._listeners: list[_Listener] = []
         # The events listeners heard of being stored (others' are told of as they are dispatched).
         self._told: OrderedDict[UUID, None] = OrderedDict()
@@ -235,6 +248,16 @@ class EventBus:
                 continue
             if not matches(found, event.event(), account):
                 continue
+            failed: str | None = None
+            if found.source_filter is not None:
+                try:
+                    if not await self._passes_source_filter(found, event):
+                        continue
+                except Exception as e:  # noqa: BLE001 - (a run is skipped rather than guessed)
+                    failed = e.message if isinstance(e, UDLError) else f"{type(e).__name__}: {e}"
+                    log.warning(
+                        "The %s subscription's source filter failed: %s", found.name, failed
+                    )
             room = await self._room(found)
             for name in found.actions:
                 action = actions.get(name)
@@ -242,7 +265,14 @@ class EventBus:
                     log.warning("The %s subscription runs %r, which is no action", found.name, name)
                     continue
                 throttled = room is not None and room <= 0
-                run = await self._queue(event, found, action, dispatch, throttled=throttled)
+                run = await self._queue(
+                    event,
+                    found,
+                    action,
+                    dispatch,
+                    throttled=throttled,
+                    skipped=None if failed is None else f"source filter failed: {failed}",
+                )
                 if run is not None:
                     queued.append(run)
                     if room is not None and run.status is RunStatus.QUEUED:
@@ -277,6 +307,14 @@ class EventBus:
             self._accounts = await self._account_names()
         return self._subscriptions, self._actions
 
+    async def _passes_source_filter(self, subscription: Subscription, event: EventRecord) -> bool:
+        key = (event.id, subscription.id)
+        if key not in self._filtered:
+            self._filtered[key] = await self._source_filter(subscription, event)
+            while len(self._filtered) > _REMEMBERED:
+                self._filtered.popitem(last=False)
+        return self._filtered[key]
+
     async def _room(self, subscription: Subscription) -> int | None:
         """How many more runs a subscription's throttle lets it have now (None: it has none):
         its runs in the throttle's window, but those it skipped, count."""
@@ -299,13 +337,14 @@ class EventBus:
         dispatch: UUID,
         *,
         throttled: bool,
+        skipped: str | None = None,
     ) -> ActionRun | None:
-        """Store a run of `action` for `event` (skipped when the subscription is `throttled` or
-        the action is disabled, saying so). None when it was queued before."""
-        skipped = None
-        if throttled:
+        """Store a run of `action` for `event` (skipped, saying why, when `skipped` says, the
+        subscription is `throttled` or the action is disabled). None when it was queued
+        before."""
+        if skipped is None and throttled:
             skipped = f"throttled: {subscription.throttle}"
-        elif not action.enabled:
+        elif skipped is None and not action.enabled:
             skipped = "the action is disabled"
         run = ActionRun(
             action_id=action.id,

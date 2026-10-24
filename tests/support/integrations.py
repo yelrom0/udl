@@ -198,10 +198,13 @@ class FakeIntegration(Integration[FakeSettings, FakeAccountOptions]):
     feeds: ClassVar[dict[str, Feed]] = {}
     source_filter_error: ClassVar[Exception | None] = None
     """What checking a source filter fails with, if anything."""
+    filtered: ClassVar[list[str]] = []
+    """The texts of the events its source filter was asked about."""
 
     def __init_subclass__(cls) -> None:
         super().__init_subclass__()
         cls.feeds = {}
+        cls.filtered = []
 
     @classmethod
     def feed(cls, account: str) -> Feed:
@@ -292,10 +295,12 @@ class FakeIntegration(Integration[FakeSettings, FakeAccountOptions]):
     async def source_filter_matches(
         self, account: AccountHandle[FakeAccountOptions], event: Event, source_filter: BaseModel
     ) -> bool:
+        text = str(event.data.get("text", ""))
+        type(self).filtered.append(text)
         if self.source_filter_error is not None:
             raise self.source_filter_error
         assert isinstance(source_filter, FakeSourceFilter)
-        return source_filter.contains in str(event.data.get("text", ""))
+        return source_filter.contains in text
 
     def _things(self, account: str) -> list[Thing]:
         things = list(self.feed(account).things)
