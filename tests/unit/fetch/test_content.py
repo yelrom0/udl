@@ -81,6 +81,19 @@ def test_its_links_are_made_absolute() -> None:
     assert "[questions people ask](https://a.example/faq.html#sizes)" in content
 
 
+def test_a_page_without_a_main_or_article_keeps_its_headings_too() -> None:
+    soup = AntiBotSite.content("/docs").replace(b"<main>", b"").replace(b"</main>", b"")
+    soup = soup.replace(b"<article>", b"<div>").replace(b"</article>", b"</div>")
+
+    content = PageText.render(fetched("/docs", "text/html", body=soup), PageFormat.MARKDOWN).content
+
+    assert content is not None
+    assert content.startswith("# Widgets: a guide")
+    assert "\n## Sizes\n" in content
+    assert "Blog" not in content
+    assert "Privacy" not in content
+
+
 def test_the_menus_and_footers_are_left_out() -> None:
     content = PageText.render(docs(), PageFormat.MARKDOWN).content or ""
 
@@ -344,6 +357,22 @@ def test_a_page_with_content_is_not_one() -> None:
 
 def test_a_page_of_few_words_without_scripts_is_not_one() -> None:
     assert not is_javascript_shell(html("<p>Short.</p>"))
+
+
+def test_a_short_page_with_scripts_is_not_one() -> None:
+    # (Most pages have some script, an analytics one at least.)
+    assert not is_javascript_shell(html("<h1>Item</h1><p>In stock.</p><script>track()</script>"))
+
+
+def test_a_page_of_scripts_and_no_words_is_one() -> None:
+    assert is_javascript_shell(html('<script src="/bundle.js"></script>'))
+
+
+def test_an_apps_empty_root_makes_a_page_one_whatever_else_it_says() -> None:
+    words = " ".join(["A footer with links and words in it, as many have."] * 10)
+    page = html(f'<div id="root"></div><footer>{words}</footer><script src="/app.js"></script>')
+
+    assert is_javascript_shell(page)
 
 
 def test_a_long_page_that_mentions_javascript_is_not_one() -> None:

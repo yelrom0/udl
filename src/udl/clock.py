@@ -4,9 +4,10 @@
 ------------
 
 Clock: what tells udl the time and lets it wait for one. Everything time-driven (schedules,
-watchers, leases, throttles, retries, refreshing tokens) asks a Clock, never datetime.now() or
-asyncio.sleep() itself (a test checks udl.automations, udl.integrations and udl.ai), so tests
-move time on (tests/support/clock.py's FakeClock) instead of waiting.
+watchers, leases, throttles, retries, refreshing tokens, fetches) asks a Clock, never
+datetime.now() or asyncio.sleep() itself (a test checks udl.automations, udl.integrations,
+udl.ai and udl.fetch), so tests move time on (tests/support/clock.py's FakeClock) instead of
+waiting.
 """
 
 # System Imports

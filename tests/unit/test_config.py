@@ -17,7 +17,14 @@ import pytest
 from pydantic import ValidationError
 
 # Local Imports
-from udl.config import DBConnectionConfig, DBSettings, ReadPolicy, Settings, WritePolicy
+from udl.config import (
+    DBConnectionConfig,
+    DBSettings,
+    PersonMode,
+    ReadPolicy,
+    Settings,
+    WritePolicy,
+)
 from udl.errors import ConfigError
 
 # The configuration example from planning/01-core.md.
@@ -408,6 +415,116 @@ def test_the_timezone_is_one_the_system_knows() -> None:
     ],
 )
 def test_invalid_new_tables_are_config_errors(toml: str, problem: str) -> None:
+    write_config(toml)
+
+    with pytest.raises(ConfigError, match=re.escape(problem)):
+        Settings.load()
+
+
+# ---------------------------------------------------------------------------------------------
+# The page fetcher ([fetch], planning.md's configuration example: Phase 12's part)
+# ---------------------------------------------------------------------------------------------
+
+FETCH_CONFIG = """
+[fetch]
+person = "ask"                            # at an anti-bot check: ask | wait | fail
+max_concurrent = 4
+max_per_site = 1                          # one site's URLs one at a time,
+site_delay = "1s"                         # this far apart
+max_urls = 200                            # in one batch
+timeout = "30s"                           # a request, or a page's load
+browser_tabs = 3
+browser_idle = "30s"                      # then udl's browser profile is free for others
+challenge_grace = "15s"                   # for a check that clears itself in the browser
+challenge_timeout = "10m"                 # how long a window waits for you
+challenge_expiry = "24h"                  # then waiting URLs fail
+relearn_after = "7d"                      # then a site's fetches start at the bottom rung again
+max_retry_after = "2m"
+max_page = "10MiB"
+max_answer = 200000                       # characters of pages in one answer
+keep = "7d"                               # batches and their pages
+store_dir = ""                            # empty = <data dir>/fetched
+"""
+
+
+def test_the_documented_fetch_config_loads(isolated_user_dirs: Path) -> None:
+    write_config(FETCH_CONFIG)
+
+    fetch = Settings.load().fetch
+
+    assert (fetch.person, fetch.max_concurrent, fetch.max_per_site) == (PersonMode.ASK, 4, 1)
+    assert (fetch.site_delay, fetch.timeout) == (timedelta(seconds=1), timedelta(seconds=30))
+    assert (fetch.max_urls, fetch.browser_tabs, fetch.browser_idle) == (
+        200,
+        3,
+        timedelta(seconds=30),
+    )
+    assert (fetch.challenge_grace, fetch.challenge_timeout, fetch.challenge_expiry) == (
+        timedelta(seconds=15),
+        timedelta(minutes=10),
+        timedelta(hours=24),
+    )
+    assert (fetch.relearn_after, fetch.max_retry_after) == (timedelta(days=7), timedelta(minutes=2))
+    assert (fetch.max_page, fetch.max_answer, fetch.keep) == (
+        10 * 1024 * 1024,
+        200_000,
+        timedelta(days=7),
+    )
+    assert fetch.store_dir == isolated_user_dirs / ".local/share/udl/fetched"
+
+
+def test_the_fetch_table_has_the_documented_defaults() -> None:
+    written = Settings.load()
+    write_config(FETCH_CONFIG)
+
+    assert written.fetch == Settings.load().fetch
+
+
+def test_the_fetched_pages_can_be_kept_elsewhere(tmp_path: Path) -> None:
+    assert Settings(fetch={"store_dir": str(tmp_path)}).fetch.store_dir == tmp_path  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.parametrize(
+    ("written", "size"),
+    [
+        ("10MiB", 10 * 1024**2),
+        ("512KiB", 512 * 1024),
+        ("1GiB", 1024**3),
+        ("2MB", 2_000_000),
+        ("300kB", 300_000),
+        ("100B", 100),
+        (" 1.5MiB ", int(1.5 * 1024**2)),
+        (4096, 4096),
+    ],
+)
+def test_sizes_are_written_with_their_units(written: object, size: int) -> None:
+    assert Settings(fetch={"max_page": written}).fetch.max_page == size  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.parametrize("written", ["big", "10 MiB", "MiB", "-1MiB", 0, True, "10XB"])
+def test_what_is_not_a_size_is_refused(written: object) -> None:
+    with pytest.raises(ValidationError, match="size"):
+        Settings(fetch={"max_page": written})  # pyright: ignore[reportArgumentType]
+
+
+def test_sizes_are_shown_as_they_are_written() -> None:
+    shown = Settings(fetch={"max_page": "10MiB"}).model_dump(mode="json")  # pyright: ignore[reportArgumentType]
+
+    bytes_ = Settings(fetch={"max_page": 1000}).model_dump(mode="json")  # pyright: ignore[reportArgumentType]
+
+    assert shown["fetch"]["max_page"] == "10MiB"
+    assert bytes_["fetch"]["max_page"] == "1000B"
+
+
+@pytest.mark.parametrize(
+    ("toml", "problem"),
+    [
+        ('[fetch]\nperson = "maybe"\n', "fetch.person"),
+        ("[fetch]\nmax_per_site = 0\n", "fetch.max_per_site"),
+        ("[fetch]\nnope = 1\n", "fetch.nope"),
+    ],
+)
+def test_an_invalid_fetch_table_is_a_config_error(toml: str, problem: str) -> None:
     write_config(toml)
 
     with pytest.raises(ConfigError, match=re.escape(problem)):

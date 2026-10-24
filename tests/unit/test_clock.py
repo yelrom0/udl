@@ -218,7 +218,7 @@ def test_what_waits_for_a_time_asks_the_clock() -> None:
     root = Path(udl.__file__).parent
     offenders = [
         f"{path.relative_to(root)}:{n}"
-        for package in ("automations", "integrations", "ai")
+        for package in ("automations", "integrations", "ai", "fetch")
         for path in sorted((root / package).rglob("*.py"))
         for n, line in enumerate(path.read_text().splitlines(), 1)
         if "datetime.now(" in line or "asyncio.sleep(" in line

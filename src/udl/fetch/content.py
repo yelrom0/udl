@@ -69,6 +69,7 @@ class FetchedPage(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict[str, str])  # KEPT_HEADERS', lower case
     via: str = "static"  # the rung that got it
     body: bytes = b""
+    truncated: bool = False  # its body was cut at [fetch] max_page
 
     @property
     def is_html(self) -> bool:
@@ -202,7 +203,7 @@ class PageText:
             return shown.model_copy(update={"content": content, "title": title, "note": note})
         if format is PageFormat.HTML:
             return shown.model_copy(update={"content": text, "title": title})
-        content = _main(text, format, base) if main_only else None
+        content = _main(_framed(parsed, text), format, base) if main_only else None
         if content is None:  # (nothing found that reads as an article: the whole page)
             body = parsed.body
             content = cls._convert([body] if body is not None else [], format, base)
@@ -244,6 +245,17 @@ def _absolute(node: LexborNode, base: str) -> None:
             value = found.attributes.get(name)
             if value and not value.startswith(("#", "data:", "javascript:")):
                 found.attrs[name] = urljoin(base, value)
+
+
+def _framed(parsed: LexborHTMLParser, html: str) -> str:
+    """The page, its body in a <main> when it has no main content of its own marked (a <main>,
+    an <article>, role=main): trafilatura finds a page's headings only in such a frame (its menus
+    and footers it leaves out anyway)."""
+    body = parsed.body
+    if body is None or parsed.css_first("main, article, [role=main]") is not None:
+        return html
+    head = parsed.head.html if parsed.head is not None else ""
+    return f"<html>{head}<body><main>{body.inner_html or ''}</main></body></html>"
 
 
 def _main(html: str, kind: PageFormat, base: str) -> str | None:
@@ -312,26 +324,26 @@ _NEEDS_JS: Final = re.compile(
     r"needed)|doesn't work properly without javascript",
     re.IGNORECASE,
 )
-_SHELL_WORDS: Final = 20  # (fewer words than this, with scripts, is a page scripts make)
+# Where a single-page app's scripts put it (React's, Vue's, Next's, Nuxt's, Angular's...).
+_APP_ROOT: Final = "#root, #app, #__next, #__nuxt, [ng-app], app-root"
 _NOTICE_WORDS: Final = 80  # (an "enable JavaScript" notice on a page of fewer words)
 
 
 def is_javascript_shell(page: FetchedPage) -> bool:
     """Whether an HTML page is a shell its scripts fill in (so it reads only in a browser): it
-    has scripts, and few words, or an "enable JavaScript" notice and not many more."""
+    has scripts, and no words at all, or an app's root with nothing in it, or an "enable
+    JavaScript" notice and few words besides."""
     if not page.is_html:
         return False
     parsed = LexborHTMLParser(page.text())
-    if not parsed.css_first("script"):
+    body = parsed.body
+    if not parsed.css_first("script") or body is None:
         return False
     notice = " ".join(node.text() for node in parsed.css("noscript"))
-    body = parsed.body
-    if body is None:
-        return True
     for dropped in body.css(_DROPPED):
         dropped.decompose()
     words = body.text(separator=" ").split()
-    if len(words) < _SHELL_WORDS:
+    if not words or any(not node.text().strip() for node in body.css(_APP_ROOT)):
         return True
     return (
         len(words) < _NOTICE_WORDS and _NEEDS_JS.search(f"{notice} {' '.join(words)}") is not None

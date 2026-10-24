@@ -84,6 +84,7 @@ _UDL_KINDS: Final = (
     "udl.integrations.watchers",
     "udl.automations.runs",
     "udl.automations.schedules",
+    "udl.fetch.ladder",
 )
 
 NAME_PATTERN: Final = r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$"

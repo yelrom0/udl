@@ -31,6 +31,7 @@ from pydantic import (
     PrivateAttr,
     SecretStr,
     ValidationError,
+    WithJsonSchema,
     model_validator,
 )
 from pydantic_settings import (
@@ -133,6 +134,59 @@ type Duration = Annotated[
     PlainSerializer(format_duration, return_type=str, when_used="json"),
 ]
 """A length of time, written as `30s`, `5m`, `24h` or `1h30m` (or a number of seconds)."""
+
+
+# A size as written in the config: a number and a unit (MiB, KiB, GiB; MB, kB, GB; B).
+_SIZE: Final = re.compile(r"(\d+(?:\.\d+)?)(B|kB|KB|MB|GB|KiB|MiB|GiB)")
+_SIZE_UNITS: Final = {
+    "B": 1,
+    "kB": 1000,
+    "KB": 1000,
+    "MB": 1000**2,
+    "GB": 1000**3,
+    "KiB": 1024,
+    "MiB": 1024**2,
+    "GiB": 1024**3,
+}
+
+
+def parse_size(value: object) -> object:
+    """A size as written: `10MiB`, `512KiB`, `2MB`, `100B`, or a number of bytes (anything else
+    is left for validation to refuse)."""
+    if isinstance(value, bool):
+        raise ValueError(f"{value!r} is not a size, such as 10MiB or 512KiB")
+    if isinstance(value, str):
+        match = _SIZE.fullmatch(value.strip())
+        if match is None:
+            raise ValueError(f"{value!r} is not a size, such as 10MiB or 512KiB")
+        value = int(float(match[1]) * _SIZE_UNITS[match[2]])
+    if isinstance(value, int | float) and value <= 0:
+        raise ValueError(f"{value!r} is not a size: it is not more than nothing")
+    return value
+
+
+def format_size(size: int) -> str:
+    """A size as it is written: e.g. 10MiB, 512KiB, 1000B."""
+    for unit in ("GiB", "MiB", "KiB"):
+        if size and size % _SIZE_UNITS[unit] == 0:
+            return f"{size // _SIZE_UNITS[unit]}{unit}"
+    return f"{size}B"
+
+
+type ByteSize = Annotated[
+    int,
+    BeforeValidator(parse_size),
+    PlainSerializer(format_size, return_type=str, when_used="json"),
+    # (Either is taken, and JSON shows it as written.)
+    WithJsonSchema(
+        {"anyOf": [{"type": "integer", "minimum": 1}, {"type": "string", "examples": ["10MiB"]}]}
+    ),
+]
+"""A number of bytes, written as `10MiB`, `512KiB` or `2MB` (or a number of bytes)."""
+
+
+def _fetched_dir(value: object) -> object:
+    return data_dir() / "fetched" if value in ("", None) else value
 
 
 def _timezone(name: str) -> str:
@@ -285,6 +339,51 @@ class SecretsSettings(_Frozen):
     keyring_service: Annotated[str, Field(min_length=1)] = APP_NAME
 
 
+class PersonMode(StrEnum):
+    """What the page fetcher does at an anti-bot check it cannot pass by itself."""
+
+    ASK = "ask"  # open a window, for the user to pass it
+    WAIT = "wait"  # wait for someone to run `udl fetch solve`
+    FAIL = "fail"  # fail the URL (challenge_required)
+
+
+class FetchSettings(_Frozen):
+    """The [fetch] table: the page fetcher (`udl fetch`, fetch_pages)."""
+
+    # At an anti-bot check: ask (open a window), wait (for `udl fetch solve`) or fail.
+    person: PersonMode = PersonMode.ASK
+    max_concurrent: PositiveInt = 4
+    # One site's URLs this many at a time, site_delay apart.
+    max_per_site: PositiveInt = 1
+    site_delay: Duration = timedelta(seconds=1)
+    # URLs in one batch, at most.
+    max_urls: PositiveInt = 200
+    # A request, or a page's load.
+    timeout: Duration = timedelta(seconds=30)
+    browser_tabs: PositiveInt = 3
+    # Then udl's browser profile is free for others (downloads, `udl browser login`, other udls).
+    browser_idle: Duration = timedelta(seconds=30)
+    # For a check that clears itself in the browser.
+    challenge_grace: Duration = timedelta(seconds=15)
+    # How long a window waits for the user.
+    challenge_timeout: Duration = timedelta(minutes=10)
+    # Then URLs waiting for a check to be passed fail.
+    challenge_expiry: Duration = timedelta(hours=24)
+    # Then a site's fetches start at the bottom rung again.
+    relearn_after: Duration = timedelta(days=7)
+    max_retry_after: Duration = timedelta(minutes=2)
+    # Of a page's body, at most.
+    max_page: ByteSize = 10 * 1024**2
+    # Characters of pages in one answer.
+    max_answer: PositiveInt = 200_000
+    # Batches and their pages are kept this long.
+    keep: Duration = timedelta(days=7)
+    # Where pages are kept (empty: <data dir>/fetched).
+    store_dir: Annotated[ExpandedPath, BeforeValidator(_fetched_dir)] = Field(
+        default_factory=lambda: data_dir() / "fetched"
+    )
+
+
 class BrowserSettings(_Frozen):
     """The [browser] table, used by the browser downloader."""
 
@@ -330,6 +429,7 @@ class Settings(BaseSettings):
     automations: AutomationsSettings = Field(default_factory=AutomationsSettings)
     ai: AISettings = Field(default_factory=AISettings)
     web: WebSettings = Field(default_factory=WebSettings)
+    fetch: FetchSettings = Field(default_factory=FetchSettings)
     # Per-downloader options, e.g. [tools.yt-dlp]; each downloader validates its own (task 2.1).
     tools: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
     # Per-plugin settings, e.g. [integrations.gmail]: the file's layer of a plugin's settings,
