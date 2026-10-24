@@ -22,7 +22,7 @@ from pydantic import JsonValue
 
 # Local Imports
 from udl.automations.templates import Limits, Templates
-from udl.errors import ErrorCode, TemplateError
+from udl.errors import ConfigError, ErrorCode, TemplateFailed
 
 # Small limits, so tests that reach them are quick.
 SMALL = Limits(output=4096, steps=1000)
@@ -45,7 +45,7 @@ def templates() -> Templates:
 
 
 def render(templates: Templates, source: str, **context: Any) -> str:
-    return templates.render(source, {"event": EVENT, **context})
+    return templates.render_text(source, {"event": EVENT, **context})
 
 
 # ---------------------------------------------------------------------------------------------
@@ -83,10 +83,11 @@ def test_truncate_shortens_a_text(templates: Templates) -> None:
 
 
 def test_a_template_with_a_syntax_error_says_where(templates: Templates) -> None:
-    with pytest.raises(TemplateError, match="line 2") as raised:
+    with pytest.raises(TemplateFailed, match="line 2") as raised:
         templates.check("fine\n{{ event.subject ")
 
-    assert raised.value.code is ErrorCode.TEMPLATE_ERROR
+    assert raised.value.code is ErrorCode.TEMPLATE_FAILED
+    assert isinstance(raised.value, ConfigError)
 
 
 def test_a_good_template_checks(templates: Templates) -> None:
@@ -94,17 +95,17 @@ def test_a_good_template_checks(templates: Templates) -> None:
 
 
 def test_an_undefined_name_fails_with_the_template_s_line(templates: Templates) -> None:
-    with pytest.raises(TemplateError, match=r"line 3.*nope"):
+    with pytest.raises(TemplateFailed, match=r"line 3.*nope"):
         render(templates, "one\ntwo {{ event.subject }}\nthree {{ event.data.nope }}")
 
 
 def test_an_undefined_name_alone_fails_too(templates: Templates) -> None:
-    with pytest.raises(TemplateError, match="nope"):
+    with pytest.raises(TemplateFailed, match="nope"):
         templates.render_value("{{ nope }}", {})
 
 
 def test_a_value_that_is_not_one_expression_is_a_template_error(templates: Templates) -> None:
-    with pytest.raises(TemplateError, match="chunk after expression"):
+    with pytest.raises(TemplateFailed, match="chunk after expression"):
         templates.render_value("{{ a b }}", {"a": 1, "b": 2})
 
 
@@ -124,6 +125,7 @@ def test_a_value_that_is_not_one_expression_is_a_template_error(templates: Templ
         ),
         ("{{ '{:>5}|{}'.format('a', 'b') }}", "    a|b"),
         ("{{ none | urls }}|{{ (1, 2) | tojson }}|{{ {'a': 1} | length }}", "[]|[1, 2]|1"),
+        ("{{ dict(a=1, b='x') | tojson }}|{{ range(3) | list }}", '{"a": 1, "b": "x"}|[0, 1, 2]'),
         ("{{ 7 // 2 }} {{ 7 - 2 }} {{ 7 % 2 }}", "3 5 1"),
     ],
 )
@@ -134,14 +136,14 @@ def test_what_stays_within_the_limits_renders_as_jinja_s_would(
 
 
 def test_a_failing_expression_is_a_template_error(templates: Templates) -> None:
-    with pytest.raises(TemplateError, match="division by zero"):
+    with pytest.raises(TemplateFailed, match="division by zero"):
         render(templates, "{{ 1 / 0 }}")
-    with pytest.raises(TemplateError, match="division by zero"):
+    with pytest.raises(TemplateFailed, match="division by zero"):
         templates.render_value("{{ 1 / 0 }}", {})
 
 
 def test_a_macro_that_never_ends_is_a_template_error(templates: Templates) -> None:
-    with pytest.raises(TemplateError):
+    with pytest.raises(TemplateFailed):
         render(templates, "{% macro again() %}{{ again() }}{% endmacro %}{{ again() }}")
 
 
@@ -198,7 +200,7 @@ def test_a_lone_expression_s_value_is_json(templates: Templates) -> None:
 
 
 def test_a_lone_expression_that_is_not_data_is_a_template_error(templates: Templates) -> None:
-    with pytest.raises(TemplateError, match="not JSON"):
+    with pytest.raises(TemplateFailed, match="not JSON"):
         templates.render_value("{{ range }}", {})
 
 
@@ -217,12 +219,12 @@ _PRIVATE = st.sampled_from(
 
 
 @settings(max_examples=50)
-@given(attribute=_PRIVATE, base=st.sampled_from(["event", "''", "cycler", "namespace", "x"]))
+@given(attribute=_PRIVATE, base=st.sampled_from(["event", "''", "range", "dict", "x"]))
 def test_nothing_private_is_ever_reached(attribute: str, base: str) -> None:
     for source in (f"{{{{ {base}.{attribute} }}}}", f"{{{{ {base}['{attribute}'] }}}}"):
         try:
-            rendered = Templates(SMALL).render(source, {"event": EVENT, "x": object()})
-        except TemplateError:
+            rendered = Templates(SMALL).render_text(source, {"event": EVENT, "x": object()})
+        except TemplateFailed:
             continue
         # (Getting an item by a private name is allowed only where there is no such thing.)
         pytest.fail(f"{source} gave {rendered!r}")
@@ -243,14 +245,17 @@ def test_no_file_is_ever_read(tag: str, tmp_path_factory: pytest.TempPathFactory
     secret = tmp_path_factory.mktemp("files") / "secret.txt"
     secret.write_text("the secret")
     for name in (repr(str(secret)), repr("secret.txt"), "'/etc/passwd'"):
-        with pytest.raises(TemplateError):
-            Templates(SMALL).render(tag.format(name=name), {})
+        with pytest.raises(TemplateFailed):
+            Templates(SMALL).render_text(tag.format(name=name), {})
 
 
 @pytest.mark.parametrize(
     "source",
     [
-        "{{ cycler.__init__.__globals__.os }}",
+        "{{ range.__init__.__globals__.os }}",
+        "{{ cycler.__init__ }}",  # (only range and dict are given)
+        "{{ namespace(a=1) }}",
+        "{{ joiner() }}",
         "{{ ''.__class__.__mro__[1].__subclasses__() }}",
         "{{ lipsum(n=1000) }}",
         "{{ range.__self__ }}",
@@ -260,13 +265,13 @@ def test_no_file_is_ever_read(tag: str, tmp_path_factory: pytest.TempPathFactory
         "{{ '{:>999999}'.format(1) }}",
         "{{ '{:{w}}'.format(1, w=9) }}",
         "{{ 10 ** 100000 }}",
-        "{% set ns = namespace(n=3) %}{% for i in range(30) %}{% set ns.n = ns.n * ns.n %}"
-        "{% endfor %}",
+        "{% macro square(n, k) %}{% if k %}{{ square(n * n, k - 1) }}{% else %}{{ n }}{% endif %}"
+        "{% endmacro %}{{ square(3, 30) }}",
         "{{ 'x'.replace('x') }}",
     ],
 )
 def test_what_could_reach_out_of_the_sandbox_is_refused(templates: Templates, source: str) -> None:
-    with pytest.raises(TemplateError):
+    with pytest.raises(TemplateFailed):
         render(templates, source)
 
 
@@ -276,21 +281,21 @@ def test_what_could_reach_out_of_the_sandbox_is_refused(templates: Templates, so
 
 _GROWTH = st.sampled_from(
     [
-        "ns.s ~ ns.s",
-        "ns.s + ns.s",
-        "ns.s * 2",
-        "ns.s * 1000000",
-        "ns.s | replace('a', ns.s)",
-        "[ns.s, ns.s] | join(ns.s)",
-        "ns.s.replace('a', ns.s)",
-        "ns.s.ljust(1000000000)",
-        "ns.s.center(1000000000)",
-        "ns.s | center(1000000000)",
-        "ns.s | indent(1000000000)",
-        "ns.s.join([ns.s] * 3)",
-        "ns.s ~ (ns.s | tojson)",
-        "'{:>99999999}'.format(ns.s)",
-        "ns.s.expandtabs(100000000)",
+        "s ~ s",
+        "s + s",
+        "s * 2",
+        "s * 1000000",
+        "s | replace('a', s)",
+        "[s, s] | join(s)",
+        "s.replace('a', s)",
+        "s.ljust(1000000000)",
+        "s.center(1000000000)",
+        "s | center(1000000000)",
+        "s | indent(1000000000)",
+        "s.join([s] * 3)",
+        "s ~ (s | tojson)",
+        "'{:>99999999}'.format(s)",
+        "s.expandtabs(100000000)",
     ]
 )
 
@@ -298,16 +303,18 @@ _GROWTH = st.sampled_from(
 @settings(max_examples=60, deadline=None)
 @given(growth=_GROWTH, rounds=st.integers(1, 60))
 def test_output_and_what_is_made_on_the_way_are_capped(growth: str, rounds: int) -> None:
+    # (Text that grows each time a macro calls itself: there is no other way to keep it.)
     source = (
-        "{% set ns = namespace(s='a\\t') %}"
-        f"{{% for i in range({rounds}) %}}{{% set ns.s = {growth} %}}{{% endfor %}}"
-        "{{ ns.s }}"
+        "{% macro grow(s, n) %}{% if n > 0 %}"
+        f"{{{{ grow({growth}, n - 1) }}}}"
+        "{% else %}{{ s }}{% endif %}{% endmacro %}"
+        f"{{{{ grow('a\\t', {rounds}) }}}}"
     )
     started = time.monotonic()
 
     try:
-        rendered = Templates(SMALL).render(source, {})
-    except TemplateError:
+        rendered = Templates(SMALL).render_text(source, {})
+    except TemplateFailed:
         rendered = ""
 
     assert len(rendered) <= SMALL.output
@@ -315,19 +322,19 @@ def test_output_and_what_is_made_on_the_way_are_capped(growth: str, rounds: int)
 
 
 def test_output_is_capped(templates: Templates) -> None:
-    with pytest.raises(TemplateError, match="4096"):
+    with pytest.raises(TemplateFailed, match="4096"):
         render(templates, "{% for i in range(1000) %}0123456789{% endfor %}")
 
 
 def test_loops_are_capped(templates: Templates) -> None:
-    with pytest.raises(TemplateError, match="1000"):
+    with pytest.raises(TemplateFailed, match="1000"):
         render(
             templates, "{% for i in range(100) %}{% for j in range(100) %}{% endfor %}{% endfor %}"
         )
 
 
 def test_a_value_is_capped_like_text(templates: Templates) -> None:
-    with pytest.raises(TemplateError, match="4096"):
+    with pytest.raises(TemplateFailed, match="4096"):
         templates.render_value("{{ x }}", {"x": ["y" * 100] * 100})
 
 
@@ -337,7 +344,21 @@ def test_a_template_within_the_limits_renders(templates: Templates) -> None:
     assert len(rendered) == 400
 
 
+def test_a_template_is_capped_too(templates: Templates) -> None:
+    with pytest.raises(TemplateFailed, match="65536"):
+        Templates().render_text("x" * (64 * 1024 + 1), {})
+    with pytest.raises(TemplateFailed, match="65536"):
+        Templates().check("x" * (64 * 1024 + 1))
+
+
+def test_a_value_checks_against_an_example(templates: Templates) -> None:
+    templates.check_value({"to": "{{ event.data['from'].address }}", "n": 3}, {"event": EVENT})
+
+    with pytest.raises(TemplateFailed, match="nope"):
+        templates.check_value({"to": "{{ event.data.nope }}"}, {"event": EVENT})
+
+
 def test_the_default_limits_are_generous() -> None:
-    rendered = Templates().render("{% for i in range(10000) %}{{ 'x' * 10 }}{% endfor %}", {})
+    rendered = Templates().render_text("{% for i in range(10000) %}{{ 'x' * 10 }}{% endfor %}", {})
 
     assert len(rendered) == 100_000

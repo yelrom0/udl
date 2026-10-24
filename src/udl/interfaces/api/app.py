@@ -53,7 +53,7 @@ _STATUS: Final[dict[ErrorCode, int]] = {
     ErrorCode.DATABASE_ERROR: 503,
     ErrorCode.DUPLICATE_KEY: 409,  # (a name another record has)
     ErrorCode.SECRET_STORE_ERROR: 503,
-    ErrorCode.TEMPLATE_ERROR: 400,
+    ErrorCode.TEMPLATE_FAILED: 400,
     ErrorCode.OAUTH_ERROR: 502,  # (the authorization server refused, or failed)
     ErrorCode.REAUTH_REQUIRED: 502,
 }

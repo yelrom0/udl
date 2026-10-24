@@ -38,7 +38,7 @@ class ErrorCode(StrEnum):
     NOT_ALLOWED = "not_allowed"
     UNAUTHORIZED = "unauthorized"
     SECRET_STORE_ERROR = "secret_store_error"  # noqa: S105 - (a code, not a secret)
-    TEMPLATE_ERROR = "template_error"
+    TEMPLATE_FAILED = "template_failed"
     OAUTH_ERROR = "oauth_error"
     REAUTH_REQUIRED = "reauth_required"
 
@@ -228,11 +228,11 @@ class SecretStoreError(UDLError):
     code = ErrorCode.SECRET_STORE_ERROR
 
 
-class TemplateError(UDLError):
+class TemplateFailed(ConfigError):
     """A template (an action's arguments, an AI prompt) cannot be rendered: it is not a template,
     names what the event does not have, or tries what the sandbox refuses."""
 
-    code = ErrorCode.TEMPLATE_ERROR
+    code = ErrorCode.TEMPLATE_FAILED
 
 
 class OAuthError(UDLError):

@@ -8,12 +8,14 @@ the event that set them off. That event was written by anyone (an email, a Slack
 template runs in a sandbox:
 
 - Jinja's immutable sandbox: nothing private (no `_` names), nothing changed in place, no
-  unsafe calls, and no loader, so no file is ever read, included or imported;
+  unsafe calls, and no loader, so no file is ever read, included or imported; its globals are
+  `range` and `dict` only. Its context (the event, the run, now) is plain JSON, not objects;
 - StrictUndefined: a name the event does not have fails, saying the template's line, rather than
   rendering as nothing;
-- limits (Limits): what a rendering gives, and any text or list it makes on the way, is at most
-  `output` long (repeating, joining, replacing, padding and formatting text are measured before
-  they are done), numbers stay a sensible size, and loops run at most `steps` times in all.
+- limits (Limits): a template is at most `source` long; what a rendering gives, and any text or
+  list it makes on the way, is at most `output` long (repeating, joining, replacing, padding and
+  formatting text are measured before they are done), numbers stay a sensible size, and loops
+  run at most `steps` times in all.
 
 No autoescaping: what templates make is not HTML. A value that is a single `{{ expression }}`
 keeps its type (render_value), so `{"urls": "{{ event.data.body_text | urls }}"}` gives a list.
@@ -45,8 +47,10 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 from pydantic_core import PydanticSerializationError, to_jsonable_python
 
 # Local Imports
-from udl.errors import TemplateError
+from udl.errors import TemplateFailed
 
+MAX_SOURCE: Final = 64 * 1024
+"""Characters a template is at most."""
 MAX_OUTPUT: Final = 256 * 1024
 """Characters a rendering gives at most (and the longest text or list it makes on the way)."""
 MAX_STEPS: Final = 100_000
@@ -69,6 +73,7 @@ _JSON: Final = TypeAdapter[JsonValue](JsonValue)
 class Limits:
     """How much a rendering may make, and do."""
 
+    source: int = MAX_SOURCE
     output: int = MAX_OUTPUT
     steps: int = MAX_STEPS
 
@@ -86,15 +91,19 @@ class Templates:
         self._sandbox = _Sandbox(self.limits)
 
     def check(self, source: str) -> None:
-        """Raise TemplateError when `source` is not a template (as an action checks its options
-        when it is saved)."""
+        """Raise TemplateFailed when `source` is not a template."""
         with _errors():
-            self._sandbox.parse(source)
+            self._sandbox.parse(self._sized(source))
 
-    def render(self, source: str, context: Mapping[str, Any]) -> str:
-        """`source` rendered with `context`. Raises TemplateError."""
+    def check_value(self, value: JsonValue, context: Mapping[str, Any]) -> None:
+        """Raise TemplateFailed when `value` does not render with `context` (an example event:
+        what is checked when something with templates in it is saved)."""
+        self.render_value(value, context)
+
+    def render_text(self, source: str, context: Mapping[str, Any]) -> str:
+        """`source` rendered with `context`. Raises TemplateFailed."""
         with _errors(), self._counting():
-            template = self._sandbox.from_string(source)
+            template = self._sandbox.from_string(self._sized(source))
             rendered: list[str] = []
             length = 0
             for chunk in template.generate(context):
@@ -105,12 +114,12 @@ class Templates:
 
     def render_value(self, value: JsonValue, context: Mapping[str, Any]) -> JsonValue:
         """`value` with every text in it rendered: a text that is a single `{{ expression }}`
-        becomes the expression's value (as JSON), any other a text. Raises TemplateError."""
+        becomes the expression's value (as JSON), any other a text. Raises TemplateFailed."""
         if isinstance(value, str):
             lone = _LONE.fullmatch(value)
             expression = lone["expression"] if lone else None
             if expression is None or any(mark in expression for mark in ("{{", "}}", "{%")):
-                return self.render(value, context)
+                return self.render_text(value, context)
             return self._evaluate(expression, context)
         if isinstance(value, list):
             return [self.render_value(item, context) for item in value]
@@ -120,17 +129,22 @@ class Templates:
 
     def _evaluate(self, expression: str, context: Mapping[str, Any]) -> JsonValue:
         with _errors(), self._counting():
-            found = self._sandbox.expression(expression)(context)
+            found = self._sandbox.expression(self._sized(expression))(context)
             if isinstance(found, Undefined):
                 str(found)  # (raises why it is undefined)
             try:
                 value = _JSON.validate_python(to_jsonable_python(found))
             except (PydanticSerializationError, ValidationError) as e:
-                raise TemplateError(
+                raise TemplateFailed(
                     f"{expression.strip()} gives a {type(found).__name__}, which is not JSON"
                 ) from e
             _fits(len(json.dumps(value)), self.limits, "Its value")
             return value
+
+    def _sized(self, source: str) -> str:
+        if len(source) > self.limits.source:
+            raise TemplateFailed(f"A template is at most {self.limits.source} characters")
+        return source
 
     @contextmanager
     def _counting(self) -> Generator[None]:
@@ -144,19 +158,19 @@ class Templates:
 
 @contextmanager
 def _errors() -> Generator[None]:
-    """Raise what goes wrong in a template as a TemplateError that says where."""
+    """Raise what goes wrong in a template as a TemplateFailed that says where."""
     try:
         yield
-    except TemplateError:
+    except TemplateFailed:
         raise
     except TemplateSyntaxError as e:
-        raise TemplateError(f"line {e.lineno}: {e.message}") from e
+        raise TemplateFailed(f"line {e.lineno}: {e.message}") from e
     except RecursionError as e:
-        raise TemplateError("It calls itself without end") from e
+        raise TemplateFailed("It calls itself without end") from e
     except Exception as e:  # (anything the template's own code raised)
         where = _line(e)
         message = str(e) if isinstance(e, SecurityError) else f"{type(e).__name__}: {e}"
-        raise TemplateError(f"line {where}: {message}" if where else message) from e
+        raise TemplateFailed(f"line {where}: {message}" if where else message) from e
 
 
 def _line(error: BaseException) -> int | None:
@@ -171,7 +185,7 @@ def _line(error: BaseException) -> int | None:
 
 def _fits(length: int, limits: Limits, what: str) -> None:
     if length > limits.output:
-        raise TemplateError(f"{what} would be longer than {limits.output} characters")
+        raise TemplateFailed(f"{what} would be longer than {limits.output} characters")
 
 
 def _is_int(value: Any) -> bool:
@@ -191,7 +205,10 @@ class _Sandbox(ImmutableSandboxedEnvironment):
     def __init__(self, limits: Limits) -> None:
         super().__init__(undefined=StrictUndefined, autoescape=False, keep_trailing_newline=True)
         self.limits = limits
-        del self.globals["lipsum"]  # (it writes as much text as it is asked for)
+        globals_ = cast(dict[str, Any], self.globals)
+        for name in list(globals_):
+            if name not in ("range", "dict"):  # (lipsum, cycler, joiner, namespace)
+                del globals_[name]
         filters = cast(dict[str, Callable[..., Any]], self.filters)
         del filters["format"]  # (printf widths; `~` and str.format do the same, measured)
         filters.update(
@@ -204,7 +221,8 @@ class _Sandbox(ImmutableSandboxedEnvironment):
         )
         for name, found in list(filters.items()):
             filters[name] = self._measured(found)
-        cast(dict[str, Any], self.globals).update(_udl_counted=_counted, _udl_concat=self._concat)
+        # (A function rather than the dict type, so no type is reachable: dict["x"] and the like.)
+        globals_.update(dict=_dict, _udl_counted=_counted, _udl_concat=self._concat)
 
     # -- what templates are made of ------------------------------------------------------------
 
@@ -390,6 +408,11 @@ def _replaced(text: str, old: str, new: str) -> int:
 # ---------------------------------------------------------------------------------------------
 # udl's filters
 # ---------------------------------------------------------------------------------------------
+
+
+def _dict(**items: Any) -> dict[str, Any]:
+    """dict(a=1, b=2), as Jinja's global."""
+    return items
 
 
 def _urls(text: Any) -> list[str]:
