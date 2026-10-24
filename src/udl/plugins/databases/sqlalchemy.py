@@ -225,14 +225,14 @@ _records = MetaData()
 def record_table(kind: type[Record]) -> Table:
     """The table of a kind of record: its id and times, a column per indexed field (each with
     an index) under the kind's unique constraints, and its own fields as JSON (`data`)."""
-    if (table := _records.tables.get(kind.kind)) is not None:
+    if (table := _records.tables.get(f"record_{kind.kind}")) is not None:
         return table
     indexed: list[Column[Any]] = []
     for name in kind.indexed:
         python_type, nullable = indexed_type(kind, name)
         indexed.append(Column(name, _column_type(python_type), nullable=nullable, index=True))
     return Table(
-        kind.kind,
+        f"record_{kind.kind}",
         _records,
         Column("id", Uuid(), primary_key=True),
         Column("created_at", UTCDateTime(), nullable=False, index=True),
@@ -240,7 +240,7 @@ def record_table(kind: type[Record]) -> Table:
         *indexed,
         Column("data", JSON(), nullable=False),
         *(
-            UniqueConstraint(*together, name=f"uq_{kind.kind}_{'_'.join(together)}")
+            UniqueConstraint(*together, name=f"uq_record_{kind.kind}_{'_'.join(together)}")
             for together in kind.unique
         ),
     )
@@ -572,9 +572,7 @@ class SQLAlchemyDatabase(DatabasePlugin):
         kind = type(record)
         table = await self._records_of(kind)
         row = _record_row(record)
-        changes = {
-            name: value for name, value in row.items() if name not in ("id", "created_at")
-        } | {"updated_at": utcnow()}
+        changes = {name: value for name, value in row.items() if name not in ("id", "created_at")}
         stored = sa.select(table).where(table.c.id == record.id)
         async with self._connection() as conn:
             try:
@@ -603,9 +601,10 @@ class SQLAlchemyDatabase(DatabasePlugin):
             deleted = await conn.execute(sa.delete(table).where(table.c.created_at < before))
         return deleted.rowcount
 
-    async def claim_lease(self, name: str, holder: str, ttl: timedelta) -> Lease | None:
+    async def claim_lease(
+        self, name: str, holder: str, ttl: timedelta, *, now: datetime
+    ) -> Lease | None:
         table = await self._records_of(Lease)
-        now = utcnow()
         claimed = _record_row(
             Lease(name=name, holder=holder, expires_at=now + ttl, created_at=now, updated_at=now)
         )
@@ -628,6 +627,14 @@ class SQLAlchemyDatabase(DatabasePlugin):
                     return None  # (another holds it)
             row = (await conn.execute(sa.select(table).where(table.c.name == name))).one()
         return _record(Lease, row)
+
+    async def release_lease(self, name: str, holder: str) -> bool:
+        table = await self._records_of(Lease)
+        async with self._connection() as conn:
+            released = await conn.execute(
+                sa.delete(table).where(table.c.name == name, table.c.holder == holder)
+            )
+        return released.rowcount > 0
 
 
 def _unique(kind: type[Record]) -> str:

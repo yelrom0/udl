@@ -16,7 +16,8 @@ from uuid import UUID, uuid4
 import pytest
 
 # Local Imports
-from support.records import Note
+from support.clock import FakeClock
+from support.records import Note, Scratch
 from udl.chains.models import TagChain
 from udl.config import DBConnectionConfig, DBSettings, ReadPolicy, WritePolicy
 from udl.db.manager import DBManager
@@ -68,9 +69,11 @@ class BrokenDatabase(MemoryDatabase):
         self._fail("write")
         return await super().upsert_site(site)
 
-    async def claim_lease(self, name: str, holder: str, ttl: timedelta) -> Lease | None:
+    async def claim_lease(
+        self, name: str, holder: str, ttl: timedelta, *, now: datetime
+    ) -> Lease | None:
         self._fail("write")
-        return await super().claim_lease(name, holder, ttl)
+        return await super().claim_lease(name, holder, ttl, now=now)
 
 
 @pytest.fixture
@@ -95,11 +98,12 @@ def make_manager(
     *connections: DBConnectionConfig,
     read_policy: ReadPolicy = ReadPolicy.FIRST,
     write_policy: WritePolicy | list[str] = WritePolicy.PRIMARY,
+    clock: FakeClock | None = None,
 ) -> DBManager:
     settings = DBSettings(
         connections=list(connections), read_policy=read_policy, write_policy=write_policy
     )
-    return DBManager(settings, registry)
+    return DBManager(settings, registry, clock=clock or FakeClock(T0))
 
 
 def make_strategy(site_key: str = "example.com", **fields: object) -> Strategy:
@@ -708,19 +712,60 @@ async def test_a_duplicate_key_in_the_primary_is_raised_as_it_is(
             await db.upsert_record(note())
 
 
-async def test_a_lease_is_claimed_in_the_leading_write_connection_only(
+async def test_records_are_stamped_with_the_time_from_the_clock(
     registry: PluginRegistry,
 ) -> None:
+    clock = FakeClock(T0)
+    async with make_manager(registry, conn("local"), clock=clock) as db:
+        made = await db.upsert_record(note())
+        await clock.advance(timedelta(hours=1))
+        changed = await db.upsert_record(made.model_copy(update={"count": 2}))
+
+    assert (made.created_at, made.updated_at) == (T0, T0)
+    assert (changed.created_at, changed.updated_at) == (T0, T0 + timedelta(hours=1))
+
+
+async def test_a_runtime_s_records_are_on_the_primary_only(registry: PluginRegistry) -> None:
     async with make_manager(
-        registry, conn("a", 0), conn("b", 10), write_policy=WritePolicy.ALL
+        registry,
+        conn("b", 0),
+        conn("a", 10, primary=True),
+        read_policy=ReadPolicy.MERGE,
+        write_policy=WritePolicy.ALL,
+    ) as db:
+        theirs = await db.database("b").upsert_record(Scratch(note="b's"))
+        ours = await db.upsert_record(Scratch(note="ours"))
+        in_b = await db.database("b").list_records(Scratch, RecordQuery())
+        listed = await db.list_records(Scratch, RecordQuery())
+        missing = await db.get_record(Scratch, theirs.id)
+        pruned = await db.prune_records(Scratch, T0 + timedelta(days=1))
+
+    assert in_b == [theirs]
+    assert listed == [ours]
+    assert missing is None
+    assert pruned == 1
+
+
+async def test_a_lease_is_claimed_and_released_in_the_primary_at_the_clock_s_time(
+    registry: PluginRegistry,
+) -> None:
+    clock = FakeClock(T0)
+    async with make_manager(
+        registry, conn("a", 0), conn("b", 10), write_policy=WritePolicy.ALL, clock=clock
     ) as db:
         lease = await db.claim_lease("automations", "udl-1", timedelta(minutes=1))
         refused = await db.claim_lease("automations", "udl-2", timedelta(minutes=1))
+        await clock.advance(timedelta(minutes=1))
+        taken = await db.claim_lease("automations", "udl-2", timedelta(minutes=1))
+        released = await db.release_lease("automations", "udl-2")
         in_b = await db.database("b").list_records(Lease, RecordQuery())
 
     assert lease is not None
-    assert lease.holder == "udl-1"
+    assert (lease.holder, lease.expires_at) == ("udl-1", T0 + timedelta(minutes=1))
     assert refused is None
+    assert taken is not None
+    assert taken.holder == "udl-2"
+    assert released is True
     assert in_b == []
 
 

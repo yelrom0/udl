@@ -80,7 +80,7 @@ async def test_connect_creates_udls_tables_and_no_others(tmp_path: Path, make_db
         "site",
         "strategy",
         "download_record",
-        *(kind.kind for kind in record_kinds()),  # (a table for each kind of record)
+        *(f"record_{kind.kind}" for kind in record_kinds()),  # (a table for each kind of record)
     }
 
 
@@ -153,7 +153,7 @@ async def test_a_records_table_that_fails_is_a_database_error(
 ) -> None:
     async with make_db("udl.db") as db:
         with closing(sqlite3.connect(tmp_path / "udl.db")) as raw:
-            raw.execute("DROP TABLE lease")
+            raw.execute("DROP TABLE record_lease")
 
         with pytest.raises(DatabaseError, match="no such table"):
             await db.list_records(Lease, RecordQuery())
@@ -169,6 +169,10 @@ async def test_a_records_table_that_cannot_be_made_is_a_database_error(
 
         class Unmade(Record):  # (a kind the database did not know when it connected)
             kind = "test_unmade"
+
+            @classmethod
+            def example(cls) -> Unmade:
+                return cls()
 
         monkeypatch.setattr(db, "_lock_schema", full)
 

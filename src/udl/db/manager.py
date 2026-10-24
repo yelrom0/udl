@@ -16,6 +16,8 @@ from types import TracebackType
 from typing import NoReturn, Self
 from uuid import UUID
 
+from udl.clock import Clock, SystemClock
+
 # Local Imports
 from udl.config import DBConnectionConfig, DBSettings, ReadPolicy, WritePolicy
 from udl.db.models import (
@@ -28,7 +30,7 @@ from udl.db.models import (
     download_order,
     strategy_order,
 )
-from udl.db.records import Lease, Record, RecordQuery, newest_first
+from udl.db.records import Lease, Record, RecordQuery, RecordScope, newest_first
 from udl.errors import DatabaseError, DoesNotExist
 from udl.plugins.databases.base import DatabasePlugin
 from udl.plugins.registry import DATABASES, PluginRegistry
@@ -57,10 +59,11 @@ class DBManager:
       (site, url_pattern, tool), a tag chain's apart from a plain strategy's.
     - list_sites / list_downloads: every connection's, keeping the highest-priority copy of each.
 
-    Records (udl.db.records) are read like downloads: get_record from the highest-priority
-    connection that has it, list_records from every connection (the highest-priority copy of
-    each). They are written like everything else, but a lease is claimed in the leading write
-    connection alone: it is that database's.
+    Records (udl.db.records) of `config` kinds are read like downloads (get_record from the
+    highest-priority connection that has it, list_records from every connection, keeping the
+    highest-priority copy of each) and written like everything else. Those of `runtime` kinds
+    (leases among them) are read from and written to the primary connection only: one runtime
+    owns them. Records are stamped with the time from the manager's clock.
 
     Writes go to the write policy's connections, never to a read-only one; the primary (or the
     highest-priority one, when the primary is not written) leads and its answer is returned.
@@ -70,7 +73,10 @@ class DBManager:
     and a failed write is not attempted anywhere else.
     """
 
-    def __init__(self, settings: DBSettings, registry: PluginRegistry) -> None:
+    def __init__(
+        self, settings: DBSettings, registry: PluginRegistry, *, clock: Clock | None = None
+    ) -> None:
+        self._clock: Clock = clock or SystemClock()
         self._read_policy = settings.read_policy
         self._connections = sorted(settings.connections, key=lambda c: c.priority)
         self._databases = {c.name: registry.get(DATABASES, c.plugin)(c) for c in self._connections}
@@ -234,15 +240,27 @@ class DBManager:
         return query.page(sorted(records, key=download_order, reverse=True))
 
     async def get_record[R: Record](self, kind: type[R], record_id: UUID) -> R | None:
+        if kind.scope is RecordScope.RUNTIME:
+            return await self._on_primary(lambda db: db.get_record(kind, record_id))
         answers = await self._read(
             lambda db: db.get_record(kind, record_id), until=lambda r: r is not None
         )
         return next((record for record in answers if record is not None), None)
 
     async def list_records[R: Record](self, kind: type[R], query: RecordQuery) -> list[R]:
+        if kind.scope is RecordScope.RUNTIME:
+            return await self._on_primary(lambda db: db.list_records(kind, query))
         answers = await self._read(lambda db: db.list_records(kind, query.from_start()))
         records = _first_of_each(chain.from_iterable(answers), key=lambda record: record.id)
         return query.page(sorted(records, key=newest_first, reverse=True))
+
+    async def _on_primary[T](self, work: Callable[[DatabasePlugin], Awaitable[T]]) -> T:
+        """`work` on the primary connection alone (a runtime's records are there)."""
+        self._check_connected()
+        try:
+            return await work(self._databases[self._primary])
+        except Exception as e:  # noqa: BLE001 - re-raised as DatabaseError
+            self._raise(self._primary, e)
 
     # -----------------------------------------------------------------------------------------
     # Writes
@@ -292,21 +310,31 @@ class DBManager:
         await self._write(lambda db: db.update_download(record))
 
     async def upsert_record[R: Record](self, record: R) -> R:
-        return await self._write(lambda db: db.upsert_record(record))
+        """Store a record, stamped with the clock's time (a stored one keeps its created_at)."""
+        now = self._clock.now()
+        stamped = record.model_copy(update={"created_at": now, "updated_at": now})
+        return await self._record_write(type(record), lambda db: db.upsert_record(stamped))
 
     async def delete_record(self, kind: type[Record], record_id: UUID) -> bool:
-        return await self._write(lambda db: db.delete_record(kind, record_id))
+        return await self._record_write(kind, lambda db: db.delete_record(kind, record_id))
 
     async def prune_records(self, kind: type[Record], before: datetime) -> int:
-        return await self._write(lambda db: db.prune_records(kind, before))
+        return await self._record_write(kind, lambda db: db.prune_records(kind, before))
+
+    async def _record_write[T](
+        self, kind: type[Record], write: Callable[[DatabasePlugin], Awaitable[T]]
+    ) -> T:
+        if kind.scope is RecordScope.RUNTIME:
+            return await self._on_primary(write)
+        return await self._write(write)
 
     async def claim_lease(self, name: str, holder: str, ttl: timedelta) -> Lease | None:
-        """Claim a lease in the leading write connection (only: see DatabasePlugin)."""
-        lead = self._writing()[0]
-        try:
-            return await self._databases[lead].claim_lease(name, holder, ttl)
-        except Exception as e:  # noqa: BLE001 - re-raised as DatabaseError
-            self._raise(lead, e)
+        """Claim a lease (in the primary connection, at the clock's time: see DatabasePlugin)."""
+        now = self._clock.now()
+        return await self._on_primary(lambda db: db.claim_lease(name, holder, ttl, now=now))
+
+    async def release_lease(self, name: str, holder: str) -> bool:
+        return await self._on_primary(lambda db: db.release_lease(name, holder))
 
 
 def _from_start[Q: SiteQuery | DownloadQuery](query: Q) -> Q:

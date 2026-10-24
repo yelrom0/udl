@@ -16,7 +16,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 # Local Imports
 from udl.db.models import JsonObject
-from udl.db.records import Record
+from udl.db.records import Record, RecordScope, SyncRule
 
 
 class NoteStatus(StrEnum):
@@ -49,26 +49,41 @@ class Note(Record):
     body: JsonObject = Field(default_factory=dict)
     detail: Detail | None = None
 
+    @classmethod
+    def example(cls) -> Note:
+        return cls(topic="inbox", slug="example", body={"a": [1]}, detail=Detail(words=["x"]))
+
 
 class Tally(Record):
-    """A second kind, kept apart from the first; db sync leaves it alone until it has ended."""
+    """A second kind, kept apart from the first; db sync copies one once it has ended (like a
+    run)."""
 
     kind = "test_tally"
     indexed = ("name",)
     unique = (("name",),)
+    sync = SyncRule.ENDED
 
     name: str
     total: int = 0
     open: bool = False
 
-    def syncable(self) -> bool:
+    @classmethod
+    def example(cls) -> Tally:
+        return cls(name="example", total=3)
+
+    def ended(self) -> bool:
         return not self.open
 
 
 class Scratch(Record):
-    """A kind db sync never copies (like leases)."""
+    """A runtime's own kind (like a watcher's state): on the primary only, and never synced."""
 
     kind = "test_scratch"
-    synced = False
+    scope = RecordScope.RUNTIME
+    sync = SyncRule.NEVER
 
     note: str = ""
+
+    @classmethod
+    def example(cls) -> Scratch:
+        return cls(note="example")

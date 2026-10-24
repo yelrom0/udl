@@ -37,6 +37,7 @@ from udl.chains.suggest import (
     ranked,
     with_preview,
 )
+from udl.clock import Clock, SystemClock
 from udl.config import DBConnectionConfig, Settings, data_dir
 from udl.core.executor import CookieSource, Executor, JobSpec, RetryPolicy, site_cookies
 from udl.core.jobs import InstanceLock, JobManager, recover_interrupted
@@ -148,6 +149,7 @@ class UDLService:
         registry: PluginRegistry | None = None,
         databases: DBManager | None = None,
         secrets: SecretStore | None = None,
+        clock: Clock | None = None,
         cookies: CookieSource | None = None,
         site_plugins: Sequence[SitePlugin] | None = None,
         retry: RetryPolicy | None = None,
@@ -155,10 +157,15 @@ class UDLService:
         progress_interval: float = 0.25,
     ) -> None:
         self.settings = settings
+        self.clock: Clock = clock or SystemClock()
         if registry is None:
             registry = PluginRegistry.discover(settings.plugin_dirs)
         self.registry = registry
-        self.db = databases if databases is not None else DBManager(settings.db, registry)
+        self.db = (
+            databases
+            if databases is not None
+            else DBManager(settings.db, registry, clock=self.clock)
+        )
         self.toolbox = Toolbox(settings, registry)
         if site_plugins is None:
             site_plugins = load_site_plugins(registry)

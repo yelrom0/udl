@@ -58,8 +58,8 @@ if TYPE_CHECKING:
 
 type Document = dict[str, Any]
 
-# The version of udl's documents this code writes.
-SCHEMA_VERSION: Final = 1
+# The version of udl's documents this code writes: 2 added records (no document changed).
+SCHEMA_VERSION: Final = 2
 
 _SCHEMES: Final = ("mongodb", "mongodb+srv")
 _DEFAULT_DATABASE: Final = "udl"  # when the URL names none
@@ -102,6 +102,11 @@ def _stored(value: Any) -> Any:
     if isinstance(value, enum.Enum):
         return value.value
     return value
+
+
+def _collection(kind: type[Record]) -> str:
+    """The collection of a kind of record."""
+    return f"record_{kind.kind}"
 
 
 def _model[M: SQLModel](model_type: type[M], document: Document) -> M:
@@ -213,7 +218,7 @@ class MongoDBPlugin(DatabasePlugin):
 
     async def _index_records(self, kind: type[Record]) -> None:
         """Make the indexes of `kind`'s collection (when they are not made yet)."""
-        collection = self._database[kind.kind]
+        collection = self._database[_collection(kind)]
         alone = {together[0] for together in kind.unique if len(together) == 1}
         with self._errors():
             await collection.create_index([("created_at", _DESCENDING), ("_id", _DESCENDING)])
@@ -234,7 +239,7 @@ class MongoDBPlugin(DatabasePlugin):
         when it connected)."""
         if kind.kind not in self._record_kinds:
             await self._index_records(kind)
-        return self._database[kind.kind]
+        return self._database[_collection(kind)]
 
     async def health(self) -> bool:
         if self._client is None:
@@ -414,7 +419,7 @@ class MongoDBPlugin(DatabasePlugin):
         document = _document(record)
         changes = {
             name: value for name, value in document.items() if name not in ("_id", "created_at")
-        } | {"updated_at": _time(utcnow())}
+        }
         duplicate = DuplicateKey(
             f"A {kind.kind} record with one of its unique keys "
             f"({'; '.join(', '.join(together) for together in kind.unique)}) the same is "
@@ -444,8 +449,9 @@ class MongoDBPlugin(DatabasePlugin):
             deleted = await collection.delete_many({"created_at": {"$lt": _time(before)}})
         return deleted.deleted_count
 
-    async def claim_lease(self, name: str, holder: str, ttl: timedelta) -> Lease | None:
-        now = utcnow()
+    async def claim_lease(
+        self, name: str, holder: str, ttl: timedelta, *, now: datetime
+    ) -> Lease | None:
         document = _document(
             Lease(name=name, holder=holder, expires_at=now + ttl, created_at=now, updated_at=now)
         )
@@ -466,3 +472,9 @@ class MongoDBPlugin(DatabasePlugin):
         except _Duplicate:
             return None  # (another holds it)
         return _model(Lease, found) if found else None
+
+    async def release_lease(self, name: str, holder: str) -> bool:
+        collection = await self._records_of(Lease)
+        with self._errors():
+            released = await collection.delete_one({"name": name, "holder": holder})
+        return released.deleted_count > 0

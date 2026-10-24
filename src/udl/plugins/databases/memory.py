@@ -166,9 +166,7 @@ class MemoryDatabase(DatabasePlugin):
         kind = type(record)
         records = self._of(kind)
         if (stored := records.get(record.id)) is not None:
-            record = record.model_copy(
-                update={"created_at": stored.created_at, "updated_at": utcnow()}
-            )
+            record = record.model_copy(update={"created_at": stored.created_at})
         _check_unique(record, records.values())
         records[record.id] = _copy(kind, record)
         return _copy(kind, record)
@@ -183,13 +181,21 @@ class MemoryDatabase(DatabasePlugin):
             del records[id_]
         return len(old)
 
-    async def claim_lease(self, name: str, holder: str, ttl: timedelta) -> Lease | None:
-        now = utcnow()
-        leases = self._of(Lease)
-        held = next(
-            (lease for lease in leases.values() if isinstance(lease, Lease) and lease.name == name),
+    def _lease(self, name: str) -> Lease | None:
+        return next(
+            (
+                lease
+                for lease in self._of(Lease).values()
+                if isinstance(lease, Lease) and lease.name == name
+            ),
             None,
         )
+
+    async def claim_lease(
+        self, name: str, holder: str, ttl: timedelta, *, now: datetime
+    ) -> Lease | None:
+        leases = self._of(Lease)
+        held = self._lease(name)
         if held is not None and held.holder != holder and held.expires_at > now:
             return None
         lease = (
@@ -197,6 +203,13 @@ class MemoryDatabase(DatabasePlugin):
         ).model_copy(update={"holder": holder, "expires_at": now + ttl, "updated_at": now})
         leases[lease.id] = _copy(Lease, lease)
         return _copy(Lease, lease)
+
+    async def release_lease(self, name: str, holder: str) -> bool:
+        held = self._lease(name)
+        if held is None or held.holder != holder:
+            return False
+        del self._of(Lease)[held.id]
+        return True
 
 
 def _check_unique(record: Record, others: Iterable[Record]) -> None:

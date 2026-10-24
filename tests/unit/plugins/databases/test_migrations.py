@@ -21,7 +21,7 @@ from sqlalchemy import Connection
 # Local Imports
 from udl.chains.models import TagChain
 from udl.config import DBConnectionConfig
-from udl.db.models import Site, Strategy, StrategySource
+from udl.db.models import Site, Strategy, StrategySource, utcnow
 from udl.db.records import Lease, RecordQuery, record_kinds
 from udl.errors import DatabaseError
 from udl.plugins.databases.sqlite import SQLitePlugin
@@ -194,7 +194,7 @@ def as_version_2(path: Path) -> None:
     """Make the database at `path` as udl made it before records (schema version 2)."""
     with closing(sqlite3.connect(path)) as raw, raw:
         for kind in record_kinds():
-            raw.execute(f"DROP TABLE {kind.kind}")
+            raw.execute(f"DROP TABLE record_{kind.kind}")
         raw.execute("UPDATE schema_version SET version = 2")
 
 
@@ -202,12 +202,12 @@ async def test_version_3_adds_records(path: Path) -> None:
     async with SQLitePlugin(connection(path)) as db:
         site = await db.upsert_site(Site(key="example.com"))
     as_version_2(path)
-    assert not {kind.kind for kind in record_kinds()} & tables(path)
+    assert not {f"record_{kind.kind}" for kind in record_kinds()} & tables(path)
 
     async with SQLitePlugin(connection(path)) as db:
         assert await db.get_site("example.com") == site
-        lease = await db.claim_lease("automations", "udl-1", timedelta(seconds=30))
+        lease = await db.claim_lease("automations", "udl-1", timedelta(seconds=30), now=utcnow())
         assert await db.list_records(Lease, RecordQuery()) == [lease]
 
     assert stored_version(path) == 3
-    assert {kind.kind for kind in record_kinds()} <= tables(path)
+    assert {f"record_{kind.kind}" for kind in record_kinds()} <= tables(path)

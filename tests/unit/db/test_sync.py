@@ -350,7 +350,7 @@ async def test_kinds_that_belong_to_one_runtime_are_never_copied(
     source: DatabasePlugin, target: DatabasePlugin
 ) -> None:
     await source.upsert_record(Scratch(note="mine"))
-    await source.claim_lease("automations", "udl-1", timedelta(minutes=1))
+    await source.claim_lease("automations", "udl-1", timedelta(minutes=1), now=T0)
 
     synced = await sync(source, target)
 

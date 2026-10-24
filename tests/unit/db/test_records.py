@@ -19,7 +19,17 @@ from pydantic import ValidationError
 
 # Local Imports
 from support.records import Note, NoteStatus, Scratch, Tally
-from udl.db.records import Lease, Record, RecordQuery, record_kinds
+from udl.db.records import (
+    RECORD_KINDS,
+    Lease,
+    PluginSettings,
+    Record,
+    RecordQuery,
+    RecordScope,
+    SyncRule,
+    record_kind,
+    record_kinds,
+)
 
 
 def test_every_kind_defined_is_known_by_name() -> None:
@@ -40,6 +50,10 @@ def test_a_base_for_kinds_is_not_a_kind() -> None:
     class Kind(Base):
         kind = "test_based"
 
+        @classmethod
+        def example(cls) -> Kind:
+            return cls()
+
     assert Kind in record_kinds()
     assert Base not in record_kinds()
 
@@ -49,8 +63,6 @@ def test_a_base_for_kinds_is_not_a_kind() -> None:
     [
         ("Shouty", "cannot name a kind"),
         ("two words", "cannot name a kind"),
-        ("site", "cannot name a kind"),  # (udl's tables)
-        ("downloads", "cannot name a kind"),  # (and collections)
     ],
 )
 def test_a_kind_is_named_as_a_table_can_be(kind: str, problem: str) -> None:
@@ -95,6 +107,28 @@ def test_a_kind_s_indexed_fields_are_ones_every_database_can_compare(
 def test_another_class_cannot_be_a_kind_that_is_taken() -> None:
     with pytest.raises(TypeError, match=re.escape("Note is the test_note kind")):
         type("Other", (Record,), {"__module__": __name__, "kind": "test_note"})
+
+
+def test_a_kind_gives_an_example() -> None:
+    with pytest.raises(TypeError, match="example"):
+        type("Exampleless", (Record,), {"__module__": __name__, "kind": "test_exampleless"})
+
+
+def test_kinds_are_known_by_name() -> None:
+    assert record_kind("lease") is Lease
+    assert RECORD_KINDS["plugin_settings"] is PluginSettings
+    with pytest.raises(KeyError, match="nope"):
+        record_kind("nope")
+
+
+def test_a_kind_s_scope_and_sync_rule_say_whose_it_is() -> None:
+    assert (PluginSettings.scope, PluginSettings.sync) == (RecordScope.CONFIG, SyncRule.ALWAYS)
+    assert (Lease.scope, Lease.sync) == (RecordScope.RUNTIME, SyncRule.NEVER)
+    assert (Note.scope, Tally.sync, Scratch.sync) == (
+        RecordScope.CONFIG,
+        SyncRule.ENDED,
+        SyncRule.NEVER,
+    )
 
 
 # ---------------------------------------------------------------------------------------------
@@ -149,8 +183,7 @@ def test_a_query_from_the_start_covers_its_page() -> None:
     assert RecordQuery(offset=4).from_start() == RecordQuery()
 
 
-def test_db_sync_copies_records_that_have_ended() -> None:
-    assert Tally(name="t").syncable()
-    assert not Tally(name="t", open=True).syncable()
-    assert Note(topic="t", slug="s").syncable()
-    assert (Lease.synced, Scratch.synced, Note.synced) == (False, False, True)
+def test_a_record_has_ended_unless_its_kind_says_otherwise() -> None:
+    assert Tally(name="t").ended()
+    assert not Tally(name="t", open=True).ended()
+    assert Note(topic="t", slug="s").ended()

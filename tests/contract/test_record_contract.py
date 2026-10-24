@@ -18,13 +18,13 @@ import pytest
 
 # Local Imports
 from support.records import Detail, Note, NoteStatus, Tally
-from udl.db.models import utcnow
-from udl.db.records import Lease, Record, RecordQuery
+from udl.db.records import Lease, Record, RecordQuery, record_kinds
 from udl.errors import DuplicateKey
 from udl.plugins.databases.base import DatabasePlugin
 
 T0 = datetime(2026, 1, 2, 3, 4, 5, 678901, tzinfo=UTC)
 LONG = timedelta(minutes=5)
+MINUTE = timedelta(minutes=1)
 
 
 def note(topic: str = "inbox", slug: str | None = None, **fields: object) -> Note:
@@ -71,14 +71,15 @@ async def test_upserting_a_stored_record_replaces_it_keeping_when_it_was_created
     db: DatabasePlugin,
 ) -> None:
     [original] = await stored(db, note(count=1, created_at=T0, updated_at=T0))
-    before = utcnow()
+    later = T0 + timedelta(days=1)
 
     updated = await db.upsert_record(
-        original.model_copy(update={"count": 2, "created_at": T0 + timedelta(days=1)})
+        original.model_copy(update={"count": 2, "created_at": later, "updated_at": later})
     )
 
+    # (The caller stamps the times, from its clock: DBManager.)
     assert (updated.id, updated.count, updated.created_at) == (original.id, 2, T0)
-    assert updated.updated_at >= before
+    assert updated.updated_at == later
     assert await db.get_record(Note, original.id) == updated
     assert len(await db.list_records(Note, RecordQuery())) == 1
 
@@ -262,52 +263,62 @@ async def test_pruning_deletes_the_records_made_before_a_time(db: DatabasePlugin
 
 
 async def test_a_free_lease_is_claimed(db: DatabasePlugin) -> None:
-    before = utcnow()
-
-    lease = await db.claim_lease("automations", "udl-1", LONG)
+    lease = await db.claim_lease("automations", "udl-1", LONG, now=T0)
 
     assert lease is not None
-    assert (lease.name, lease.holder) == ("automations", "udl-1")
-    assert before + LONG <= lease.expires_at <= utcnow() + LONG
+    assert (lease.name, lease.holder, lease.expires_at) == ("automations", "udl-1", T0 + LONG)
 
 
 async def test_a_held_lease_is_not_claimed_by_another(
     db: DatabasePlugin, other: DatabasePlugin
 ) -> None:
-    await db.claim_lease("automations", "udl-1", LONG)
+    await db.claim_lease("automations", "udl-1", LONG, now=T0)
 
-    assert await other.claim_lease("automations", "udl-2", LONG) is None
-    assert await db.claim_lease("other work", "udl-2", LONG) is not None
+    assert await other.claim_lease("automations", "udl-2", LONG, now=T0 + MINUTE) is None
+    assert await db.claim_lease("other work", "udl-2", LONG, now=T0) is not None
 
 
 async def test_a_lease_is_renewed_by_its_holder(db: DatabasePlugin, other: DatabasePlugin) -> None:
-    first = await db.claim_lease("automations", "udl-1", timedelta(seconds=30))
+    await db.claim_lease("automations", "udl-1", LONG, now=T0)
 
-    renewed = await other.claim_lease("automations", "udl-1", LONG)
+    renewed = await other.claim_lease("automations", "udl-1", LONG, now=T0 + MINUTE)
 
-    assert first is not None
     assert renewed is not None
-    assert renewed.holder == "udl-1"
-    assert renewed.expires_at > first.expires_at
+    assert (renewed.holder, renewed.expires_at) == ("udl-1", T0 + MINUTE + LONG)
 
 
 async def test_a_lease_that_expired_is_taken_over(
     db: DatabasePlugin, other: DatabasePlugin
 ) -> None:
-    await db.claim_lease("automations", "udl-1", timedelta(0))
+    await db.claim_lease("automations", "udl-1", LONG, now=T0)
 
-    taken = await other.claim_lease("automations", "udl-2", LONG)
+    taken = await other.claim_lease("automations", "udl-2", LONG, now=T0 + LONG)
 
     assert taken is not None
     assert taken.holder == "udl-2"
-    assert await db.claim_lease("automations", "udl-1", LONG) is None
+    assert await db.claim_lease("automations", "udl-1", LONG, now=T0 + LONG) is None
+
+
+async def test_a_released_lease_is_free_at_once(db: DatabasePlugin, other: DatabasePlugin) -> None:
+    await db.claim_lease("automations", "udl-1", LONG, now=T0)
+
+    assert await other.release_lease("automations", "udl-2") is False  # (not theirs)
+    assert await db.release_lease("automations", "udl-1") is True
+    taken = await other.claim_lease("automations", "udl-2", LONG, now=T0 + MINUTE)
+
+    assert taken is not None
+    assert taken.holder == "udl-2"
+    assert await db.release_lease("automations", "udl-1") is False
 
 
 async def test_a_lease_is_claimed_by_one_of_many_at_once(
     db: DatabasePlugin, other: DatabasePlugin
 ) -> None:
     claims = await asyncio.gather(
-        *((db if n % 2 else other).claim_lease("automations", f"udl-{n}", LONG) for n in range(10))
+        *(
+            (db if n % 2 else other).claim_lease("automations", f"udl-{n}", LONG, now=T0)
+            for n in range(10)
+        )
     )
 
     holders = {claim.holder for claim in claims if claim is not None}
@@ -315,10 +326,24 @@ async def test_a_lease_is_claimed_by_one_of_many_at_once(
 
 
 async def test_leases_are_records_of_their_own_kind(db: DatabasePlugin) -> None:
-    lease = await db.claim_lease("automations", "udl-1", LONG)
+    lease = await db.claim_lease("automations", "udl-1", LONG, now=T0)
 
     assert await db.list_records(Lease, RecordQuery()) == [lease]
     assert await db.list_records(Note, RecordQuery()) == []
+
+
+# ---------------------------------------------------------------------------------------------
+# Every kind
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("kind", record_kinds(), ids=lambda kind: kind.kind)
+async def test_every_kind_round_trips_its_example(db: DatabasePlugin, kind: type[Record]) -> None:
+    example = kind.example()
+
+    assert await db.upsert_record(example) == example
+    assert await db.get_record(kind, example.id) == example
+    assert await db.list_records(kind, RecordQuery()) == [example]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -335,6 +360,10 @@ async def test_a_kind_defined_after_connecting_is_stored_too(db: DatabasePlugin)
         unique = (("name",),)
 
         name: str
+
+        @classmethod
+        def example(cls) -> Later:
+            return cls(name="example")
 
     record = await db.upsert_record(Later(name="late"))
 

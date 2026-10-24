@@ -131,9 +131,10 @@ class DatabasePlugin(ABC):
 
     @abstractmethod
     async def upsert_record[R: Record](self, record: R) -> R:
-        """Store a record, matched by id. Replacing one keeps its created_at and sets its
-        updated_at to now. Returns the stored record. Raises DuplicateKey when another record of
-        its kind has the same values in one of its kind's unique keys (none of them None)."""
+        """Store a record, matched by id. Replacing one keeps its stored created_at (the
+        caller stamps the times, from its clock: DBManager). Returns the stored record. Raises
+        DuplicateKey when another record of its kind has the same values in one of its kind's
+        unique keys (none of them None)."""
 
     @abstractmethod
     async def delete_record(self, kind: type[Record], record_id: UUID) -> bool:
@@ -144,7 +145,15 @@ class DatabasePlugin(ABC):
         """Delete the records of `kind` created before `before`. Returns how many."""
 
     @abstractmethod
-    async def claim_lease(self, name: str, holder: str, ttl: timedelta) -> Lease | None:
-        """Take the lease called `name` for `holder` until `ttl` from now: when nobody holds
-        it, `holder` does already (renewing it) or it has expired. Returns it, or None when
-        another holds it. Atomic, also between udls on one database."""
+    async def claim_lease(
+        self, name: str, holder: str, ttl: timedelta, *, now: datetime
+    ) -> Lease | None:
+        """Take the lease called `name` for `holder` until `ttl` after `now` (the caller's
+        clock's): when nobody holds it, `holder` does already (renewing it) or it has expired
+        by `now`. Returns it, or None when another holds it. Atomic, also between udls on one
+        database."""
+
+    @abstractmethod
+    async def release_lease(self, name: str, holder: str) -> bool:
+        """Give up the lease called `name`, when `holder` holds it, so another may take it at
+        once. Returns whether it did."""

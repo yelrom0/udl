@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt
 
 # Local Imports
 from udl.db.models import DownloadQuery, SiteQuery
-from udl.db.records import Record, RecordQuery, record_kinds
+from udl.db.records import Record, RecordQuery, SyncRule, record_kinds
 from udl.errors import DuplicateKey
 from udl.plugins.databases.base import DatabasePlugin
 
@@ -118,7 +118,9 @@ async def sync(
 
     by_kind: dict[str, SyncCounts] = {}
     for kind in record_kinds():
-        if kind.synced and (counted := await _sync_records(source, target, kind, dry_run, page)):
+        if kind.sync is SyncRule.NEVER:
+            continue
+        if counted := await _sync_records(source, target, kind, dry_run, page):
             by_kind[kind.kind] = _counts(counted)
 
     return SyncResult(
@@ -139,7 +141,7 @@ async def _sync_records(
     while found := await source.list_records(kind, RecordQuery(limit=page, offset=offset)):
         offset += len(found)
         for record in found:
-            if record.id in seen or not record.syncable():
+            if record.id in seen or (kind.sync is SyncRule.ENDED and not record.ended()):
                 continue
             seen.add(record.id)
             stored = await target.get_record(kind, record.id)

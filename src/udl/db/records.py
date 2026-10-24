@@ -8,9 +8,15 @@ settings...), each kind a Record model that every database plugin stores, the sa
 
 A kind names the fields it is looked up by (`indexed`: equality in a RecordQuery) and the ones
 that are unique together (`unique`), and they are all a database needs to know about it: a SQL
-database keeps a table per kind (a column per indexed field, the rest as JSON), MongoDB a
-collection, so a new kind needs no code in any database plugin. Records have UUID ids, so they
-are the same records in every database (db sync copies them), and are listed newest first.
+database keeps a table per kind (`record_<kind>`: a column per indexed field, the rest as JSON),
+MongoDB a collection, so a new kind needs no code in any database plugin. Each kind gives an
+example(), which the record contract round-trips in every database plugin. Records have UUID
+ids, so they are the same records in every database, and are listed newest first.
+
+A kind's `scope` says whose its records are: `config` records (subscriptions, settings...) follow
+the read and write policies, as sites do; `runtime` records (leases, events, runs, a watcher's
+state) belong to the one runtime that owns them, on the primary connection only. Its `sync` rule
+says what db sync copies: `always`, `ended` (history, once it has ended) or `never`.
 
 Leases are records too: claim_lease() is how one udl, of several on one database, does work
 that only one may do (running the automations).
@@ -25,7 +31,8 @@ import typing
 import uuid
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any, ClassVar, Final, cast
+from enum import StrEnum
+from typing import Any, ClassVar, Final, Self, cast
 
 # Package Imports
 import pydantic
@@ -36,14 +43,27 @@ from sqlmodel import Field, SQLModel
 from udl.db.models import JsonObject, utcnow
 
 _KIND: Final = re.compile(r"[a-z][a-z0-9_]*")
-# Names udl's tables and collections already have.
-_TAKEN: Final = frozenset(
-    {"site", "strategy", "download_record", "schema_version", "sites", "strategies", "downloads"}
-)
 # The types an indexed field can have (or None too): what every database can compare.
 _INDEXABLE: Final = (str, int, bool, uuid.UUID, datetime)
 
-_kinds: dict[str, type[Record]] = {}
+
+class RecordScope(StrEnum):
+    """Whose records of a kind are."""
+
+    CONFIG = "config"  # the user's: read and written by the policies, like sites
+    RUNTIME = "runtime"  # one runtime's: on the primary connection only
+
+
+class SyncRule(StrEnum):
+    """What db sync copies of a kind."""
+
+    ALWAYS = "always"
+    ENDED = "ended"  # history, once it has ended (Record.ended())
+    NEVER = "never"  # one runtime's own (leases, a watcher's state)
+
+
+RECORD_KINDS: Final[dict[str, type[Record]]] = {}
+"""Every kind of record, by name: udl's, and any defined since (the tests')."""
 
 
 class Record(SQLModel):
@@ -61,8 +81,8 @@ class Record(SQLModel):
     # Indexed fields whose values two records may not share (each tuple together); a record
     # with None in any of them clashes with none.
     unique: ClassVar[tuple[tuple[str, ...], ...]] = ()
-    # Whether db sync copies records of this kind (never a runtime's own, such as leases).
-    synced: ClassVar[bool] = True
+    scope: ClassVar[RecordScope] = RecordScope.CONFIG
+    sync: ClassVar[SyncRule] = SyncRule.ALWAYS
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4)
     created_at: AwareDatetime = Field(default_factory=utcnow)
@@ -73,15 +93,21 @@ class Record(SQLModel):
         super().__pydantic_init_subclass__(**kwargs)
         if "kind" not in cls.__dict__:  # (a base for kinds, not one)
             return
-        _check(cls)
-        known = _kinds.get(cls.kind)
+        known = RECORD_KINDS.get(cls.kind)
         if known is not None and known.__qualname__ != cls.__qualname__:
             raise TypeError(f"{cls.__qualname__}: {known.__qualname__} is the {cls.kind} kind")
-        _kinds[cls.kind] = cls
+        _check(cls)
+        RECORD_KINDS[cls.kind] = cls
 
-    def syncable(self) -> bool:
-        """Whether db sync may copy it now: yes, unless it is history still being made (an
-        event not yet dispatched, a run still running)."""
+    @classmethod
+    def example(cls) -> Self:
+        """A record of the kind (which the record contract stores in every database)."""
+        raise NotImplementedError
+
+    def ended(self) -> bool:
+        """Whether it is history that has ended (a run that ran, an event that was
+        dispatched): what db sync copies of a kind whose sync rule is `ended`. Yes, unless the
+        kind says otherwise."""
         return True
 
     @classmethod
@@ -107,7 +133,15 @@ class Record(SQLModel):
 
 def record_kinds() -> list[type[Record]]:
     """Every kind of record (udl's and those defined since), by name."""
-    return [_kinds[kind] for kind in sorted(_kinds)]
+    return [RECORD_KINDS[kind] for kind in sorted(RECORD_KINDS)]
+
+
+def record_kind(name: str) -> type[Record]:
+    """The kind of record called `name`. Raises KeyError."""
+    try:
+        return RECORD_KINDS[name]
+    except KeyError:
+        raise KeyError(f"No kind of record called {name!r}") from None
 
 
 def indexed_type(cls: type[Record], name: str) -> tuple[type, bool]:
@@ -132,10 +166,10 @@ def indexed_type(cls: type[Record], name: str) -> tuple[type, bool]:
 
 def _check(cls: type[Record]) -> None:
     """Raise TypeError when a kind is not one every database can store."""
-    if not _KIND.fullmatch(cls.kind) or cls.kind in _TAKEN:
+    if not _KIND.fullmatch(cls.kind):
         raise TypeError(
             f"{cls.__qualname__}.kind: {cls.kind!r} cannot name a kind of record (lower case "
-            f"letters, digits and _, and none of {', '.join(sorted(_TAKEN))})"
+            "letters, digits and _)"
         )
     for name in cls.indexed:
         if name not in cls.own_fields():
@@ -149,6 +183,8 @@ def _check(cls: type[Record]) -> None:
     for together in cls.unique:
         if not together or not set(together) <= set(cls.indexed):
             raise TypeError(f"{cls.__qualname__}.unique: {together!r} are not (all) indexed fields")
+    if "example" not in cls.__dict__:
+        raise TypeError(f"{cls.__qualname__} gives no example() (the record contract stores it)")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -202,11 +238,16 @@ class Lease(Record):
     kind = "lease"
     indexed = ("name", "holder", "expires_at")
     unique = (("name",),)
-    synced = False  # (it is the runtime's own)
+    scope = RecordScope.RUNTIME
+    sync = SyncRule.NEVER
 
     name: str
     holder: str
     expires_at: AwareDatetime
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(name="automations", holder="udl-1", expires_at=utcnow())
 
 
 # ---------------------------------------------------------------------------------------------
@@ -226,3 +267,7 @@ class PluginSettings(Record):
     plugin: str
     values: JsonObject = Field(default_factory=dict)
     secrets: list[str] = Field(default_factory=list[str])
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(plugin="gmail", values={"poll_interval": "60s"}, secrets=["client_secret"])
