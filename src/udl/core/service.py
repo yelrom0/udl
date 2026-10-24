@@ -29,6 +29,7 @@ from pydantic import BaseModel, JsonValue
 # Local Imports
 from udl.automations.bus import EventBus
 from udl.automations.events import EventTypes
+from udl.automations.runner import ActionRunner
 from udl.chains.executor import ChainRun, ChainRunner
 from udl.chains.files import read_chains, write_chains
 from udl.chains.models import FetchMode, SiteChain, StepTrace, TagChain
@@ -173,6 +174,7 @@ class UDLService:
         self.operations = OperationRegistry.discover(registry)
         self.event_types = EventTypes.discover(registry)
         self.bus = EventBus(self.db, self.event_types, self.clock, settings.automations)
+        self.runner = ActionRunner(self)
         self.jobs = JobManager(
             self.executor,
             max_concurrent=settings.max_concurrent,
@@ -221,12 +223,20 @@ class UDLService:
         if alone:
             try:
                 await recover_interrupted(self.db)
+                await self._recover_runs()
             finally:
                 self._lock.share()
 
+    async def _recover_runs(self) -> None:
+        try:
+            await self.runner.recover_direct()
+        except DatabaseError as e:
+            log.warning("Could not read the runs to clean them up: %s", e)
+
     async def close(self) -> None:
-        """Cancel the downloads still running, then close the databases."""
+        """Cancel the downloads and runs still running, then close the databases."""
         await self.jobs.shutdown()
+        await self.runner.shutdown()
         await self.db.close()
         self._lock.release()
 

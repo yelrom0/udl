@@ -20,6 +20,7 @@ from pydantic import JsonValue
 # Local Imports
 from support.downloaders import FakeMedia
 from support.engine import StaticCookies, databases, registry, script, settings
+from udl.clock import Clock
 from udl.config import Settings
 from udl.core.executor import RetryPolicy
 from udl.core.jobs import InstanceLock
@@ -50,12 +51,14 @@ class Harness:
         tmp_path: Path,
         *,
         tools: Mapping[str, dict[str, JsonValue]] | None = None,
+        clock: Clock | None = None,
         **fields: Any,
     ) -> None:
         self.tmp_path = tmp_path
         self.settings = settings(tmp_path, tools=media() if tools is None else tools, **fields)
         self.registry = registry()
-        self.db: DBManager = databases(self.settings, self.registry)
+        self.clock = clock  # (the services' and the databases', else the system's)
+        self.db: DBManager = databases(self.settings, self.registry, clock=clock)
         # (One store for every service, as the user's keyring is.)
         self.secrets = MemorySecretStore(self.settings.secrets)
         self.cookies = StaticCookies()
@@ -77,6 +80,7 @@ class Harness:
             registry=self.registry,
             databases=self.db,
             secrets=self.secrets,
+            clock=self.clock,
             cookies=self.cookies,
             retry=RetryPolicy(retries=0),
             lock=InstanceLock(self.tmp_path / "udl.lock"),

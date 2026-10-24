@@ -18,6 +18,7 @@ from pydantic import JsonValue, SecretStr
 
 # Local Imports
 from support.downloaders import FakeDownloader, FakeMedia, FakeOptions
+from udl.clock import Clock
 from udl.config import (
     DBConnectionConfig,
     DBSettings,
@@ -118,8 +119,10 @@ def settings(
     )
 
 
-def databases(config: Settings, plugins: PluginRegistry) -> DBManager:
-    return DBManager(config.db, plugins)
+def databases(
+    config: Settings, plugins: PluginRegistry, *, clock: Clock | None = None
+) -> DBManager:
+    return DBManager(config.db, plugins, clock=clock)
 
 
 def cookie(name: str = "session", value: str = "signed-in", domain: str = "example.com") -> Cookie:
