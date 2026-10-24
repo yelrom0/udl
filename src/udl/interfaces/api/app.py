@@ -73,15 +73,16 @@ async def require_api_key(request: Request, key: Annotated[str | None, Security(
 
 
 def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService) -> FastAPI:
-    """The API, on a service made from `settings` (started and closed by the app's lifespan)."""
+    """The API, on a service made from `settings` (started and closed by the app's lifespan).
+    The service is made first: the operations its plugins add are routes too."""
 
-    mcp = create_server(lambda: app.state.service)
+    service = make_service(settings)
+    mcp = create_server(lambda: service, service.operations)
     mcp_app = mcp.streamable_http_app(streamable_http_path=MCP_PATH, host=settings.api.host)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-        async with make_service(settings) as service, mcp.session_manager.run():
-            app.state.service = service
+        async with service, mcp.session_manager.run():
             yield
 
     app = FastAPI(
@@ -92,6 +93,7 @@ def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService)
         dependencies=[Security(require_api_key)],
     )
     app.state.settings = settings
+    app.state.service = service
     for router in (downloads.router, sites.router, chains.router, system.router):
         app.include_router(router)
     # (A route rather than a mount, which would answer only /mcp/...)

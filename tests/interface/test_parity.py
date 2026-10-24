@@ -18,7 +18,8 @@ from typer.core import TyperGroup
 
 # Local Imports
 from udl.config import Settings
-from udl.core.service import UDLService, operations
+from udl.core.operations import operations
+from udl.core.service import UDLService
 
 # planning/01-core.md's Feature Matrix: each operation's CLI command and API route (its MCP tool is
 # named after the operation).

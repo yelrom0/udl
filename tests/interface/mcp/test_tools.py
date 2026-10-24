@@ -35,7 +35,7 @@ from udl.core.models import (
     SiteList,
     SyncReport,
 )
-from udl.core.service import operations
+from udl.core.operations import operations
 from udl.db.models import JobStatus, Site, Strategy, StrategySource
 from udl.interfaces.mcp.server import DEFAULT_WAIT
 
@@ -84,6 +84,45 @@ async def test_every_tool_is_an_operation_and_documented_as_one(client: Client) 
         assert tool.output_schema is not None
         assert tool.annotations is not None
         assert tool.annotations.title
+
+
+# What each tool said it does when its hints lived in the MCP server (Phase 4): (title,
+# read-only, destructive, idempotent, open-world). They now come from the operations.
+ANNOTATIONS: dict[str, tuple[str, bool, bool, bool, bool]] = {
+    "download": ("Download URLs", False, False, False, True),
+    "get_download": ("Show a download", True, False, False, False),
+    "list_downloads": ("List the downloads", True, False, False, False),
+    "cancel_download": ("Cancel downloads", False, True, True, False),
+    "probe_url": ("Probe a URL", True, False, False, True),
+    "list_sites": ("List the sites", True, False, False, False),
+    "get_site": ("Show a site", True, False, False, False),
+    "set_site_strategy": ("Set a site's downloader", False, False, True, False),
+    "delete_site": ("Forget a site", False, True, True, False),
+    "suggest_chain": ("Suggest tag chains", True, False, False, True),
+    "test_chain": ("Test a tag chain", True, False, False, True),
+    "set_site_chain": ("Save a site's tag chain", False, False, True, False),
+    "import_chains": ("Import tag chains", False, False, True, False),
+    "export_chain": ("Export a site's tag chains", True, False, False, False),
+    "list_databases": ("List the databases", True, False, False, False),
+    "sync_databases": ("Sync the databases", False, True, True, False),
+    "list_plugins": ("List the plugins", True, False, False, False),
+    "get_config": ("Show the settings", True, False, False, False),
+}
+
+
+async def test_every_tool_keeps_the_annotations_it_had(client: Client) -> None:
+    tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+
+    for name, (title, read_only, destructive, idempotent, open_world) in ANNOTATIONS.items():
+        annotations = tools[name].annotations
+        assert annotations is not None
+        assert (
+            annotations.title,
+            annotations.read_only_hint,
+            annotations.destructive_hint,
+            annotations.idempotent_hint,
+            annotations.open_world_hint,
+        ) == (title, read_only, destructive, idempotent, open_world), name
 
 
 @pytest.mark.parametrize(

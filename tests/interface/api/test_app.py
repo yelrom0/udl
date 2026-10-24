@@ -22,7 +22,7 @@ from support.api import client_for
 from support.interfaces import A, Harness
 from udl.config import APISettings
 from udl.core.models import DownloadList
-from udl.core.service import operations
+from udl.core.operations import operations
 from udl.errors import ErrorCode, ErrorInfo
 from udl.interfaces.api.app import LocalHostsOnly
 

@@ -123,6 +123,14 @@ class PluginRegistry:
             for _, entry in sorted(self._plugins.get(group, {}).items())
         ]
 
+    def entries(self) -> list[tuple[PluginInfo, type[Any]]]:
+        """Every registered plugin and its class, sorted by kind and name."""
+        return [
+            (entry.info, entry.cls)
+            for group in sorted(self._plugins)
+            for _, entry in sorted(self._plugins[group].items())
+        ]
+
     def get[P](self, kind: PluginKind[P], name: str) -> type[P]:
         """The plugin class named `name`. Raises PluginError when there is none."""
         if kind.group not in self._plugins:
@@ -212,11 +220,15 @@ class PluginRegistry:
                         self._report(kind, str(path), e)
 
     def _report(self, kind: PluginKind[Any] | None, origin: str, error: Exception) -> None:
+        self.report(kind.group if kind else None, origin, error)
+
+    def report(self, kind: str | None, origin: str, error: Exception) -> None:
+        """Report a plugin (of the kind whose entry point group is `kind`, at `origin`) that
+        could not be loaded, or used: it is one of the problems, rather than stopping udl."""
         message = (
             str(error) if isinstance(error, PluginError) else f"{type(error).__name__}: {error}"
         )
-        problem = PluginProblem(kind=kind.group if kind else None, origin=origin, error=message)
-        self._problems.append(problem)
+        self._problems.append(PluginProblem(kind=kind, origin=origin, error=message))
         log.warning("Could not load the plugin %s: %s", origin, message)
 
 

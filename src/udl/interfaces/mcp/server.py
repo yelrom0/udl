@@ -3,10 +3,10 @@
 - server.py -
 -------------
 
-The MCP server (the mcp SDK's MCPServer): a tool for every operation, named after it, whose
-arguments are the operation's request fields and whose result is its response (as structured
-content, and the same as JSON text). `udl mcp` serves it on stdin/stdout, and `udl serve` at
-/mcp (streamable HTTP).
+The MCP server (the mcp SDK's MCPServer): a tool for every operation (udl's own and its plugins'),
+named after it, whose arguments are the operation's request fields and whose result is its
+response (as structured content, and the same as JSON text). Its annotations are the operation's
+hints. `udl mcp` serves it on stdin/stdout, and `udl serve` at /mcp (streamable HTTP).
 
 `download` waits for its downloads (at most DEFAULT_WAIT seconds unless the agent says
 otherwise), reporting their progress as MCP progress notifications. As with the API, an output
@@ -31,7 +31,8 @@ from pydantic.fields import FieldInfo
 
 # Local Imports
 from udl.core.models import DownloadRequest, JobEvent
-from udl.core.service import Operation, UDLService, operations
+from udl.core.operations import Operation, OperationRegistry
+from udl.core.service import UDLService
 from udl.errors import UDLError
 from udl.interfaces.security import check_output_dir
 
@@ -58,71 +59,47 @@ and `set_site_chain` saves it, so `download` follows it from then on. `export_ch
 """
 
 
-def _hints(
-    title: str,
-    *,
-    read_only: bool = False,
-    destructive: bool = False,
-    idempotent: bool = False,
-    open_world: bool = False,
-) -> ToolAnnotations:
-    return ToolAnnotations(
-        title=title,
-        read_only_hint=read_only,
-        destructive_hint=destructive,
-        idempotent_hint=idempotent,
-        open_world_hint=open_world,
-    )
-
-
-# What each tool does to the world, for the agent (and its user) to decide when to call it.
-_HINTS: Final[dict[str, ToolAnnotations]] = {
-    "download": _hints("Download URLs", open_world=True),
-    "get_download": _hints("Show a download", read_only=True),
-    "list_downloads": _hints("List the downloads", read_only=True),
-    "cancel_download": _hints("Cancel downloads", destructive=True, idempotent=True),
-    "probe_url": _hints("Probe a URL", read_only=True, open_world=True),
-    "list_sites": _hints("List the sites", read_only=True),
-    "get_site": _hints("Show a site", read_only=True),
-    "set_site_strategy": _hints("Set a site's downloader", idempotent=True),
-    "delete_site": _hints("Forget a site", destructive=True, idempotent=True),
-    "suggest_chain": _hints("Suggest tag chains", read_only=True, open_world=True),
-    "test_chain": _hints("Test a tag chain", read_only=True, open_world=True),
-    "set_site_chain": _hints("Save a site's tag chain", idempotent=True),
-    "import_chains": _hints("Import tag chains", idempotent=True),
-    "export_chain": _hints("Export a site's tag chains", read_only=True),
-    "list_databases": _hints("List the databases", read_only=True),
-    "sync_databases": _hints("Sync the databases", destructive=True, idempotent=True),
-    "list_plugins": _hints("List the plugins", read_only=True),
-    "get_config": _hints("Show the settings", read_only=True),
-}
-
 # The tools' own defaults, where an agent should not get the operation's.
 _DEFAULTS: Final[dict[str, dict[str, object]]] = {"download": {"timeout": DEFAULT_WAIT}}
 
 
-def create_server(service: Callable[[], UDLService]) -> MCPServer:
-    """The MCP server, whose tools run on `service()` (a started service)."""
+def create_server(
+    service: Callable[[], UDLService], operations: OperationRegistry | None = None
+) -> MCPServer:
+    """The MCP server, whose tools are `operations` (by default, udl's own) and run on
+    `service()` (a started service)."""
     server = MCPServer(
         name="udl",
         title="udl",
         version=importlib.metadata.version("udl"),
         instructions=INSTRUCTIONS,
     )
-    for name, op in operations().items():
-        if name == "download":
+    for op in operations if operations is not None else OperationRegistry.core():
+        if op.name == "download" and op.namespace is None:
             tool = _tool(op, DownloadRequest, _download, service)
         else:
             tool = _tool(op, op.request, functools.partial(_call, op), service)
         server.add_tool(
             tool,
-            name=name,
-            title=_HINTS[name].title,
+            name=op.name,
+            title=op.title,
             description=op.description,
-            annotations=_HINTS[name],
+            annotations=_annotations(op),
             structured_output=True,
         )
     return server
+
+
+def _annotations(op: Operation) -> ToolAnnotations:
+    """What the tool does to the world, for the agent (and its user) to decide when to call it."""
+    hints = op.hints
+    return ToolAnnotations(
+        title=op.title,
+        read_only_hint=hints.read_only,
+        destructive_hint=hints.destructive,
+        idempotent_hint=hints.idempotent,
+        open_world_hint=hints.open_world,
+    )
 
 
 def _tool[Q: BaseModel](

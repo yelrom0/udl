@@ -13,7 +13,8 @@ from typing import Annotated, Any
 from fastapi import Depends, Request
 
 # Local Imports
-from udl.core.service import UDLService, operations
+from udl.core.operations import operations
+from udl.core.service import UDLService
 from udl.errors import ErrorInfo
 
 

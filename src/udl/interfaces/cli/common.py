@@ -22,7 +22,8 @@ from rich.markup import escape
 
 # Local Imports
 from udl.config import Settings
-from udl.core.service import ServiceFactory, UDLService, operations
+from udl.core.operations import operations
+from udl.core.service import ServiceFactory, UDLService
 from udl.core.urls import URL
 from udl.errors import ConfigError, UDLError
 

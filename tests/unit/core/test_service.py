@@ -50,7 +50,8 @@ from udl.core.models import (
     SiteRequest,
     SyncDatabasesRequest,
 )
-from udl.core.service import UDLService, operation, operations
+from udl.core.operations import operation, operations
+from udl.core.service import UDLService
 from udl.core.urls import URL
 from udl.db.manager import DBManager
 from udl.db.models import (
@@ -174,7 +175,7 @@ def test_an_operation_name_can_be_registered_once() -> None:
         raise AssertionError
 
     with pytest.raises(ValueError, match="download"):
-        operation("download")(another)
+        operation("download", title="Another")(another)
     assert operations()["download"].method is UDLService.download
 
 

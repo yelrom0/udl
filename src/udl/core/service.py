@@ -3,23 +3,21 @@
 - service.py -
 --------------
 
-UDLService: everything udl does, as operations. An operation is an async method that takes one
-request model and returns one response model, registered with @operation. The CLI, the API and
-the MCP server (Phase 4) only parse a request, call an operation and render its response, so
-they offer the same operations with the same validation (the parity test compares the operations
-each one offers with operations()).
+UDLService: everything udl does, as operations (udl.core.operations). udl's own are its methods
+marked with @operation, each taking one request model and returning one response model; its
+`operations` registry holds them and the ones its plugins add. The CLI, the API and the MCP
+server only parse a request, call an operation and render its response, so they offer the same
+operations with the same validation (the parity test compares what each one offers with the
+registry).
 """
 
 # System Imports
 import asyncio
 import contextlib
 import functools
-import inspect
 import logging
 import re
-import typing
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, Final, Self
 from urllib.parse import urlsplit, urlunsplit
@@ -75,6 +73,7 @@ from udl.core.models import (
     SyncDatabasesRequest,
     SyncReport,
 )
+from udl.core.operations import OperationHints, OperationRegistry, operation
 from udl.core.resolver import Resolver
 from udl.core.sites import load_site_plugins
 from udl.core.tools import Toolbox
@@ -106,60 +105,6 @@ _SECRET_KEY: Final = re.compile(
 )
 _HIDDEN: Final[str] = "***"
 _PREVIEWS: Final[int] = 5  # media of a tested chain whose type and size are asked for
-
-
-# ---------------------------------------------------------------------------------------------
-# The operations registry
-# ---------------------------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class Operation:
-    """One of udl's operations."""
-
-    name: str  # e.g. "download": the MCP tool's name; the CLI and API name theirs after it
-    request: type[BaseModel]
-    response: type[BaseModel]
-    summary: str  # the first line of its docstring
-    description: str  # its docstring, written for people and for AI agents (MCP)
-    method: Callable[..., Awaitable[BaseModel]]  # (unbound) UDLService's method
-
-
-_registered: list[tuple[str, Callable[..., Awaitable[BaseModel]]]] = []
-
-
-def operation[**P, R: BaseModel](
-    name: str,
-) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]:
-    """Register a UDLService method as the operation called `name`: it takes its request as its
-    only positional argument (others are keyword-only, for callers in Python)."""
-
-    def register(method: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
-        if any(registered == name for registered, _ in _registered):
-            raise ValueError(f"There already is an operation called {name!r}")
-        _registered.append((name, method))
-        return method
-
-    return register
-
-
-@functools.cache
-def operations() -> dict[str, Operation]:
-    """Every operation, by name."""
-    found: dict[str, Operation] = {}
-    for name, method in _registered:
-        hints = typing.get_type_hints(method)
-        _, request, *_ = inspect.signature(method).parameters
-        doc = inspect.getdoc(method) or ""
-        found[name] = Operation(
-            name=name,
-            request=hints[request],
-            response=hints["return"],
-            summary=doc.partition("\n")[0],
-            description=doc,
-            method=method,
-        )
-    return found
 
 
 # ---------------------------------------------------------------------------------------------
@@ -200,6 +145,8 @@ class UDLService:
         self.executor = Executor(
             settings, self.resolver, self.toolbox, cookies=self.cookies, retry=retry
         )
+        # (Known as soon as the service is made, so the interfaces can offer them before it starts.)
+        self.operations = OperationRegistry.discover(registry)
         self.jobs = JobManager(
             self.executor,
             max_concurrent=settings.max_concurrent,
@@ -246,13 +193,9 @@ class UDLService:
         self._lock.release()
 
     async def call(self, name: str, request: BaseModel | Mapping[str, Any]) -> BaseModel:
-        """Run the operation called `name` with `request`: its request model, or plain data that
-        is validated into one (raising ValidationError)."""
-        op = operations().get(name)
-        if op is None:
-            raise DoesNotExist(
-                f"No operation called {name!r}", hint=f"The operations: {', '.join(operations())}."
-            )
+        """Run the operation called `name` (udl's own, or a plugin's) with `request`: its request
+        model, or plain data that is validated into one (raising ValidationError)."""
+        op = self.operations.get(name)  # (raises DoesNotExist)
         if isinstance(request, Mapping):
             request = op.request.model_validate(request)
         elif not isinstance(request, op.request):
@@ -269,7 +212,7 @@ class UDLService:
 
     # -- downloads -----------------------------------------------------------------------------
 
-    @operation("download")
+    @operation("download", title="Download URLs", hints=OperationHints(open_world=True))
     async def download(
         self,
         request: DownloadRequest,
@@ -321,7 +264,7 @@ class UDLService:
         plugin = self.resolver.site_plugin(url)
         return await plugin.transform_urls(url) if plugin else [url]
 
-    @operation("get_download")
+    @operation("get_download", title="Show a download", hints=OperationHints(read_only=True))
     async def get_download(self, request: JobRequest) -> JobInfo:
         """Show a download: whether it is queued, running (with its progress), finished (with
         the files it wrote) or failed (with why, and every tool it tried)."""
@@ -334,7 +277,7 @@ class UDLService:
             )
         return JobInfo.from_record(record)
 
-    @operation("list_downloads")
+    @operation("list_downloads", title="List the downloads", hints=OperationHints(read_only=True))
     async def list_downloads(self, request: DownloadQuery) -> DownloadList:
         """List the download history, newest first (optionally for one site, or with one
         status), showing the downloads this udl is running as they are now."""
@@ -345,7 +288,11 @@ class UDLService:
             ]
         )
 
-    @operation("cancel_download")
+    @operation(
+        "cancel_download",
+        title="Cancel downloads",
+        hints=OperationHints(destructive=True, idempotent=True),
+    )
     async def cancel_download(self, request: JobRequest) -> DownloadList:
         """Cancel a download that this udl is running, or every download of a batch, and wait
         for them to stop. Downloads that have ended are left as they are."""
@@ -365,7 +312,11 @@ class UDLService:
 
     # -- probing -------------------------------------------------------------------------------
 
-    @operation("probe_url")
+    @operation(
+        "probe_url",
+        title="Probe a URL",
+        hints=OperationHints(read_only=True, open_world=True),
+    )
     async def probe(self, request: ProbeRequest) -> ProbeReport:
         """Find out which downloaders can download a URL, and what media they see, without
         downloading anything.
@@ -405,13 +356,13 @@ class UDLService:
 
     # -- sites ---------------------------------------------------------------------------------
 
-    @operation("list_sites")
+    @operation("list_sites", title="List the sites", hints=OperationHints(read_only=True))
     async def list_sites(self, request: SiteQuery) -> SiteList:
         """List the sites udl knows (it has downloaded from them, or has a strategy for them),
         by key, optionally only those whose key or name contains `search`."""
         return SiteList(sites=await self.db.list_sites(request))
 
-    @operation("get_site")
+    @operation("get_site", title="Show a site", hints=OperationHints(read_only=True))
     async def get_site(self, request: SiteRequest) -> SiteInfo:
         """Show what udl knows about a site: its settings, and its strategies (the downloaders
         that work on it, with how often they have worked and failed)."""
@@ -423,7 +374,11 @@ class UDLService:
             )
         return SiteInfo(site=site, strategies=await self.db.strategies_for(site.key))
 
-    @operation("set_site_strategy")
+    @operation(
+        "set_site_strategy",
+        title="Set a site's downloader",
+        hints=OperationHints(idempotent=True),
+    )
     async def set_site_strategy(self, request: SetStrategyRequest) -> Strategy:
         """Tell udl which downloader (and options) to use for a site, or only for its URLs
         whose path matches `pattern`.
@@ -458,14 +413,22 @@ class UDLService:
             )
         )
 
-    @operation("delete_site")
+    @operation(
+        "delete_site",
+        title="Forget a site",
+        hints=OperationHints(destructive=True, idempotent=True),
+    )
     async def delete_site(self, request: SiteRequest) -> Deleted:
         """Forget a site and its strategies (its download history is kept)."""
         return Deleted(deleted=await self.db.delete_site(request.site))
 
     # -- tag chains ----------------------------------------------------------------------------
 
-    @operation("suggest_chain")
+    @operation(
+        "suggest_chain",
+        title="Suggest tag chains",
+        hints=OperationHints(read_only=True, open_world=True),
+    )
     async def suggest_chain(self, request: SuggestChainRequest) -> ChainSuggestions:
         """Suggest tag chains for a page's media: for a site that no downloader handles.
 
@@ -515,7 +478,11 @@ class UDLService:
             error=error,
         )
 
-    @operation("test_chain")
+    @operation(
+        "test_chain",
+        title="Test a tag chain",
+        hints=OperationHints(read_only=True, open_world=True),
+    )
     async def test_chain(self, request: ChainTestRequest) -> ChainReport:
         """Try a tag chain on a page, without downloading anything: what each step found, and
         the media it led to (with its type and size).
@@ -569,7 +536,11 @@ class UDLService:
             }
         )
 
-    @operation("set_site_chain")
+    @operation(
+        "set_site_chain",
+        title="Save a site's tag chain",
+        hints=OperationHints(idempotent=True),
+    )
     async def set_site_chain(self, request: SetChainRequest) -> Strategy:
         """Save a tag chain for a site, or only for its URLs whose path matches `pattern`:
         downloads from it then follow the chain (test it first with test_chain).
@@ -587,7 +558,7 @@ class UDLService:
             source=StrategySource.MANUAL,
         )
 
-    @operation("import_chains")
+    @operation("import_chains", title="Import tag chains", hints=OperationHints(idempotent=True))
     async def import_chains(self, request: ImportChainsRequest) -> ImportedChains:
         """Save the tag chains in a chain file (YAML, as export_chain gives them), each for its
         site (and pattern), replacing the chain there.
@@ -613,7 +584,11 @@ class UDLService:
             ]
         )
 
-    @operation("export_chain")
+    @operation(
+        "export_chain",
+        title="Export a site's tag chains",
+        hints=OperationHints(read_only=True),
+    )
     async def export_chain(self, request: SiteRequest) -> ChainFile:
         """Give a site's tag chains as a chain file (YAML), which import_chains (and `udl chain
         import`) reads: to keep them, share them or move them to another udl."""
@@ -710,7 +685,7 @@ class UDLService:
 
     # -- udl itself ----------------------------------------------------------------------------
 
-    @operation("list_databases")
+    @operation("list_databases", title="List the databases", hints=OperationHints(read_only=True))
     async def list_databases(self, request: ListDatabasesRequest) -> DatabaseList:
         """List the database connections udl uses (with any password hidden), in the order it
         consults them, and whether each is connected and answering."""
@@ -718,7 +693,11 @@ class UDLService:
             databases=[await self._database(connection) for connection in self.db.connections]
         )
 
-    @operation("sync_databases")
+    @operation(
+        "sync_databases",
+        title="Sync the databases",
+        hints=OperationHints(destructive=True, idempotent=True, admin=True),
+    )
     async def sync_databases(self, request: SyncDatabasesRequest) -> SyncReport:
         """Copy what one database connection knows into others: its sites, their strategies
         and its downloads that have ended, so the udls that use them know the same.
@@ -776,7 +755,7 @@ class UDLService:
             healthy=healthy,
         )
 
-    @operation("list_plugins")
+    @operation("list_plugins", title="List the plugins", hints=OperationHints(read_only=True))
     async def list_plugins(self, request: ListPluginsRequest) -> PluginList:
         """List udl's plugins (database engines, downloaders and site plugins: built in,
         installed, or local files in the plugin dirs), whether each can run (with what to install
@@ -815,7 +794,7 @@ class UDLService:
             }
         )
 
-    @operation("get_config")
+    @operation("get_config", title="Show the settings", hints=OperationHints(read_only=True))
     async def get_config(self, request: GetConfigRequest) -> ConfigInfo:
         """Show the settings udl runs with (from its config file, UDL_* environment variables
         and the defaults), with secrets hidden."""

@@ -27,7 +27,7 @@ from mcp import Client, StdioServerParameters
 # Local Imports
 from support.fixture_site import FixtureSite, Page
 from udl.core.models import ConfigInfo, DownloadBatch, ProbeReport
-from udl.core.service import operations
+from udl.core.operations import operations
 from udl.db.models import JobStatus
 
 

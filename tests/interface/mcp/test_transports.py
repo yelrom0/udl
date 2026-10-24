@@ -23,7 +23,7 @@ from support.cli import CLI
 from support.interfaces import Harness
 from udl.config import APISettings
 from udl.core.models import ConfigInfo
-from udl.core.service import operations
+from udl.core.operations import operations
 from udl.errors import ErrorCode, ErrorInfo
 
 INITIALIZE = {

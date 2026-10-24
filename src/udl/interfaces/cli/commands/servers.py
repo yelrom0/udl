@@ -52,4 +52,4 @@ def mcp(ctx: typer.Context) -> None:
     # (Imported here: the other commands start faster without the MCP SDK.)
     from udl.interfaces.mcp.server import create_server
 
-    run(ctx, lambda service: create_server(lambda: service).run_stdio_async())
+    run(ctx, lambda service: create_server(lambda: service, service.operations).run_stdio_async())
