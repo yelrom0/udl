@@ -10,14 +10,16 @@ rendered; what is not HTML (JSON, a file) is read as it was served, through the 
 cookies.
 
 ChromiumTabs opens a Chromium for each tab. (The queue's browser lane keeps one open for its
-batches: udl.fetch.queue.) Playwright comes with udl's browser extra, so this module is only
-imported when a page is fetched in the browser.
+batches: udl.fetch.queue.) ProfileCookies reads and writes the profile's cookies, through the
+browser that has it open, if one does. Playwright comes with udl's browser extra, so this module
+is only imported when it is needed.
 """
 
 # System Imports
+import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
@@ -30,9 +32,11 @@ from playwright.async_api import Error as PlaywrightError
 # Local Imports
 from udl.clock import Clock
 from udl.fetch.content import media_type
+from udl.fetch.cookies import of_site
 from udl.fetch.ladder import Snapshot
-from udl.plugins.downloaders.base import CancelToken
-from udl.plugins.downloaders.browser import chromium
+from udl.plugins.downloaders.auth import for_site
+from udl.plugins.downloaders.base import CancelToken, Cookie
+from udl.plugins.downloaders.browser import add_cookies, chromium, from_playwright
 from udl.plugins.downloaders.errors import chromium_error
 
 log = logging.getLogger(__name__)
@@ -195,3 +199,70 @@ async def opened(
     finally:
         with contextlib.suppress(PlaywrightError):
             await page.close()
+
+
+# ---------------------------------------------------------------------------------------------
+# The profile's cookies
+# ---------------------------------------------------------------------------------------------
+
+
+class ProfileCookies:
+    """The cookies of udl's browser profile (udl.fetch.cookies.Profile): read and written
+    through the context `open_context()` gives (the browser that has the profile open), else
+    through a Chromium of their own on it."""
+
+    def __init__(
+        self,
+        profile_dir: Path,
+        *,
+        open_context: Callable[[], BrowserContext | None] = lambda: None,
+    ) -> None:
+        self.profile_dir = profile_dir
+        self._open_context = open_context
+
+    @asynccontextmanager
+    async def _context(self) -> AsyncGenerator[BrowserContext]:
+        if (context := self._open_context()) is not None:
+            yield context
+            return
+        cancel = CancelToken()
+        async with chromium(profile_dir=self.profile_dir, headless=True, cancel=cancel) as opened:
+            yield opened
+
+    async def _used(self) -> bool:
+        """Whether the profile was ever used (else it has no cookies, and no Chromium starts)."""
+        return self._open_context() is not None or await asyncio.to_thread(self.profile_dir.is_dir)
+
+    async def cookies(self) -> list[Cookie]:
+        if not await self._used():
+            return []
+        async with self._context() as context:
+            return from_playwright(await context.cookies())
+
+    async def cookies_for(self, url: str) -> list[Cookie]:
+        """The cookies the profile has for url's site."""
+        return for_site(await self.cookies(), url)
+
+    async def add(self, cookies: list[Cookie]) -> None:
+        async with self._context() as context:
+            await add_cookies(context, cookies)
+
+    async def remove(self, cookies: list[Cookie]) -> None:
+        if not cookies or not await self._used():
+            return
+        async with self._context() as context:
+            for cookie in cookies:
+                await context.clear_cookies(
+                    name=cookie.name, domain=cookie.domain, path=cookie.path
+                )
+
+    async def clear(self, site: str) -> int:
+        if not await self._used():
+            return 0
+        async with self._context() as context:
+            found = of_site(from_playwright(await context.cookies()), site)
+            for cookie in found:
+                await context.clear_cookies(
+                    name=cookie.name, domain=cookie.domain, path=cookie.path
+                )
+        return len(found)

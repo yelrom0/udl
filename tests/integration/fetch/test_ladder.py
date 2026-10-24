@@ -43,6 +43,12 @@ class Jar:
     async def keep(self, url: str, sent: list[Cookie], now: list[Cookie]) -> None:
         self.cookies = now
 
+    async def flush(self) -> None:
+        pass
+
+    def forget(self, site: str | None = None) -> None:
+        pass
+
 
 class Ladder:
     def __init__(self, fetcher: Fetcher, jar: Jar) -> None:

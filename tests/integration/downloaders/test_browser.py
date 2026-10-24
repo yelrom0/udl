@@ -12,6 +12,7 @@ persistent profile that keeps logins
 import asyncio
 import time
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 # Package Imports
@@ -26,7 +27,12 @@ from support.fixture_site import COOKIE_NAME, FixtureSite, Page
 from udl.config import data_dir
 from udl.errors import Cancelled, ErrorCode
 from udl.plugins.downloaders.base import CancelToken, DownloadContext, ProbeContext
-from udl.plugins.downloaders.browser import BrowserDownloader, BrowserOptions
+from udl.plugins.downloaders.browser import (
+    BrowserDownloader,
+    BrowserOptions,
+    chromium,
+    profile_cookies,
+)
 
 
 @pytest.fixture
@@ -251,6 +257,27 @@ async def test_a_login_is_kept_in_the_profile(fixture_site: FixtureSite, tmp_pat
     assert result.error is None
     assert result.handoff is not None
     assert COOKIE_NAME in {cookie.name for cookie in result.handoff.cookies}
+
+
+async def test_a_session_cookie_is_kept_in_the_profile_when_the_browser_closes(
+    httpserver: HTTPServer, tmp_path: Path
+) -> None:
+    # (Chromium forgets session cookies when it closes, unless it is to continue where it left
+    # off: udl's profile does, so a login with a session cookie lasts.)
+    needs_chromium()
+    profile = tmp_path / "profile"
+    httpserver.expect_request("/login").respond_with_data(
+        "<p>in</p>", content_type="text/html", headers={"Set-Cookie": "sid=1; Path=/"}
+    )
+
+    async with chromium(profile_dir=profile, headless=True, cancel=CancelToken()) as context:
+        page = await context.new_page()
+        await page.goto(httpserver.url_for("/login"))
+
+    [kept] = await profile_cookies(profile)
+    assert kept.name == "sid"
+    assert kept.expires is not None
+    assert kept.expires - datetime.now(UTC) > timedelta(days=29)
 
 
 async def test_without_a_profile_nothing_is_kept(

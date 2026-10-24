@@ -144,6 +144,8 @@ class FakeTabs:
         self.visits: list[tuple[str, str | None]] = []
         self.headers: list[dict[str, str]] = []
         self.looks = 0
+        self.jar: FakeJar | None = None
+        self.flushed_first: list[int | None] = []  # (how often the jar had flushed, at each tab)
 
     def script(self, *loads: list[Answer], url: str = PAGE_URL) -> None:
         self.loads[url] = list(loads)
@@ -153,6 +155,7 @@ class FakeTabs:
         self, *, headers: Mapping[str, str], cancel: CancelToken
     ) -> AsyncGenerator[FakeTab]:
         self.headers.append(dict(headers))
+        self.flushed_first.append(self.jar.flushed if self.jar is not None else None)
         yield FakeTab(self)
 
 
@@ -160,12 +163,20 @@ class FakeJar:
     def __init__(self) -> None:
         self.cookies: list[Cookie] = []
         self.kept: list[tuple[str, list[str], list[str]]] = []
+        self.flushed = 0
+        self.forgotten: list[str | None] = []
 
     async def cookies_for(self, url: str) -> list[Cookie]:
         return [cookie for cookie in self.cookies if cookie.matches(url)]
 
     async def keep(self, url: str, sent: list[Cookie], now: list[Cookie]) -> None:
         self.kept.append((url, sorted(c.name for c in sent), sorted(c.name for c in now)))
+
+    async def flush(self) -> None:
+        self.flushed += 1
+
+    def forget(self, site: str | None = None) -> None:
+        self.forgotten.append(site)
 
 
 class Ladder:
@@ -177,6 +188,7 @@ class Ladder:
         self.static = FakeStatic(self.clock)
         self.tabs = FakeTabs()
         self.jar = FakeJar()
+        self.tabs.jar = self.jar
         self.sites = FetchSites(db, self.clock)
         self.fetcher = Fetcher(
             self.settings,
@@ -312,6 +324,26 @@ async def test_the_cookies_rung_keeps_what_the_site_set(ladder: Ladder) -> None:
     await ladder.fetch()
 
     assert ladder.jar.kept == [(PAGE_URL, ["session"], ["rotated", "session"])]
+
+
+async def test_what_sites_set_is_written_to_the_profile_before_the_browser_opens_it(
+    ladder: Ladder,
+) -> None:
+    ladder.jar.cookies = [cookie()]
+    ladder.static.script(status(401), status(401))
+    ladder.tabs.script([page()])
+
+    await ladder.fetch()
+
+    assert ladder.tabs.flushed_first == [1]
+
+
+async def test_after_the_browser_the_sites_cookies_are_read_afresh(ladder: Ladder) -> None:
+    ladder.tabs.script([page()])
+
+    await ladder.fetch(via="browser")
+
+    assert ladder.jar.forgotten == [PAGE_URL]
 
 
 async def test_a_404_is_the_end(ladder: Ladder) -> None:

@@ -14,19 +14,21 @@ page it opens is a tab of its own, which can wait for elements, click them and r
 requests it has made. The finds are handed off in the same way.
 
 Chromium runs on udl's persistent profile (where `udl browser login` keeps logins) unless the
-profile_dir option is None. One Chromium at a time uses a profile: others wait their turn.
+profile_dir option is None. One Chromium at a time uses a profile, in any udl process (a lock on
+<profile>.lock beside it): others wait their turn.
 """
 
 # System Imports
 import asyncio
 import contextlib
+import fcntl
 import logging
 import re
 import stat
 import threading
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import ClassVar, Final
 
@@ -100,6 +102,8 @@ _ELEMENT_SOURCES: Final = """() => [...document.querySelectorAll("video, audio")
 _SOURCES: Final = TypeAdapter(list[tuple[str, str]])
 # How often a login in progress takes a copy of the browser's cookies.
 _LOGIN_POLL: Final[float] = 0.5
+SESSION_KEPT: Final = timedelta(days=30)
+"""How long a profile keeps a session cookie (one without an expiry) after its browser closes."""
 _USER_AGENT: Final = "() => navigator.userAgent"
 # A document served as one of these is read as it was served (e.g. an API's JSON), not rendered.
 _TEXT_TYPES: Final = ("text/", "application/json", "application/javascript", "+json", "+xml")
@@ -180,17 +184,50 @@ def _lock_for(profile: Path) -> threading.Lock:
         return _profiles.setdefault(profile.absolute(), threading.Lock())
 
 
+def profile_lock(profile_dir: Path) -> Path:
+    """The file whose lock says a udl process has the profile at `profile_dir` open."""
+    return profile_dir.with_name(f"{profile_dir.name}.lock")
+
+
 @asynccontextmanager
 async def _profile(path: Path, cancel: CancelToken) -> AsyncGenerator[None]:
-    """Hold the profile at `path`, waiting while another Chromium of udl's uses it."""
+    """Hold the profile at `path`, waiting while another Chromium of udl's uses it (in this
+    process, or in another udl's)."""
     lock = _lock_for(path)
     while not lock.acquire(blocking=False):
         cancel.check()
         await asyncio.sleep(0.05)
     try:
-        yield
+        async with _across_processes(path, cancel):
+            yield
     finally:
         lock.release()
+
+
+@asynccontextmanager
+async def _across_processes(path: Path, cancel: CancelToken) -> AsyncGenerator[None]:
+    """Hold the profile's lock file, waiting (and saying so) while another udl holds it."""
+    lock_file = profile_lock(path)
+    await asyncio.to_thread(lock_file.parent.mkdir, parents=True, exist_ok=True)
+    with lock_file.open("ab") as held:
+        told = False
+        while True:
+            try:
+                fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if not told:
+                    log.warning(
+                        "Another udl has the browser profile %s open: waiting for it to close it",
+                        path,
+                    )
+                    told = True
+                cancel.check()
+                await asyncio.sleep(0.1)
+        try:
+            yield
+        finally:
+            fcntl.flock(held, fcntl.LOCK_UN)
 
 
 def _launch_error(error: PlaywrightError) -> DownloadError:
@@ -246,7 +283,20 @@ async def chromium(
         except PlaywrightError as e:
             raise _launch_error(e) from e
         stack.push_async_callback(context.close)
+        if profile_dir is not None:
+            stack.push_async_callback(_keep_session_cookies, context)  # (before it closes)
         yield context
+
+
+async def _keep_session_cookies(context: BrowserContext) -> None:
+    """Keep the session cookies of a profile's context when it closes (Chromium would forget
+    them), for SESSION_KEPT, as Chrome does when it continues where it left off: a login
+    that a session cookie holds lasts."""
+    with contextlib.suppress(PlaywrightError):  # (closed already: the user closed the window)
+        session = [cookie for cookie in await context.cookies() if cookie.get("expires", -1) < 0]
+        if session:
+            until = (datetime.now(UTC) + SESSION_KEPT).timestamp()
+            await context.add_cookies([{**cookie, "expires": until} for cookie in session])
 
 
 async def profile_cookies(profile_dir: Path) -> list[Cookie]:

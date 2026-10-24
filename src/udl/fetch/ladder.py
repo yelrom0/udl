@@ -317,6 +317,15 @@ class SiteJar(Protocol):
         """Keep what changed between the cookies sent for `url` and those after its answer."""
         ...
 
+    async def flush(self) -> None:
+        """Write what was kept to udl's browser profile (before the browser reads it)."""
+        ...
+
+    def forget(self, site: str | None = None) -> None:
+        """Read the cookies of `site` (a URL or a host of it; None: every site's) afresh next
+        time: the browser may have changed them."""
+        ...
+
 
 class HttpStatic:
     """The static rungs' requests, over httpx: at most `max_page` of each body is read."""
@@ -584,17 +593,21 @@ class Fetcher:
             return _Failed(e)
 
     async def _browser(self, url: URL, options: FetchOptions, cancel: CancelToken) -> _Seen:
-        async with self.tabs.tab(headers=options.headers, cancel=cancel) as tab:
-            seen = _read(url, await tab.goto(url.value, wait_for=options.wait_for), Via.BROWSER)
-            deadline = self.clock.now() + self.settings.challenge_grace
-            # (A check that a script in it passes: many do, in a browser.)
-            while isinstance(seen, _Check) and seen.detection.passable:
-                if self.clock.now() >= deadline:
-                    break
-                cancel.check()
-                await self.clock.sleep(LOOK_EVERY)
-                seen = _read(url, await tab.look(), Via.BROWSER)
-            return seen
+        await self.jar.flush()  # (so the browser sends what plain requests were last given)
+        try:
+            async with self.tabs.tab(headers=options.headers, cancel=cancel) as tab:
+                seen = _read(url, await tab.goto(url.value, wait_for=options.wait_for), Via.BROWSER)
+                deadline = self.clock.now() + self.settings.challenge_grace
+                # (A check that a script in it passes: many do, in a browser.)
+                while isinstance(seen, _Check) and seen.detection.passable:
+                    if self.clock.now() >= deadline:
+                        break
+                    cancel.check()
+                    await self.clock.sleep(LOOK_EVERY)
+                    seen = _read(url, await tab.look(), Via.BROWSER)
+                return seen
+        finally:
+            self.jar.forget(url.value)  # (what the browser set is what plain requests send next)
 
 
 def _read(url: URL, seen: Snapshot, rung: Via) -> _Seen:

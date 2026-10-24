@@ -19,7 +19,7 @@ import logging
 import re
 from collections.abc import Awaitable, Iterable
 from pathlib import Path
-from typing import Final, Self
+from typing import Final, Protocol, Self
 from urllib.parse import urlsplit
 
 # Package Imports
@@ -173,15 +173,28 @@ async def browser_login(
 # ---------------------------------------------------------------------------------------------
 
 
+class ProfileReader(Protocol):
+    """Reads udl's browser profile's cookies (the page fetcher's does it through its browser
+    while that is open: udl.fetch.browser.ProfileCookies)."""
+
+    async def cookies_for(self, url: str) -> list[Cookie]: ...
+
+
 class AuthCookies:
     """The cookies that sign in to a site: the user's browser's (if `browser`), then udl's
-    browser profile's (if `profile`), which win, since `udl browser login` signs in there."""
+    browser profile's (if `profile`), which win, since `udl browser login` signs in there. The
+    profile is read by `reader` when there is one, else by a Chromium of its own."""
 
     def __init__(
-        self, *, browser: BrowserCookieSource | None = None, profile: Path | None = None
+        self,
+        *,
+        browser: BrowserCookieSource | None = None,
+        profile: Path | None = None,
+        reader: ProfileReader | None = None,
     ) -> None:
         self.browser = browser
         self.profile = profile
+        self.reader = reader
 
     @classmethod
     def from_settings(cls, settings: Settings) -> Self:
@@ -201,9 +214,12 @@ class AuthCookies:
                 log.warning("Could not use the browser's cookies: %s", e)
         if self.profile is not None:
             try:
-                cookies = merge_cookies(
-                    cookies, await profile_cookies(url, profile_dir=self.profile)
+                found = (
+                    await self.reader.cookies_for(url)
+                    if self.reader is not None
+                    else await profile_cookies(url, profile_dir=self.profile)
                 )
+                cookies = merge_cookies(cookies, found)
             except UDLError as e:
                 log.warning("Could not use udl's browser profile: %s", e)
         return cookies
