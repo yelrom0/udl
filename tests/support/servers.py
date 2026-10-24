@@ -36,6 +36,7 @@ class Server:
     port: int  # the port the server listens on in the container
     url: Callable[[str], str]  # the server's URL, given the "host:port" it is published on
     env: dict[str, str] = field(default_factory=dict[str, str])
+    options: tuple[str, ...] = ()  # more for `docker run`
 
 
 POSTGRES: Final = Server(
@@ -44,7 +45,14 @@ POSTGRES: Final = Server(
     url=lambda address: f"postgresql://udl:udl@{address}/postgres",
     env={"POSTGRES_USER": "udl", "POSTGRES_PASSWORD": "udl"},
 )
-MONGODB: Final = Server(image="mongo:8", port=27017, url=lambda address: f"mongodb://{address}")
+MONGODB: Final = Server(
+    image="mongo:8",
+    port=27017,
+    url=lambda address: f"mongodb://{address}",
+    # Each collection and index is a file MongoDB keeps open, and every test makes a database of
+    # them: Docker's usual limit (1024) runs out partway (MongoDB asks for 64000).
+    options=("--ulimit", "nofile=64000:64000"),
+)
 
 
 @contextmanager
@@ -81,6 +89,7 @@ def _start(server: Server, env_var: str) -> str:
         "--publish",
         f"127.0.0.1::{server.port}",
         *env,
+        *server.options,
         server.image,
         timeout=_START_TIMEOUT,
     )

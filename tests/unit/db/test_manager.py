@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 import pytest
 
 # Local Imports
+from support.records import Note
 from udl.chains.models import TagChain
 from udl.config import DBConnectionConfig, DBSettings, ReadPolicy, WritePolicy
 from udl.db.manager import DBManager
@@ -29,7 +30,8 @@ from udl.db.models import (
     StrategySource,
     strategy_order,
 )
-from udl.errors import DatabaseError, DoesNotExist, PluginError
+from udl.db.records import Lease, RecordQuery
+from udl.errors import DatabaseError, DoesNotExist, DuplicateKey, PluginError
 from udl.plugins.databases.base import DatabasePlugin
 from udl.plugins.databases.memory import MemoryDatabase
 from udl.plugins.registry import DATABASES, PluginRegistry
@@ -65,6 +67,10 @@ class BrokenDatabase(MemoryDatabase):
     async def upsert_site(self, site: Site) -> Site:
         self._fail("write")
         return await super().upsert_site(site)
+
+    async def claim_lease(self, name: str, holder: str, ttl: timedelta) -> Lease | None:
+        self._fail("write")
+        return await super().claim_lease(name, holder, ttl)
 
 
 @pytest.fixture
@@ -629,3 +635,98 @@ def test_a_view_must_name_known_connections(registry: PluginRegistry, names: lis
     # (The request's fault, not a database's: what it names does not exist.)
     with pytest.raises(DoesNotExist, match="connection"):
         manager.only(names)
+
+
+# ---------------------------------------------------------------------------------------------
+# Records
+# ---------------------------------------------------------------------------------------------
+
+
+def note(slug: str = "a", **fields: object) -> Note:
+    return Note.model_validate({"topic": "inbox", "slug": slug, **fields})
+
+
+async def test_a_record_comes_from_the_highest_priority_connection_that_has_it(
+    registry: PluginRegistry,
+) -> None:
+    async with make_manager(registry, conn("low", 10), conn("high", 0)) as db:
+        record = note(count=1)
+        await db.database("low").upsert_record(record)
+        assert await db.get_record(Note, record.id) == record
+
+        newer = record.model_copy(update={"count": 2})
+        await db.database("high").upsert_record(newer)
+        assert await db.get_record(Note, record.id) == newer
+        assert await db.get_record(Note, uuid4()) is None
+
+
+async def test_records_are_listed_from_every_connection_newest_first(
+    registry: PluginRegistry,
+) -> None:
+    async with make_manager(registry, conn("a", 0), conn("b", 10)) as db:
+        older, newer, shared = (
+            note("old", created_at=T0),
+            note("new", created_at=T0 + timedelta(days=2)),
+            note("both", created_at=T0 + timedelta(days=1)),
+        )
+        await db.database("a").upsert_record(older)
+        await db.database("a").upsert_record(shared)
+        await db.database("b").upsert_record(newer)
+        await db.database("b").upsert_record(shared.model_copy(update={"count": 9}))
+
+        listed = await db.list_records(Note, RecordQuery())
+        page = await db.list_records(Note, RecordQuery(limit=1, offset=1))
+        found = await db.list_records(Note, RecordQuery(where={"slug": "new"}))
+
+    assert listed == [newer, shared, older]  # (a's copy of the record both have)
+    assert page == [shared]
+    assert found == [newer]
+
+
+async def test_records_are_written_by_the_write_policy(registry: PluginRegistry) -> None:
+    async with make_manager(
+        registry, conn("a", 0), conn("b", 10), write_policy=WritePolicy.ALL
+    ) as db:
+        record = await db.upsert_record(note(created_at=T0))
+        everywhere = [await db.database(name).get_record(Note, record.id) for name in "ab"]
+        pruned = await db.prune_records(Note, T0 + timedelta(seconds=1))
+        gone = [await db.database(name).get_record(Note, record.id) for name in "ab"]
+        again = await db.upsert_record(note("b"))
+        deleted = await db.delete_record(Note, again.id)
+
+    assert everywhere == [record, record]
+    assert (pruned, gone, deleted) == (1, [None, None], True)
+
+
+async def test_a_duplicate_key_in_the_primary_is_raised_as_it_is(
+    registry: PluginRegistry,
+) -> None:
+    async with make_manager(registry, conn("local")) as db:
+        await db.upsert_record(note())
+
+        with pytest.raises(DuplicateKey):
+            await db.upsert_record(note())
+
+
+async def test_a_lease_is_claimed_in_the_leading_write_connection_only(
+    registry: PluginRegistry,
+) -> None:
+    async with make_manager(
+        registry, conn("a", 0), conn("b", 10), write_policy=WritePolicy.ALL
+    ) as db:
+        lease = await db.claim_lease("automations", "udl-1", timedelta(minutes=1))
+        refused = await db.claim_lease("automations", "udl-2", timedelta(minutes=1))
+        in_b = await db.database("b").list_records(Lease, RecordQuery())
+
+    assert lease is not None
+    assert lease.holder == "udl-1"
+    assert refused is None
+    assert in_b == []
+
+
+async def test_a_lease_that_cannot_be_claimed_is_a_database_error(
+    registry: PluginRegistry,
+) -> None:
+    async with make_manager(registry, conn("local", url="broken://write")) as db:
+        with pytest.raises(DatabaseError, match="local is unreachable"):
+            await db.claim_lease("automations", "udl-1", timedelta(minutes=1))

@@ -7,9 +7,11 @@ MongoDB, through pymongo's async client (udl's `mongodb` extra): a database plug
 SQL, which keeps the DatabasePlugin interface honest.
 
 Each model is stored as a document of its JSON form, with its id (as text) for `_id`, in a
-collection of its own: sites, strategies and downloads. Times are written in UTC to the
-microsecond at a fixed width, so they sort as text and lose nothing (BSON dates keep
-milliseconds).
+collection of its own: sites, strategies and downloads, and a collection per kind of record
+(udl.db.records), named after it, with an index on each indexed field and a unique one for each
+of its unique keys (counting only documents with a value in every field of the key, so records
+without one never clash). Times are written in UTC to the microsecond at a fixed width, so they
+sort as text and lose nothing (BSON dates keep milliseconds).
 
 Schema versioning: the schema_version collection holds the version of udl's documents in the
 database, and a newer one is refused. A change to the documents needs SCHEMA_VERSION raised and
@@ -20,10 +22,11 @@ without it.
 """
 
 # System Imports
+import enum
 import re
 from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, ClassVar, Final
 from urllib.parse import parse_qsl, urlsplit
 from uuid import UUID
@@ -42,7 +45,8 @@ from udl.db.models import (
     Strategy,
     utcnow,
 )
-from udl.errors import ConfigError, DatabaseError
+from udl.db.records import Lease, Record, RecordQuery, record_kinds
+from udl.errors import ConfigError, DatabaseError, DuplicateKey
 from udl.plugins.requirements import Requirement
 
 from .base import DatabasePlugin
@@ -62,6 +66,9 @@ _DEFAULT_DATABASE: Final = "udl"  # when the URL names none
 _ASCENDING: Final = 1
 _DESCENDING: Final = -1
 _AFTER: Final = True  # (pymongo.ReturnDocument.AFTER: return the document as updated)
+# The types of the values an indexed field is stored as (text, a number, yes or no): a unique
+# key counts only documents with one of these in each of its fields.
+_VALUED: Final = {"$type": ["string", "number", "bool"]}
 
 
 class _Duplicate(Exception):
@@ -84,6 +91,17 @@ def _document(model: SQLModel) -> Document:
             document[name] = _time(value)
     document["_id"] = document.pop("id")
     return document
+
+
+def _stored(value: Any) -> Any:
+    """A value as documents hold it (to look them up by)."""
+    if isinstance(value, datetime):
+        return _time(value)
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, enum.Enum):
+        return value.value
+    return value
 
 
 def _model[M: SQLModel](model_type: type[M], document: Document) -> M:
@@ -119,6 +137,7 @@ class MongoDBPlugin(DatabasePlugin):
         if "serverselectiontimeoutms" not in {key.lower() for key, _ in parse_qsl(parts.query)}:
             self._options["serverSelectionTimeoutMS"] = round(self.connect_timeout * 1000)
         self._client: AsyncMongoClient[Document] | None = None
+        self._record_kinds: set[str] = set()  # the kinds whose indexes are known to be made
 
     @property
     def _database(self) -> AsyncDatabase[Document]:
@@ -189,6 +208,33 @@ class MongoDBPlugin(DatabasePlugin):
             await self._strategies.create_index("site_key")
             await self._downloads.create_index("site_key")
             await self._downloads.create_index([("started_at", _DESCENDING), ("_id", _DESCENDING)])
+        for kind in record_kinds():
+            await self._index_records(kind)
+
+    async def _index_records(self, kind: type[Record]) -> None:
+        """Make the indexes of `kind`'s collection (when they are not made yet)."""
+        collection = self._database[kind.kind]
+        alone = {together[0] for together in kind.unique if len(together) == 1}
+        with self._errors():
+            await collection.create_index([("created_at", _DESCENDING), ("_id", _DESCENDING)])
+            for name in kind.indexed:
+                if name not in alone:  # (a unique index of its own is its index)
+                    await collection.create_index(name)
+            for together in kind.unique:
+                await collection.create_index(
+                    [(name, _ASCENDING) for name in together],
+                    name=f"uq_{'_'.join(together)}",
+                    unique=True,
+                    partialFilterExpression=dict.fromkeys(together, _VALUED),
+                )
+        self._record_kinds.add(kind.kind)
+
+    async def _records_of(self, kind: type[Record]) -> AsyncCollection[Document]:
+        """The collection of `kind`, indexed first if it is not yet (a kind udl did not know
+        when it connected)."""
+        if kind.kind not in self._record_kinds:
+            await self._index_records(kind)
+        return self._database[kind.kind]
 
     async def health(self) -> bool:
         if self._client is None:
@@ -331,3 +377,92 @@ class MongoDBPlugin(DatabasePlugin):
             cursor = cursor.limit(query.limit)
         with self._errors():
             return [_model(DownloadRecord, document) async for document in cursor]
+
+    # -----------------------------------------------------------------------------------------
+    # Records
+    # -----------------------------------------------------------------------------------------
+
+    async def get_record[R: Record](self, kind: type[R], record_id: UUID) -> R | None:
+        collection = await self._records_of(kind)
+        with self._errors():
+            document = await collection.find_one({"_id": str(record_id)})
+        return _model(kind, document) if document else None
+
+    async def list_records[R: Record](self, kind: type[R], query: RecordQuery) -> list[R]:
+        found: Document = {name: _stored(value) for name, value in kind.where(query.where).items()}
+        made: Document = {}
+        if query.since is not None:
+            made["$gte"] = _time(query.since)
+        if query.until is not None:
+            made["$lt"] = _time(query.until)
+        if made:
+            found["created_at"] = made
+        collection = await self._records_of(kind)
+        cursor = (
+            collection.find(found)
+            .sort([("created_at", _DESCENDING), ("_id", _DESCENDING)])
+            .skip(query.offset)
+        )
+        if query.limit is not None:
+            cursor = cursor.limit(query.limit)
+        with self._errors():
+            return [_model(kind, document) async for document in cursor]
+
+    async def upsert_record[R: Record](self, record: R) -> R:
+        kind = type(record)
+        collection = await self._records_of(kind)
+        document = _document(record)
+        changes = {
+            name: value for name, value in document.items() if name not in ("_id", "created_at")
+        } | {"updated_at": _time(utcnow())}
+        duplicate = DuplicateKey(
+            f"A {kind.kind} record with one of its unique keys "
+            f"({'; '.join(', '.join(together) for together in kind.unique)}) the same is "
+            "already stored"
+        )
+        try:
+            with self._errors(duplicates=True):
+                stored = await collection.find_one_and_update(
+                    {"_id": document["_id"]}, {"$set": changes}, return_document=_AFTER
+                )
+                if stored is None:
+                    await collection.insert_one(document)
+                    stored = document
+        except _Duplicate as e:
+            raise duplicate from e
+        return _model(kind, stored)
+
+    async def delete_record(self, kind: type[Record], record_id: UUID) -> bool:
+        collection = await self._records_of(kind)
+        with self._errors():
+            deleted = await collection.delete_one({"_id": str(record_id)})
+        return deleted.deleted_count > 0
+
+    async def prune_records(self, kind: type[Record], before: datetime) -> int:
+        collection = await self._records_of(kind)
+        with self._errors():
+            deleted = await collection.delete_many({"created_at": {"$lt": _time(before)}})
+        return deleted.deleted_count
+
+    async def claim_lease(self, name: str, holder: str, ttl: timedelta) -> Lease | None:
+        now = utcnow()
+        document = _document(
+            Lease(name=name, holder=holder, expires_at=now + ttl, created_at=now, updated_at=now)
+        )
+        collection = await self._records_of(Lease)
+        # One update, which takes the lease when it is free (or its holder's) and stores it
+        # when there is none yet; when another holds it, the lease it would store clashes with
+        # theirs.
+        free = {"name": name, "$or": [{"holder": holder}, {"expires_at": {"$lte": _time(now)}}]}
+        taken = {
+            "$set": {key: document[key] for key in ("holder", "expires_at", "updated_at")},
+            "$setOnInsert": {key: document[key] for key in ("_id", "created_at")},
+        }
+        try:
+            with self._errors(duplicates=True):
+                found = await collection.find_one_and_update(
+                    free, taken, upsert=True, return_document=_AFTER
+                )
+        except _Duplicate:
+            return None  # (another holds it)
+        return _model(Lease, found) if found else None

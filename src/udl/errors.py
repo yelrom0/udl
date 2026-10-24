@@ -22,6 +22,7 @@ class ErrorCode(StrEnum):
     PLUGIN_ERROR = "plugin_error"
     PLUGIN_FAILED = "plugin_failed"
     DATABASE_ERROR = "database_error"
+    DUPLICATE_KEY = "duplicate_key"
     DOWNLOAD_ERROR = "download_error"
     UNSUPPORTED_URL = "unsupported_url"
     EXTRACTION_FAILED = "extraction_failed"
@@ -87,6 +88,12 @@ class DatabaseError(UDLError):
     """A database plugin failed."""
 
     code = ErrorCode.DATABASE_ERROR
+
+
+class DuplicateKey(DatabaseError):
+    """A record has a unique key (e.g. a name) that another record of its kind already has."""
+
+    code = ErrorCode.DUPLICATE_KEY
 
 
 class DownloadError(UDLError):

@@ -13,10 +13,12 @@ from pathlib import Path
 # Package Imports
 from pydantic import SecretStr
 
-# Local Imports
 from support.cli import CLI
 from support.engine import connection
 from support.interfaces import Harness
+
+# Local Imports
+from support.records import Note
 from udl.config import APISettings, config_dir
 from udl.core.models import ConfigInfo, DatabaseList, PluginList, SyncReport
 from udl.db.manager import DBManager
@@ -63,6 +65,7 @@ def two_databases(tmp_path: Path, **shared: object) -> Harness:
 
 def test_db_sync_copies_one_database_into_another(tmp_path: Path) -> None:
     harness = two_databases(tmp_path)
+    harness.seed(lambda db: db.database("local").upsert_record(Note(topic="t", slug="s")))
     cli = CLI(harness)
 
     dry = cli("db", "sync", "--from", "local", "--to", "shared", "--dry-run")
@@ -75,7 +78,9 @@ def test_db_sync_copies_one_database_into_another(tmp_path: Path) -> None:
     assert "dry run" in dry.stdout.lower()
     assert result.exit_code == 0, result.output
     assert "shared" in result.stdout
+    assert "test_note" in result.stdout  # (records, by kind)
     assert again.targets[0].sites == SyncCounts(unchanged=1)
+    assert again.targets[0].records == {"test_note": SyncCounts(unchanged=1)}
 
     async def shared_sites(db: DBManager) -> None:
         assert [s.key for s in await db.database("shared").list_sites(SiteQuery())] == [

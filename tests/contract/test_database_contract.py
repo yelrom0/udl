@@ -3,14 +3,14 @@
 - test_database_contract.py -
 -----------------------------
 
-The behaviour every database plugin must have. Each test runs once per plugin in CONNECTIONS;
-a new plugin starts by adding itself there (and watching this suite fail).
+The behaviour every database plugin must have with sites, strategies and the download history
+(test_record_contract.py has records). Each test runs once per plugin in conftest.py's
+CONNECTIONS; a new plugin starts by adding itself there (and watching this suite fail).
 """
 
 # System Imports
 import asyncio
 import re
-from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -20,7 +20,6 @@ import pytest
 
 # Local Imports
 from udl.chains.models import TagChain
-from udl.config import DBConnectionConfig
 from udl.db.models import (
     DownloadQuery,
     DownloadRecord,
@@ -35,30 +34,8 @@ from udl.db.models import (
 )
 from udl.errors import AuthRequired, DatabaseError, NetworkError
 from udl.plugins.databases.base import DatabasePlugin
-from udl.plugins.registry import DATABASES, PluginRegistry
-
-# The URL of a fresh, empty database for each plugin. Those that need a server get one from its
-# fixture (tests/conftest.py), which skips them when there is no server to use.
-CONNECTIONS: dict[str, Callable[[pytest.FixtureRequest], str]] = {
-    "memory": lambda _: "memory://",
-    "sqlite": lambda request: f"sqlite+aiosqlite:///{request.getfixturevalue('tmp_path')}/udl.db",
-    "postgres": lambda request: request.getfixturevalue("postgres_url"),
-    "mongodb": lambda request: request.getfixturevalue("mongodb_url"),
-}
 
 T0 = datetime(2026, 1, 2, 3, 4, 5, 678901, tzinfo=UTC)
-
-
-@pytest.fixture(params=sorted(CONNECTIONS))
-async def db(request: pytest.FixtureRequest) -> AsyncIterator[DatabasePlugin]:
-    """A connected database of each plugin, found the way udl finds it (by entry point)."""
-    plugin_name: str = request.param
-    connection = DBConnectionConfig(
-        name="contract", plugin=plugin_name, url=CONNECTIONS[plugin_name](request)
-    )
-    plugin = PluginRegistry.discover().get(DATABASES, connection.plugin)
-    async with plugin(connection) as database:
-        yield database
 
 
 def make_site(key: str = "example.com", **fields: object) -> Site:

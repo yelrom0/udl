@@ -6,11 +6,14 @@
 DatabasePlugin: the interface every database plugin implements.
 
 It works at the level of the domain models (a repository), not SQL, so non-SQL databases can be
-plugins too. tests/contract/test_database_contract.py is the behaviour every plugin must have.
+plugins too: sites, strategies and the download history, and records of any kind
+(udl.db.records). tests/contract/test_database_contract.py and test_record_contract.py are the
+behaviour every plugin must have.
 """
 
 # System Imports
 from abc import ABC, abstractmethod
+from datetime import datetime, timedelta
 from types import TracebackType
 from typing import ClassVar, Self
 from uuid import UUID
@@ -18,6 +21,7 @@ from uuid import UUID
 # Local Imports
 from udl.config import DBConnectionConfig
 from udl.db.models import DownloadQuery, DownloadRecord, Outcome, Site, SiteQuery, Strategy
+from udl.db.records import Lease, Record, RecordQuery
 from udl.plugins.requirements import Requirement
 
 
@@ -110,3 +114,37 @@ class DatabasePlugin(ABC):
     @abstractmethod
     async def list_downloads(self, query: DownloadQuery) -> list[DownloadRecord]:
         """The downloads matching `query`, newest (started_at) first."""
+
+    # -----------------------------------------------------------------------------------------
+    # Records
+    # -----------------------------------------------------------------------------------------
+
+    @abstractmethod
+    async def get_record[R: Record](self, kind: type[R], record_id: UUID) -> R | None:
+        """The record of `kind` with this id, if any."""
+
+    @abstractmethod
+    async def list_records[R: Record](self, kind: type[R], query: RecordQuery) -> list[R]:
+        """The records of `kind` matching `query`, newest (created_at) first, then by id
+        (descending). Raises ValueError when `query` looks them up by a field that is not
+        indexed."""
+
+    @abstractmethod
+    async def upsert_record[R: Record](self, record: R) -> R:
+        """Store a record, matched by id. Replacing one keeps its created_at and sets its
+        updated_at to now. Returns the stored record. Raises DuplicateKey when another record of
+        its kind has the same values in one of its kind's unique keys (none of them None)."""
+
+    @abstractmethod
+    async def delete_record(self, kind: type[Record], record_id: UUID) -> bool:
+        """Delete the record of `kind` with this id. Returns whether there was one."""
+
+    @abstractmethod
+    async def prune_records(self, kind: type[Record], before: datetime) -> int:
+        """Delete the records of `kind` created before `before`. Returns how many."""
+
+    @abstractmethod
+    async def claim_lease(self, name: str, holder: str, ttl: timedelta) -> Lease | None:
+        """Take the lease called `name` for `holder` until `ttl` from now: when nobody holds
+        it, `holder` does already (renewing it) or it has expired. Returns it, or None when
+        another holds it. Atomic, also between udls on one database."""

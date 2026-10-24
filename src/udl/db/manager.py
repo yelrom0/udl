@@ -10,6 +10,7 @@ DBManager: the configured database connections ([db] in the config), used as one
 import copy
 import logging
 from collections.abc import Awaitable, Callable, Collection, Hashable, Iterable
+from datetime import datetime, timedelta
 from itertools import chain
 from types import TracebackType
 from typing import NoReturn, Self
@@ -27,6 +28,7 @@ from udl.db.models import (
     download_order,
     strategy_order,
 )
+from udl.db.records import Lease, Record, RecordQuery, newest_first
 from udl.errors import DatabaseError, DoesNotExist
 from udl.plugins.databases.base import DatabasePlugin
 from udl.plugins.registry import DATABASES, PluginRegistry
@@ -54,6 +56,11 @@ class DBManager:
       the site. `merge`: every connection's, keeping the highest-priority copy of each
       (site, url_pattern, tool), a tag chain's apart from a plain strategy's.
     - list_sites / list_downloads: every connection's, keeping the highest-priority copy of each.
+
+    Records (udl.db.records) are read like downloads: get_record from the highest-priority
+    connection that has it, list_records from every connection (the highest-priority copy of
+    each). They are written like everything else, but a lease is claimed in the leading write
+    connection alone: it is that database's.
 
     Writes go to the write policy's connections, never to a read-only one; the primary (or the
     highest-priority one, when the primary is not written) leads and its answer is returned.
@@ -226,12 +233,23 @@ class DBManager:
         records = _first_of_each(chain.from_iterable(answers), key=lambda record: record.id)
         return query.page(sorted(records, key=download_order, reverse=True))
 
+    async def get_record[R: Record](self, kind: type[R], record_id: UUID) -> R | None:
+        answers = await self._read(
+            lambda db: db.get_record(kind, record_id), until=lambda r: r is not None
+        )
+        return next((record for record in answers if record is not None), None)
+
+    async def list_records[R: Record](self, kind: type[R], query: RecordQuery) -> list[R]:
+        answers = await self._read(lambda db: db.list_records(kind, query.from_start()))
+        records = _first_of_each(chain.from_iterable(answers), key=lambda record: record.id)
+        return query.page(sorted(records, key=newest_first, reverse=True))
+
     # -----------------------------------------------------------------------------------------
     # Writes
     # -----------------------------------------------------------------------------------------
 
-    async def _write[T](self, write: Callable[[DatabasePlugin], Awaitable[T]]) -> T:
-        """Write to each live write connection, the leading one first. Returns its answer."""
+    def _writing(self) -> list[str]:
+        """The live write connections, the leading one first."""
         self._check_connected()
         names = [name for name in self._writers if name in self._live]
         if not names:
@@ -239,7 +257,11 @@ class DBManager:
                 "No database connection to write to",
                 hint="Every connection is read-only or unavailable. Check [db] in the config.",
             )
-        lead, *others = names
+        return names
+
+    async def _write[T](self, write: Callable[[DatabasePlugin], Awaitable[T]]) -> T:
+        """Write to each live write connection, the leading one first. Returns its answer."""
+        lead, *others = self._writing()
         try:
             answer = await write(self._databases[lead])
         except Exception as e:  # noqa: BLE001 - re-raised as DatabaseError
@@ -268,6 +290,23 @@ class DBManager:
 
     async def update_download(self, record: DownloadRecord) -> None:
         await self._write(lambda db: db.update_download(record))
+
+    async def upsert_record[R: Record](self, record: R) -> R:
+        return await self._write(lambda db: db.upsert_record(record))
+
+    async def delete_record(self, kind: type[Record], record_id: UUID) -> bool:
+        return await self._write(lambda db: db.delete_record(kind, record_id))
+
+    async def prune_records(self, kind: type[Record], before: datetime) -> int:
+        return await self._write(lambda db: db.prune_records(kind, before))
+
+    async def claim_lease(self, name: str, holder: str, ttl: timedelta) -> Lease | None:
+        """Claim a lease in the leading write connection (only: see DatabasePlugin)."""
+        lead = self._writing()[0]
+        try:
+            return await self._databases[lead].claim_lease(name, holder, ttl)
+        except Exception as e:  # noqa: BLE001 - re-raised as DatabaseError
+            self._raise(lead, e)
 
 
 def _from_start[Q: SiteQuery | DownloadQuery](query: Q) -> Q:

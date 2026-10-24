@@ -458,6 +458,7 @@ def synced(console: Console, report: SyncReport) -> None:
             ("sites", result.sites),
             ("strategies", result.strategies),
             ("downloads", result.downloads),
+            *sorted(result.records.items()),
         ):
             table.add_row(
                 escape(result.target),

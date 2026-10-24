@@ -11,6 +11,7 @@ made by an older udl up to date (run here through the sqlite plugin), and udl's 
 import re
 import sqlite3
 from contextlib import closing
+from datetime import timedelta
 from pathlib import Path
 
 # Package Imports
@@ -21,6 +22,7 @@ from sqlalchemy import Connection
 from udl.chains.models import TagChain
 from udl.config import DBConnectionConfig
 from udl.db.models import Site, Strategy, StrategySource
+from udl.db.records import Lease, RecordQuery, record_kinds
 from udl.errors import DatabaseError
 from udl.plugins.databases.sqlite import SQLitePlugin
 
@@ -71,6 +73,12 @@ def stored_version(path: Path) -> int:
     return version
 
 
+def tables(path: Path) -> set[str]:
+    with closing(sqlite3.connect(path)) as raw:
+        rows = raw.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+    return {name for (name,) in rows}
+
+
 def columns(path: Path, table: str = "site") -> list[str]:
     with closing(sqlite3.connect(path)) as raw:
         return [row[1] for row in raw.execute(f"PRAGMA table_info({table})").fetchall()]
@@ -78,9 +86,9 @@ def columns(path: Path, table: str = "site") -> list[str]:
 
 async def test_a_new_database_is_stamped_with_the_current_schema_version(path: Path) -> None:
     async with SQLitePlugin(connection(path)) as db:
-        assert db.schema_version == 2
+        assert db.schema_version == 3
 
-    assert stored_version(path) == 2
+    assert stored_version(path) == 3
 
 
 async def test_a_new_database_gets_the_current_tables_without_migrating(path: Path) -> None:
@@ -178,5 +186,28 @@ async def test_version_2_adds_strategies_tag_chains(path: Path) -> None:
         )
         assert chained in await db.strategies_for("example.com")
 
-    assert stored_version(path) == 2
+    assert stored_version(path) == 3
     assert "chain" in columns(path, "strategy")
+
+
+def as_version_2(path: Path) -> None:
+    """Make the database at `path` as udl made it before records (schema version 2)."""
+    with closing(sqlite3.connect(path)) as raw, raw:
+        for kind in record_kinds():
+            raw.execute(f"DROP TABLE {kind.kind}")
+        raw.execute("UPDATE schema_version SET version = 2")
+
+
+async def test_version_3_adds_records(path: Path) -> None:
+    async with SQLitePlugin(connection(path)) as db:
+        site = await db.upsert_site(Site(key="example.com"))
+    as_version_2(path)
+    assert not {kind.kind for kind in record_kinds()} & tables(path)
+
+    async with SQLitePlugin(connection(path)) as db:
+        assert await db.get_site("example.com") == site
+        lease = await db.claim_lease("automations", "udl-1", timedelta(seconds=30))
+        assert await db.list_records(Lease, RecordQuery()) == [lease]
+
+    assert stored_version(path) == 3
+    assert {kind.kind for kind in record_kinds()} <= tables(path)

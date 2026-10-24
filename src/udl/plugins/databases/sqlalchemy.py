@@ -9,6 +9,12 @@ The domain models are mapped onto tables of udl's own (the *Table classes), in a
 own so they never mix with other SQLModel tables. A SQL plugin is then mostly a name, a URL scheme
 and a driver dependency.
 
+Records (udl.db.records) have a table per kind, named after it: the record's id and times, a
+column per indexed field (with an index each, and the kind's unique constraints), and its own
+fields as JSON (`data`). A kind's table is made by migrate() for the kinds udl knows, or the
+first time a record of the kind is used, so a new kind needs no migration (a change to a kind's
+indexed fields does).
+
 Schema versioning: the schema_version table holds the version of udl's tables in the database.
 migrate() (run by connect()) creates a new database at the current version, and brings one made
 by an older udl up to date by running the `migrations` it lacks, all in one transaction. So a
@@ -16,31 +22,40 @@ change to the tables needs a migration appended to SQLAlchemyDatabase.migrations
 """
 
 # System Imports
+import enum
 import logging
 import re
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar
 from uuid import UUID, uuid4
 
 # Package Imports
+import sqlalchemy as sa
 from pydantic import AwareDatetime, TypeAdapter
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
+    Column,
     Connection,
     DateTime,
     Dialect,
+    MetaData,
+    Row,
+    Table,
     TypeDecorator,
+    UniqueConstraint,
+    Uuid,
     func,
     insert,
     or_,
 )
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import ArgumentError, DBAPIError, IntegrityError, SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 from sqlalchemy.orm import declared_attr, registry
 from sqlmodel import Field, SQLModel, col, delete, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -61,7 +76,8 @@ from udl.db.models import (
     StrategySource,
     utcnow,
 )
-from udl.errors import ConfigError, DatabaseError, ErrorInfo
+from udl.db.records import Lease, Record, RecordQuery, indexed_type, record_kinds
+from udl.errors import ConfigError, DatabaseError, DuplicateKey, ErrorInfo
 
 from .base import DatabasePlugin
 
@@ -183,6 +199,10 @@ def _add_strategy_chains(conn: Connection) -> None:
     conn.exec_driver_sql(f"ALTER TABLE strategy ADD COLUMN chain {JSON().compile(conn.dialect)}")
 
 
+def _add_records(conn: Connection) -> None:
+    """Version 3: records, a table per kind (which migrate() makes for every kind it knows)."""
+
+
 def _site(row: SiteTable) -> Site:
     return Site.model_validate(row, from_attributes=True)
 
@@ -193,6 +213,71 @@ def _strategy(row: StrategyTable) -> Strategy:
 
 def _download(row: DownloadRecordTable) -> DownloadRecord:
     return DownloadRecord.model_validate(row, from_attributes=True)
+
+
+# ---------------------------------------------------------------------------------------------
+# Records: a table per kind
+# ---------------------------------------------------------------------------------------------
+
+_records = MetaData()
+
+
+def record_table(kind: type[Record]) -> Table:
+    """The table of a kind of record: its id and times, a column per indexed field (each with
+    an index) under the kind's unique constraints, and its own fields as JSON (`data`)."""
+    if (table := _records.tables.get(kind.kind)) is not None:
+        return table
+    indexed: list[Column[Any]] = []
+    for name in kind.indexed:
+        python_type, nullable = indexed_type(kind, name)
+        indexed.append(Column(name, _column_type(python_type), nullable=nullable, index=True))
+    return Table(
+        kind.kind,
+        _records,
+        Column("id", Uuid(), primary_key=True),
+        Column("created_at", UTCDateTime(), nullable=False, index=True),
+        Column("updated_at", UTCDateTime(), nullable=False),
+        *indexed,
+        Column("data", JSON(), nullable=False),
+        *(
+            UniqueConstraint(*together, name=f"uq_{kind.kind}_{'_'.join(together)}")
+            for together in kind.unique
+        ),
+    )
+
+
+def _column_type(python_type: type) -> Any:
+    if python_type is bool:
+        return Boolean()
+    if python_type is int:
+        return BigInteger()
+    if python_type is UUID:
+        return Uuid()
+    if python_type is datetime:
+        return UTCDateTime()
+    return AutoString()  # (text, and enums of text)
+
+
+def _column_value(value: Any) -> Any:
+    return value.value if isinstance(value, enum.Enum) else value
+
+
+def _record_row(record: Record) -> dict[str, Any]:
+    """`record` as its table's row."""
+    return {
+        "id": record.id,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+        **{name: _column_value(getattr(record, name)) for name in record.indexed},
+        "data": record.model_dump(mode="json", include=set(record.own_fields())),
+    }
+
+
+def _record[R: Record](kind: type[R], row: Row[Any]) -> R:
+    """The record a row of its kind's table holds."""
+    return kind.model_validate(
+        {**row.data, "id": row.id, "created_at": row.created_at, "updated_at": row.updated_at}
+    )
 
 
 # ---------------------------------------------------------------------------------------------
@@ -207,7 +292,7 @@ class SQLAlchemyDatabase(DatabasePlugin):
     """
 
     # migrations[n] upgrades the schema from version n + 1 to n + 2.
-    migrations: ClassVar[Sequence[Migration]] = (_add_strategy_chains,)
+    migrations: ClassVar[Sequence[Migration]] = (_add_strategy_chains, _add_records)
 
     def __init__(self, connection: DBConnectionConfig) -> None:
         super().__init__(connection)
@@ -218,6 +303,7 @@ class SQLAlchemyDatabase(DatabasePlugin):
                 f"The database connection {connection.name!r} has an invalid URL: {e}"
             ) from e
         self._engine: AsyncEngine | None = None
+        self._record_tables: set[str] = set()  # the kinds whose tables are known to be made
 
     @property
     def schema_version(self) -> int:
@@ -252,7 +338,6 @@ class SQLAlchemyDatabase(DatabasePlugin):
             raise self._error(e) from e
 
     def _migrate(self, conn: Connection) -> None:
-        name = self.connection.name
         self._lock_schema(conn)
         versions = _registry.metadata.tables[SchemaVersionTable.__tablename__]
         versions.create(conn, checkfirst=True)
@@ -260,7 +345,14 @@ class SQLAlchemyDatabase(DatabasePlugin):
         if stored is None:
             _registry.metadata.create_all(conn)
             conn.execute(insert(versions).values(id=1, version=self.schema_version))
-            return
+        else:
+            self._upgrade(conn, stored)
+        self._make_record_tables(conn, record_kinds())
+
+    def _upgrade(self, conn: Connection, stored: int) -> None:
+        """Bring a database at schema version `stored` up to date."""
+        name = self.connection.name
+        versions = _registry.metadata.tables[SchemaVersionTable.__tablename__]
         if stored > self.schema_version:
             raise DatabaseError(
                 f"The {name!r} database has schema version {stored}, but this udl only knows "
@@ -276,6 +368,23 @@ class SQLAlchemyDatabase(DatabasePlugin):
                     f"Could not migrate the {name!r} database to schema version {version}: {e}"
                 ) from e
             conn.execute(update(versions).values(version=version))
+
+    def _make_record_tables(self, conn: Connection, kinds: Iterable[type[Record]]) -> None:
+        for kind in kinds:
+            record_table(kind).create(conn, checkfirst=True)
+            self._record_tables.add(kind.kind)
+
+    async def _records_of(self, kind: type[Record]) -> Table:
+        """The table of `kind`, made first if it is not yet (a kind udl did not know when it
+        migrated the database)."""
+        if kind.kind not in self._record_tables:
+            try:
+                async with self.engine.begin() as conn:
+                    await conn.run_sync(self._lock_schema)
+                    await conn.run_sync(self._make_record_tables, [kind])
+            except SQLAlchemyError as e:
+                raise self._error(e) from e
+        return record_table(kind)
 
     def _lock_schema(self, conn: Connection) -> None:
         """Keep other udls from migrating the database until `conn`'s transaction ends, so
@@ -305,6 +414,16 @@ class SQLAlchemyDatabase(DatabasePlugin):
         try:
             async with AsyncSession(self.engine, expire_on_commit=False) as s, s.begin():
                 yield s
+        except SQLAlchemyError as e:
+            raise self._error(e) from e
+
+    @asynccontextmanager
+    async def _connection(self) -> AsyncGenerator[AsyncConnection]:
+        """A connection in a transaction that commits when the block succeeds and rolls back
+        when it raises."""
+        try:
+            async with self.engine.begin() as conn:
+                yield conn
         except SQLAlchemyError as e:
             raise self._error(e) from e
 
@@ -424,3 +543,92 @@ class SQLAlchemyDatabase(DatabasePlugin):
         statement = statement.offset(query.offset).limit(query.limit)
         async with self._transaction() as s:
             return [_download(row) for row in await s.exec(statement)]
+
+    # -----------------------------------------------------------------------------------------
+    # Records
+    # -----------------------------------------------------------------------------------------
+
+    async def get_record[R: Record](self, kind: type[R], record_id: UUID) -> R | None:
+        table = await self._records_of(kind)
+        async with self._connection() as conn:
+            row = (await conn.execute(sa.select(table).where(table.c.id == record_id))).first()
+        return _record(kind, row) if row is not None else None
+
+    async def list_records[R: Record](self, kind: type[R], query: RecordQuery) -> list[R]:
+        where = kind.where(query.where)
+        table = await self._records_of(kind)
+        statement = sa.select(table).order_by(table.c.created_at.desc(), table.c.id.desc())
+        for name, value in where.items():
+            statement = statement.where(table.c[name] == _column_value(value))
+        if query.since is not None:
+            statement = statement.where(table.c.created_at >= query.since)
+        if query.until is not None:
+            statement = statement.where(table.c.created_at < query.until)
+        statement = statement.offset(query.offset).limit(query.limit)
+        async with self._connection() as conn:
+            return [_record(kind, row) for row in await conn.execute(statement)]
+
+    async def upsert_record[R: Record](self, record: R) -> R:
+        kind = type(record)
+        table = await self._records_of(kind)
+        row = _record_row(record)
+        changes = {
+            name: value for name, value in row.items() if name not in ("id", "created_at")
+        } | {"updated_at": utcnow()}
+        stored = sa.select(table).where(table.c.id == record.id)
+        async with self._connection() as conn:
+            try:
+                async with conn.begin_nested():
+                    replaced = await conn.execute(
+                        update(table).where(table.c.id == record.id).values(changes)
+                    )
+                    if replaced.rowcount == 0:
+                        await conn.execute(sa.insert(table).values(row))
+            except IntegrityError as e:
+                raise DuplicateKey(
+                    f"A {kind.kind} record with one of its unique keys "
+                    f"({_unique(kind)}) the same is already stored"
+                ) from e
+            return _record(kind, (await conn.execute(stored)).one())
+
+    async def delete_record(self, kind: type[Record], record_id: UUID) -> bool:
+        table = await self._records_of(kind)
+        async with self._connection() as conn:
+            deleted = await conn.execute(sa.delete(table).where(table.c.id == record_id))
+        return deleted.rowcount > 0
+
+    async def prune_records(self, kind: type[Record], before: datetime) -> int:
+        table = await self._records_of(kind)
+        async with self._connection() as conn:
+            deleted = await conn.execute(sa.delete(table).where(table.c.created_at < before))
+        return deleted.rowcount
+
+    async def claim_lease(self, name: str, holder: str, ttl: timedelta) -> Lease | None:
+        table = await self._records_of(Lease)
+        now = utcnow()
+        claimed = _record_row(
+            Lease(name=name, holder=holder, expires_at=now + ttl, created_at=now, updated_at=now)
+        )
+        # One statement that takes the lease when it is free (or its holder's), then, when no
+        # lease of that name is stored yet, one that stores it: either is atomic, so of udls
+        # claiming it at once, one gets it.
+        free = or_(table.c.holder == holder, table.c.expires_at <= now)
+        async with self._connection() as conn:
+            taken = await conn.execute(
+                sa.update(table)
+                .where(table.c.name == name, free)
+                .values({key: claimed[key] for key in ("holder", "expires_at", "data")})
+                .values(updated_at=now)
+            )
+            if taken.rowcount == 0:
+                try:
+                    async with conn.begin_nested():
+                        await conn.execute(sa.insert(table).values(claimed))
+                except IntegrityError:
+                    return None  # (another holds it)
+            row = (await conn.execute(sa.select(table).where(table.c.name == name))).one()
+        return _record(Lease, row)
+
+
+def _unique(kind: type[Record]) -> str:
+    return "; ".join(", ".join(together) for together in kind.unique)

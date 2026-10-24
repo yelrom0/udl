@@ -107,7 +107,7 @@ async def test_version_2_adds_strategies_tag_chains(postgres_url: str) -> None:
         assert chained in await db.strategies_for("example.com")
 
     with psycopg.connect(plain(postgres_url)) as raw:
-        assert raw.execute("SELECT version FROM schema_version").fetchall() == [(2,)]
+        assert raw.execute("SELECT version FROM schema_version").fetchall() == [(3,)]
 
 
 async def test_a_server_that_cannot_be_reached_is_a_database_error_without_the_password() -> None:

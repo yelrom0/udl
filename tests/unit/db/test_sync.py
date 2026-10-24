@@ -3,8 +3,8 @@
 - test_sync.py -
 ----------------
 
-sync(): copying what one database knows (its sites, their strategies and its downloads) into
-another, which is what `udl db sync` does for each connection it syncs into
+sync(): copying what one database knows (its sites, their strategies, its downloads and its
+records) into another, which is what `udl db sync` does for each connection it syncs into
 """
 
 # System Imports
@@ -17,6 +17,7 @@ import pytest
 
 # Local Imports
 from support.engine import connection
+from support.records import Note, Scratch, Tally
 from udl.db.models import (
     DownloadQuery,
     DownloadRecord,
@@ -26,6 +27,7 @@ from udl.db.models import (
     Strategy,
     StrategySource,
 )
+from udl.db.records import Lease, RecordQuery
 from udl.db.sync import SyncCounts, SyncResult, sync
 from udl.plugins.databases.base import DatabasePlugin
 from udl.plugins.databases.memory import MemoryDatabase
@@ -262,3 +264,121 @@ async def test_a_dry_run_counts_what_would_change_and_changes_nothing(
         SyncCounts(updated=1, unchanged=1),
     )
     assert await everything(target) == before
+
+
+# ---------------------------------------------------------------------------------------------
+# Records
+# ---------------------------------------------------------------------------------------------
+
+
+def note(slug: str = "a", **fields: object) -> Note:
+    return Note.model_validate({"topic": "inbox", "slug": slug, **fields})
+
+
+async def kept(db: DatabasePlugin) -> list[dict[str, object]]:
+    """A database's notes, but for when each was last updated (in that database)."""
+    return [
+        found.model_dump(exclude={"updated_at"})
+        for found in await db.list_records(Note, RecordQuery())
+    ]
+
+
+async def test_records_are_copied_by_kind(source: DatabasePlugin, target: DatabasePlugin) -> None:
+    notes = [await source.upsert_record(note(slug, created_at=T0)) for slug in "abc"]
+    tally = await source.upsert_record(Tally(name="t", total=3))
+    changed = await target.upsert_record(notes[0].model_copy(update={"count": 9}))
+    await target.upsert_record(notes[1])
+
+    synced = await sync(source, target)
+
+    assert synced.records == {
+        "test_note": SyncCounts(added=1, updated=1, unchanged=1),
+        "test_tally": SyncCounts(added=1),
+    }
+    assert await kept(target) == await kept(source)
+    assert await target.get_record(Tally, tally.id) == tally
+    assert changed.count == 9
+
+
+async def test_syncing_records_again_changes_nothing(
+    source: DatabasePlugin, target: DatabasePlugin
+) -> None:
+    await source.upsert_record(note())
+    await sync(source, target)
+
+    again = await sync(source, target)
+
+    assert again.records == {"test_note": SyncCounts(unchanged=1)}
+
+
+async def test_a_record_the_target_keeps_under_another_id_is_replaced_by_the_source_s(
+    source: DatabasePlugin, target: DatabasePlugin
+) -> None:
+    ours = await source.upsert_record(note("same", count=1))
+    await target.upsert_record(note("same", count=2))  # (the same key, another id)
+
+    synced = await sync(source, target)
+
+    assert synced.records == {"test_note": SyncCounts(added=1)}
+    assert await target.list_records(Note, RecordQuery()) == [ours]
+
+
+async def test_a_record_changed_to_a_key_another_target_record_has_replaces_that_one(
+    source: DatabasePlugin, target: DatabasePlugin
+) -> None:
+    first = await target.upsert_record(note("a"))
+    await target.upsert_record(note("b", ref="r"))
+    changed = await source.upsert_record(first.model_copy(update={"ref": "r"}))
+
+    await sync(source, target)
+
+    assert await kept(target) == [changed.model_dump(exclude={"updated_at"})]
+
+
+async def test_records_still_being_made_are_left_until_they_have_ended(
+    source: DatabasePlugin, target: DatabasePlugin
+) -> None:
+    await source.upsert_record(Tally(name="running", open=True))
+
+    synced = await sync(source, target)
+
+    assert synced.records == {}
+    assert await target.list_records(Tally, RecordQuery()) == []
+
+
+async def test_kinds_that_belong_to_one_runtime_are_never_copied(
+    source: DatabasePlugin, target: DatabasePlugin
+) -> None:
+    await source.upsert_record(Scratch(note="mine"))
+    await source.claim_lease("automations", "udl-1", timedelta(minutes=1))
+
+    synced = await sync(source, target)
+
+    assert synced.records == {}
+    assert await target.list_records(Scratch, RecordQuery()) == []
+    assert await target.list_records(Lease, RecordQuery()) == []
+
+
+async def test_every_record_is_copied_a_page_at_a_time(
+    source: DatabasePlugin, target: DatabasePlugin
+) -> None:
+    for n in range(7):
+        await source.upsert_record(note(str(n), created_at=T0 + timedelta(seconds=n)))
+
+    synced = await sync(source, target, page=3)
+
+    assert synced.records == {"test_note": SyncCounts(added=7)}
+    assert len(await target.list_records(Note, RecordQuery())) == 7
+
+
+async def test_a_dry_run_counts_records_and_copies_none(
+    source: DatabasePlugin, target: DatabasePlugin
+) -> None:
+    await source.upsert_record(note())
+    await target.upsert_record(note("same", count=2))
+    await source.upsert_record(note("same", count=1))
+
+    synced = await sync(source, target, dry_run=True)
+
+    assert synced.records == {"test_note": SyncCounts(added=2)}
+    assert [found.count for found in await target.list_records(Note, RecordQuery())] == [2]

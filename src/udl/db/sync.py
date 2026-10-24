@@ -5,14 +5,18 @@
 
 sync(): copy what one database knows into another (`udl db sync`).
 
-What is copied: every site, its strategies, and the downloads that have ended (one still queued
-or running is left until it ends, so a copy taken while it ran never replaces the record of how
-it ended). Records keep their ids, so they are the same records in every database.
+What is copied: every site, its strategies, the downloads that have ended (one still queued or
+running is left until it ends, so a copy taken while it ran never replaces the record of how it
+ended), and the records of each kind db sync copies (udl.db.records: settings and automations,
+and the history that has ended, never a runtime's own, such as leases). Records keep their ids,
+so they are the same records in every database.
 
-A record the target lacks is added. One it has (a site with the same key; a strategy or download
-with the same id) is replaced by the source's copy where they differ: the source is taken to be
-right. A site's own id and times are its database's, so they are not compared, and the target
-keeps its own. Nothing is deleted, so syncing again changes nothing.
+A record the target lacks is added. One it has (a site with the same key; a strategy, download or
+record with the same id) is replaced by the source's copy where they differ: the source is taken
+to be right. A site's own id and times are its database's, so they are not compared, and the
+target keeps its own; nor is when a record was last updated. A record whose unique key (e.g. a
+name) the target has under another id replaces that one: that is the only time a sync deletes
+anything, so syncing again changes nothing.
 """
 
 # System Imports
@@ -21,15 +25,17 @@ from typing import Final, Literal
 from uuid import UUID
 
 # Package Imports
-from pydantic import BaseModel, ConfigDict, NonNegativeInt
+from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt
 
 # Local Imports
 from udl.db.models import DownloadQuery, SiteQuery
+from udl.db.records import Record, RecordQuery, record_kinds
+from udl.errors import DuplicateKey
 from udl.plugins.databases.base import DatabasePlugin
 
 type Change = Literal["added", "updated", "unchanged"]
 
-# Downloads are read this many at a time.
+# Downloads and records are read this many at a time.
 PAGE: Final = 500
 # A site's fields that belong to the database that holds it.
 _SITE_OWN: Final = {"id", "created_at", "updated_at"}
@@ -59,6 +65,8 @@ class SyncResult(_Frozen):
     strategies: SyncCounts
     downloads: SyncCounts
     """Only downloads that have ended are copied."""
+    records: dict[str, SyncCounts] = Field(default_factory=dict[str, SyncCounts])
+    """By kind of record, the kinds the source has some to copy of."""
 
 
 def _change[M: BaseModel](stored: M | None, copy: M, *, ignore: set[str] | None = None) -> Change:
@@ -108,9 +116,51 @@ async def sync(
             elif change == "updated":
                 await target.update_download(record)
 
+    by_kind: dict[str, SyncCounts] = {}
+    for kind in record_kinds():
+        if kind.synced and (counted := await _sync_records(source, target, kind, dry_run, page)):
+            by_kind[kind.kind] = _counts(counted)
+
     return SyncResult(
         target=target.connection.name,
         sites=_counts(sites),
         strategies=_counts(strategies),
         downloads=_counts(downloads),
+        records=by_kind,
     )
+
+
+async def _sync_records(
+    source: DatabasePlugin, target: DatabasePlugin, kind: type[Record], dry_run: bool, page: int
+) -> Counter[Change]:
+    """Copy the source's records of `kind` (those that have ended) into the target, a page at a
+    time, newest first (as downloads are)."""
+    changes, offset, seen = Counter[Change](), 0, set[UUID]()
+    while found := await source.list_records(kind, RecordQuery(limit=page, offset=offset)):
+        offset += len(found)
+        for record in found:
+            if record.id in seen or not record.syncable():
+                continue
+            seen.add(record.id)
+            stored = await target.get_record(kind, record.id)
+            changes[change := _change(stored, record, ignore={"updated_at"})] += 1
+            if change != "unchanged" and not dry_run:
+                await _copy(target, record)
+    return changes
+
+
+async def _copy(target: DatabasePlugin, record: Record) -> None:
+    """Store `record` in the target, in place of any record there with one of its unique keys
+    (under another id)."""
+    try:
+        await target.upsert_record(record)
+    except DuplicateKey:
+        kind = type(record)
+        for together in kind.unique:
+            key = {name: getattr(record, name) for name in together}
+            if None in key.values():
+                continue
+            for clash in await target.list_records(kind, RecordQuery(where=key)):
+                if clash.id != record.id:
+                    await target.delete_record(kind, clash.id)
+        await target.upsert_record(record)
