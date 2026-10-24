@@ -3,39 +3,19 @@
 - security.py -
 ---------------
 
-What the servers (the API, and the MCP server) allow, beyond what the CLI does: a request's
-output dir only under api.allowed_output_roots, and, when api.api_key is set, only requests that
-send it
+Who the servers (the API, and the MCP server it serves) answer: when api.api_key is set, only
+requests that send it. (What they may ask for, such as an output dir under
+api.allowed_output_roots, the operations check: udl.core.paths.)
 """
 
 # System Imports
 import hmac
-from pathlib import Path
 
 # Local Imports
-from udl.config import Settings, expand_path
-from udl.errors import NotAllowed, Unauthorized
+from udl.config import Settings
+from udl.errors import Unauthorized
 
 API_KEY_HEADER = "X-API-Key"
-
-
-def check_output_dir(settings: Settings, output_dir: Path | None) -> None:
-    """Raise NotAllowed unless `output_dir` (a request's) is in one of api.allowed_output_roots.
-
-    `~` and `$VARS` are expanded, a relative dir is taken from the working dir, and `..` and
-    links are followed first, so neither can lead out of a root.
-    """
-    if output_dir is None:
-        return
-    target = expand_path(output_dir).resolve()
-    allowed = [root.resolve() for root in settings.api.allowed_output_roots]
-    if not any(target.is_relative_to(root) for root in allowed):
-        roots = ", ".join(map(str, allowed)) or "none"
-        raise NotAllowed(
-            f"Downloading to {target} is not allowed (it is not in api.allowed_output_roots)",
-            hint=f"Choose a folder in one of the allowed output roots ({roots}), or leave the "
-            "output dir out to use the default one.",
-        )
 
 
 def check_api_key(settings: Settings, given: str | None) -> None:

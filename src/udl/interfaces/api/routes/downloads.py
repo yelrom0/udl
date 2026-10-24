@@ -29,7 +29,6 @@ from udl.core.models import (
 from udl.db.models import DownloadQuery
 from udl.errors import ErrorInfo
 from udl.interfaces.api.deps import ServiceDep, documented
-from udl.interfaces.security import check_output_dir
 
 router = APIRouter(prefix="/downloads", tags=["downloads"])
 
@@ -56,7 +55,6 @@ async def download(
         ),
     ] = None,
 ) -> DownloadBatch:
-    check_output_dir(service.settings, spec.output_dir)
     request = DownloadRequest.model_validate(
         {**spec.model_dump(), "wait": wait, "timeout": seconds}
     )

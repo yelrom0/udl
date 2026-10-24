@@ -34,6 +34,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 # Local Imports
 from udl.config import Settings
+from udl.core.operations import Caller, current_caller
 from udl.core.service import ServiceFactory, UDLService
 from udl.errors import ErrorCode, ErrorInfo, UDLError, Unauthorized
 from udl.interfaces.adapters import add_routes
@@ -120,6 +121,7 @@ def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService)
         failed = ErrorInfo(code=ErrorCode.UDL_ERROR, message="udl failed; its log says why")
         return JSONResponse(failed.model_dump(mode="json"), 500)
 
+    app.add_middleware(CalledThroughTheAPI)
     if is_local(settings.api.host):
         app.add_middleware(LocalHostsOnly)
     return app
@@ -157,6 +159,24 @@ def is_local(host: str) -> bool:
         return ipaddress.ip_address(host).is_loopback
     except ValueError:
         return False
+
+
+class CalledThroughTheAPI:
+    """Marks the operations a request runs as the API's (current_caller), in the request's own
+    task (a plain ASGI middleware, unlike Starlette's BaseHTTPMiddleware)."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        called = current_caller.set(Caller.API)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            current_caller.reset(called)
 
 
 class LocalHostsOnly:

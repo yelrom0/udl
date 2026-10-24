@@ -4,19 +4,21 @@
 -----------------
 
 Gizmo: a site plugin that adds operations of its own, whose requests use every kind of field
-the generated adapters (the CLI's, the API's and the MCP server's) have to handle
+the generated adapters (the CLI's, the API's and the MCP server's) have to handle, and ones that
+say how their command and route look (CLISpec, APISpec)
 """
 
 # System Imports
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Self
 
 # Package Imports
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, SecretStr, model_validator
+from rich.console import Console
 
 # Local Imports
-from udl.core.operations import Operation, OperationHints
+from udl.core.operations import APISpec, CLISpec, Operation, OperationHints, current_caller
 from udl.errors import DoesNotExist
 from udl.plugins.sites.base import SitePlugin
 
@@ -121,6 +123,59 @@ async def lookup(service: UDLService, request: LookupRequest) -> Found:
     return Found(value="yes")
 
 
+class ThingRequest(_Model):
+    """A thing, by key."""
+
+    key: str
+    """The thing's key."""
+    words: list[str] = Field(default_factory=list[str])
+    """Words to say about it."""
+    loud: bool = False
+    """Say them loudly."""
+
+    @model_validator(mode="after")
+    def _something(self) -> Self:
+        if self.key == "nothing" and self.words:
+            raise ValueError("nothing has no words")
+        return self
+
+
+class Thing(_Model):
+    key: str
+    said: str
+
+
+async def find(service: UDLService, request: ThingRequest) -> Thing:
+    """Find a thing, and say its words about it."""
+    said = " ".join(request.words)
+    return Thing(key=request.key, said=said.upper() if request.loud else said)
+
+
+async def keep(service: UDLService, request: ThingRequest) -> Thing:
+    """Keep a thing."""
+    return Thing(key=request.key, said="kept")
+
+
+def shown(console: Console, thing: Thing) -> None:
+    """How `udl gizmo things find` shows a thing."""
+    console.print(f"{thing.key} says {thing.said!r}")
+
+
+class Nothing(_Model):
+    """Ask nothing."""
+
+
+class CallerInfo(_Model):
+    caller: str | None
+    """Who called (cli, api, mcp, automation), or None from Python."""
+
+
+async def caller(service: UDLService, request: Nothing) -> CallerInfo:
+    """Say who called this operation."""
+    found = current_caller.get()
+    return CallerInfo(caller=None if found is None else found.value)
+
+
 class Gizmo(SitePlugin):
     """A site plugin (for no sites) that only adds operations."""
 
@@ -131,4 +186,26 @@ class Gizmo(SitePlugin):
         return [
             Operation.of(echo, name="echo", title="Echo", hints=OperationHints(read_only=True)),
             Operation.of(lookup, name="lookup", title="Look up", hints=OperationHints()),
+            Operation.of(
+                find,
+                name="find",
+                title="Find a thing",
+                hints=OperationHints(read_only=True),
+                cli=CLISpec(
+                    path=("gizmo", "things", "find"),
+                    arguments=("key", "words"),
+                    options={"loud": "--shout"},
+                    render=shown,
+                ),
+                api=APISpec(method="GET", path="/gizmo/things/{key}"),
+            ),
+            Operation.of(
+                keep,
+                name="keep",
+                title="Keep a thing",
+                api=APISpec(method="PUT", path="/gizmo/things/{key}", status=201),
+            ),
+            Operation.of(
+                caller, name="caller", title="Who called", hints=OperationHints(read_only=True)
+            ),
         ]

@@ -12,7 +12,11 @@ udl's own operations are UDLService's methods marked with @operation (operations
 after the plugin (the gizmo plugin's `echo` is `gizmo_echo`), and its function takes the service
 and the request. A service's OperationRegistry holds udl's and its plugins', and the interfaces
 offer every operation in it: the plugins' through adapters made from their request models
-(udl.interfaces.adapters).
+(udl.interfaces.adapters), as their CLISpec and APISpec say.
+
+The interface an operation is called through sets current_caller (cli, api, mcp, and the
+automations' runtime), so an operation can tell what to allow: one that takes a path checks it
+against its roots unless it came from the CLI (or from udl's own Python).
 """
 
 # System Imports
@@ -22,12 +26,14 @@ import importlib
 import inspect
 import logging
 import re
-from collections.abc import Awaitable, Callable, Iterable, Iterator
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Final, Self, cast
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, Final, Self, cast
 
 # Package Imports
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, SecretStr
 
 # Local Imports
 from udl.errors import DoesNotExist, PluginError
@@ -39,6 +45,12 @@ log = logging.getLogger(__name__)
 
 # An operation's name, and a plugin's when it names operations: lower case, digits, _ and -.
 _NAME: Final = re.compile(r"[a-z0-9][a-z0-9_-]*")
+_PATH_FIELD: Final = re.compile(r"{(\w+)}")
+_METHODS: Final = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
+INTEGRATIONS: Final = "udl.integrations"  # (the integrations' kind: their routes are their own)
+# What a plugin's operation is never called on the API, besides an integration's: its routes
+# are /plugins/<plugin>/<op>, and /plugins/<plugin>/settings is the plugin's settings.
+_RESERVED: Final = frozenset({"settings"})
 
 type OperationMethod = Callable[..., Awaitable[BaseModel]]
 """An operation's function: (service, request) -> response (UDLService's methods are too)."""
@@ -63,6 +75,28 @@ class OperationHints(BaseModel):
 
 
 @dataclass(frozen=True)
+class CLISpec:
+    """How an operation's generated command looks, where the defaults (`udl <plugin> <op>`, an
+    option per field) are not what it should be."""
+
+    path: tuple[str, ...] | None = None  # the command's words, e.g. ("gmail", "list")
+    arguments: tuple[str, ...] = ()  # the fields given as positional arguments, in order
+    options: Mapping[str, str] = field(default_factory=dict[str, str])  # field: option name
+    render: Callable[..., None] | None = None  # (console, response): how it is shown
+
+
+@dataclass(frozen=True)
+class APISpec:
+    """How an operation's generated route looks: its method, its path (whose `{field}`s are
+    the request's fields; the rest is the body, or the query of a GET or DELETE) and the status
+    it answers with."""
+
+    method: str = "POST"
+    path: str | None = None  # by default /plugins/<plugin>/<op> (an integration's: /integrations/…)
+    status: int = 200
+
+
+@dataclass(frozen=True)
 class Operation:
     """One operation: udl's own, or one a plugin adds."""
 
@@ -76,6 +110,10 @@ class Operation:
     hints: OperationHints = field(default_factory=OperationHints)
     namespace: str | None = None  # the plugin that adds it (e.g. "gizmo"); None for udl's own
     kind: str | None = None  # that plugin's kind (its entry point group, e.g. "udl.sites")
+    cli: CLISpec | None = (
+        None  # its generated command, where not the default (udl.interfaces.adapters)
+    )
+    api: APISpec | None = None  # its generated route, where not the default
 
     @classmethod
     def of(
@@ -85,10 +123,13 @@ class Operation:
         name: str,
         title: str,
         hints: OperationHints | None = None,
+        cli: CLISpec | None = None,
+        api: APISpec | None = None,
     ) -> Self:
         """The operation `method` is: an async function (or UDLService's method) whose second
         parameter is its request model, which returns its response model and whose docstring
-        describes it. Raises PluginError when it is not one."""
+        describes it, with its command and route as `cli` and `api` say. Raises PluginError
+        when it is not one."""
         what = getattr(method, "__qualname__", repr(method))
         if not valid_name(name):
             raise PluginError(
@@ -111,6 +152,7 @@ class Operation:
                 f"{what} is not an operation: it takes (service, request) and returns a "
                 "response, both annotated as Pydantic models"
             )
+        _check_specs(what, request, cli, api)
         return cls(
             name=name,
             title=title,
@@ -120,6 +162,8 @@ class Operation:
             description=doc,
             method=method,
             hints=hints or OperationHints(),
+            cli=cli,
+            api=api,
         )
 
     @property
@@ -136,7 +180,53 @@ class Operation:
                 f"A plugin called {namespace!r} cannot add operations: its name must be lower "
                 "case letters, digits, _ and -"
             )
+        if kind != INTEGRATIONS and self.name in _RESERVED:
+            raise PluginError(
+                f"A plugin's operation is not called {self.name!r}: "
+                f"/plugins/{namespace}/{self.name} is the plugin's settings",
+                hint="Rename the operation.",
+            )
         return replace(self, name=f"{namespace}_{self.name}", namespace=namespace, kind=kind)
+
+
+def _check_specs(
+    what: str, request: type[BaseModel], cli: CLISpec | None, api: APISpec | None
+) -> None:
+    """Raise PluginError when a spec names what the request does not have."""
+    fields = request.model_fields
+    named: list[str] = []
+    if cli is not None:
+        if cli.path is not None and len(cli.path) < 2:
+            raise PluginError(f"{what}: a command's path is two words or more, not {cli.path!r}")
+        named += [*cli.arguments, *cli.options]
+        for argument in cli.arguments:
+            if argument in fields and _is_secret(fields[argument].annotation):
+                raise PluginError(
+                    f"{what}: {argument} is a secret, never a command's argument (it is asked for)"
+                )
+    if api is not None:
+        if api.method not in _METHODS:
+            raise PluginError(f"{what}: {api.method} is not a method udl routes")
+        named += _PATH_FIELD.findall(api.path or "")
+    unknown = [name for name in named if name not in fields]
+    if unknown:
+        raise PluginError(f"{what}: its request has no field {', '.join(unknown)}")
+
+
+def _is_secret(annotation: Any) -> bool:
+    return annotation is SecretStr or SecretStr in getattr(annotation, "__args__", ())
+
+
+def route(op: Operation) -> APISpec:
+    """The route an operation's generated adapter has: its APISpec, with its path by default
+    /plugins/<plugin>/<op> (or, for an integration's, /integrations/<integration>/<op>)."""
+    spec = op.api or APISpec()
+    if spec.path is not None:
+        return spec
+    if op.namespace is None:
+        raise ValueError(f"{op.name} is udl's own: its route is its APISpec's, or written by hand")
+    section = "integrations" if op.kind == INTEGRATIONS else "plugins"
+    return replace(spec, path=f"/{section}/{op.namespace}/{op.short_name}")
 
 
 def valid_name(name: str) -> bool:
@@ -155,19 +245,35 @@ def _model(annotation: object) -> type[BaseModel] | None:
 # udl's own operations
 # ---------------------------------------------------------------------------------------------
 
-_registered: list[tuple[str, str, OperationHints, OperationMethod]] = []
+
+@dataclass(frozen=True)
+class _Registered:
+    name: str
+    title: str
+    hints: OperationHints | None
+    cli: CLISpec | None
+    api: APISpec | None
+    method: OperationMethod
+
+
+_registered: list[_Registered] = []
 
 
 def operation[**P, R: BaseModel](
-    name: str, *, title: str, hints: OperationHints | None = None
+    name: str,
+    *,
+    title: str,
+    hints: OperationHints | None = None,
+    cli: CLISpec | None = None,
+    api: APISpec | None = None,
 ) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]:
     """Register a UDLService method as the operation called `name`: it takes its request as its
     only positional argument (others are keyword-only, for callers in Python)."""
 
     def register(method: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
-        if any(registered == name for registered, *_ in _registered):
+        if any(registered.name == name for registered in _registered):
             raise ValueError(f"There already is an operation called {name!r}")
-        _registered.append((name, title, hints or OperationHints(), method))
+        _registered.append(_Registered(name, title, hints, cli, api, method))
         return method
 
     return register
@@ -179,8 +285,15 @@ def operations() -> dict[str, Operation]:
     importlib.import_module("udl.core.service")  # (its methods register the operations)
 
     return {
-        name: Operation.of(method, name=name, title=title, hints=hints)
-        for name, title, hints, method in _registered
+        found.name: Operation.of(
+            found.method,
+            name=found.name,
+            title=found.title,
+            hints=found.hints,
+            cli=found.cli,
+            api=found.api,
+        )
+        for found in _registered
     }
 
 
@@ -266,3 +379,28 @@ class OperationRegistry:
 
     def __len__(self) -> int:
         return len(self._ops)
+
+
+# ---------------------------------------------------------------------------------------------
+# Who calls
+# ---------------------------------------------------------------------------------------------
+
+
+class Caller(StrEnum):
+    """The interface an operation is called through."""
+
+    CLI = "cli"
+    API = "api"
+    MCP = "mcp"
+    AUTOMATION = "automation"  # (an action's run, in the runtime)
+
+
+current_caller: ContextVar[Caller | None] = ContextVar("udl_current_caller", default=None)
+"""Who is calling the operation that runs: set by each interface; None for udl's own Python."""
+
+
+def checks_paths() -> bool:
+    """Whether the operation that runs checks the paths it is given against their roots (such
+    as api.allowed_output_roots): unless the CLI (the user, on their machine) or udl's own Python
+    called it."""
+    return current_caller.get() not in (None, Caller.CLI)

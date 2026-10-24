@@ -20,11 +20,14 @@ from support.engine import registry, settings
 from support.operations import Echoed, EchoRequest, Found, Gizmo, LookupRequest, echo, lookup
 from udl.core.models import GetConfigRequest
 from udl.core.operations import (
+    APISpec,
+    CLISpec,
     Operation,
     OperationHints,
     OperationMethod,
     OperationRegistry,
     operations,
+    route,
 )
 from udl.core.service import UDLService
 from udl.errors import DoesNotExist, PluginError
@@ -33,6 +36,10 @@ from udl.plugins.sites.base import SitePlugin
 
 if TYPE_CHECKING:
     from udl.core.service import UDLService as Service
+
+
+# The operations the Gizmo plugin adds.
+GIZMO = ["gizmo_echo", "gizmo_lookup", "gizmo_find", "gizmo_keep", "gizmo_caller"]
 
 
 def gizmo_registry(*plugins: type[SitePlugin]) -> PluginRegistry:
@@ -144,6 +151,54 @@ def test_an_operation_in_a_namespace_is_named_after_it() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("specs", "named"),
+    [
+        ({"cli": CLISpec(arguments=("nope",))}, "nope"),
+        ({"cli": CLISpec(options={"nope": "--x"})}, "nope"),
+        ({"cli": CLISpec(path=("one",))}, "path"),
+        ({"cli": CLISpec(arguments=("token",))}, "token"),  # (a secret is never an argument)
+        ({"api": APISpec(path="/things/{nope}")}, "nope"),
+        ({"api": APISpec(method="TRACE")}, "TRACE"),
+    ],
+)
+def test_an_operation_s_specs_name_its_fields(specs: dict[str, object], named: str) -> None:
+    with pytest.raises(PluginError, match=named):
+        Operation.of(echo, name="echo", title="Echo", **specs)  # pyright: ignore[reportArgumentType]
+
+
+def test_a_plugin_s_operation_is_routed_by_its_kind() -> None:
+    op = Operation.of(echo, name="echo", title="Echo")
+
+    assert route(op.in_namespace("gizmo", kind=SITES.group)) == APISpec(
+        method="POST", path="/plugins/gizmo/echo"
+    )
+    assert route(op.in_namespace("gmail", kind="udl.integrations")).path == (
+        "/integrations/gmail/echo"
+    )
+    assert (
+        route(Operation.of(echo, name="echo", title="Echo", api=APISpec(path="/x/{text}"))).path
+        == "/x/{text}"
+    )
+
+
+def test_a_plugin_operation_called_settings_is_refused_unless_an_integration_s() -> None:
+    class Settled(SitePlugin):
+        name = "settled"
+
+        @classmethod
+        def operations(cls) -> list[Operation]:
+            return [Operation.of(echo, name="settings", title="Echo")]
+
+    plugins = gizmo_registry(Settled)
+
+    ops = OperationRegistry.discover(plugins)
+
+    assert "settled_settings" not in ops
+    [problem] = plugins.problems
+    assert "settings" in problem.error
+
+
 # ---------------------------------------------------------------------------------------------
 # The registry
 # ---------------------------------------------------------------------------------------------
@@ -182,7 +237,7 @@ def test_operations_are_listed_by_namespace() -> None:
         ops.add(op.in_namespace("gizmo", kind=SITES.group))
 
     assert ops.namespaces() == ["gizmo"]
-    assert [op.name for op in ops.in_namespace("gizmo")] == ["gizmo_echo", "gizmo_lookup"]
+    assert [op.name for op in ops.in_namespace("gizmo")] == GIZMO
     assert [op.name for op in ops.in_namespace(None)] == list(operations())
     assert ops.in_namespace("nope") == []
 
@@ -190,7 +245,7 @@ def test_operations_are_listed_by_namespace() -> None:
 def test_a_registry_is_discovered_with_every_plugin_s_operations() -> None:
     ops = OperationRegistry.discover(gizmo_registry())
 
-    assert ops.names() == [*operations(), "gizmo_echo", "gizmo_lookup"]
+    assert ops.names() == [*operations(), *GIZMO]
     assert ops.get("gizmo_echo").kind == "udl.sites"
 
 
@@ -280,7 +335,7 @@ def make_service(tmp_path: Path) -> UDLService:
 def test_a_service_s_operations_are_udl_s_and_its_plugins(tmp_path: Path) -> None:
     service = make_service(tmp_path)
 
-    assert service.operations.names() == [*operations(), "gizmo_echo", "gizmo_lookup"]
+    assert service.operations.names() == [*operations(), *GIZMO]
 
 
 async def test_a_plugin_s_operation_is_called_like_udl_s(tmp_path: Path) -> None:

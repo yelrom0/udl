@@ -10,8 +10,8 @@ hints. `udl mcp` serves it on stdin/stdout, and `udl serve` at /mcp (streamable 
 
 `download` waits for its downloads (at most DEFAULT_WAIT seconds unless the agent says
 otherwise), reporting their progress as MCP progress notifications. As with the API, an output
-dir the agent names must be in api.allowed_output_roots. udl's errors are tool errors that say
-what to do next.
+dir the agent names must be in api.allowed_output_roots (the tools are called as MCP's:
+current_caller). udl's errors are tool errors that say what to do next.
 """
 
 # System Imports
@@ -31,10 +31,9 @@ from pydantic.fields import FieldInfo
 
 # Local Imports
 from udl.core.models import DownloadRequest, JobEvent
-from udl.core.operations import Operation, OperationRegistry
+from udl.core.operations import Caller, Operation, OperationRegistry, current_caller
 from udl.core.service import UDLService
 from udl.errors import UDLError
-from udl.interfaces.security import check_output_dir
 
 DEFAULT_WAIT: Final = 120.0
 """Seconds the download tool waits for its downloads, unless the agent says otherwise."""
@@ -112,10 +111,13 @@ def _tool[Q: BaseModel](
     are the tool's arguments, and it returns the response."""
 
     async def tool(ctx: Context, **arguments: Any) -> BaseModel:
+        called = current_caller.set(Caller.MCP)
         try:
             return await run(service(), request.model_validate(arguments), ctx)
         except UDLError as e:
             raise ToolError(_described(e)) from e
+        finally:
+            current_caller.reset(called)
 
     defaults = _DEFAULTS.get(op.name, {})
     fields = [
@@ -153,7 +155,6 @@ async def _call(op: Operation, service: UDLService, request: BaseModel, ctx: Con
 
 
 async def _download(service: UDLService, request: DownloadRequest, ctx: Context) -> BaseModel:
-    check_output_dir(service.settings, request.output_dir)
     return await service.download(request, on_event=_Progress(ctx, len(request.urls)))
 
 

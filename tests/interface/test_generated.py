@@ -4,9 +4,10 @@
 ---------------------
 
 The adapters udl makes for the operations plugins add: a CLI command (`udl <plugin> <op>`), an
-API route (`POST /<kind>/<plugin>/<op>`) and an MCP tool (`<plugin>_<op>`), each made from the
-operation's request model, so a plugin without a UI of its own is still fully usable. The same
-request gives the same response through all three.
+API route (`POST /plugins/<plugin>/<op>`) and an MCP tool (`<plugin>_<op>`), each made from the
+operation's request model (or as its CLISpec and APISpec say), so a plugin without a UI of its own
+is still fully usable. The same request gives the same response through all three, and each says
+which it is (current_caller).
 """
 
 # System Imports
@@ -24,6 +25,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from mcp import Client
 from pydantic import BaseModel, ConfigDict, JsonValue
+from typer.core import TyperGroup
 
 # Local Imports
 from support.api import client_for as api_client_for
@@ -34,16 +36,16 @@ from support.mcp import client_for as mcp_client_for
 from support.operations import Colour, Echoed, EchoRequest, Gizmo, Point, echoed
 from support.tasks import held
 from udl.config import Settings
-from udl.core.operations import Operation, operations
+from udl.core.operations import Operation, operations, route
 from udl.core.service import UDLService
 from udl.errors import ErrorCode, ErrorInfo
-from udl.interfaces.adapters import api_path, cli_groups
+from udl.interfaces.adapters import cli_groups
 from udl.interfaces.api.app import create_app
 from udl.interfaces.cli.common import operation_of
 from udl.plugins.registry import SITES
 from udl.plugins.sites.base import SitePlugin
 
-ECHO = "/sites/gizmo/echo"
+ECHO = "/plugins/gizmo/echo"
 
 
 def gizmo_harness(tmp_path: Path) -> Harness:
@@ -78,16 +80,25 @@ def test_every_plugin_operation_has_its_cli_command(harness: Harness) -> None:
         f"{namespace} {name}": operation_of(inspect.unwrap(command.callback or print))
         for namespace, group in groups.items()
         for name, command in group.commands.items()
+        if not isinstance(command, TyperGroup)
     }
 
-    assert found == {"gizmo echo": "gizmo_echo", "gizmo lookup": "gizmo_lookup"}
+    assert found == {
+        "gizmo echo": "gizmo_echo",
+        "gizmo lookup": "gizmo_lookup",
+        "gizmo keep": "gizmo_keep",
+        "gizmo caller": "gizmo_caller",
+    }
+    things = groups["gizmo"].commands["things"]
+    assert isinstance(things, TyperGroup)
+    assert operation_of(inspect.unwrap(things.commands["find"].callback or print)) == "gizmo_find"
 
 
 def test_every_plugin_operation_has_its_api_route(harness: Harness) -> None:
     paths = create_app(harness.settings, make_service=harness.service).openapi()["paths"]
 
     assert paths[ECHO]["post"]["operationId"] == "gizmo_echo"
-    assert paths["/sites/gizmo/lookup"]["post"]["operationId"] == "gizmo_lookup"
+    assert paths["/plugins/gizmo/lookup"]["post"]["operationId"] == "gizmo_lookup"
 
 
 async def test_every_plugin_operation_has_its_mcp_tool(harness: Harness) -> None:
@@ -101,6 +112,29 @@ async def test_every_plugin_operation_has_its_mcp_tool(harness: Harness) -> None
     assert set(echo.input_schema["properties"]) == set(EchoRequest.model_fields)
     assert echo.input_schema["required"] == ["text"]
     assert "gizmo_lookup" in tools
+
+
+def test_a_plugin_s_operations_from_a_plugin_dir_get_all_three(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "plugins"
+    plugin_dir.mkdir()
+    # (A local plugin, as users add theirs: a file whose plugin is Gizmo again.)
+    (plugin_dir / "local_gizmo.py").write_text(
+        "from support.operations import Gizmo\n\n\nclass LocalGizmo(Gizmo):\n    name = 'gizmo'\n"
+    )
+    harness = Harness(tmp_path)
+    harness.registry.load_dir(plugin_dir)
+
+    cli = CLI(harness)("gizmo", "echo", "--text", "local", "--json")
+    route = asyncio.run(_through_the_api(harness, {"text": "local"}))
+    tool = asyncio.run(_through_mcp(harness, {"text": "local"}))
+
+    assert cli.exit_code == 0, cli.output
+    assert (
+        json.loads(cli.stdout)
+        == route
+        == tool
+        == echoed(EchoRequest(text="local")).model_dump(mode="json")
+    )
 
 
 # ---------------------------------------------------------------------------------------------
@@ -315,6 +349,25 @@ def test_a_command_runs_on_a_service_that_imported_the_plugin_again(tmp_path: Pa
     assert json.loads(result.stdout) == {"text": "Hello, Dan!"}
 
 
+def test_a_command_s_spec_gives_its_path_arguments_options_and_rendering(cli: CLI) -> None:
+    shown = cli("gizmo", "things", "find", "door", "is", "open", "--shout")
+    as_json = cli("gizmo", "things", "find", "door", "--json")
+    help_text = cli("gizmo", "things", "find", "--help")
+
+    assert shown.exit_code == 0, shown.output
+    assert shown.stdout.strip() == "door says 'IS OPEN'"
+    assert json.loads(as_json.stdout) == {"key": "door", "said": ""}
+    assert "--shout" in help_text.stdout
+    assert "KEY" in help_text.stdout
+
+
+def test_an_argument_can_come_from_the_input(cli: CLI) -> None:
+    result = cli("gizmo", "things", "find", "--input", "-", "--json", stdin='{"key": "lid"}')
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["key"] == "lid"
+
+
 def test_a_udl_error_is_shown_with_its_hint_and_exits_with_1(cli: CLI) -> None:
     result = cli("gizmo", "lookup", "--key", "nope")
 
@@ -351,7 +404,7 @@ def test_a_url_is_still_downloaded_when_a_plugin_adds_commands(cli: CLI) -> None
 
 def test_udl_s_own_operations_have_routes_written_by_hand() -> None:
     with pytest.raises(ValueError, match="download"):
-        api_path(operations()["download"])
+        route(operations()["download"])
 
 
 @pytest.fixture
@@ -386,6 +439,29 @@ async def test_the_route_is_typed_and_documented(api: httpx.AsyncClient) -> None
     assert "description" in schema["components"]["schemas"]["EchoRequest"]["properties"]["colour"]
 
 
+async def test_a_route_s_spec_gives_its_method_path_and_status(api: httpx.AsyncClient) -> None:
+    found = await api.get("/gizmo/things/door", params={"words": ["is", "open"], "loud": "true"})
+    kept = await api.put("/gizmo/things/door", json={"words": ["x"]})
+    schema = (await api.get("/openapi.json")).json()
+
+    assert (found.status_code, found.json()) == (200, {"key": "door", "said": "IS OPEN"})
+    assert (kept.status_code, kept.json()) == (201, {"key": "door", "said": "kept"})
+    route = schema["paths"]["/gizmo/things/{key}"]
+    assert route["get"]["operationId"] == "gizmo_find"
+    assert route["put"]["operationId"] == "gizmo_keep"
+    assert {p["name"] for p in route["get"]["parameters"]} == {"key", "words", "loud"}
+    assert "requestBody" not in route["get"]
+
+
+async def test_a_route_s_bad_path_or_query_is_a_422(api: httpx.AsyncClient) -> None:
+    response = await api.get("/gizmo/things/door", params={"loud": "maybe"})
+    together = await api.get("/gizmo/things/nothing", params={"words": ["x"]})
+
+    assert response.status_code == 422
+    assert together.status_code == 422  # (the path and the query, checked together)
+    assert "nothing has no words" in together.text
+
+
 async def test_a_bad_request_is_a_422(api: httpx.AsyncClient) -> None:
     response = await api.post(ECHO, json={"count": 1})
 
@@ -393,7 +469,7 @@ async def test_a_bad_request_is_a_422(api: httpx.AsyncClient) -> None:
 
 
 async def test_a_udl_error_is_answered_as_error_info(api: httpx.AsyncClient) -> None:
-    response = await api.post("/sites/gizmo/lookup", json={"key": "nope"})
+    response = await api.post("/plugins/gizmo/lookup", json={"key": "nope"})
 
     assert response.status_code == 404
     assert ErrorInfo.model_validate(response.json()).code is ErrorCode.DOES_NOT_EXIST
@@ -479,3 +555,32 @@ def test_the_same_request_gives_the_same_response_through_each_interface(
     assert json.loads(result.stdout) == expected
     assert asyncio.run(_through_the_api(harness, raw)) == expected
     assert asyncio.run(_through_mcp(harness, raw)) == expected
+
+
+# ---------------------------------------------------------------------------------------------
+# Who called
+# ---------------------------------------------------------------------------------------------
+
+
+def test_each_adapter_says_who_called(harness: Harness) -> None:
+    cli = CLI(harness)("gizmo", "caller", "--json")
+    api = asyncio.run(_called(harness, "api"))
+    mcp = asyncio.run(_called(harness, "mcp"))
+
+    assert json.loads(cli.stdout) == {"caller": "cli"}
+    assert (api, mcp) == ({"caller": "api"}, {"caller": "mcp"})
+
+
+async def test_python_callers_are_no_interface(harness: Harness) -> None:
+    async with harness.service() as service:
+        found = await service.call("gizmo_caller", {})
+
+    assert found.model_dump() == {"caller": None}
+
+
+async def _called(harness: Harness, through: str) -> JsonValue:
+    if through == "api":
+        async with api_client_for(harness) as client:
+            return (await client.post("/plugins/gizmo/caller", json={})).json()
+    async with mcp_client_for(harness) as client:
+        return (await client.call_tool("gizmo_caller", {})).structured_content

@@ -6,22 +6,26 @@
 The adapters udl makes for an operation from its request model, so the operations plugins add
 are offered by every interface without any interface code of their own:
 
-- the CLI: `udl <plugin> <op>`, with an option per field (a flag for a yes or no, choices for
-  one of a few, repeated for a list, JSON for anything else; a secret is asked for, hidden, never
-  given on the command line), `--input FILE` (`-` for stdin) for the whole request as JSON or
-  YAML, and `--json`;
-- the API: `POST /<kind>/<plugin>/<op>` (e.g. /sites/gizmo/echo), whose body is the request and
-  whose answer is the response, typed in the OpenAPI schema;
+- the CLI: `udl <plugin> <op>` (or the path its CLISpec gives), with an option per field (a flag
+  for a yes or no, choices for one of a few, repeated for a list, JSON for anything else; a
+  secret is asked for, hidden, never given on the command line), or a positional argument where
+  its CLISpec says, `--input FILE` (`-` for stdin) for the whole request as JSON or YAML, and
+  `--json`;
+- the API: `POST /plugins/<plugin>/<op>` (an integration's: /integrations/…), or as its APISpec
+  says: its path's `{field}`s are path parameters, and the rest of the request is the body (or,
+  for a GET or DELETE, the query), typed in the OpenAPI schema;
 - the MCP server: the `<plugin>_<op>` tool, as for udl's own (udl.interfaces.mcp.server).
 """
 
 # System Imports
+import copy
 import enum
 import inspect
 import json
+import re
 import types
 import typing
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
@@ -29,13 +33,13 @@ from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
 # Package Imports
 import typer
 import yaml
-from pydantic import BaseModel, JsonValue, SecretStr
+from pydantic import BaseModel, JsonValue, SecretStr, ValidationError, create_model
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 from typer.core import TyperGroup
 
 # Local Imports
-from udl.core.operations import Operation, OperationRegistry
+from udl.core.operations import APISpec, Operation, OperationRegistry, route
 from udl.interfaces.cli import render
 from udl.interfaces.cli.common import JsonOption, mark, parse, run, show, usage_error
 
@@ -57,29 +61,37 @@ type FieldKind = Literal["flag", "plain", "list", "json", "json_list", "secret"]
 
 
 def cli_groups(ops: OperationRegistry) -> dict[str, TyperGroup]:
-    """A command group for each plugin that adds operations (`udl <plugin>`), with a command
-    for each of its operations, by the plugin's name."""
-    groups: dict[str, TyperGroup] = {}
-    for namespace in ops.namespaces():
-        app = typer.Typer(
-            help=f"The {namespace} plugin's operations.",
-            no_args_is_help=True,
-            rich_markup_mode="markdown",
-        )
-        for op in ops.in_namespace(namespace):
-            app.command(command_name(op), help=op.description)(cli_command(op))
-        groups[namespace] = typer.main.get_group(app)
-    return groups
+    """The command groups of the operations plugins add (`udl <plugin> <op>`, or the path their
+    CLISpec gives), by their first word."""
+    apps: dict[tuple[str, ...], typer.Typer] = {}
+    for op in ops:
+        if op.namespace is None:  # (udl's own commands are written by hand)
+            continue
+        path = cli_path(op)
+        _group(apps, path[:-1]).command(path[-1], help=op.description)(cli_command(op))
+    return {path[0]: typer.main.get_group(app) for path, app in apps.items() if len(path) == 1}
 
 
-def command_name(op: Operation) -> str:
-    """The operation's command, in its plugin's group: e.g. `send-message` for send_message."""
-    return op.short_name.replace("_", "-")
+def cli_path(op: Operation) -> tuple[str, ...]:
+    """The words of an operation's command: e.g. ("gizmo", "echo")."""
+    if op.cli is not None and op.cli.path is not None:
+        return op.cli.path
+    return (op.namespace or "udl", op.short_name.replace("_", "-"))
+
+
+def _group(apps: dict[tuple[str, ...], typer.Typer], path: tuple[str, ...]) -> typer.Typer:
+    """The Typer app of the command group `path` (made, with the groups it is in, if new)."""
+    if path not in apps:
+        what = f"The {path[0]} plugin's operations." if len(path) == 1 else f"udl {' '.join(path)}"
+        apps[path] = typer.Typer(help=what, no_args_is_help=True, rich_markup_mode="markdown")
+        if len(path) > 1:
+            _group(apps, path[:-1]).add_typer(apps[path], name=path[-1])
+    return apps[path]
 
 
 @dataclass(frozen=True)
 class _Field:
-    """A request field, as a command's option."""
+    """A request field, as a command's option or argument."""
 
     name: str
     kind: FieldKind
@@ -87,35 +99,42 @@ class _Field:
 
 
 def cli_command(op: Operation) -> Callable[..., None]:
-    """The command that runs `op`: its options are the request's fields."""
+    """The command that runs `op`: its options (and arguments) are the request's fields."""
+    spec = op.cli
+    arguments = spec.arguments if spec is not None else ()
+    names: Mapping[str, str] = spec.options if spec is not None else {}
     fields = [
-        _field(name, info, n)
+        _field(name, op.request.model_fields[name], n, argument=True)
+        for n, name in enumerate(arguments)
+    ] + [
+        _field(name, info, n + len(arguments), option=names.get(name))
         for n, (name, info) in enumerate(op.request.model_fields.items())
-        if name not in _OWN_OPTIONS
+        if name not in _OWN_OPTIONS and name not in arguments
     ]
+    show_it = spec.render if spec is not None and spec.render is not None else render.model
 
     def command(ctx: typer.Context, **options: Any) -> None:
         values = _read_input(options.pop("input_file"))
         as_json: bool = options.pop("as_json")
-        for spec in fields:
-            given = options[spec.parameter.name]
-            if spec.kind == "secret":
-                info = op.request.model_fields[spec.name]
-                if given or (info.is_required() and spec.name not in values):
-                    values[spec.name] = typer.prompt(
-                        _label(spec.name, info), hide_input=True, err=True
+        for found in fields:
+            given = options[found.parameter.name]
+            if found.kind == "secret":
+                info = op.request.model_fields[found.name]
+                if given or (info.is_required() and found.name not in values):
+                    values[found.name] = typer.prompt(
+                        _label(found.name, info), hide_input=True, err=True
                     )
-            elif given is not None and given != []:
-                values[spec.name] = _value(spec.kind, given)
+            elif given is not None and given != [] and given != ():
+                values[found.name] = _value(found.kind, given)
         request = parse(op.request, **values)
         # (As data, which the service reads as its own operation's request: a local plugin's
         # file is imported again by each service, so its models are other classes there.)
         given = request.model_dump(round_trip=True)
-        show(run(ctx, lambda service: service.call(op.name, given)), as_json, render.model)
+        show(run(ctx, lambda service: service.call(op.name, given)), as_json, show_it)
 
     parameters = [
         inspect.Parameter("ctx", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=typer.Context),
-        *(spec.parameter for spec in fields),
+        *(found.parameter for found in fields),
         inspect.Parameter(
             "input_file",
             inspect.Parameter.KEYWORD_ONLY,
@@ -143,12 +162,16 @@ def cli_command(op: Operation) -> Callable[..., None]:
     return command
 
 
-def _field(name: str, info: FieldInfo, n: int) -> _Field:
-    """The option for the request field `name`."""
+def _field(
+    name: str, info: FieldInfo, n: int, *, argument: bool = False, option: str | None = None
+) -> _Field:
+    """The option (or the positional argument) for the request field `name`."""
     kind, python_type = _kind(info.annotation)
-    option = f"--{name.replace('_', '-')}"
+    option = option or f"--{name.replace('_', '-')}"
     help_text = info.description or ""
-    if kind == "flag":
+    if argument:
+        declared: Any = typer.Argument(help=help_text, metavar=name.upper(), show_default=False)
+    elif kind == "flag":
         declared = typer.Option(f"{option}/--no-{option[2:]}", help=help_text, show_default=False)
     elif kind == "secret":
         declared = typer.Option(
@@ -266,52 +289,89 @@ def _shown(name: str) -> str:
 # ---------------------------------------------------------------------------------------------
 
 
-def api_path(op: Operation) -> str:
-    """The route of a plugin's operation: /<kind>/<plugin>/<op>, e.g. /sites/gizmo/echo."""
-    if op.namespace is None or op.kind is None:
-        raise ValueError(f"{op.name} is udl's own: its route is written by hand")
-    return f"/{op.kind.rpartition('.')[2]}/{op.namespace}/{op.short_name}"
-
-
 def add_routes(app: FastAPI, ops: OperationRegistry) -> None:
-    """Add a route to `app` for each operation in `ops` that a plugin adds."""
+    """Add a route to `app` for each operation in `ops` that a plugin adds (or that has an
+    APISpec), as route() gives it."""
     # (Imported here, as the API is: the CLI starts faster without it.)
-    from udl.errors import ErrorInfo
+    from udl.interfaces.api.deps import documented_op
 
     for op in ops:
-        if op.namespace is None:
+        if op.namespace is None and op.api is None:  # (udl's own are written by hand)
             continue
+        spec = route(op)
         app.add_api_route(
-            api_path(op),
-            _endpoint(op),
-            methods=["POST"],
+            spec.path or "",
+            _endpoint(op, spec),
+            methods=[spec.method],
+            status_code=spec.status,
             response_model=op.response,
-            operation_id=op.name,
-            summary=op.summary,
-            description=op.description,
-            responses={status: {"model": ErrorInfo} for status in (400, 403, 404, 503)},
-            tags=[op.namespace],
+            tags=[op.namespace or "udl"],
+            **documented_op(op, 400, 403, 404, 409, 503),
         )
 
 
-def _endpoint(op: Operation) -> Callable[..., Any]:
-    """The route's function: it takes the request (the body) and runs the operation."""
+def _endpoint(op: Operation, spec: APISpec) -> Callable[..., Any]:
+    """The route's function: its path parameters, then the rest of the request as the body (or
+    the query), and it runs the operation."""
+    from fastapi import Path as InPath
+    from fastapi import Query
+    from fastapi.exceptions import RequestValidationError
+
     from udl.interfaces.api.deps import ServiceDep
 
-    async def endpoint(request: BaseModel, service: Any) -> BaseModel:
+    fields = op.request.model_fields
+    in_path = re.findall(r"{(\w+)}", spec.path or "")
+    rest = [name for name in fields if name not in in_path]
+    parameters = [
+        inspect.Parameter(
+            name,
+            inspect.Parameter.KEYWORD_ONLY,
+            annotation=Annotated[
+                fields[name].annotation, InPath(description=fields[name].description)
+            ],
+        )
+        for name in in_path
+    ]
+    if rest:
+        part = op.request if not in_path else _part(op.request, rest, spec.method)
+        if spec.method in ("GET", "DELETE"):
+            parameters.append(
+                inspect.Parameter(
+                    "udl_query", inspect.Parameter.KEYWORD_ONLY, annotation=Annotated[part, Query()]
+                )
+            )
+        else:
+            parameters.append(
+                inspect.Parameter("udl_body", inspect.Parameter.KEYWORD_ONLY, annotation=part)
+            )
+    parameters.append(
+        inspect.Parameter("udl_service", inspect.Parameter.KEYWORD_ONLY, annotation=ServiceDep)
+    )
+
+    async def endpoint(**given: Any) -> BaseModel:
+        service = given.pop("udl_service")
+        part: BaseModel | None = given.pop("udl_query", None) or given.pop("udl_body", None)
+        data = {**(part.model_dump() if part is not None else {}), **given}
+        try:
+            request = op.request.model_validate(data)
+        except ValidationError as e:
+            raise RequestValidationError(e.errors()) from e
         return await service.call(op.name, request)
 
-    # (FastAPI reads a route's body and answer from its signature.)
-    signature = inspect.Signature(
-        [
-            inspect.Parameter(
-                "request", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=op.request
-            ),
-            inspect.Parameter(
-                "service", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=ServiceDep
-            ),
-        ],
-        return_annotation=op.response,
-    )
+    # (FastAPI reads a route's parameters, body and answer from its signature.)
+    signature = inspect.Signature(parameters, return_annotation=op.response)
     setattr(endpoint, "__signature__", signature)  # noqa: B010
     return endpoint
+
+
+def _part(request: type[BaseModel], names: list[str], method: str) -> type[BaseModel]:
+    """A model of some of a request's fields (those not in the route's path)."""
+    fields = request.model_fields
+    what = "Query" if method in ("GET", "DELETE") else "Body"
+    definitions: dict[str, Any] = {
+        name: (fields[name].annotation, copy.copy(fields[name])) for name in names
+    }
+    made: type[BaseModel] = create_model(
+        f"{request.__name__}{what}", __config__=request.model_config, **definitions
+    )
+    return made

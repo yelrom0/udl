@@ -3,11 +3,12 @@
 - test_security.py -
 --------------------
 
-What the API and the MCP server allow: output dirs only under api.allowed_output_roots, and only
-requests with the API key when one is set
+What the API and the MCP server allow: output dirs only under api.allowed_output_roots (for the
+operations they call: current_caller), and only requests with the API key when one is set
 """
 
 # System Imports
+from collections.abc import Iterator
 from pathlib import Path
 
 # Package Imports
@@ -16,12 +17,36 @@ from pydantic import SecretStr
 
 # Local Imports
 from udl.config import APISettings, Settings
+from udl.core.operations import Caller, current_caller
+from udl.core.paths import check_output_dir
 from udl.errors import NotAllowed, Unauthorized
-from udl.interfaces.security import check_api_key, check_output_dir
+from udl.interfaces.security import check_api_key
 
 
 def roots(*paths: Path) -> Settings:
     return Settings(api=APISettings(allowed_output_roots=list(paths)))
+
+
+@pytest.fixture(autouse=True)
+def called_through_the_api() -> Iterator[None]:
+    called = current_caller.set(Caller.API)
+    yield
+    current_caller.reset(called)
+
+
+@pytest.mark.parametrize("caller", [Caller.API, Caller.MCP, Caller.AUTOMATION])
+def test_the_servers_and_automations_paths_are_checked(tmp_path: Path, caller: Caller) -> None:
+    current_caller.set(caller)
+
+    with pytest.raises(NotAllowed):
+        check_output_dir(roots(tmp_path / "allowed"), tmp_path / "elsewhere")
+
+
+@pytest.mark.parametrize("caller", [Caller.CLI, None])
+def test_the_cli_s_and_udl_s_own_paths_are_not(tmp_path: Path, caller: Caller | None) -> None:
+    current_caller.set(caller)
+
+    check_output_dir(roots(tmp_path / "allowed"), tmp_path / "elsewhere")
 
 
 def test_no_output_dir_is_allowed(tmp_path: Path) -> None:

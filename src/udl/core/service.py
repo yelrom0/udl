@@ -77,6 +77,7 @@ from udl.core.models import (
     SyncReport,
 )
 from udl.core.operations import OperationHints, OperationRegistry, operation
+from udl.core.paths import check_output_dir
 from udl.core.resolver import Resolver
 from udl.core.sites import load_site_plugins
 from udl.core.tools import Toolbox
@@ -260,6 +261,7 @@ class UDLService:
         or at once (still queued) when `wait` is false, or after `timeout` seconds.
         """
         # (`on_event` hears what happens to the jobs while this waits, e.g. to show progress.)
+        check_output_dir(self.settings, request.output_dir)  # (unless the CLI asked)
         if request.tool is not None:
             self.registry.get(DOWNLOADERS, request.tool)  # (raises PluginError)
         db = self.db.only(request.databases) if request.databases else self.db

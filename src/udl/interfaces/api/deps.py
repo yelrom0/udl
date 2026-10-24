@@ -13,7 +13,7 @@ from typing import Annotated, Any
 from fastapi import Depends, Request
 
 # Local Imports
-from udl.core.operations import operations
+from udl.core.operations import Operation, operations
 from udl.core.service import UDLService
 from udl.errors import ErrorInfo
 
@@ -27,11 +27,15 @@ ServiceDep = Annotated[UDLService, Depends(service)]
 
 
 def documented(name: str, *errors: int) -> dict[str, Any]:
-    """The route arguments that make a route the operation called `name`: its operationId,
+    """The route arguments that make a route udl's operation called `name`: its operationId,
     summary and description, and the errors (ErrorInfo) it may answer with."""
-    op = operations()[name]
+    return documented_op(operations()[name], *errors)
+
+
+def documented_op(op: Operation, *errors: int) -> dict[str, Any]:
+    """The route arguments that make a route the operation `op` (see documented())."""
     return {
-        "operation_id": name,
+        "operation_id": op.name,
         "summary": op.summary,
         "description": op.description,
         "responses": {status: {"model": ErrorInfo} for status in errors},

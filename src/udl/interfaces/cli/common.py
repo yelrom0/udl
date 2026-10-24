@@ -23,7 +23,7 @@ from rich.markup import escape
 
 # Local Imports
 from udl.config import Settings
-from udl.core.operations import operations
+from udl.core.operations import Caller, current_caller, operations
 from udl.core.service import ServiceFactory, UDLService
 from udl.core.urls import URL
 from udl.errors import ConfigError, UDLError
@@ -146,6 +146,7 @@ def run[T](
     runtime = Runtime.of(ctx)
 
     async def main() -> T:
+        current_caller.set(Caller.CLI)  # (for this run's context only)
         async with runtime.make_service(settings or runtime.settings) as service:
             return await work(service)
 
