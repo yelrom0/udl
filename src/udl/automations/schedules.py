@@ -404,11 +404,11 @@ class Schedule(Record):
         return schedule_zone(self.timezone, default)
 
     def planned(self, after: datetime, zone: tzinfo) -> Self:
-        """It with its next time after `after` (an interval without a start starting then); an
-        at schedule whose time has gone by is disabled."""
+        """It with its next time after `after` (an interval without a start starting then, on
+        the second); an at schedule whose time has gone by is disabled."""
         spec = self.spec
         if isinstance(spec, EverySpec) and spec.start is None:
-            spec = spec.model_copy(update={"start": after})
+            spec = spec.model_copy(update={"start": after.replace(microsecond=0)})
         next_run_at = next_time(spec, zone, after)
         return self.model_copy(
             update={

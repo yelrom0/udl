@@ -149,6 +149,13 @@ def test_an_interval_without_a_start_starts_when_it_is_first_planned() -> None:
     assert planned.planned(utc(2026, 1, 1, 12), UTC_ZONE).next_run_at == utc(2026, 1, 1, 12, 30)
 
 
+def test_an_interval_without_a_start_starts_on_a_whole_second() -> None:
+    planned = schedule(spec={"every": "1m"}).planned(utc(2026, 1, 1, 9, 30, 15, 72_423), UTC_ZONE)
+
+    assert planned.spec == EverySpec(every=timedelta(minutes=1), start=utc(2026, 1, 1, 9, 30, 15))
+    assert planned.next_run_at == utc(2026, 1, 1, 9, 31, 15)
+
+
 def test_an_at_schedule_is_disabled_once_its_time_has_gone_by() -> None:
     once = schedule(spec={"at": "2026-11-01T09:00:00+00:00"})
 

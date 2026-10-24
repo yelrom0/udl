@@ -59,6 +59,19 @@ def test_a_cron_job_is_one_command(cli: CLI) -> None:
     assert (linked["name"], linked["filter_text"]) == ("schedule:digest", 'schedule == "digest"')
 
 
+def test_no_actions_is_given_as_input(cli: CLI) -> None:
+    ok(cli, "actions", "set", "morning-digest", "--kind", "fake")
+    ok(cli, "schedules", "set", "digest", "--cron", "@daily", "--action", "morning-digest")
+
+    result = cli(
+        "schedules", "set", "digest", "--cron", "@daily", "-f", "-", stdin='{"actions": []}'
+    )
+
+    assert result.exit_code == 0, result.output
+    assert as_json(cli, "subs", "list")["subscriptions"] == []
+    assert as_json(cli, "schedules", "show", "digest")["actions"] == []
+
+
 def test_every_with_its_options(cli: CLI) -> None:
     saved = as_json(
         cli,

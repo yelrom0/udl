@@ -48,7 +48,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 10.3 `Scheduler` on the `Clock`: sleeps until the next due schedule, wakes when schedules change, fires `schedule.fired` once per due time
   - [x] 10.4 A schedule's `actions` keep a linked subscription, so a cron job is one command
   - [x] 10.5 Operations (`list/get/set/delete/run/preview_schedule`) via CLI, API and MCP
-  - [ ] 10.6 End to end: a schedule runs a script through `udl serve`'s runtime (on a `FakeClock`)
+  - [x] 10.6 End to end: a schedule runs a script through `udl serve`'s runtime (on a `FakeClock`)
 
 - [ ] **Phase 11: Integrations & accounts**
   - [ ] 11.1 `udl.integrations` plugin kind: `Integration` base class + contract suite + `FakeIntegration`
@@ -462,7 +462,8 @@ src/udl/
     subscriptions.py            # Subscription, matching, throttles
     bus.py                      # EventBus
     runner.py                   # ActionRunner, ActionRun
-    schedules.py                # ScheduleSpec, CronExpression, Scheduler
+    schedules.py                # ScheduleSpec, CronExpression, Schedule, misfires
+    scheduler.py                # Scheduler
     runtime.py                  # AutomationRuntime: watchers, scheduler, bus, runner, lease, retention
     templates.py                # the sandboxed template environment
   ai/
@@ -1726,6 +1727,68 @@ class Schedule(Record):
   you type).
 - This also covers the old plan's "scheduled downloads": a schedule with an `operation` action calling
   `download`.
+
+### Decisions made while building Phase 10
+
+Where the build differs from a card, it is on purpose, as below.
+
+- **Specs (10.1):** `cronsim` (2.7), the card's default: it ships types and refuses at parse
+  what can never match (`0 0 30 2 *`). `croniter` is maintained again (pallets-eco) but untyped;
+  either stays behind `CronExpression`, which only gives wall-clock (naive) times. Where those
+  fall in a zone is udl's own (`instant()`: a skipped time at the end of the gap, a repeated one
+  at its first occurrence), checked against a brute-force oracle (hypothesis) near every
+  2026-2027 change in the four zones.
+  - Five fields only (cronsim's seconds field is refused). The aliases are also `@midnight` and
+    `@annually`; names (`mon-fri`) in any case.
+  - Cron's day rule as cronsim and Vixie cron have it: a field is restricted when it doesn't
+    start with `*`, so `*/2` counts as unrestricted.
+  - A stepped range of one value (`5-5/3`) is that value; cronsim reads it as "from 5, every 3",
+    so `CronExpression` rewrites it. An expression whose time never comes within 50 years
+    (`0 0 */3 2 1#5`) is refused.
+  - `every` is a length of time (24h across a change is 24h), not a wall-clock interval.
+  - The line form (`parse_spec()` / `spec_text()`) also reads `every 1d from <time>`, so any
+    spec's line round trips. `schedule_zone()` / `system_timezone()`: `$TZ`, else the zone
+    `/etc/localtime` links to, else that file (named `localtime`), else UTC; no `tzlocal`.
+- **The record (10.2):** `ScheduleFiredData` and `schedule.fired` live in
+  `udl.automations.events` with udl's other types. A schedule has a `description`, as
+  subscriptions and actions do. Its name is at most 91 characters, so `schedule:<name>` is a
+  `Name` (`NAME_PATTERN` and `NAME_LENGTH` in `udl.db.records`). `misfire_grace` and `jitter` are
+  durations of none or more.
+  - `planned(after, zone)` plans a schedule. An interval without a start starts then, on a whole
+    second. An `at` schedule with no time to come is disabled.
+  - Jitter is a hash of the schedule's id and the time (`due_at()`), so a udl that restarts
+    keeps it; `next_run_at` stays the time without it.
+  - `due_after_downtime()` gives `Due(fire, next_run_at)`. `once` fires the latest time missed
+    within `misfire_grace`, never one before `next_run_at`.
+- **The scheduler (10.3):** `Scheduler` is a module of its own (`udl.automations.scheduler`),
+  as runs and the runner are. Every service has one (`service.scheduler`, as it has a runner),
+  so saving calls its `changed()` in any udl.
+  - A time is missed when the scheduler gets to it more than `LATE_AFTER` (a minute) after it
+    was due, not only when it starts: a machine that slept follows the misfire policy too.
+  - When it starts, it plans again the next times still to come (a changed `[automations]
+    timezone`, or new tzdata). An enabled schedule without a next time is planned whenever it
+    is read.
+  - After firing, the next time is planned from the schedule as it is stored then: one changed
+    meanwhile keeps its change, and one deleted stays deleted.
+  - `pause()` moved to `udl.clock`, for the runtime's loops and the scheduler. Its 60 s
+    `recheck` is the scheduler's attribute (the end-to-end test makes it an hour).
+  - `get_status`'s `next_schedules` are `UpcomingSchedule`s (name, `next_run_at`), soonest
+    first; `udl status` shows them.
+- **One command for a cron job (10.4):** the linked subscription is checked as
+  `set_subscription` checks one (each action's options against `schedule.fired`) before
+  anything is saved; its filter is the tree `schedule == "<name>"`.
+  - Saving an `at` schedule whose time has gone by is refused (`ConfigError`), unless it is saved
+    disabled. An interval saved again with the same `every` and no start keeps its start.
+  - The CLI takes `actions: []` only in `--input` (`-f`), since a list option left out means
+    "keep them". `delete_subscription`'s `NotAllowed` names the schedule's commands.
+- **Operations (10.5):** `run_schedule` answers 201 (as `emit_event`). Its event's source is
+  its caller, with `manual: true` and no dedupe key, and the schedule's next time is left as it
+  is. `ScheduleInfo` has `spec_text`, `zone` (the zone it runs in), `next_times` (five, from
+  its next time; none while it is disabled), `actions` and `subscription`. `SchedulePreview` has
+  the spec, its line, the zone and each time `local` and `utc`. As before, a `ConfigError` exits
+  the CLI with 2.
+- **End to end (10.6):** as the card. The fake days pass quickly with long `lease_ttl`,
+  `dispatch_interval` and `recheck`; what is published in-process wakes the dispatcher anyway.
 
 ---
 
