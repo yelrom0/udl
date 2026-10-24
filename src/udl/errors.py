@@ -42,6 +42,7 @@ class ErrorCode(StrEnum):
     REAUTH_REQUIRED = "reauth_required"
     INVALID_FILTER = "invalid_filter"
     ALREADY_EXISTS = "already_exists"
+    ACTION_FAILED = "action_failed"
 
 
 class ErrorInfo(BaseModel):
@@ -57,9 +58,12 @@ class ErrorInfo(BaseModel):
 
 
 class UDLError(Exception):
-    """Base class for every error udl raises on purpose. `hint` tells the user what to do next."""
+    """Base class for every error udl raises on purpose. `hint` tells the user what to do next.
+    `retryable` means that doing the same again later may work (is_retryable() says so of any
+    error: the action runner and the watchers try again after those)."""
 
     code: ClassVar[ErrorCode] = ErrorCode.UDL_ERROR
+    retryable: ClassVar[bool] = False
 
     def __init__(self, message: str, *, hint: str | None = None) -> None:
         super().__init__(message)
@@ -111,7 +115,6 @@ class DownloadError(UDLError):
 
     code = ErrorCode.DOWNLOAD_ERROR
     counts_against_strategy: ClassVar[bool] = True
-    retryable: ClassVar[bool] = False
 
     def __init__(self, message: str, *, tool: str | None = None, hint: str | None = None) -> None:
         super().__init__(message, hint=hint)
@@ -248,6 +251,35 @@ class AlreadyExists(UDLError):
     udl's own (a subscription named schedule:<name>, which belongs to that schedule)."""
 
     code = ErrorCode.ALREADY_EXISTS
+
+
+class ActionFailed(UDLError):
+    """An action's run failed. `may_retry` says whether trying again may help (after
+    `retry_after` seconds, when the action knows)."""
+
+    code = ErrorCode.ACTION_FAILED
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool = False,
+        retry_after: float | None = None,
+        hint: str | None = None,
+    ) -> None:
+        super().__init__(message, hint=hint)
+        self.may_retry = retryable
+        self.retry_after = retry_after
+
+    def to_info(self) -> ErrorInfo:
+        return super().to_info().model_copy(update={"retry_after": self.retry_after})
+
+
+def is_retryable(error: BaseException) -> bool:
+    """Whether doing again what failed with `error` may work."""
+    if isinstance(error, ActionFailed):
+        return error.may_retry
+    return isinstance(error, UDLError) and type(error).retryable
 
 
 class ReauthRequired(UDLError):

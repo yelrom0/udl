@@ -100,6 +100,7 @@ from udl.errors import (
 from udl.plugins.downloaders.auth import AuthCookies
 from udl.plugins.downloaders.base import Cookie, ProbeContext, ProbeResult
 from udl.plugins.registry import (
+    ACTIONS,
     DATABASES,
     DOWNLOADERS,
     SECRETS,
@@ -791,10 +792,10 @@ class UDLService:
 
     @operation("list_plugins", title="List the plugins", hints=OperationHints(read_only=True))
     async def list_plugins(self, request: ListPluginsRequest) -> PluginList:
-        """List udl's plugins (database engines, downloaders, site plugins and secret stores:
-        built in, installed, or local files in the plugin dirs), whether each can run (with what
-        to install for one that cannot), and the sites each site plugin handles. Plugins that
-        failed to load are listed as problems."""
+        """List udl's plugins (database engines, downloaders, site plugins, secret stores and
+        kinds of action: built in, installed, or local files in the plugin dirs), whether each
+        can run (with what to install for one that cannot), and the sites each site plugin
+        handles. Plugins that failed to load are listed as problems."""
         return PluginList(
             plugins=[self._plugin(info) for info in self.registry.plugins()],
             problems=self.registry.problems,
@@ -820,6 +821,8 @@ class UDLService:
             store = self.registry.get(SECRETS, info.name)
             missing = unmet(store.requires)
             problem = None if missing else store(self.settings.secrets).unavailable()
+        elif info.kind == ACTIONS.group:
+            missing = unmet(self.registry.get(ACTIONS, info.name).requires)
         else:  # a database
             missing = unmet(self.registry.get(DATABASES, info.name).requires)
         return PluginStatus.model_validate(

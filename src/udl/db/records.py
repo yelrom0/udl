@@ -76,7 +76,11 @@ RECORD_KINDS: Final[dict[str, type[Record]]] = {}
 
 # The modules that define udl's own kinds (each kind registers itself as it is defined), loaded
 # as soon as the kinds are asked for, so a database knows them all.
-_UDL_KINDS: Final = ("udl.automations.events", "udl.automations.subscriptions")
+_UDL_KINDS: Final = (
+    "udl.automations.events",
+    "udl.automations.subscriptions",
+    "udl.plugins.actions.base",
+)
 
 type Name = Annotated[
     str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$", max_length=100)
