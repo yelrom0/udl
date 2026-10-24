@@ -26,6 +26,7 @@ from udl.core.executor import RetryPolicy
 from udl.core.jobs import InstanceLock
 from udl.core.service import UDLService
 from udl.db.manager import DBManager
+from udl.http import HttpClientFactory
 from udl.plugins.secrets.memory import MemorySecretStore
 
 A = "https://example.com/a"
@@ -62,6 +63,7 @@ class Harness:
         # (One store for every service, as the user's keyring is.)
         self.secrets = MemorySecretStore(self.settings.secrets)
         self.cookies = StaticCookies()
+        self.http: HttpClientFactory | None = None  # (the services' HTTP clients, else udl's)
         self.loaded: list[Settings] = []  # the settings each service was made with
 
     def service(self, loaded: Settings | None = None) -> UDLService:
@@ -89,6 +91,7 @@ class Harness:
             secrets=self.secrets,
             clock=self.clock,
             cookies=self.cookies,
+            http=self.http,
             retry=RetryPolicy(retries=0),
             lock=InstanceLock(self.tmp_path / "udl.lock"),
             progress_interval=0,

@@ -142,6 +142,8 @@ from udl.errors import (
     PluginError,
     UDLError,
 )
+from udl.http import HttpClientFactory, api_client
+from udl.integrations.accounts import AccountManager, Integrations
 from udl.plugins.downloaders.auth import AuthCookies
 from udl.plugins.downloaders.base import Cookie, ProbeContext, ProbeResult
 from udl.plugins.registry import (
@@ -190,6 +192,7 @@ class UDLService:
         secrets: SecretStore | None = None,
         clock: Clock | None = None,
         cookies: CookieSource | None = None,
+        http: HttpClientFactory | None = None,
         site_plugins: Sequence[SitePlugin] | None = None,
         retry: RetryPolicy | None = None,
         lock: InstanceLock | None = None,
@@ -216,7 +219,17 @@ class UDLService:
         # (Known as soon as the service is made, so the interfaces can offer them before it starts.)
         self.operations = OperationRegistry.discover(registry)
         self.event_types = EventTypes.discover(registry)
-        self.bus = EventBus(self.db, self.event_types, self.clock, settings.automations)
+        self.http: HttpClientFactory = http or api_client
+        """What makes the HTTP clients integrations talk to their services with."""
+        self.integrations = Integrations(self)
+        self.accounts = AccountManager(self)
+        self.bus = EventBus(
+            self.db,
+            self.event_types,
+            self.clock,
+            settings.automations,
+            account_names=self.accounts.names,
+        )
         self.runner = ActionRunner(self)
         self.scheduler = Scheduler(self.db, self.bus, self.clock, settings.automations)
         self.runtime: AutomationRuntime | None = None
@@ -957,7 +970,9 @@ class UDLService:
         Settings that widen what udl reaches are set in the config file only. What the plugin
         would run with is checked before anything is kept.
         """
-        return await self._plugin_settings.change(request)
+        changed = await self._plugin_settings.change(request)
+        self.integrations.changed(request.name)  # (made again, with its new settings)
+        return changed
 
     # -- events --------------------------------------------------------------------------------
 

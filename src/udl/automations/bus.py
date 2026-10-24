@@ -28,7 +28,7 @@ import asyncio
 import fnmatch
 import logging
 from collections import OrderedDict, deque
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final
@@ -128,8 +128,12 @@ class _Listener:
         self.woken.set()
 
 
-type AccountNames = Callable[[UUID], str | None]
-"""An account's name (integration:name) by its id, for matching a subscription's accounts."""
+type AccountNames = Callable[[], Awaitable[dict[UUID, str]]]
+"""The accounts' names (integration:name) by their ids, for matching subscriptions' accounts."""
+
+
+async def _no_accounts() -> dict[UUID, str]:
+    return {}
 
 
 class EventBus:
@@ -148,12 +152,13 @@ class EventBus:
         self.types = types
         self.clock = clock
         self.settings = settings
-        self._account_names: AccountNames = account_names or (lambda account_id: None)
+        self._account_names: AccountNames = account_names or _no_accounts
         self._listeners: list[_Listener] = []
         # The events listeners heard of being stored (others' are told of as they are dispatched).
         self._told: OrderedDict[UUID, None] = OrderedDict()
         self._subscriptions: list[Subscription] | None = None
         self._actions: dict[str, Action] | None = None
+        self._accounts: dict[UUID, str] = {}
         self.published = asyncio.Event()
         """Set when this bus stores an event (the runtime's dispatcher waits for it)."""
 
@@ -201,8 +206,8 @@ class EventBus:
     # -- dispatching ---------------------------------------------------------------------------
 
     def subscriptions_changed(self) -> None:
-        """Read the subscriptions and actions again before the next dispatch (this process
-        changed them: another's changes are read at each dispatch_pending())."""
+        """Read the subscriptions, actions and accounts again before the next dispatch (this
+        process changed them: another's changes are read at each dispatch_pending())."""
         self._subscriptions = None
         self._actions = None
 
@@ -222,7 +227,7 @@ class EventBus:
             await self._mark(event, EventStatus.DROPPED, reason)
             return []
         subscriptions, actions = await self._configured()
-        account = None if event.account_id is None else self._account_names(event.account_id)
+        account = None if event.account_id is None else self._accounts.get(event.account_id)
         dispatch = uuid4() if replay else event.id
         queued: list[ActionRun] = []
         for found in subscriptions:
@@ -269,6 +274,7 @@ class EventBus:
             self._actions = {
                 action.name: action for action in await self.db.list_records(Action, RecordQuery())
             }
+            self._accounts = await self._account_names()
         return self._subscriptions, self._actions
 
     async def _room(self, subscription: Subscription) -> int | None:

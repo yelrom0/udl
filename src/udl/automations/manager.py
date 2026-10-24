@@ -256,12 +256,14 @@ class Automations:
             if request.event is not None
             else await self._latest(events, request.recent)
         )
+        names = await self.service.accounts.names()
 
         def match(event: EventRecord) -> EventMatch:
             failed: str | None = None
+            account = names.get(event.account_id) if event.account_id is not None else None
             if not any(fnmatch.fnmatchcase(event.type, glob) for glob in events):
                 failed = "its type"
-            elif accounts is not None:  # (no account is known by name before integrations)
+            elif accounts is not None and account not in accounts:
                 failed = "its account"
             elif tree is not None and not matches_filter(tree, event.data):
                 failed = failing(tree, event.data)
@@ -355,6 +357,7 @@ class Automations:
             event.event() if event is not None else None,
             run={"id": None, "action": action.name, "subscription": None, "attempt": 1},
             now=self.service.clock.now(),
+            account=await self.service.accounts.name_of(event.account_id if event else None),
         )
         rendered = Templates().render_value(action.options, context)
         options = plugin.options(rendered if isinstance(rendered, dict) else {})

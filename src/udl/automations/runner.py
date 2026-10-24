@@ -354,6 +354,7 @@ class ActionRunner:
                 "attempt": run.attempt,
             },
             now=service.clock.now(),
+            account=await service.accounts.name_of(event.account_id if event else None),
         )
         rendered = self._templates.render_value(action.options, context)
         options = plugin.options(rendered if isinstance(rendered, dict) else {})
