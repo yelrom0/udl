@@ -72,8 +72,9 @@ from udl.errors import (
     PluginError,
 )
 from udl.plugins.databases.memory import MemoryDatabase
-from udl.plugins.registry import DATABASES, DOWNLOADERS, SITES, PluginRegistry
+from udl.plugins.registry import DATABASES, DOWNLOADERS, SECRETS, SITES, PluginRegistry
 from udl.plugins.requirements import Requirement
+from udl.plugins.secrets.keyring import KeyringSecretStore
 from udl.plugins.sites.base import SitePlugin
 from udl.plugins.sites.youtube import YouTubePlugin
 
@@ -933,8 +934,28 @@ async def test_listing_the_plugins_says_which_downloaders_can_run(
     assert by_name["needs-a-binary"].missing == [
         Requirement.binary("udl-no-such-binary", hint="Install it")
     ]
-    assert (by_name["memory"].kind, by_name["memory"].available) == ("udl.databases", True)
+    assert {(p.kind, p.available) for p in found.plugins if p.name == "memory"} == {
+        ("udl.databases", True),
+        ("udl.secrets", True),
+    }
     assert [problem.origin for problem in found.problems] == [str(plugin_dir / "broken.py")]
+
+
+async def test_listing_the_plugins_says_which_secret_stores_can_run(make: Make) -> None:
+    plugins = registry()
+    plugins.register(SECRETS, KeyringSecretStore)  # (and no keyring, in the tests)
+    service = await make(plugins=plugins)
+
+    found = {
+        p.name: p
+        for p in (await service.list_plugins(ListPluginsRequest())).plugins
+        if p.kind == SECRETS.group
+    }
+
+    assert found["memory"].available is True
+    assert found["keyring"].available is False
+    assert found["keyring"].problem is not None
+    assert "no keyring" in found["keyring"].problem
 
 
 async def test_listing_the_plugins_says_which_databases_can_run(tmp_path: Path, make: Make) -> None:
@@ -1134,7 +1155,8 @@ async def test_a_service_made_from_the_settings_alone_uses_udl_s_own_plugins() -
     assert {"http", "yt-dlp", "gallery-dl", "scraper", "browser", "sqlite", "youtube"} <= {
         p.name for p in plugins.plugins
     }
-    assert all(p.available for p in plugins.plugins)
+    # (All but the keyring store: the tests have no keyring.)
+    assert {p.name for p in plugins.plugins if not p.available} == {"keyring"}
     assert [(d.name, d.plugin, d.healthy) for d in databases_.databases] == [
         ("local", "sqlite", True)
     ]

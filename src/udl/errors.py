@@ -37,6 +37,7 @@ class ErrorCode(StrEnum):
     DOES_NOT_EXIST = "does_not_exist"
     NOT_ALLOWED = "not_allowed"
     UNAUTHORIZED = "unauthorized"
+    SECRET_STORE_ERROR = "secret_store_error"  # noqa: S105 - (a code, not a secret)
 
 
 class ErrorInfo(BaseModel):
@@ -216,6 +217,12 @@ class Unauthorized(NotAllowed):
     """A request to the API (or the MCP server it serves) without the API key it needs."""
 
     code = ErrorCode.UNAUTHORIZED
+
+
+class SecretStoreError(UDLError):
+    """The secret store failed (e.g. the keyring is locked, or its file cannot be read)."""
+
+    code = ErrorCode.SECRET_STORE_ERROR
 
 
 def _classes(cls: type[UDLError]) -> list[type[UDLError]]:

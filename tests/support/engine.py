@@ -18,11 +18,19 @@ from pydantic import JsonValue, SecretStr
 
 # Local Imports
 from support.downloaders import FakeDownloader, FakeMedia, FakeOptions
-from udl.config import DBConnectionConfig, DBSettings, ReadPolicy, Settings, WritePolicy
+from udl.config import (
+    DBConnectionConfig,
+    DBSettings,
+    ReadPolicy,
+    SecretsSettings,
+    Settings,
+    WritePolicy,
+)
 from udl.db.manager import DBManager
 from udl.plugins.databases.memory import MemoryDatabase
 from udl.plugins.downloaders.base import Cookie
-from udl.plugins.registry import DATABASES, DOWNLOADERS, PluginRegistry
+from udl.plugins.registry import DATABASES, DOWNLOADERS, SECRETS, PluginRegistry
+from udl.plugins.secrets.memory import MemorySecretStore
 
 TOOLS = ("http", "yt-dlp", "gallery-dl", "scraper", "browser")
 
@@ -38,10 +46,11 @@ def fake_tool(tool_name: str) -> type[FakeDownloader]:
 
 
 def registry(*tools: str) -> PluginRegistry:
-    """A registry of the memory database and fake downloaders called `tools` (by default, the
-    names of udl's own downloaders)."""
+    """A registry of the memory database, the memory secret store and fake downloaders called
+    `tools` (by default, the names of udl's own downloaders)."""
     plugins = PluginRegistry()
     plugins.register(DATABASES, MemoryDatabase)
+    plugins.register(SECRETS, MemorySecretStore)
     for tool in tools or TOOLS:
         plugins.register(DOWNLOADERS, fake_tool(tool))
     return plugins
@@ -97,6 +106,7 @@ def settings(
     scripts."""
     fields.setdefault("probe_order", list(TOOLS))
     fields.setdefault("download_dir", tmp_path / "downloads")
+    fields.setdefault("secrets", SecretsSettings(store="memory"))
     return Settings(
         tools=dict(tools or {}),
         db=DBSettings(

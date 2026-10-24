@@ -16,9 +16,11 @@ from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 # Package Imports
+import keyring
 import psycopg
 import pymongo
 import pytest
+from keyring.backends import fail
 from psycopg import sql
 from pymongo.errors import PyMongoError
 from sqlalchemy.engine import make_url
@@ -63,6 +65,13 @@ def isolated_user_dirs(
         if name.startswith("UDL_"):
             monkeypatch.delenv(name)
     return home
+
+
+@pytest.fixture(autouse=True)
+def no_keyring() -> None:
+    """Give udl a keyring that has nothing in it and keeps nothing: tests never read or write the
+    user's real one (those of the keyring store set one of their own, support.secrets)."""
+    keyring.set_keyring(fail.Keyring())
 
 
 @pytest.fixture(autouse=True)

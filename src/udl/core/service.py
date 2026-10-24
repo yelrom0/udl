@@ -93,8 +93,16 @@ from udl.errors import (
 )
 from udl.plugins.downloaders.auth import AuthCookies
 from udl.plugins.downloaders.base import Cookie, ProbeContext, ProbeResult
-from udl.plugins.registry import DATABASES, DOWNLOADERS, SITES, PluginInfo, PluginRegistry
+from udl.plugins.registry import (
+    DATABASES,
+    DOWNLOADERS,
+    SECRETS,
+    SITES,
+    PluginInfo,
+    PluginRegistry,
+)
 from udl.plugins.requirements import unmet
+from udl.plugins.secrets.base import SecretStore, secret_store
 from udl.plugins.sites.base import SitePlugin
 
 log = logging.getLogger(__name__)
@@ -126,6 +134,7 @@ class UDLService:
         *,
         registry: PluginRegistry | None = None,
         databases: DBManager | None = None,
+        secrets: SecretStore | None = None,
         cookies: CookieSource | None = None,
         site_plugins: Sequence[SitePlugin] | None = None,
         retry: RetryPolicy | None = None,
@@ -154,6 +163,15 @@ class UDLService:
             progress_interval=progress_interval,
         )
         self._lock = lock if lock is not None else InstanceLock(data_dir() / "udl.lock")
+        self._secrets = secrets
+
+    @property
+    def secrets(self) -> SecretStore:
+        """The secret store ([secrets] store), made the first time it is needed (finding the
+        keyring takes a moment). Raises PluginError or ConfigError when it cannot be used."""
+        if self._secrets is None:
+            self._secrets = secret_store(self.settings.secrets, self.registry)
+        return self._secrets
 
     async def __aenter__(self) -> Self:
         await self.start()
@@ -757,10 +775,10 @@ class UDLService:
 
     @operation("list_plugins", title="List the plugins", hints=OperationHints(read_only=True))
     async def list_plugins(self, request: ListPluginsRequest) -> PluginList:
-        """List udl's plugins (database engines, downloaders and site plugins: built in,
-        installed, or local files in the plugin dirs), whether each can run (with what to install
-        for one that cannot), and the sites each site plugin handles. Plugins that failed to load
-        are listed as problems."""
+        """List udl's plugins (database engines, downloaders, site plugins and secret stores:
+        built in, installed, or local files in the plugin dirs), whether each can run (with what
+        to install for one that cannot), and the sites each site plugin handles. Plugins that
+        failed to load are listed as problems."""
         return PluginList(
             plugins=[self._plugin(info) for info in self.registry.plugins()],
             problems=self.registry.problems,
@@ -782,6 +800,10 @@ class UDLService:
             domains = list(site.domains)
             missing = unmet(site.requires)
             problem = None if missing else _cannot_start(site)
+        elif info.kind == SECRETS.group:
+            store = self.registry.get(SECRETS, info.name)
+            missing = unmet(store.requires)
+            problem = None if missing else store(self.settings.secrets).unavailable()
         else:  # a database
             missing = unmet(self.registry.get(DATABASES, info.name).requires)
         return PluginStatus.model_validate(

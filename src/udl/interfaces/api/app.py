@@ -51,6 +51,7 @@ _STATUS: Final[dict[ErrorCode, int]] = {
     ErrorCode.CONFIG_ERROR: 400,  # (or options the tool does not take)
     ErrorCode.DATABASE_ERROR: 503,
     ErrorCode.DUPLICATE_KEY: 409,  # (a name another record has)
+    ErrorCode.SECRET_STORE_ERROR: 503,
 }
 
 _LOCAL_HOSTS: Final = frozenset({"localhost"})

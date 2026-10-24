@@ -24,7 +24,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 8.3 Generated adapters: Typer commands (an option per field, `--input FILE` for the whole request), FastAPI routes (typed in the OpenAPI schema), MCP tools (as today)
   - [x] 8.4 `Record` base model + `RecordQuery`; `DatabasePlugin` gains the record methods and `claim_lease`; their contract tests first
   - [x] 8.5 Records in every DB plugin: `memory`, the SQLAlchemy base (schema version 3: a table per record kind), `mongodb` (a collection per kind); `DBManager` reads and writes them with its policies; `db sync` copies them
-  - [ ] 8.6 `udl.secrets` plugin kind: `SecretStore` ABC + contract suite; `keyring` (Secret Service / KWallet), `file` (`0600`) and `memory` built-ins; `SecretRef`; secrets never in a database, the config or a log
+  - [x] 8.6 `udl.secrets` plugin kind: `SecretStore` ABC + contract suite; `keyring` (Secret Service / KWallet), `file` (`0600`) and `memory` built-ins; `SecretRef`; secrets never in a database, the config or a log
   - [x] 8.7 `Clock` (`SystemClock`; `FakeClock` in `tests/support`) for everything time-driven
   - [ ] 8.8 Templates: a sandboxed Jinja2 environment for action arguments and prompts (`StrictUndefined`, size limits, a lone `{{ expression }}` keeps its type), with property tests
   - [ ] 8.9 OAuth 2.0 helper on httpx: authorization code + PKCE, a loopback redirect listener, refresh, revoke; tested against a fake authorization server

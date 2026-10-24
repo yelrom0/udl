@@ -165,6 +165,19 @@ class APISettings(_Frozen):
     allowed_output_roots: list[ExpandedPath] = Field(default_factory=lambda: [downloads_dir()])
 
 
+class SecretsSettings(_Frozen):
+    """The [secrets] table: where udl keeps secrets (tokens, keys, passwords), which are never
+    in a database, the config or a log."""
+
+    # auto: the system's keyring (Secret Service, KWallet) when it has one, else the file; or a
+    # secret store plugin's name: keyring, file, memory (forgotten on exit)...
+    store: Annotated[str, Field(min_length=1)] = "auto"
+    # The file store's file (readable by its owner only).
+    file: ExpandedPath = Field(default_factory=lambda: data_dir() / "secrets.json")
+    # The keyring store's service name: what the keyring lists udl's secrets under.
+    keyring_service: Annotated[str, Field(min_length=1)] = APP_NAME
+
+
 class BrowserSettings(_Frozen):
     """The [browser] table, used by the browser downloader."""
 
@@ -206,6 +219,7 @@ class Settings(BaseSettings):
     db: DBSettings = Field(default_factory=DBSettings)
     api: APISettings = Field(default_factory=APISettings)
     browser: BrowserSettings = Field(default_factory=BrowserSettings)
+    secrets: SecretsSettings = Field(default_factory=SecretsSettings)
     # Per-downloader options, e.g. [tools.yt-dlp]; each downloader validates its own (task 2.1).
     tools: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
 

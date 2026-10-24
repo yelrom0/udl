@@ -427,8 +427,8 @@ class ListPluginsRequest(_Frozen):
 
 class PluginStatus(_Frozen):
     kind: str
-    """The plugin's kind (its entry point group): "udl.databases", "udl.downloaders" or
-    "udl.sites"."""
+    """The plugin's kind (its entry point group): "udl.databases", "udl.downloaders",
+    "udl.sites" or "udl.secrets"."""
     name: str
     source: PluginSource
     """builtin (udl's own), installed (another package's) or local (a file in a plugin dir)."""
