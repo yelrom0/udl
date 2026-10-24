@@ -20,8 +20,8 @@ from werkzeug import Request, Response
 from support.downloaders import Lookup
 from support.fixture_site import FixtureSite, Page
 from udl.errors import AuthRequired, ErrorCode, NetworkError, NotFound
+from udl.http import USER_AGENT
 from udl.plugins.downloaders.base import DownloadContext, MediaKind, ProbeContext, ProbeResult
-from udl.plugins.downloaders.http import USER_AGENT
 from udl.plugins.downloaders.scraper import ScraperDownloader, ScraperOptions
 
 CDN = "https://cdn.example.com"

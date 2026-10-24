@@ -34,6 +34,7 @@ from pydantic import Field, JsonValue, NonNegativeInt, PositiveFloat
 
 # Local Imports
 from udl.errors import Cancelled, ExtractionFailed, NetworkError, UDLError, UnsupportedURL
+from udl.http import USER_AGENT, with_user_agent
 from udl.plugins.downloaders.base import (
     CancelToken,
     DownloadContext,
@@ -52,9 +53,8 @@ from udl.plugins.downloaders.base import (
     threadsafe,
 )
 from udl.plugins.downloaders.errors import gallerydl_error, http_status_error, httpx_error
-from udl.plugins.downloaders.http import USER_AGENT, with_user_agent
-from udl.plugins.downloaders.process import run_process
 from udl.plugins.requirements import Requirement
+from udl.process import run_process
 
 log = logging.getLogger(__name__)
 

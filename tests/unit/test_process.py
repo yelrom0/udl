@@ -3,8 +3,9 @@
 - test_process.py -
 -------------------
 
-run_process(): running a tool's command-line program, with its output, ticks while it runs,
-and cancellation (from the token or the awaiting task)
+run_process(): running a program (a tool's, a script action's), with its output, ticks while it
+runs, cancellation (from the token or the awaiting task), and what it is given: its input, its
+environment, its folder, and how much of its output is kept
 """
 
 # System Imports
@@ -18,8 +19,7 @@ import pytest
 
 # Local Imports
 from udl.errors import Cancelled, ToolUnavailable
-from udl.plugins.downloaders.base import CancelToken
-from udl.plugins.downloaders.process import ProcessResult, run_process
+from udl.process import CancelToken, ProcessResult, run_process
 
 
 def python(code: str) -> list[str]:
@@ -148,3 +148,51 @@ async def test_a_cancelled_token_never_starts_the_program(tmp_path: Path) -> Non
 async def test_a_missing_program_is_tool_unavailable() -> None:
     with pytest.raises(ToolUnavailable, match="udl-no-such-program"):
         await run_process(["udl-no-such-program", "--version"], cancel=CancelToken())
+
+
+async def test_it_is_given_its_input() -> None:
+    result = await run_process(
+        python("import sys; print(sys.stdin.read().upper())"), cancel=CancelToken(), stdin=b"hi"
+    )
+
+    assert result.stdout == "HI\n"
+
+
+async def test_it_may_ignore_its_input() -> None:
+    result = await run_process(python("print('ok')"), cancel=CancelToken(), stdin=b"x" * 10**6)
+
+    assert (result.returncode, result.stdout) == (0, "ok\n")
+
+
+async def test_it_is_given_its_environment_and_folder(tmp_path: Path) -> None:
+    code = "import os; print(os.environ.get('UDL_X'), os.environ.get('HOME'), os.getcwd())"
+
+    result = await run_process(python(code), cancel=CancelToken(), env={"UDL_X": "1"}, cwd=tmp_path)
+
+    assert result.stdout.split() == ["1", "None", str(tmp_path)]
+
+
+async def test_it_keeps_the_first_of_stdout_and_the_last_of_stderr() -> None:
+    code = (
+        "import sys; sys.stdout.write('a' * 5000 + 'END'); sys.stderr.write('START' + 'b' * 5000)"
+    )
+
+    result = await run_process(python(code), cancel=CancelToken(), max_output=1000)
+
+    assert result.stdout == "a" * 1000
+    assert result.stderr == "b" * 1000
+    assert result.truncated is True
+
+
+async def test_output_within_its_limit_is_whole() -> None:
+    result = await run_process(python("print('ok')"), cancel=CancelToken(), max_output=1000)
+
+    assert (result.stdout, result.truncated) == ("ok\n", False)
+
+
+async def test_a_cancelled_program_says_what_was_cancelled(tmp_path: Path) -> None:
+    token = CancelToken()
+    token.cancel()
+
+    with pytest.raises(Cancelled, match="The run was cancelled"):
+        await run_process(python("pass"), cancel=token, cancelled="The run was cancelled")

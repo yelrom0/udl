@@ -31,14 +31,9 @@ from udl.errors import (
     NetworkError,
     NotFound,
 )
+from udl.http import USER_AGENT, http_client
 from udl.plugins.downloaders.base import CancelToken, Cookie, DownloadContext, ProbeContext
-from udl.plugins.downloaders.http import (
-    USER_AGENT,
-    HttpBackend,
-    HttpDownloader,
-    HttpOptions,
-    http_client,
-)
+from udl.plugins.downloaders.http import HttpBackend, HttpDownloader, HttpOptions
 
 type Handler = Callable[[Request], Response]
 

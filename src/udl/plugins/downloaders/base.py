@@ -19,9 +19,8 @@ import http.cookiejar
 import logging
 import os
 import string
-import threading
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
@@ -57,6 +56,10 @@ from udl.errors import (
     UnsupportedURL,
 )
 from udl.plugins.requirements import Requirement, unmet
+
+# (Moved to udl.process; downloaders import them from here.)
+from udl.process import CancelToken as CancelToken
+from udl.process import cancellable as cancellable
 
 if TYPE_CHECKING:
     from udl.plugins.registry import PluginRegistry
@@ -186,26 +189,6 @@ def merge_cookies(first: list[Cookie], then: list[Cookie]) -> list[Cookie]:
 # ---------------------------------------------------------------------------------------------
 
 
-class CancelToken:
-    """Asks a download (or probe) to stop. Safe to use from any thread: threaded tools check it
-    in their progress hooks."""
-
-    def __init__(self) -> None:
-        self._event = threading.Event()
-
-    def cancel(self) -> None:
-        self._event.set()
-
-    @property
-    def cancelled(self) -> bool:
-        return self._event.is_set()
-
-    def check(self) -> None:
-        """Raise Cancelled if the token has been cancelled."""
-        if self.cancelled:
-            raise Cancelled("The download was cancelled")
-
-
 class DownloadProgress(_Frozen):
     """How far a download has got."""
 
@@ -255,27 +238,6 @@ async def run_blocking[T](call: Callable[[], T], *, cancel: CancelToken) -> T:
         cancel.cancel()
         await asyncio.wait([worker])
         raise
-
-
-async def cancellable[T](
-    awaitable: Awaitable[T], cancel: CancelToken, *, interval: float = 0.1
-) -> T:
-    """Await `awaitable`, stopping it (and raising Cancelled) within `interval` seconds of
-    `cancel` being cancelled, even if it is stuck waiting (e.g. on a stalled server). If the
-    awaiting task is cancelled, `cancel` is cancelled too."""
-    task = asyncio.ensure_future(awaitable)
-    try:
-        while not cancel.cancelled:
-            if (await asyncio.wait([task], timeout=interval))[0]:
-                return task.result()
-        task.cancel()  # (before its first step, if it never started)
-        await asyncio.wait([task])
-    except asyncio.CancelledError:
-        cancel.cancel()
-        task.cancel()
-        await asyncio.wait([task])
-        raise
-    raise Cancelled("The download was cancelled")
 
 
 # ---------------------------------------------------------------------------------------------

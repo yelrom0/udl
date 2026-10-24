@@ -57,6 +57,7 @@ from udl.chains.executor import (
 from udl.chains.models import FetchMode, StepTrace, TagChain
 from udl.chains.suggest import ChainSuggestion, suggest
 from udl.errors import ConfigError, DownloadError, UnsupportedURL
+from udl.http import USER_AGENT, http_client
 from udl.plugins.downloaders.base import (
     Cookie,
     DownloadContext,
@@ -71,7 +72,7 @@ from udl.plugins.downloaders.base import (
     cancellable,
 )
 from udl.plugins.downloaders.errors import http_status_error
-from udl.plugins.downloaders.http import PAGE_TYPES, USER_AGENT, http_client
+from udl.plugins.downloaders.http import PAGE_TYPES
 from udl.plugins.downloaders.media import Find, media_type, page_title, stream_kind, unique
 from udl.plugins.requirements import Requirement
 

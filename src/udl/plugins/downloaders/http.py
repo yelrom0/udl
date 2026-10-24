@@ -15,13 +15,12 @@ It talks to servers with httpx, or with curl or wget when the `backend` option p
 
 # System Imports
 import asyncio
-import http.cookiejar
 import os
 import re
 import tempfile
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, Callable, Mapping
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from collections.abc import Callable, Mapping
+from contextlib import AbstractAsyncContextManager
 from email.message import Message
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
@@ -34,6 +33,7 @@ from pydantic import BaseModel, ConfigDict, NonNegativeInt, PositiveFloat, TypeA
 
 # Local Imports
 from udl.errors import DownloadError, ExtractionFailed, NetworkError, UnsupportedURL
+from udl.http import USER_AGENT, http_client, with_user_agent
 from udl.plugins.downloaders.base import (
     CancelToken,
     Confidence,
@@ -50,7 +50,7 @@ from udl.plugins.downloaders.base import (
     cancellable,
     render_template,
 )
-from udl.plugins.downloaders.errors import curl_error, http_status_error, httpx_error, wget_error
+from udl.plugins.downloaders.errors import curl_error, http_status_error, wget_error
 from udl.plugins.downloaders.media import (
     MEDIA_KINDS,
     extension_for,
@@ -58,8 +58,8 @@ from udl.plugins.downloaders.media import (
     stream_kind,
     url_name,
 )
-from udl.plugins.downloaders.process import run_process
 from udl.plugins.requirements import Requirement
+from udl.process import run_process
 
 TOOL: Final[str] = "http"
 _DEFAULT_TEMPLATE: Final[str] = "{title}.{ext}"  # the name the server gives the file
@@ -75,13 +75,6 @@ _EXTENSION: Final = re.compile(r"\.[A-Za-z0-9]{1,8}")
 # Statuses a server may answer HEAD with although GET works (403: e.g. a URL signed for GET).
 _HEAD_REFUSED: Final = frozenset({403, 405, 501})
 _CURL_CANNOT_RESUME: Final[int] = 33  # the server ignores Range
-
-# The User-Agent udl's own requests send (unless a download has one): a browser's, since many
-# sites refuse others (a library's, curl's, wget's), as yt-dlp and gallery-dl know.
-USER_AGENT: Final = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/141.0.0.0 Safari/537.36"
-)
 
 
 class HttpBackend(StrEnum):
@@ -128,13 +121,6 @@ class _File(_Model):
     content_type: str | None
     size: NonNegativeInt | None  # None when the server did not say
     confidence: Confidence
-
-
-def with_user_agent(headers: Mapping[str, str], user_agent: str) -> dict[str, str]:
-    """`headers`, with `user_agent` as the User-Agent unless they have one."""
-    if any(name.lower() == "user-agent" for name in headers):
-        return dict(headers)
-    return {"User-Agent": user_agent, **headers}
 
 
 def _request(ctx: ProbeContext, user_agent: str) -> _Request:
@@ -260,36 +246,6 @@ class _Backend(ABC):
         """Write the URL's content into `part`. When `offset` (the bytes `part` already holds)
         is not 0, append the rest if the server can send it, else start again. Raises the
         DownloadError a failure means."""
-
-
-@asynccontextmanager
-async def http_client(
-    *,
-    headers: Mapping[str, str],
-    cookies: list[Cookie],
-    seconds: float,
-    retries: int,
-    tool: str,
-    user_agent: str = USER_AGENT,
-) -> AsyncGenerator[httpx.AsyncClient]:
-    """An httpx client that sends `headers` (with `user_agent`, unless they have a User-Agent),
-    and `cookies` to their sites, follows redirects, waits `seconds` to connect or for more
-    data, and retries a failed connection `retries` times. httpx's errors are raised as the
-    DownloadErrors they mean (from `tool`)."""
-    jar = http.cookiejar.CookieJar()
-    for cookie in cookies:
-        jar.set_cookie(cookie.to_http_cookie())
-    try:
-        async with httpx.AsyncClient(
-            headers=with_user_agent(headers, user_agent),
-            cookies=jar,
-            follow_redirects=True,
-            timeout=seconds,
-            transport=httpx.AsyncHTTPTransport(retries=retries),
-        ) as client:
-            yield client
-    except httpx.HTTPError as e:
-        raise httpx_error(e, tool=tool) from e
 
 
 class _Httpx(_Backend):
