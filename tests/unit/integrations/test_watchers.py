@@ -650,3 +650,20 @@ async def test_an_account_removed_by_another_udl_while_its_watcher_fails_stays_r
 
     assert await service.db.get_record(Account, work.id) is None
     assert len(await events(service, "udl.account.error")) == 1
+
+
+async def test_an_account_disconnected_by_another_udl_leaves_no_state_behind(
+    service: UDLService, fakes: Fakes, clock: FakeClock, watching: asyncio.Event
+) -> None:
+    work = await source(service, "work")
+    await subscribe(service)
+    await settle(clock)
+    [state] = await service.db.list_records(PluginState, RecordQuery())
+    # (As another udl disconnects it: this one is not told, and finds out as it goes.)
+    await service.db.delete_record(Account, work.id)
+    await service.db.delete_record(PluginState, state.id)
+
+    await settle(clock, timedelta(minutes=1))
+    await settle(clock, timedelta(seconds=30))
+
+    assert await service.db.list_records(PluginState, RecordQuery()) == []

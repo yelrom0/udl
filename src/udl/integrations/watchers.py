@@ -170,7 +170,11 @@ class _Kept:
             return found[0]
         return PluginState(plugin=self.account.integration, account_id=self.account.id)
 
-    async def update(self, **fields: Any) -> PluginState:
+    async def update(self, **fields: Any) -> PluginState | None:
+        """Change the record's `fields`, unless the account is gone (another udl disconnected
+        it, and forgot its state: it is not made again)."""
+        if await self._service.db.get_record(Account, self.account.id) is None:
+            return None
         return await self._service.db.upsert_record((await self.get()).model_copy(update=fields))
 
 
