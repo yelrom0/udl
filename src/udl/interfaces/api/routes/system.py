@@ -17,12 +17,12 @@ from udl.core.models import (
     ConfigInfo,
     DatabaseList,
     GetConfigRequest,
-    GetPluginSettingsRequest,
     ListDatabasesRequest,
     ListPluginsRequest,
     PluginList,
     PluginSettingsChange,
     PluginSettingsInfo,
+    PluginSettingsRequest,
     SetPluginSettingsRequest,
     SyncDatabasesRequest,
     SyncReport,
@@ -52,14 +52,14 @@ Plugin = Annotated[str, Path(description="The plugin: its name, as /plugins give
 
 @router.get("/plugins/{name}/settings", **documented("get_plugin_settings", 400, 404))
 async def get_plugin_settings(name: Plugin, service: ServiceDep) -> PluginSettingsInfo:
-    return await service.get_plugin_settings(GetPluginSettingsRequest(plugin=name))
+    return await service.get_plugin_settings(PluginSettingsRequest(name=name))
 
 
 @router.put("/plugins/{name}/settings", **documented("set_plugin_settings", 400, 403, 404))
 async def set_plugin_settings(
     name: Plugin, change: PluginSettingsChange, service: ServiceDep
 ) -> PluginSettingsInfo:
-    request = SetPluginSettingsRequest.model_validate({**change.model_dump(), "plugin": name})
+    request = SetPluginSettingsRequest.model_validate({**change.model_dump(), "name": name})
     return await service.set_plugin_settings(request)
 
 

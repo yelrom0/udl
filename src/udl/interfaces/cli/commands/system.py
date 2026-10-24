@@ -15,9 +15,9 @@ import typer
 # Local Imports
 from udl.core.models import (
     GetConfigRequest,
-    GetPluginSettingsRequest,
     ListDatabasesRequest,
     ListPluginsRequest,
+    PluginSettingsRequest,
     SetPluginSettingsRequest,
     SyncDatabasesRequest,
 )
@@ -101,7 +101,7 @@ def plugin_settings(ctx: typer.Context, plugin: Plugin, as_json: JsonOption = Fa
 
     A plugin's settings are its defaults, then its [integrations.<name>] table in the config, then
     what `udl plugins configure` set. Secrets are hidden."""
-    request = parse(GetPluginSettingsRequest, plugin=plugin)
+    request = parse(PluginSettingsRequest, name=plugin)
     show(run(ctx, lambda service: service.get_plugin_settings(request)), as_json, render.settings)
 
 
@@ -119,7 +119,7 @@ def configure_plugin(
             metavar="KEY=VALUE",
         ),
     ] = None,
-    unset: Annotated[
+    reset: Annotated[
         list[str] | None,
         typer.Option(
             help="Give a setting back to the config file (or its default).", metavar="KEY"
@@ -141,7 +141,7 @@ def configure_plugin(
     values = key_values(option or [])
     for key in secret or []:
         values[key] = typer.prompt(key, hide_input=True, err=True)
-    request = parse(SetPluginSettingsRequest, plugin=plugin, values=values, unset=unset or [])
+    request = parse(SetPluginSettingsRequest, name=plugin, values=values, reset=reset or [])
     show(run(ctx, lambda service: service.set_plugin_settings(request)), as_json, render.settings)
 
 

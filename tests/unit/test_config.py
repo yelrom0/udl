@@ -321,6 +321,11 @@ def test_the_documented_automations_config_loads() -> None:
 def test_the_new_tables_have_defaults(isolated_user_dirs: Path) -> None:
     settings = Settings()
 
+    assert settings.automations.dispatch_interval == timedelta(seconds=2)
+    assert settings.automations.lease_ttl == timedelta(seconds=30)
+    assert (settings.ai.detect_ollama, settings.ai.allowed_commands) == (True, [])
+    assert settings.web.public_url is None
+
     config = isolated_user_dirs / ".config" / "udl"
     assert settings.automations.scripts_dir == config / "scripts"
     assert settings.automations.enabled is True

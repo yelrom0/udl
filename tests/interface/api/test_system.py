@@ -112,16 +112,16 @@ async def test_a_plugin_s_settings_are_shown_and_changed(tmp_path: Path) -> None
         shown = await client.get("/plugins/configurable/settings")
         changed = await client.put(
             "/plugins/configurable/settings",
-            json={"values": {"speed": "fast", "client_secret": "s3cret"}, "unset": ["limit"]},
+            json={"values": {"speed": "fast", "client_secret": "s3cret"}, "reset": ["limit"]},
         )
         again = await client.get("/plugins/configurable/settings")
 
     assert shown.status_code == 200
-    assert PluginSettingsInfo.model_validate(shown.json()).settings["limit"] == 20
+    assert PluginSettingsInfo.model_validate(shown.json()).values["limit"] == 20
     assert changed.status_code == 200
     assert "s3cret" not in changed.text
     after = PluginSettingsInfo.model_validate(again.json())
-    assert (after.settings["speed"], after.settings["limit"]) == ("fast", 20)  # (the file's)
+    assert (after.values["speed"], after.values["limit"]) == ("fast", 20)  # (the file's)
 
 
 @pytest.mark.parametrize(

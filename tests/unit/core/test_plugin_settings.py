@@ -21,8 +21,8 @@ from pydantic import JsonValue, SecretStr
 from support.engine import databases, registry, settings
 from support.settings import Configurable, ConfigurableSettings, Speed
 from udl.core.models import (
-    GetPluginSettingsRequest,
     PluginSettingsInfo,
+    PluginSettingsRequest,
     SetPluginSettingsRequest,
 )
 from udl.core.service import UDLService
@@ -65,12 +65,12 @@ async def make(tmp_path: Path) -> AsyncIterator[Make]:
 
 
 async def show(service: UDLService) -> PluginSettingsInfo:
-    return await service.get_plugin_settings(GetPluginSettingsRequest(plugin="configurable"))
+    return await service.get_plugin_settings(PluginSettingsRequest(name="configurable"))
 
 
 async def change(service: UDLService, **request: Any) -> PluginSettingsInfo:
     return await service.set_plugin_settings(
-        SetPluginSettingsRequest.model_validate({"plugin": "configurable", **request})
+        SetPluginSettingsRequest.model_validate({"name": "configurable", **request})
     )
 
 
@@ -82,9 +82,9 @@ async def change(service: UDLService, **request: Any) -> PluginSettingsInfo:
 async def test_a_plugin_s_settings_are_its_defaults_to_begin_with(make: Make) -> None:
     shown = await show(await make())
 
-    assert shown.plugin == "configurable"
+    assert shown.name == "configurable"
     assert shown.kind == "udl.sites"
-    assert shown.settings == {
+    assert shown.values == {
         "speed": "slow",
         "limit": 10,
         "client_id": None,
@@ -102,8 +102,8 @@ async def test_a_plugin_s_settings_are_its_defaults_to_begin_with(make: Make) ->
 async def test_the_config_file_s_table_is_over_the_defaults(make: Make) -> None:
     shown = await show(await make({"configurable": FILE}))
 
-    assert (shown.settings["client_id"], shown.settings["limit"]) == ("from-the-file", 20)
-    assert shown.settings["roots"] == [str(Path.home() / "Media")]
+    assert (shown.values["client_id"], shown.values["limit"]) == ("from-the-file", 20)
+    assert shown.values["roots"] == [str(Path.home() / "Media")]
     assert shown.sources == {
         "speed": SettingSource.DEFAULT,
         "limit": SettingSource.FILE,
@@ -119,7 +119,7 @@ async def test_secrets_are_never_shown(make: Make) -> None:
 
     shown = await show(service)
 
-    assert shown.settings["client_secret"] == "**********"  # noqa: S105 - (hidden)
+    assert shown.values["client_secret"] == "**********"  # noqa: S105 - (hidden)
     assert "file-secret" not in shown.model_dump_json()
 
 
@@ -128,7 +128,7 @@ async def test_a_plugin_without_settings_has_none_to_show(make: Make) -> None:
 
     for name in ("http", "nope"):
         with pytest.raises(DoesNotExist, match=name) as raised:
-            await service.get_plugin_settings(GetPluginSettingsRequest(plugin=name))
+            await service.get_plugin_settings(PluginSettingsRequest(name=name))
         assert raised.value.hint is not None
         assert "configurable" in raised.value.hint
 
@@ -154,8 +154,8 @@ async def test_settings_set_through_udl_are_over_the_file_s(make: Make) -> None:
     changed = await change(service, values={"speed": "fast", "limit": 30})
     again = await show(await make({"configurable": FILE}))  # (the next udl)
 
-    assert (changed.settings["speed"], changed.settings["limit"]) == ("fast", 30)
-    assert changed.settings["client_id"] == "from-the-file"
+    assert (changed.values["speed"], changed.values["limit"]) == ("fast", 30)
+    assert changed.values["client_id"] == "from-the-file"
     assert (changed.sources["speed"], changed.sources["limit"]) == (
         SettingSource.STORED,
         SettingSource.STORED,
@@ -169,17 +169,17 @@ async def test_setting_more_keeps_what_was_set(make: Make) -> None:
 
     changed = await change(service, values={"limit": 5})
 
-    assert (changed.settings["speed"], changed.settings["limit"]) == ("fast", 5)
+    assert (changed.values["speed"], changed.values["limit"]) == ("fast", 5)
 
 
-async def test_unsetting_a_setting_gives_it_back_to_the_file(make: Make) -> None:
+async def test_resetting_a_setting_gives_it_back_to_the_file(make: Make) -> None:
     service = await make({"configurable": FILE})
     await change(service, values={"limit": 30, "speed": "fast"})
 
-    changed = await change(service, unset=["limit"])
+    changed = await change(service, reset=["limit"])
 
-    assert (changed.settings["limit"], changed.sources["limit"]) == (20, SettingSource.FILE)
-    assert changed.settings["speed"] == "fast"
+    assert (changed.values["limit"], changed.sources["limit"]) == (20, SettingSource.FILE)
+    assert changed.values["speed"] == "fast"
 
 
 async def test_a_secret_goes_to_the_secret_store_not_the_database(make: Make) -> None:
@@ -200,11 +200,11 @@ async def test_a_secret_goes_to_the_secret_store_not_the_database(make: Make) ->
     assert layered.client_secret == SecretStr("s3cret")
 
 
-async def test_unsetting_a_secret_forgets_it(make: Make) -> None:
+async def test_resetting_a_secret_forgets_it(make: Make) -> None:
     service = await make()
     await change(service, values={"client_secret": "s3cret"})
 
-    changed = await change(service, unset=["client_secret"])
+    changed = await change(service, reset=["client_secret"])
 
     assert changed.sources["client_secret"] == SettingSource.DEFAULT
     assert await service.secrets.get(SecretRef("plugins/configurable/client_secret")) is None
@@ -217,7 +217,7 @@ async def test_a_secret_set_to_nothing_is_forgotten(make: Make) -> None:
 
     changed = await change(service, values={"client_secret": None})
 
-    assert changed.settings["client_secret"] is None
+    assert changed.values["client_secret"] is None
     assert await service.secrets.get(SecretRef("plugins/configurable/client_secret")) is None
 
 
@@ -247,7 +247,7 @@ async def test_a_file_only_setting_cannot_be_set_through_udl(make: Make) -> None
     ("request_", "named"),
     [
         ({"values": {"nope": 1}}, "nope"),
-        ({"unset": ["nope"]}, "nope"),
+        ({"reset": ["nope"]}, "nope"),
         ({"values": {"limit": 1000}}, "limit"),
         ({"values": {"speed": "warp"}}, "speed"),
         ({"values": {"client_secret": 42}}, "client_secret"),
@@ -268,16 +268,16 @@ async def test_settings_the_plugin_does_not_take_are_refused_and_nothing_is_stor
 async def test_a_plugin_without_settings_cannot_be_set(make: Make) -> None:
     with pytest.raises(DoesNotExist, match="http"):
         await (await make()).set_plugin_settings(
-            SetPluginSettingsRequest(plugin="http", values={"x": 1})
+            SetPluginSettingsRequest(name="http", values={"x": 1})
         )
 
 
-async def test_unsetting_what_was_never_set_keeps_nothing(make: Make) -> None:
+async def test_resetting_what_was_never_set_keeps_nothing(make: Make) -> None:
     service = await make({"configurable": FILE})
 
-    changed = await change(service, unset=["limit", "client_secret"])
+    changed = await change(service, reset=["limit", "client_secret"])
 
-    assert changed.settings["limit"] == 20
+    assert changed.values["limit"] == 20
     assert await service.db.list_records(PluginSettings, RecordQuery()) == []
 
 
@@ -292,4 +292,4 @@ async def test_a_secret_the_store_does_not_have_is_the_file_s(make: Make) -> Non
 
     assert isinstance(layered, ConfigurableSettings)
     assert layered.client_secret == SecretStr("file-secret")
-    assert changed.settings["limit"] == 6
+    assert changed.values["limit"] == 6

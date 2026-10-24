@@ -455,10 +455,10 @@ class PluginList(_Frozen):
     """The folders local plugins are read from: each is a single .py file there."""
 
 
-class GetPluginSettingsRequest(_Frozen):
+class PluginSettingsRequest(_Frozen):
     """Show a plugin's settings."""
 
-    plugin: str
+    name: str
     """The plugin: its name, as list_plugins gives it."""
 
 
@@ -468,29 +468,30 @@ class PluginSettingsChange(_Frozen):
     values: JsonObject = Field(default_factory=dict)
     """The settings to set, by name, to these values: over the config file's (a secret's value
     goes to the secret store; null forgets it)."""
-    unset: list[str] = Field(default_factory=list[str])
-    """The settings to give back to the config file (or the default)."""
+    reset: list[str] = Field(default_factory=list[str])
+    """The settings to forget, giving them back to the config file (or the default)."""
 
 
 class SetPluginSettingsRequest(PluginSettingsChange):
     """Change a plugin's settings."""
 
-    plugin: str
+    name: str
     """The plugin: its name, as list_plugins gives it."""
 
 
 class PluginSettingsInfo(_Frozen):
-    plugin: str
+    name: str
+    """The plugin."""
     kind: str
     """The plugin's kind (its entry point group), e.g. "udl.integrations"."""
-    settings: JsonObject
+    values: JsonObject
     """The settings it runs with (secrets hidden)."""
     sources: dict[str, SettingSource]
-    """Where each setting comes from: default, file ([integrations.<name>] in the config) or udl
-    (set through udl)."""
+    """Where each setting comes from: default, file ([integrations.<name>] in the config) or
+    stored (set through udl)."""
     json_schema: JsonObject
     """The settings' JSON Schema: their types, descriptions and defaults (file-only ones are
-    marked fileOnly)."""
+    marked fileOnly), for a settings panel."""
     secrets: list[str]
     """The settings that are secrets: set through udl, the secret store keeps them."""
     file_only: list[str]

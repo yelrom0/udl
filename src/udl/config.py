@@ -224,7 +224,7 @@ class APISettings(_Frozen):
     allowed_output_roots: list[ExpandedPath] = Field(default_factory=lambda: [downloads_dir()])
 
 
-class AutomationSettings(_Frozen):
+class AutomationsSettings(_Frozen):
     """The [automations] table: the runtime that runs subscriptions' actions (in `udl serve`)."""
 
     # Run the runtime in `udl serve`.
@@ -237,6 +237,10 @@ class AutomationSettings(_Frozen):
     scripts_dir: ExpandedPath = Field(default_factory=lambda: config_dir() / "scripts")
     # Schedules' time zone (an IANA name); empty is the system's.
     timezone: Annotated[str, AfterValidator(_timezone)] = ""
+    # How often the runtime dispatches the events other udls stored.
+    dispatch_interval: Duration = timedelta(seconds=2)
+    # How long the runtime's lease lasts unless renewed (renewed a third of the way).
+    lease_ttl: Duration = timedelta(seconds=30)
 
 
 class AISettings(_Frozen):
@@ -246,6 +250,11 @@ class AISettings(_Frozen):
     default_provider: str | None = None
     # How long a run waits for a tool call to be approved, before it is denied.
     approval_timeout: Duration = timedelta(hours=24)
+    # Offer Ollama (on 127.0.0.1:11434) as a provider when it answers.
+    detect_ollama: bool = True
+    # The programs an AI provider's `command` may start (15.3): set here only, as they run on
+    # this machine.
+    allowed_commands: list[str] = Field(default_factory=list[str])
 
 
 class WebSettings(_Frozen):
@@ -257,6 +266,9 @@ class WebSettings(_Frozen):
     ui_plugin_dirs: list[ExpandedPath] = Field(
         default_factory=lambda: [config_dir() / "ui-plugins"]
     )
+    # The URL other machines reach this udl at (its OAuth callbacks are under it), when it
+    # serves them; None for localhost only.
+    public_url: str | None = None
 
 
 class SecretsSettings(_Frozen):
@@ -314,7 +326,7 @@ class Settings(BaseSettings):
     api: APISettings = Field(default_factory=APISettings)
     browser: BrowserSettings = Field(default_factory=BrowserSettings)
     secrets: SecretsSettings = Field(default_factory=SecretsSettings)
-    automations: AutomationSettings = Field(default_factory=AutomationSettings)
+    automations: AutomationsSettings = Field(default_factory=AutomationsSettings)
     ai: AISettings = Field(default_factory=AISettings)
     web: WebSettings = Field(default_factory=WebSettings)
     # Per-downloader options, e.g. [tools.yt-dlp]; each downloader validates its own (task 2.1).

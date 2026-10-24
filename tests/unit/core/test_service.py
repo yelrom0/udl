@@ -32,7 +32,7 @@ from support.engine import (
 )
 from support.sites import FakeSitePlugin, fake_site
 from udl.chains.models import TagChain
-from udl.config import APISettings, Settings
+from udl.config import APISettings, SecretsSettings, Settings
 from udl.core.executor import RetryPolicy
 from udl.core.jobs import InstanceLock
 from udl.core.models import (
@@ -1174,3 +1174,17 @@ def test_a_cookies_from_browser_setting_udl_cannot_read_is_a_config_error(
 
     with pytest.raises(ConfigError, match="cookies_from_browser"):
         UDLService(config, registry=registry())
+
+
+async def test_the_config_says_when_its_secret_store_cannot_be_used(
+    tmp_path: Path, make: Make
+) -> None:
+    plugins = registry()
+    plugins.register(SECRETS, KeyringSecretStore)  # (and no keyring, in the tests)
+    service = await make(
+        settings(tmp_path, secrets=SecretsSettings(store="keyring")), plugins=plugins
+    )
+
+    shown = await service.get_config(GetConfigRequest())
+
+    assert shown.secret_store is None

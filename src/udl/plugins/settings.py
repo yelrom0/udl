@@ -49,7 +49,7 @@ class SettingSource(StrEnum):
 
     DEFAULT = "default"  # the plugin's settings model
     FILE = "file"  # its [integrations.<name>] table
-    STORED = "udl"  # set through udl (set_plugin_settings)
+    STORED = "stored"  # set through udl (set_plugin_settings)
 
 
 def settings_model_of(plugin: type) -> type[BaseModel] | None:

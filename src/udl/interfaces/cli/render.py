@@ -509,7 +509,7 @@ def plugins(console: Console, listed: PluginList) -> None:
 def settings(console: Console, info: PluginSettingsInfo) -> None:
     """A plugin's settings: each one's value (secrets hidden) and where it comes from."""
     table = Table("Setting", _folded("Value"), "From", "")
-    for name, value in info.settings.items():
+    for name, value in info.values.items():
         notes = [
             note
             for note, applies in (
@@ -524,7 +524,7 @@ def settings(console: Console, info: PluginSettingsInfo) -> None:
             str(info.sources.get(name, "")),
             f"[dim]{', '.join(notes)}[/]",
         )
-    console.print(f"The [bold]{escape(info.plugin)}[/] plugin's settings:")
+    console.print(f"The [bold]{escape(info.name)}[/] plugin's settings:")
     console.print(table)
 
 

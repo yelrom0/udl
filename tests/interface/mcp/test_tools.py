@@ -332,17 +332,17 @@ async def test_a_plugin_s_settings(tmp_path: Path) -> None:
             await call(
                 client,
                 "set_plugin_settings",
-                plugin="configurable",
+                name="configurable",
                 values={"limit": 7, "client_secret": "s3cret"},
             )
         )
         shown = PluginSettingsInfo.model_validate(
-            await call(client, "get_plugin_settings", plugin="configurable")
+            await call(client, "get_plugin_settings", name="configurable")
         )
         refused = await failure(
-            client, "set_plugin_settings", plugin="configurable", values={"roots": []}
+            client, "set_plugin_settings", name="configurable", values={"roots": []}
         )
 
-    assert changed.settings["limit"] == 7
+    assert changed.values["limit"] == 7
     assert shown == changed
     assert "not_allowed" in refused

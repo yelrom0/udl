@@ -164,7 +164,7 @@ def test_plugins_settings_shows_a_plugin_s_settings_and_where_they_come_from(
     assert "from-the-file" in shown.stdout
     assert "file" in shown.stdout
     assert "secret" in shown.stdout
-    assert as_json.settings["client_id"] == "from-the-file"
+    assert as_json.values["client_id"] == "from-the-file"
 
 
 def test_plugins_configure_sets_unsets_and_asks_for_secrets(tmp_path: Path) -> None:
@@ -183,15 +183,15 @@ def test_plugins_configure_sets_unsets_and_asks_for_secrets(tmp_path: Path) -> N
         "--json",
         stdin="s3cret\n",
     )
-    then = cli("plugins", "configure", "configurable", "--unset", "limit", "--json")
+    then = cli("plugins", "configure", "configurable", "--reset", "limit", "--json")
 
     assert first.exit_code == 0, first.output
     assert "s3cret" not in first.output
     changed = PluginSettingsInfo.model_validate_json(first.stdout)
-    assert (changed.settings["speed"], changed.settings["limit"]) == ("fast", 30)
-    assert changed.settings["client_secret"] == "**********"  # noqa: S105 - (hidden)
+    assert (changed.values["speed"], changed.values["limit"]) == ("fast", 30)
+    assert changed.values["client_secret"] == "**********"  # noqa: S105 - (hidden)
     unset = PluginSettingsInfo.model_validate_json(then.stdout)
-    assert (unset.settings["speed"], unset.settings["limit"]) == ("fast", 10)
+    assert (unset.values["speed"], unset.values["limit"]) == ("fast", 10)
 
 
 def test_plugins_configure_shows_what_it_set(tmp_path: Path) -> None:
