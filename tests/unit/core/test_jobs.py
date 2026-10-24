@@ -252,12 +252,16 @@ async def test_waiting_for_a_job_that_has_ended_returns_at_once(tmp_path: Path) 
 def busy(
     urls: Sequence[str], tmp_path: Path, *, max_concurrent: int = 4, max_per_site: int = 2
 ) -> Settings:
-    """Settings in which each URL takes about 0.1 s to download."""
-    media = FakeMedia(content=b"x" * 50, delay=0.02)
+    """Settings in which each URL takes about 0.1 s to download (each to a file of its own: jobs
+    that wrote the same file at once would find it emptied by the other)."""
+    media = {
+        url: FakeMedia(content=b"x" * 50, delay=0.02, filename=f"{n}.mp4")
+        for n, url in enumerate(urls)
+    }
     return settings(
         tmp_path,
         probe_order=["http"],
-        tools={"http": {**script(dict.fromkeys(urls, media)), "chunk_size": 10}},
+        tools={"http": {**script(media), "chunk_size": 10}},
         max_concurrent=max_concurrent,
         max_per_site=max_per_site,
     )
