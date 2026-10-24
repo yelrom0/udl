@@ -39,6 +39,8 @@ class ErrorCode(StrEnum):
     UNAUTHORIZED = "unauthorized"
     SECRET_STORE_ERROR = "secret_store_error"  # noqa: S105 - (a code, not a secret)
     TEMPLATE_ERROR = "template_error"
+    OAUTH_ERROR = "oauth_error"
+    REAUTH_REQUIRED = "reauth_required"
 
 
 class ErrorInfo(BaseModel):
@@ -231,6 +233,19 @@ class TemplateError(UDLError):
     names what the event does not have, or tries what the sandbox refuses."""
 
     code = ErrorCode.TEMPLATE_ERROR
+
+
+class OAuthError(UDLError):
+    """Connecting an account (OAuth) failed: the user refused, the answer was not the one asked
+    for, or the authorization server failed or refused udl's client."""
+
+    code = ErrorCode.OAUTH_ERROR
+
+
+class ReauthRequired(OAuthError):
+    """An account's access was taken back, or has expired: it has to be connected again."""
+
+    code = ErrorCode.REAUTH_REQUIRED
 
 
 def _classes(cls: type[UDLError]) -> list[type[UDLError]]:
