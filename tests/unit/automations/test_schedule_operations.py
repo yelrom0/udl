@@ -7,7 +7,8 @@ The schedules' operations, through the service. Saving a schedule plans it (an `
 has gone by is refused, unless the schedule is saved disabled), and its actions are run
 through a subscription it keeps, schedule:<name> (on schedule.fired where schedule is its
 name), so one command makes a cron job; that subscription is the schedule's to change and to
-delete, never set_subscription's or delete_subscription's
+delete, never set_subscription's or delete_subscription's. A schedule can be run by hand, and
+any spec previewed (its next times, in its zone and in UTC) without saving it
 """
 
 # System Imports
@@ -27,6 +28,8 @@ from support.interfaces import Harness
 from udl.automations.filters import Condition, Op
 from udl.automations.models import (
     ActionRequest,
+    ListSchedulesRequest,
+    PreviewScheduleRequest,
     ScheduleInfo,
     ScheduleRequest,
     SetActionRequest,
@@ -38,6 +41,7 @@ from udl.automations.runs import ActionRun
 from udl.automations.schedules import AtSpec, CronSpec, EverySpec, Schedule
 from udl.automations.subscriptions import Subscription
 from udl.config import AutomationsSettings
+from udl.core.operations import Caller, current_caller
 from udl.core.service import UDLService
 from udl.db.records import RecordQuery
 from udl.errors import AlreadyExists, ConfigError, DoesNotExist, NotAllowed, TemplateFailed
@@ -76,13 +80,11 @@ async def service(harness: Harness) -> AsyncIterator[UDLService]:
 async def set_schedule(service: UDLService, name: str = "digest", **fields: Any) -> ScheduleInfo:
     if not {"cron", "every", "at"} & set(fields):
         fields["cron"] = "0 8 * * 1-5"
-    return await service.automations.set_schedule(
-        SetScheduleRequest.model_validate({"name": name, **fields})
-    )
+    return await service.set_schedule(SetScheduleRequest.model_validate({"name": name, **fields}))
 
 
 async def get_schedule(service: UDLService, name: str = "digest") -> ScheduleInfo:
-    return await service.automations.get_schedule(ScheduleRequest(name=name))
+    return await service.get_schedule(ScheduleRequest(name=name))
 
 
 async def action(service: UDLService, name: str = "morning-digest", **fields: Any) -> None:
@@ -203,7 +205,7 @@ async def test_the_scheduler_is_told_when_a_schedule_changes(
     monkeypatch.setattr(service.scheduler, "changed", lambda: told.append(True))
 
     await set_schedule(service)
-    await service.automations.delete_schedule(ScheduleRequest(name="digest"))
+    await service.delete_schedule(ScheduleRequest(name="digest"))
 
     assert told == [True, True]
 
@@ -305,8 +307,8 @@ async def test_deleting_a_schedule_deletes_its_subscription(service: UDLService)
     await action(service)
     await set_schedule(service, actions=["morning-digest"])
 
-    deleted = await service.automations.delete_schedule(ScheduleRequest(name="digest"))
-    again = await service.automations.delete_schedule(ScheduleRequest(name="digest"))
+    deleted = await service.delete_schedule(ScheduleRequest(name="digest"))
+    again = await service.delete_schedule(ScheduleRequest(name="digest"))
 
     assert (deleted.deleted, again.deleted) == (True, False)
     assert await service.db.list_records(Schedule, RecordQuery()) == []
@@ -349,3 +351,113 @@ async def test_an_action_a_schedule_runs_is_in_use(service: UDLService) -> None:
     shown = await service.get_action(ActionRequest(name="morning-digest"))
 
     assert shown.used_by == ["schedule:digest"]
+
+
+# ---------------------------------------------------------------------------------------------
+# Listing, running by hand, previewing
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_the_schedules_are_listed_by_name(service: UDLService) -> None:
+    await action(service)
+    await set_schedule(service, "weekly", cron="@weekly", enabled=False)
+    await set_schedule(service, "digest", actions=["morning-digest"])
+
+    listed = await service.list_schedules(ListSchedulesRequest())
+    enabled = await service.list_schedules(ListSchedulesRequest(enabled=True))
+
+    assert [found.name for found in listed.schedules] == ["digest", "weekly"]
+    assert [found.actions for found in listed.schedules] == [["morning-digest"], []]
+    assert [found.name for found in enabled.schedules] == ["digest"]
+
+
+async def test_a_schedule_run_by_hand_fires_now_as_its_caller(service: UDLService) -> None:
+    saved = await set_schedule(service, data={"report": 1})
+
+    token = current_caller.set(Caller.CLI)
+    try:
+        fired = await service.run_schedule(ScheduleRequest(name="digest"))
+        again = await service.run_schedule(ScheduleRequest(name="digest"))
+    finally:
+        current_caller.reset(token)
+
+    assert (fired.type, fired.source, fired.dedupe_key) == ("schedule.fired", "cli", None)
+    assert fired.data == {
+        "schedule": "digest",
+        "scheduled_for": T0.isoformat().replace("+00:00", "Z"),
+        "fired_at": T0.isoformat().replace("+00:00", "Z"),
+        "late": False,
+        "manual": True,
+        "data": {"report": 1},
+    }
+    assert again.id != fired.id
+    assert (await get_schedule(service)).next_run_at == saved.next_run_at
+
+
+async def test_a_schedule_run_by_hand_runs_its_actions(service: UDLService) -> None:
+    await action(service)
+    await set_schedule(service, actions=["morning-digest"], enabled=False)
+
+    await service.run_schedule(ScheduleRequest(name="digest"))
+    await service.bus.dispatch_pending()
+
+    [run] = await service.db.list_records(ActionRun, RecordQuery())
+    assert run.action == "morning-digest"
+
+
+async def test_an_unknown_schedule_is_not_run(service: UDLService) -> None:
+    with pytest.raises(DoesNotExist, match="nope"):
+        await service.run_schedule(ScheduleRequest(name="nope"))
+
+
+async def test_a_cron_spec_is_previewed_in_its_zone_and_in_utc(service: UDLService) -> None:
+    preview = await service.preview_schedule(
+        PreviewScheduleRequest(
+            spec="30 1 * * *",
+            timezone="Europe/London",
+            count=2,
+            after=datetime(2026, 3, 28, 12, tzinfo=UTC),
+        )
+    )
+
+    assert (preview.spec, preview.spec_text, preview.zone) == (
+        CronSpec(cron="30 1 * * *"),
+        "30 1 * * *",
+        "Europe/London",
+    )
+    assert [(time.local.isoformat(), time.utc) for time in preview.times] == [
+        ("2026-03-29T02:00:00+01:00", datetime(2026, 3, 29, 1, tzinfo=UTC)),  # (after the gap)
+        ("2026-03-30T01:30:00+01:00", datetime(2026, 3, 30, 0, 30, tzinfo=UTC)),
+    ]
+
+
+async def test_a_preview_is_of_the_next_five_from_now_in_the_default_zone(
+    service: UDLService,
+) -> None:
+    preview = await service.preview_schedule(PreviewScheduleRequest(spec="every 15m"))
+
+    assert preview.zone == "UTC"
+    assert [time.utc for time in preview.times] == [
+        T0 + n * timedelta(minutes=15) for n in range(1, 6)
+    ]
+
+
+async def test_an_at_spec_is_previewed_once(service: UDLService) -> None:
+    preview = await service.preview_schedule(PreviewScheduleRequest(spec="at 2026-11-01T09:00"))
+
+    assert [time.utc for time in preview.times] == [datetime(2026, 11, 1, 9, tzinfo=UTC)]
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"spec": "every so often"},
+        {"spec": "61 * * * *"},
+        {"spec": "@daily", "count": 0},
+        {"spec": "@daily", "count": 51},
+        {"spec": "@daily", "timezone": "Nowhere/Special"},
+    ],
+)
+def test_a_preview_of_no_schedule_is_refused(fields: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        PreviewScheduleRequest.model_validate(fields)

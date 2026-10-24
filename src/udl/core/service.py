@@ -43,8 +43,10 @@ from udl.automations.models import (
     ListEventsRequest,
     ListEventTypesRequest,
     ListRunsRequest,
+    ListSchedulesRequest,
     ListScriptsRequest,
     ListSubscriptionsRequest,
+    PreviewScheduleRequest,
     ReplayEventRequest,
     RunActionRequest,
     RunActionResult,
@@ -52,8 +54,13 @@ from udl.automations.models import (
     RunInfo,
     RunList,
     RunRequest,
+    ScheduleInfo,
+    ScheduleList,
+    SchedulePreview,
+    ScheduleRequest,
     ScriptList,
     SetActionRequest,
+    SetScheduleRequest,
     SetSubscriptionRequest,
     StatusRequest,
     SubscriptionInfo,
@@ -1227,6 +1234,97 @@ class UDLService:
         serve`, or disabled) and what waits: queued, running and waiting runs, pending events,
         and when an event was last dispatched."""
         return await self.automations.status(request)
+
+    # -- schedules -----------------------------------------------------------------------------
+
+    @operation(
+        "list_schedules",
+        title="List the schedules",
+        hints=OperationHints(read_only=True),
+        cli=CLISpec(path=("schedules", "list")),
+        api=APISpec(method="GET", path="/schedules"),
+    )
+    async def list_schedules(self, request: ListSchedulesRequest) -> ScheduleList:
+        """List the schedules (each fires schedule.fired at its times, and runs its actions
+        then), by name, with their next times."""
+        return await self.automations.list_schedules(request)
+
+    @operation(
+        "get_schedule",
+        title="Show a schedule",
+        hints=OperationHints(read_only=True),
+        cli=CLISpec(path=("schedules", "show"), arguments=("name",)),
+        api=APISpec(method="GET", path="/schedules/{name}"),
+    )
+    async def get_schedule(self, request: ScheduleRequest) -> ScheduleInfo:
+        """Show a schedule: when it fires (and its next five times), in which time zone, what
+        it does about times it missed, and the actions it runs (through its subscription)."""
+        return await self.automations.get_schedule(request)
+
+    @operation(
+        "set_schedule",
+        title="Save a schedule",
+        hints=OperationHints(idempotent=True, admin=True),
+        cli=CLISpec(
+            path=("schedules", "set"),
+            arguments=("name",),
+            options={"timezone": "--tz", "actions": "--action"},
+        ),
+        api=APISpec(method="PUT", path="/schedules/{name}"),
+    )
+    async def set_schedule(self, request: SetScheduleRequest) -> ScheduleInfo:
+        """Save a schedule: when it fires schedule.fired (exactly one of cron: a cron
+        expression such as `0 8 * * 1-5`; every: an interval such as 15m, from start; at: a
+        time, once), in a time zone, and the actions it runs then, so one command makes a cron
+        job. Its actions run through a subscription it keeps (schedule:<name>); leaving them out
+        keeps those it runs, and [] runs none.
+
+        Times without a zone are in its time zone. A time missed while udl was stopped is
+        skipped, or (misfire once) fired once, late, within misfire_grace; jitter delays each
+        time by up to its length.
+        """
+        return await self.automations.set_schedule(request)
+
+    @operation(
+        "run_schedule",
+        title="Run a schedule now",
+        hints=OperationHints(admin=True),
+        cli=CLISpec(path=("schedules", "run"), arguments=("name",)),
+        api=APISpec(method="POST", path="/schedules/{name}/run", status=201),
+    )
+    async def run_schedule(self, request: ScheduleRequest) -> EventInfo:
+        """Fire a schedule now, by hand (its schedule.fired says manual): the actions it runs
+        run, in the udl that runs the automations. Its next time stays as it is."""
+        return await self.automations.run_schedule(request)
+
+    @operation(
+        "preview_schedule",
+        title="Preview a schedule",
+        hints=OperationHints(read_only=True),
+        cli=CLISpec(
+            path=("schedules", "preview"),
+            arguments=("spec",),
+            options={"count": ("-n", "--count"), "timezone": "--tz"},
+        ),
+        api=APISpec(method="POST", path="/schedules/preview"),
+    )
+    async def preview_schedule(self, request: PreviewScheduleRequest) -> SchedulePreview:
+        """Say the next times a schedule would fire (`every 15m`, `at 2026-11-01T09:00`, or a
+        cron expression such as `0 8 * * 1-5`), in its time zone and in UTC, without saving
+        anything."""
+        return self.automations.preview_schedule(request)
+
+    @operation(
+        "delete_schedule",
+        title="Delete a schedule",
+        hints=OperationHints(destructive=True, idempotent=True, admin=True),
+        cli=CLISpec(path=("schedules", "rm"), arguments=("name",)),
+        api=APISpec(method="DELETE", path="/schedules/{name}"),
+    )
+    async def delete_schedule(self, request: ScheduleRequest) -> Deleted:
+        """Delete a schedule, and the subscription it runs its actions through (the actions,
+        its events and their runs are kept)."""
+        return await self.automations.delete_schedule(request)
 
     @operation("get_config", title="Show the settings", hints=OperationHints(read_only=True))
     async def get_config(self, request: GetConfigRequest) -> ConfigInfo:

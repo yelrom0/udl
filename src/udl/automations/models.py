@@ -44,6 +44,7 @@ from udl.automations.schedules import (
     ScheduleName,
     ScheduleSpec,
     ZoneName,
+    parse_spec,
     spec_text,
 )
 from udl.automations.subscriptions import Glob, Subscription, Throttle
@@ -55,6 +56,7 @@ from udl.plugins.actions.base import Action
 
 _PAGE = 50  # (what a list gives, unless asked for more)
 _MOST = 1000  # (what a list gives at most)
+_PREVIEWED = 50  # (a schedule's times a preview gives at most)
 
 
 class _Frozen(BaseModel):
@@ -678,3 +680,57 @@ class ScheduleInfo(_Frozen):
                 else None,
             }
         )
+
+
+class ScheduleList(_Frozen):
+    schedules: list[ScheduleInfo]
+    """The schedules, by name."""
+
+
+class ListSchedulesRequest(_Frozen):
+    """Which schedules to list."""
+
+    enabled: bool | None = None
+    """Only those enabled (true), or disabled (false)."""
+
+
+def _spec_line(text: str) -> str:
+    parse_spec(text)
+    return text
+
+
+class PreviewScheduleRequest(_Frozen):
+    """When a schedule would fire, without saving anything."""
+
+    spec: Annotated[str, AfterValidator(_spec_line)]
+    """When it fires: `every 15m` (or `every 1d from 2026-01-10T09:00`), `at
+    2026-11-01T09:00`, or a cron expression (e.g. `0 8 * * 1-5`, @daily)."""
+    timezone: ZoneName = None
+    """The time zone its times are in (an IANA name); none: [automations] timezone, else the
+    system's."""
+    count: Annotated[PositiveInt, Field(le=_PREVIEWED)] = 5
+    """How many of its next times."""
+    after: AwareDatetime | None = None
+    """Its times after this (none: now)."""
+
+
+class ScheduleTime(_Frozen):
+    """A time a schedule fires at."""
+
+    local: AwareDatetime
+    """In its time zone."""
+    utc: AwareDatetime
+    """In UTC."""
+
+
+class SchedulePreview(_Frozen):
+    """When a schedule would fire."""
+
+    spec: ScheduleSpec
+    """When it fires, as a spec."""
+    spec_text: str
+    """When it fires, as a line."""
+    zone: str
+    """The time zone its times are in."""
+    times: list[ScheduleTime]
+    """Its next times."""

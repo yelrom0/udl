@@ -182,6 +182,12 @@ def test_the_operations_are_the_feature_matrix_s() -> None:
         "get_run",
         "cancel_run",
         "get_status",
+        "list_schedules",
+        "get_schedule",
+        "set_schedule",
+        "run_schedule",
+        "preview_schedule",
+        "delete_schedule",
     }
 
 

@@ -107,6 +107,12 @@ def test_every_operation_says_whether_it_is_admin() -> None:
         "get_run": False,
         "cancel_run": True,
         "get_status": False,
+        "list_schedules": False,
+        "get_schedule": False,
+        "set_schedule": True,
+        "run_schedule": True,
+        "preview_schedule": False,
+        "delete_schedule": True,
     }
 
 

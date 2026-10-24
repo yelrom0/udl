@@ -46,8 +46,10 @@ from udl.automations.models import (
     ListEventsRequest,
     ListEventTypesRequest,
     ListRunsRequest,
+    ListSchedulesRequest,
     ListScriptsRequest,
     ListSubscriptionsRequest,
+    PreviewScheduleRequest,
     ReplayEventRequest,
     RunActionRequest,
     RunActionResult,
@@ -56,7 +58,10 @@ from udl.automations.models import (
     RunList,
     RunRequest,
     ScheduleInfo,
+    ScheduleList,
+    SchedulePreview,
     ScheduleRequest,
+    ScheduleTime,
     ScriptInfo,
     ScriptList,
     SetActionRequest,
@@ -72,7 +77,14 @@ from udl.automations.models import (
 from udl.automations.runs import ActionRun
 from udl.automations.runtime import RuntimeStatus, runtime_status
 from udl.automations.scheduler import FIRED
-from udl.automations.schedules import EverySpec, Schedule, spec_text
+from udl.automations.schedules import (
+    EverySpec,
+    Schedule,
+    next_times,
+    parse_spec,
+    schedule_zone,
+    spec_text,
+)
 from udl.automations.subscriptions import (
     SCHEDULE_PREFIX,
     Subscription,
@@ -508,6 +520,43 @@ class Automations:
 
     # -- schedules -----------------------------------------------------------------------------
 
+    async def list_schedules(self, request: ListSchedulesRequest) -> ScheduleList:
+        where = {} if request.enabled is None else {"enabled": request.enabled}
+        found = await self.service.db.list_records(Schedule, RecordQuery(where=where))
+        linked = {
+            subscription.name: subscription
+            for subscription in await self._all(Subscription)
+            if subscription.name.startswith(SCHEDULE_PREFIX)
+        }
+        return ScheduleList(
+            schedules=[
+                self._info_of(schedule, linked.get(SCHEDULE_PREFIX + schedule.name))
+                for schedule in sorted(found, key=lambda schedule: schedule.name)
+            ]
+        )
+
+    async def run_schedule(self, request: ScheduleRequest) -> EventInfo:
+        schedule = await self._schedule(request.name)
+        caller = current_caller.get()
+        fired = await self.service.scheduler.run_now(
+            schedule, source=caller.value if caller is not None else "udl"
+        )
+        return EventInfo.of(fired)
+
+    def preview_schedule(self, request: PreviewScheduleRequest) -> SchedulePreview:
+        spec = parse_spec(request.spec)
+        zone = schedule_zone(request.timezone, self.service.settings.automations.timezone)
+        after = request.after or self.service.clock.now()
+        return SchedulePreview(
+            spec=spec,
+            spec_text=spec_text(spec),
+            zone=str(zone),
+            times=[
+                ScheduleTime(local=time.astimezone(zone), utc=time)
+                for time in next_times(spec, zone, after, request.count)
+            ],
+        )
+
     async def get_schedule(self, request: ScheduleRequest) -> ScheduleInfo:
         return await self._schedule_info(await self._schedule(request.name))
 
@@ -564,12 +613,16 @@ class Automations:
         return schedule.zone(self.service.settings.automations.timezone)
 
     async def _schedule_info(self, schedule: Schedule) -> ScheduleInfo:
+        linked = await self._named(Subscription, SCHEDULE_PREFIX + schedule.name)
+        return self._info_of(schedule, linked)
+
+    def _info_of(self, schedule: Schedule, linked: Subscription | None) -> ScheduleInfo:
         zone = self._zone(schedule)
         return ScheduleInfo.of(
             schedule,
             zone=str(zone),
             next_times=schedule.upcoming(zone, UPCOMING),
-            subscription=await self._named(Subscription, SCHEDULE_PREFIX + schedule.name),
+            subscription=linked,
         )
 
     async def _linked(self, schedule: Schedule, actions: list[str]) -> Subscription | None:

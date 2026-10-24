@@ -21,7 +21,7 @@ rules) changed while it was stopped.
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Final
+from typing import Final, cast
 
 # Local Imports
 from udl.automations.bus import EventBus, NewEvent
@@ -129,6 +129,13 @@ class Scheduler:
                 dedupe_key=None if manual else dedupe_key(schedule, scheduled_for),
             )
         )
+
+    async def run_now(self, schedule: Schedule, *, source: str) -> EventRecord:
+        """Publish `schedule`'s schedule.fired now, run by hand (by `source`), leaving its next
+        time as it is."""
+        now = self.clock.now()
+        fired = await self.fire(schedule, now, now=now, manual=True, source=source)
+        return cast(EventRecord, fired)  # (one run by hand is never one seen before)
 
     async def _planned(self, schedule: Schedule, now: datetime, *, again: bool) -> Schedule:
         """`schedule`, with a next time when it has none (and, `again`, its next time planned

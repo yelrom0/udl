@@ -182,7 +182,7 @@ app.add_typer(system.config, name="config")
 app.command("serve")(servers.serve)
 app.command("mcp")(servers.mcp)
 app.add_typer(browser.app, name="browser")
-# (The automations': events, subs, actions, runs and status.)
+# (The automations': events, subs, actions, runs, schedules and status.)
 add_commands(app, operations().values(), renderers=automations.RENDERERS, helps=automations.HELPS)
 
 

@@ -15,6 +15,7 @@ from datetime import datetime
 from types import TracebackType
 from typing import Any, Final, Self, cast
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Package Imports
 from pydantic import BaseModel, SecretStr
@@ -44,6 +45,9 @@ from udl.automations.models import (
     RunDetail,
     RunInfo,
     RunList,
+    ScheduleInfo,
+    ScheduleList,
+    SchedulePreview,
     ScriptList,
     SubscriptionInfo,
     SubscriptionList,
@@ -51,6 +55,7 @@ from udl.automations.models import (
 )
 from udl.automations.runs import RunStatus
 from udl.automations.runtime import AutomationState, RuntimeStatus
+from udl.automations.schedules import Misfire
 from udl.chains.models import FetchMode, TagChain
 from udl.chains.shorthand import format_steps
 from udl.config import format_duration
@@ -842,6 +847,76 @@ def status(console: Console, shown: RuntimeStatus) -> None:
             )
         )
     _lines(console, rows)
+
+
+def _in_zone(at: datetime | None, zone: str) -> str:
+    """A time as it is in a schedule's time zone (the system's, for one without a name)."""
+    if at is None:
+        return ""
+    try:
+        local = at.astimezone(ZoneInfo(zone))
+    except ZoneInfoNotFoundError, ValueError:
+        local = at.astimezone()
+    return local.strftime("%Y-%m-%d %H:%M %Z")
+
+
+def schedules(console: Console, listed: ScheduleList) -> None:
+    """The schedules, by name."""
+    table = Table("Name", "When", "Zone", "Next", "Last", "Runs", "Enabled")
+    for found in listed.schedules:
+        table.add_row(
+            found.name,
+            escape(found.spec_text),
+            found.zone,
+            _in_zone(found.next_run_at, found.zone) if found.enabled else "",
+            _in_zone(found.last_run_at, found.zone),
+            "\n".join(found.actions),
+            _yes(found.enabled),
+        )
+    console.print(table)
+    if not listed.schedules:
+        console.print("No schedules: `udl schedules set` makes one.")
+
+
+def schedule(console: Console, info: ScheduleInfo) -> None:
+    """A schedule."""
+    rows = [
+        ("Schedule", info.name),
+        ("When", escape(info.spec_text)),
+        ("Zone", info.zone),
+        (
+            "Next",
+            "\n".join(_in_zone(time, info.zone) for time in info.next_times) or "-",
+        ),
+        ("Runs", ", ".join(info.actions) or "nothing (`--action` to run something)"),
+        (
+            "Misfire",
+            "skip the times missed while udl was stopped"
+            if info.misfire is Misfire.SKIP
+            else f"fire the latest time missed, if within {format_duration(info.misfire_grace)}",
+        ),
+        ("Enabled", _yes(info.enabled)),
+    ]
+    if info.description:
+        rows.insert(1, ("About", escape(info.description)))
+    if info.jitter:
+        rows.append(("Jitter", f"up to {format_duration(info.jitter)}"))
+    if info.last_run_at is not None:
+        rows.append(("Last", _in_zone(info.last_run_at, info.zone)))
+    if info.data:
+        rows.append(("Data", _json(info.data)))
+    _lines(console, rows)
+
+
+def schedule_preview(console: Console, preview: SchedulePreview) -> None:
+    """When a schedule would fire."""
+    console.print(f"When: {escape(preview.spec_text)}")
+    table = Table(f"In {preview.zone}", "UTC")
+    for time in preview.times:
+        table.add_row(time.local.strftime("%Y-%m-%d %H:%M %Z"), time.utc.strftime("%Y-%m-%d %H:%M"))
+    console.print(table)
+    if not preview.times:
+        console.print("It fires no more.")
 
 
 def deleted(console: Console, done: Deleted) -> None:

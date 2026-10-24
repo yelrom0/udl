@@ -25,10 +25,13 @@ from udl.automations.models import (
     EventInfo,
     RunDetail,
     RunList,
+    ScheduleInfo,
+    SchedulePreview,
     SubscriptionInfo,
     SubscriptionTestReport,
 )
 from udl.automations.runtime import AutomationState, RuntimeStatus
+from udl.automations.schedules import AtSpec
 from udl.chains.models import FetchMode, StepTrace, TagChain
 from udl.chains.suggest import ChainSuggestion
 from udl.core.models import (
@@ -602,3 +605,67 @@ def test_the_status_says_who_holds_the_lease_and_the_last_dispatch() -> None:
     assert "Last dispatch" in text
     assert "Lease until" in text
     assert "disabled" in shown(render.status, off)
+
+
+def schedule_info(**fields: object) -> ScheduleInfo:
+    return ScheduleInfo.model_validate(
+        {
+            "name": "digest",
+            "id": uuid.uuid4(),
+            "description": "",
+            "spec": {"cron": "0 8 * * *"},
+            "spec_text": "0 8 * * *",
+            "timezone": None,
+            "zone": "Europe/London",
+            "data": {},
+            "misfire": "skip",
+            "misfire_grace": "1h",
+            "jitter": "0s",
+            "enabled": True,
+            "next_run_at": NOW,
+            "last_run_at": None,
+            "next_times": [NOW],
+            "actions": [],
+            "subscription": None,
+            "created_at": NOW,
+            "updated_at": NOW,
+            **fields,
+        }
+    )
+
+
+def test_a_schedule_says_what_it_does_about_missed_times_and_its_extras() -> None:
+    text = shown(
+        render.schedule,
+        schedule_info(
+            description="The morning digest",
+            misfire="once",
+            misfire_grace="2h",
+            jitter="30s",
+            last_run_at=NOW,
+            data={"report": "daily"},
+        ),
+    )
+
+    assert "The morning digest" in text
+    assert "fire the latest time missed, if within 2h" in text
+    assert "up to 30s" in text
+    assert "2026-10-23 13:00 BST" in text  # (its last run, in its zone)
+    assert '"report": "daily"' in text
+
+
+def test_a_schedule_in_a_zone_without_a_name_is_shown_in_the_system_s() -> None:
+    text = shown(render.schedule, schedule_info(zone="localtime"))
+
+    assert NOW.astimezone().strftime("%Y-%m-%d %H:%M") in text
+
+
+def test_a_preview_of_a_time_gone_by_says_so() -> None:
+    text = shown(
+        render.schedule_preview,
+        SchedulePreview(
+            spec=AtSpec(at=NOW), spec_text="at 2026-10-23T12:00:00+00:00", zone="UTC", times=[]
+        ),
+    )
+
+    assert "It fires no more." in text

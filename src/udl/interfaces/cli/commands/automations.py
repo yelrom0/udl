@@ -3,8 +3,9 @@
 - automations.py -
 ------------------
 
-udl events, udl subs, udl actions, udl runs and udl status: the automations' commands, made from
-their operations (udl.interfaces.adapters.add_commands), shown by these renderers
+udl events, udl subs, udl actions, udl runs, udl schedules and udl status: the automations'
+commands, made from their operations (udl.interfaces.adapters.add_commands), shown by these
+renderers
 """
 
 # System Imports
@@ -35,6 +36,12 @@ RENDERERS: Final[dict[str, Callable[..., None]]] = {
     "get_run": render.run,
     "cancel_run": render.run,
     "get_status": render.status,
+    "list_schedules": render.schedules,
+    "get_schedule": render.schedule,
+    "set_schedule": render.schedule,
+    "run_schedule": render.event,
+    "preview_schedule": render.schedule_preview,
+    "delete_schedule": render.deleted,
 }
 """How each of the automations' commands shows its response, by operation."""
 
@@ -45,5 +52,7 @@ HELPS: Final[dict[str, str]] = {
     "actions": "Actions: named things to run (a script, an operation, a webhook, an event, a "
     "notification) when a subscription's event comes.",
     "runs": "Runs: each action that ran (or will) for an event.",
+    "schedules": "Schedules: cron jobs. When each fires schedule.fired (a cron expression, an "
+    "interval or a time), and the actions it runs then.",
 }
 """The automations' command groups' help."""

@@ -46,8 +46,8 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 10.1 `ScheduleSpec`: `cron` | `every` | `at`, in a timezone; cron parsing behind `CronExpression`; next times tested across DST changes (hypothesis)
   - [x] 10.2 `Schedule` record: misfire policy (`skip` | `once`), jitter, `next_run_at`
   - [x] 10.3 `Scheduler` on the `Clock`: sleeps until the next due schedule, wakes when schedules change, fires `schedule.fired` once per due time
-  - [ ] 10.4 A schedule's `actions` keep a linked subscription, so a cron job is one command
-  - [ ] 10.5 Operations (`list/get/set/delete/run/preview_schedule`) via CLI, API and MCP
+  - [x] 10.4 A schedule's `actions` keep a linked subscription, so a cron job is one command
+  - [x] 10.5 Operations (`list/get/set/delete/run/preview_schedule`) via CLI, API and MCP
   - [ ] 10.6 End to end: a schedule runs a script through `udl serve`'s runtime (on a `FakeClock`)
 
 - [ ] **Phase 11: Integrations & accounts**
