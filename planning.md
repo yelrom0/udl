@@ -50,7 +50,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 10.5 Operations (`list/get/set/delete/run/preview_schedule`) via CLI, API and MCP
   - [x] 10.6 End to end: a schedule runs a script through `udl serve`'s runtime (on a `FakeClock`)
 
-- [ ] **Phase 11: Integrations & accounts**
+- [x] **Phase 11: Integrations & accounts**
   - [x] 11.1 `udl.integrations` plugin kind: `Integration` base class + contract suite + `FakeIntegration`
   - [x] 11.2 `Account` record (any number per integration, each named), `AccountHandle` (credentials from the secret store, refreshed when they expire; `needs_reauth`)
   - [x] 11.3 Connecting: `oauth` (a loopback listener for the CLI and stdio MCP; the server's own callback for the API and UI), `tokens`, and `none` (a source that needs no login)
@@ -472,7 +472,8 @@ src/udl/
   db/records.py                 # Record, RecordQuery, Lease, the record kinds
   integrations/
     oauth.py                    # OAuth 2.0: PKCE, the loopback listener, refresh, revoke
-    accounts.py                 # Account, AccountHandle, connecting
+    accounts.py                 # AccountManager (and its handles), Integrations, connecting
+    models.py                   # the accounts' operations' requests and responses (11.7)
     operations.py               # integration operations: the account argument, fan-out (11.4)
     watchers.py                 # WatcherSupervisor, PluginState
   plugins/
@@ -2030,6 +2031,91 @@ on) is added with its options only: `udl accounts add <integration> <name> -O KE
 Google allows loopback redirects for Desktop OAuth clients, so the UI's flow works when the browser runs on
 udl's machine. Serving the UI to other machines needs a Web OAuth client with the server's HTTPS callback
 registered (documented in 19.4).
+
+### Decisions made while building Phase 11
+
+Where the build differs from a card, it is on purpose, as below.
+
+- **The plugin kind (11.1):** the `Account` record and `AccountHandle` (abstract: `account`,
+  `options`, `credentials()`, `tokens()`) live in `udl.plugins.integrations.base`, the plugin API,
+  as `Action` lives in `udl.plugins.actions.base`; `udl.integrations.accounts` has the manager and
+  the handle it gives. The base also re-exports `OperationHints`, `CLISpec`, `APISpec` and
+  `Duration`, so an integration imports only the public API (a test checks the built-in ones, and
+  `FakeIntegration`, by their imports).
+  - `event_types()` is a classmethod, as Phase 9 has every plugin's; `watches()` says whether the
+    integration implements `watch()`.
+  - `identify(credentials, options)`: a source that connects with `none` is who its options say.
+  - `access_levels` (what an account may be connected for, the default first) is the
+    integration's; an operation's `access` must be one of them.
+  - `revoke(account, credentials) -> bool` gives OAuth tokens back by default; tokens the user gave
+    are theirs to revoke. `EventSink.emit(event_type, …)` (`type` is a builtin) says whether the
+    event was new.
+  - `udl.http` has `HttpClientFactory` and `api_client()` (udl's User-Agent); `UDLService` takes
+    `http`, which tests point at their fake servers.
+  - `FakeIntegration`'s feeds are per account, in memory (`feed(name).add()` / `.fail()`), and,
+    for trying it by hand, the lines of a file per account in its `feed_dir`. It also has
+    `fake_version`, which needs no account.
+- **Accounts (11.2):** `disabled` is `enabled: false`, a field of its own, so a disabled account
+  keeps its status (`pending`, `connected`, `needs_reauth`, `error`). Account names are letters,
+  digits, `_`, `.` and `-` (no colon), at most 64.
+  - `credentials()` reads the account again each time, so a reconnect or a mark made meanwhile is
+    seen, and a `needs_reauth` account is refused without asking its service again.
+  - `UDLService.integrations` makes each integration once per service, and again after
+    `set_plugin_settings`.
+  - The bus reads the accounts' names with the subscriptions, so `accounts` in a subscription
+    match; `test_subscription` checks them, and templates' `event.account` is the name.
+- **Connecting (11.3):** `ConnectAccountRequest` has `method` (an integration may connect more
+  than one way): by default `tokens` when tokens are given, else its first. `access` defaults to
+  the first access level; others are refused.
+  - The redirect is the server's `/accounts/callback` when the service serves HTTP (`create_app`
+    sets `callback_url`: `web.public_url`, else `http://127.0.0.1:<api.port>`), else a listener in
+    the process (the CLI, `udl mcp`, Python). The callback is a route of Starlette's, ahead of the
+    others (no API key, and before `/accounts/{account}`); it answers HTML, or `303` to
+    `return_to`, which must be a path of this udl's (no open redirect).
+  - An account that was never connected (pending, or in `error`) is connected afresh by a new
+    `connect_account` without `reconnect`, which forgets the earlier authorization. One being
+    connected again keeps its status meanwhile (`pending_until` says a flow runs).
+  - A refused or expired authorization leaves an account never connected in `error`, with why; a
+    connected one keeps its status, with `last_error`. Expiry is noticed when the account is read
+    or the callback comes.
+  - `udl accounts add` has `--method`, `--tokens-stdin` and `-O KEY=VALUE`; it prints the page as
+    well as opening it. `connect_account` answers 201.
+- **Integration operations (11.4):** the request is `create_model(name, __base__=(R, <account>))`:
+  `account` first, `R`'s validators kept, and it is an `R`.
+  - The accounts an operation may use are those connected once (`connected_at`) and enabled;
+    `needs_reauth` ones count (and fail as such). A disabled one named is `NotAllowed`.
+  - One account (named, or the only one) raises what it fails with; a list or `"*"` lists the
+    failures. `"*"` for an operation that writes is a `ConfigError`; a list is refused by its
+    request model (422). A fan-out must be read-only.
+- **Watchers (11.5):** `PluginState` holds the watcher's status too (`watcher`, `failures`,
+  `last_error`, `last_event_at`), so any udl shows it (`get_status`, `get_account`); while no udl
+  runs the automations, every watcher shows as stopped. It is written only while its account
+  exists.
+  - An account is watched again when its options or access change. A watcher that returns is a
+    failure ("stopped by itself"); anything not a `UDLError` is a `PluginFailed`. A streak's first
+    failure also keeps its error on the account.
+  - `recheck` is the supervisor's attribute (30 s); `forget()` (disconnecting) stops a watcher and
+    deletes its state.
+- **Source filters (11.6):** checked through the event's account (an event without one cannot be
+  checked, so its runs are skipped); answers are kept per event and subscription, as many as the
+  bus remembers of other things, and errors are not kept. A bus without integrations (as in its
+  own tests) skips source-filtered runs.
+- **Account operations (11.7):** `disconnect_account` answers `Disconnected` (`deleted`, `revoked`:
+  null when there was nothing to give back, false when that failed, `subscriptions`).
+  `set_account` sets options over those the account has (null takes one away). `check_account`
+  says what is wrong rather than failing (credentials found refused mark the account).
+  `list_events` takes `account` by name. `add_commands` takes groups made already (`udl accounts
+  add` is written by hand), and the MCP server's instructions describe accounts.
+- **The phase's hand check** passed on 2026-10-25 against a real `udl serve` on a scratch config,
+  with `FakeIntegration` as a local plugin (`PYTHONPATH=tests`) reading files in its `feed_dir`:
+  two accounts connected with `udl accounts add fake … --tokens-stdin`, a subscription on
+  `fake:work` ran a script for each of its lines and none for `fake:home` (which had no watcher),
+  `udl status` showed the watcher with its last event, and `udl fake list-things --account '*'`
+  gave both accounts' things. It found that disconnecting from the CLI let the server's watcher
+  write its state again (fixed, with a test).
+- **Fixed on the way:** a hypothesis test drew the templates' `replace` filter only sometimes, so
+  coverage came and went (an `@example` now draws it); closing udl closes an OAuth listener whose
+  task never got to run.
 
 ---
 
