@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "aiosqlite>=0.22.1",
+    "charset-normalizer>=3.5.2",
     "cronsim>=2.7",
     "fastapi>=0.143.0",
     "gallery-dl>=1.32.16",
@@ -14,6 +15,7 @@ dependencies = [
     "httpx>=0.28.1",
     "jinja2>=3.1.6",
     "keyring>=25.7.0",
+    "markdownify>=1.2.3",
     "mcp>=2.3.0",
     "platformdirs>=4.12.4",
     "pydantic-settings>=2.15.0",
@@ -22,6 +24,7 @@ dependencies = [
     "selectolax>=1.0.0",
     "sqlmodel>=0.0.48",
     "tldextract>=5.4.0",
+    "trafilatura>=2.3.1",
     "typer>=0.27.3",
     "yt-dlp>=2026.8.19",
 ]

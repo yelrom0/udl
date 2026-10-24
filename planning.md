@@ -64,7 +64,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
 - [ ] **Phase 12: Page fetcher (`udl fetch`)**
   - [x] 12.1 Anti-bot fixture site in `tests/support/`: pages that turn plain clients away with a 500, a Cloudflare-style check a person passes (its clearance bound to the User-Agent), a hard block, a 429, a page built by JavaScript, a login wall; `FakePerson`
   - [x] 12.2 Recognising challenges: a table of markers per kind (Cloudflare, Turnstile, hCaptcha, reCAPTCHA, DataDome, PerimeterX, AWS WAF, Imperva, Sucuri, Akamai); a check a person can pass vs a block
-  - [ ] 12.3 Page content: the main content as Markdown (or text, or the HTML), links made absolute, `select`, charsets; other types kept as files
+  - [x] 12.3 Page content: the main content as Markdown (or text, or the HTML), links made absolute, `select`, charsets; other types kept as files
   - [ ] 12.4 The ladder: static → with the site's cookies → udl's browser → a person, climbing on a 5xx (after one more try), 401/403, a challenge or a JavaScript shell; the rung that worked remembered per site (`FetchSite`)
   - [ ] 12.5 Cookies, both ways: import `cookies.txt`, JSON exports, a `Cookie:` header or the user's browser into udl's profile, with the User-Agent they belong to; what sites set written back; list (never values) and delete; the profile held across processes
   - [ ] 12.6 Batches and the queue: `FetchBatch` / `FetchItem` records, a lane per site with limits and delays, one browser lane, a site's challenge holding its other URLs, cancel, retry, recovery, retention; `udl.fetch.challenge` and `udl.fetch.finished`
