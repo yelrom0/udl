@@ -499,7 +499,11 @@ _requests: st.SearchStrategy[dict[str, Any]] = st.fixed_dictionaries(
         "tags": st.lists(_words, max_size=3),
         "sizes": st.lists(st.integers(-1000, 1000), max_size=3),
         "point": st.fixed_dictionaries({"x": st.integers(-9, 9)}, optional={"y": st.integers()}),
-        "token": st.text(st.characters(codec="ascii", categories=["L", "N"]), min_size=1),
+        # (Not null, true or false: the MCP SDK reads a string argument that is JSON as JSON
+        # unless its parameter is exactly str, so over MCP those would not stay text.)
+        "token": st.text(st.characters(codec="ascii", categories=["L", "N"]), min_size=1).filter(
+            lambda token: token not in ("null", "true", "false")
+        ),
         "extra": _json,
         "limit": st.integers(1, 10),
     },
