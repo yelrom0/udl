@@ -31,7 +31,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 8.10 Settings: the `[automations]`, `[secrets]`, `[ai]`, `[integrations.<name>]` and `[web]` tables; `PluginSettings` records layered over the file (`get_plugin_settings` / `set_plugin_settings`); `get_config` hides the new secrets
 
 - [ ] **Phase 9: Events, subscriptions & actions**
-  - [ ] 9.1 `Event` / `EventType` models and the event type registry; udl's own types (`udl.download.*`, `udl.action.*`, `udl.account.*`, `custom.*`); `list_event_types` gives each type's data schema
+  - [x] 9.1 `Event` / `EventType` models and the event type registry; udl's own types (`udl.download.*`, `udl.action.*`, `udl.account.*`, `custom.*`); `list_event_types` gives each type's data schema
   - [ ] 9.2 `Filter`: conditions on an event's data, checked against its type's schema when saved; a one-line shorthand with round-trip property tests; the evaluator
   - [ ] 9.3 `Subscription`: event types (globs), accounts, filter, source filter (11.6), actions, throttle; matching
   - [ ] 9.4 `udl.actions` plugin kind: `ActionPlugin` base + contract suite + `FakeAction`; the `Action` record

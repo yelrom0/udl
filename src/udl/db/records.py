@@ -24,6 +24,7 @@ that only one may do (running the automations).
 
 # System Imports
 import enum
+import importlib
 import inspect
 import re
 import types
@@ -64,6 +65,10 @@ class SyncRule(StrEnum):
 
 RECORD_KINDS: Final[dict[str, type[Record]]] = {}
 """Every kind of record, by name: udl's, and any defined since (the tests')."""
+
+# The modules that define udl's own kinds (each kind registers itself as it is defined), loaded
+# as soon as the kinds are asked for, so a database knows them all.
+_UDL_KINDS: Final = ("udl.automations.events",)
 
 
 class Record(SQLModel):
@@ -133,15 +138,22 @@ class Record(SQLModel):
 
 def record_kinds() -> list[type[Record]]:
     """Every kind of record (udl's and those defined since), by name."""
+    _load_udl_kinds()
     return [RECORD_KINDS[kind] for kind in sorted(RECORD_KINDS)]
 
 
 def record_kind(name: str) -> type[Record]:
     """The kind of record called `name`. Raises KeyError."""
+    _load_udl_kinds()
     try:
         return RECORD_KINDS[name]
     except KeyError:
         raise KeyError(f"No kind of record called {name!r}") from None
+
+
+def _load_udl_kinds() -> None:
+    for module in _UDL_KINDS:
+        importlib.import_module(module)
 
 
 def indexed_type(cls: type[Record], name: str) -> tuple[type, bool]:
