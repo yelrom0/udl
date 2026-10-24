@@ -81,6 +81,7 @@ from udl.core.models import (
 from udl.db.models import JobStatus, Strategy
 from udl.errors import ErrorInfo
 from udl.integrations.models import AccountInfo
+from udl.integrations.watchers import WatcherState, WatcherStatus
 from udl.plugins.downloaders.base import MediaCandidate, MediaKind
 from udl.plugins.integrations.base import AccountStatus
 from udl.plugins.registry import ACTIONS, DATABASES, DOWNLOADERS, INTEGRATIONS, SECRETS, SITES
@@ -849,7 +850,18 @@ def status(console: Console, shown: RuntimeStatus) -> None:
                 ),
             )
         )
+    if shown.watchers:
+        rows.append(("Watchers", "\n".join(_watcher(found) for found in shown.watchers)))
     _lines(console, rows)
+
+
+def _watcher(found: WatcherStatus) -> str:
+    said = f"{escape(found.account)}  {found.state}"
+    if found.state is WatcherState.BACKOFF and found.last_error is not None:
+        said += f" (failed {found.failures} times: {escape(found.last_error.message)})"
+    if found.last_event_at is not None:
+        said += f", last event {_when(found.last_event_at)}"
+    return said
 
 
 def _in_zone(at: datetime | None, zone: str) -> str:

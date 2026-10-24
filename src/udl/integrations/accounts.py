@@ -263,6 +263,7 @@ class AccountManager:
         """Store `account`. Raises DuplicateKey for a name its integration has another of."""
         saved = await self._service.db.upsert_record(account)
         self._service.bus.subscriptions_changed()  # (it knows the accounts by name)
+        self._service.watchers.changed()
         return saved
 
     async def remove(self, account: Account) -> bool:
@@ -270,6 +271,7 @@ class AccountManager:
         await self._service.secrets.delete_prefix(SecretRef.of("accounts", account.id))
         removed = await self._service.db.delete_record(Account, account.id)
         self._service.bus.subscriptions_changed()
+        self._service.watchers.changed()
         return removed
 
     async def keep_credentials(self, account: Account, credentials: BaseModel) -> Account:

@@ -220,7 +220,7 @@ class Automations:
         for name in subscription.actions:
             await self._check_action(actions[name], types_of(subscription, types))
         stored = await self.service.db.upsert_record(subscription)
-        self.service.bus.subscriptions_changed()
+        self._subscriptions_changed()
         return SubscriptionInfo.of(stored)
 
     async def try_subscription(self, request: SubscriptionTestRequest) -> SubscriptionTestReport:
@@ -298,7 +298,7 @@ class Automations:
         if found is None:
             return Deleted(deleted=False)
         deleted = await self.service.db.delete_record(Subscription, found.id)
-        self.service.bus.subscriptions_changed()
+        self._subscriptions_changed()
         return Deleted(deleted=deleted)
 
     async def _subscription(self, name: str) -> Subscription:
@@ -343,7 +343,7 @@ class Automations:
             await plugin.check(action.options, event_type)
         options = await self._keep_secrets(action, plugin.options_model)
         stored = await self.service.db.upsert_record(action.model_copy(update={"options": options}))
-        self.service.bus.subscriptions_changed()
+        self._subscriptions_changed()
         return self._info(stored, users)
 
     async def run_action(self, request: RunActionRequest) -> RunActionResult:
@@ -375,7 +375,7 @@ class Automations:
             )
         deleted = await self.service.db.delete_record(Action, found.id)
         await self.service.secrets.delete_prefix(_secrets_of(found))
-        self.service.bus.subscriptions_changed()
+        self._subscriptions_changed()
         return Deleted(deleted=deleted)
 
     def list_scripts(self, request: ListScriptsRequest) -> ScriptList:
@@ -658,7 +658,12 @@ class Automations:
             found = await self._named(Subscription, SCHEDULE_PREFIX + schedule)
             if found is not None:
                 await self.service.db.delete_record(Subscription, found.id)
+        self._subscriptions_changed()
+
+    def _subscriptions_changed(self) -> None:
+        """Tell the bus and the watchers the subscriptions (or actions) changed."""
         self.service.bus.subscriptions_changed()
+        self.service.watchers.changed()
 
     # -- looking records up --------------------------------------------------------------------
 

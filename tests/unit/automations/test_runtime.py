@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 # Local Imports
+from support.accounts import connected, with_fake_integration
 from support.actions import FakeAction, fake_action
 from support.clock import FakeClock
 from support.downloaders import FakeMedia
@@ -40,7 +41,9 @@ from udl.core.models import DownloadRequest
 from udl.core.service import UDLService
 from udl.db.records import Lease, RecordQuery
 from udl.errors import ConfigError, DatabaseError
+from udl.integrations.watchers import PluginState, WatcherState
 from udl.plugins.actions.base import Action
+from udl.plugins.integrations.base import ConnectMethod
 from udl.plugins.registry import ACTIONS
 
 
@@ -555,3 +558,56 @@ async def test_a_runner_that_fails_is_started_again(
 
     assert len(served) == 2
     assert "a bug in the runner" in caplog.text
+
+
+# ---------------------------------------------------------------------------------------------
+# Watchers
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_the_runtime_runs_the_watchers_and_their_events_runs(
+    tmp_path: Path, clock: FakeClock, fake: type[FakeAction]
+) -> None:
+    harness = harness_of(tmp_path, clock, fake)
+    fakes = with_fake_integration(harness)
+    async with harness.service() as service:
+        await service.db.upsert_record(Action(name="hello", plugin="fake"))
+        work = await connected(service, method=ConnectMethod.NONE, options={"source": "x"})
+        await service.db.upsert_record(
+            Subscription(name="things", events=["fake.*"], actions=["hello"])
+        )
+        async with AutomationRuntime(service, holder="here:1:a"):
+            await clock.advance(timedelta(0))
+            fakes.plugin.feed("work").add("report")
+
+            await until(lambda: _ran(service), clock)
+            status = await runtime_status(service)
+
+        [watcher] = status.watchers
+        assert (watcher.account_id, watcher.state) == (work.id, WatcherState.RUNNING)
+        [ran] = fake.ran
+        assert ran.event is not None
+        assert ran.event.account_id == work.id
+        stopped = await runtime_status(service)
+        assert [found.state for found in stopped.watchers] == [WatcherState.STOPPED]
+
+
+async def _ran(service: UDLService) -> bool:
+    return any(run.status is RunStatus.SUCCEEDED for run in await runs(service))
+
+
+async def test_watchers_are_shown_stopped_while_nothing_runs_the_automations(
+    tmp_path: Path, clock: FakeClock, fake: type[FakeAction]
+) -> None:
+    harness = harness_of(tmp_path, clock, fake)
+    with_fake_integration(harness)
+    async with harness.service() as service:
+        work = await connected(service, method=ConnectMethod.NONE, options={"source": "x"})
+        await service.db.upsert_record(
+            PluginState(plugin="fake", account_id=work.id, watcher=WatcherState.RUNNING)
+        )
+
+        status = await runtime_status(service)
+
+    assert status.automations is AutomationState.STOPPED
+    assert [found.state for found in status.watchers] == [WatcherState.STOPPED]

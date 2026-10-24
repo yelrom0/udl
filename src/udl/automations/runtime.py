@@ -14,12 +14,13 @@ host, its process and a random part). While it holds it, it runs:
   left running;
 - retention: every hour, it prunes events and ended runs older than event_retention_days (never
   a pending event, or a run that waits);
-- the scheduler (udl.automations.scheduler), which fires the schedules as they come due.
+- the scheduler (udl.automations.scheduler), which fires the schedules as they come due;
+- the watchers (udl.integrations.watchers), one for each account a subscription wants events
+  from.
 
 A runtime that loses the lease stops them (interrupting its runs) until it has it again;
-closing releases it, so another `udl serve` takes over at once. The watchers (Phase 11) join
-them. It will not start with a scripts_dir inside a folder udl writes
-to, so nothing udl downloads can become a script.
+closing releases it, so another `udl serve` takes over at once. It will not start with a
+scripts_dir inside a folder udl writes to, so nothing udl downloads can become a script.
 
 runtime_status() is what get_status says: read from the database, so any udl can say which udl
 runs the automations.
@@ -51,6 +52,7 @@ from udl.config import Settings
 from udl.db.manager import DBManager
 from udl.db.records import Lease, Record, RecordQuery
 from udl.errors import ConfigError, DatabaseError
+from udl.integrations.watchers import WatcherState, WatcherStatus, watcher_statuses
 
 if TYPE_CHECKING:
     from udl.core.service import UDLService
@@ -115,6 +117,8 @@ class RuntimeStatus(BaseModel):
     """When an event was last dispatched."""
     next_schedules: list[UpcomingSchedule] = Field(default_factory=list[UpcomingSchedule])
     """The next schedules to fire (five at most), soonest first."""
+    watchers: list[WatcherStatus] = Field(default_factory=list[WatcherStatus])
+    """How each account's watcher is (stopped, all, while nothing runs the automations)."""
 
 
 def check_scripts_dir(settings: Settings) -> None:
@@ -238,6 +242,7 @@ class AutomationRuntime:
             group.create_task(self._forever("run", self.service.runner.serve, stop))
             group.create_task(self._retention(stop))
             group.create_task(self._forever("schedule", self.service.scheduler.serve, stop))
+            group.create_task(self._forever("watch", self.service.watchers.serve, stop))
 
     # -- the work ------------------------------------------------------------------------------
 
@@ -336,6 +341,9 @@ async def runtime_status(service: UDLService) -> RuntimeStatus:
         ),
         key=lambda found: found.next_run_at,
     )
+    watchers = await watcher_statuses(service)
+    if state not in (AutomationState.RUNNING, AutomationState.ELSEWHERE):
+        watchers = [found.model_copy(update={"state": WatcherState.STOPPED}) for found in watchers]
     return RuntimeStatus(
         automations=state,
         holder=lease.holder if lease is not None else None,
@@ -347,4 +355,5 @@ async def runtime_status(service: UDLService) -> RuntimeStatus:
         pending_events=await count(EventRecord, EventStatus.PENDING),
         last_dispatch=dispatched[0].dispatched_at if dispatched else None,
         next_schedules=upcoming[:UPCOMING],
+        watchers=watchers,
     )

@@ -81,6 +81,7 @@ _UDL_KINDS: Final = (
     "udl.automations.subscriptions",
     "udl.plugins.actions.base",
     "udl.plugins.integrations.base",
+    "udl.integrations.watchers",
     "udl.automations.runs",
     "udl.automations.schedules",
 )

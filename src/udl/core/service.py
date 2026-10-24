@@ -145,6 +145,7 @@ from udl.errors import (
 from udl.http import HttpClientFactory, api_client
 from udl.integrations.accounts import AccountManager, Integrations
 from udl.integrations.models import ConnectAccountRequest, Connection
+from udl.integrations.watchers import WatcherSupervisor
 from udl.plugins.downloaders.auth import AuthCookies
 from udl.plugins.downloaders.base import Cookie, ProbeContext, ProbeResult
 from udl.plugins.registry import (
@@ -224,6 +225,8 @@ class UDLService:
         """What makes the HTTP clients integrations talk to their services with."""
         self.integrations = Integrations(self)
         self.accounts = AccountManager(self)
+        self.watchers = WatcherSupervisor(self)
+        """The accounts' watchers (which the runtime runs)."""
         self.bus = EventBus(
             self.db,
             self.event_types,
@@ -1252,7 +1255,8 @@ class UDLService:
     async def get_status(self, request: StatusRequest) -> RuntimeStatus:
         """Say which udl runs the automations (running here, elsewhere, stopped: start `udl
         serve`, or disabled) and what waits: queued, running and waiting runs, pending events,
-        and when an event was last dispatched."""
+        when an event was last dispatched, the next schedules, and how each account's watcher
+        is (running, or failing and started again after a while)."""
         return await self.automations.status(request)
 
     # -- schedules -----------------------------------------------------------------------------

@@ -52,7 +52,8 @@ from udl.core.models import (
     SiteList,
 )
 from udl.db.models import JobStatus, Site, Strategy, StrategySource
-from udl.errors import AuthRequired, NoStrategyFound
+from udl.errors import AuthRequired, ErrorCode, ErrorInfo, NoStrategyFound
+from udl.integrations.watchers import WatcherState, WatcherStatus
 from udl.interfaces.cli import render
 from udl.plugins.downloaders.base import (
     DownloadProgress,
@@ -615,6 +616,32 @@ def test_the_status_says_who_holds_the_lease_and_the_last_dispatch() -> None:
     assert "Last dispatch" in text
     assert "Lease until" in text
     assert "disabled" in shown(render.status, off)
+
+
+def test_the_status_says_how_each_watcher_is() -> None:
+    failing = WatcherStatus(
+        account="gmail:work",
+        account_id=uuid.uuid4(),
+        integration="gmail",
+        state=WatcherState.BACKOFF,
+        failures=3,
+        last_error=ErrorInfo(code=ErrorCode.NETWORK_ERROR, message="Gmail is down"),
+    )
+    running = WatcherStatus(
+        account="slack:acme",
+        account_id=uuid.uuid4(),
+        integration="slack",
+        state=WatcherState.RUNNING,
+        last_event_at=NOW,
+    )
+
+    text = shown(
+        render.status,
+        RuntimeStatus(automations=AutomationState.RUNNING, watchers=[failing, running]),
+    )
+
+    assert "gmail:work  backoff (failed 3 times: Gmail is down)" in text
+    assert "slack:acme  running, last event" in text
 
 
 def schedule_info(**fields: object) -> ScheduleInfo:
