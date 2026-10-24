@@ -24,21 +24,36 @@ gives wall-clock times: what they are in a zone is udl's own (next_times()).
 """
 
 # System Imports
+import hashlib
 import itertools
 import os
 import re
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, tzinfo
+from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Final
+from typing import Annotated, Final, Self
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Package Imports
 from cronsim import CronSim, CronSimError
-from pydantic import AfterValidator, BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+    field_validator,
+)
 
 # Local Imports
+from udl.automations.subscriptions import SCHEDULE_PREFIX
 from udl.config import Duration, format_duration
+from udl.db.models import JsonObject
+from udl.db.records import NAME_LENGTH, NAME_PATTERN, Record
 
 ALIASES: Final = {
     "@hourly": "0 * * * *",
@@ -54,6 +69,7 @@ SHORTEST: Final = timedelta(minutes=1)
 """The shortest interval `every` may be."""
 LOCALTIME: Final = Path("/etc/localtime")
 
+_TICK: Final = timedelta(microseconds=1)
 # (Where an expression is first tried from, to tell one that never comes.)
 _PROBE: Final = datetime(2000, 1, 1)
 _ZONEINFO: Final = "zoneinfo"
@@ -286,3 +302,144 @@ def _linked_zone(localtime: Path) -> str:
         return ""
     parts = localtime.resolve().parts
     return "/".join(parts[parts.index(_ZONEINFO) + 1 :]) if _ZONEINFO in parts else ""
+
+
+def _valid_zone(name: str | None) -> str | None:
+    """An IANA time zone's name (or none)."""
+    if name is not None:
+        try:
+            ZoneInfo(name)
+        except (ZoneInfoNotFoundError, ValueError) as e:
+            raise ValueError(f"{name!r} is not a time zone this system knows") from e
+    return name
+
+
+type ZoneName = Annotated[str | None, AfterValidator(_valid_zone)]
+"""An IANA time zone's name, e.g. Europe/London (none: the default)."""
+
+
+# ---------------------------------------------------------------------------------------------
+# The record
+# ---------------------------------------------------------------------------------------------
+
+type ScheduleName = Annotated[
+    str,
+    StringConstraints(pattern=NAME_PATTERN, max_length=NAME_LENGTH - len(SCHEDULE_PREFIX)),
+]
+"""A schedule's name (schedule:<name> names the subscription it runs its actions through)."""
+
+
+class Misfire(StrEnum):
+    """What a schedule does about the times it missed while udl was stopped."""
+
+    SKIP = "skip"  # nothing: it goes on from its next time
+    ONCE = "once"  # it fires the latest of them once (late), when that is within misfire_grace
+
+
+def _not_negative(length: timedelta) -> timedelta:
+    if length < timedelta(0):
+        raise ValueError("a length of time is none or more, e.g. 0s or 1h")
+    return length
+
+
+type _Length = Annotated[Duration, AfterValidator(_not_negative)]
+
+
+class Schedule(Record):
+    """When schedule.fired events are fired: a spec (cron, every or at) in a time zone."""
+
+    kind = "schedule"
+    indexed = ("name", "enabled")
+    unique = (("name",),)
+
+    name: ScheduleName
+    """Its name."""
+    description: str = ""
+    """What it is for."""
+    spec: ScheduleSpec
+    """When it fires: {"cron": "0 8 * * 1-5"}, {"every": "15m", "start": ...} or {"at": ...}."""
+    timezone: ZoneName = None
+    """The time zone its times are in (an IANA name); none: [automations] timezone, else the
+    system's."""
+    data: JsonObject = Field(default_factory=dict)
+    """What it passes on, in each schedule.fired event's data."""
+    misfire: Misfire = Misfire.SKIP
+    """What it does about the times it missed while udl was stopped: skip them, or fire the
+    latest of them once (late), within misfire_grace."""
+    misfire_grace: _Length = timedelta(hours=1)
+    """How late a missed time may still fire (when misfire is once)."""
+    jitter: _Length = timedelta(0)
+    """At most how long after each time it fires (a random delay, the same for a time)."""
+    enabled: bool = True
+    """Whether it fires (an at schedule is disabled once its time has gone by)."""
+    next_run_at: AwareDatetime | None = None
+    """Its next time (without its jitter)."""
+    last_run_at: AwareDatetime | None = None
+    """When it last fired."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls.model_validate(
+            {
+                "name": "digest",
+                "spec": {"cron": "0 8 * * 1-5"},
+                "timezone": "Europe/London",
+                "data": {"report": "daily"},
+                "misfire": "once",
+                "jitter": "30s",
+                "next_run_at": "2026-01-05T08:00:00Z",
+            }
+        )
+
+    def zone(self, default: str) -> ZoneInfo:
+        """The time zone it runs in: its own, else `default` ([automations] timezone), else the
+        system's."""
+        return schedule_zone(self.timezone, default)
+
+    def planned(self, after: datetime, zone: tzinfo) -> Self:
+        """It with its next time after `after` (an interval without a start starting then); an
+        at schedule whose time has gone by is disabled."""
+        spec = self.spec
+        if isinstance(spec, EverySpec) and spec.start is None:
+            spec = spec.model_copy(update={"start": after})
+        next_run_at = next_time(spec, zone, after)
+        return self.model_copy(
+            update={
+                "spec": spec,
+                "next_run_at": next_run_at,
+                "enabled": self.enabled and next_run_at is not None,
+            }
+        )
+
+    def due_at(self) -> datetime | None:
+        """When it is due: its next time, plus its jitter for that time (a delay of up to
+        `jitter`, the same each time it is asked, so a udl that restarts keeps it)."""
+        if self.next_run_at is None:
+            return None
+        if not self.jitter:
+            return self.next_run_at
+        seed = f"{self.id}:{self.next_run_at.isoformat()}".encode()
+        fraction = int.from_bytes(hashlib.blake2b(seed, digest_size=8).digest()) / 2**64
+        return self.next_run_at + self.jitter * fraction
+
+
+@dataclass(frozen=True)
+class Due:
+    """What a schedule does about the times it missed while udl was stopped."""
+
+    fire: datetime | None  # the time to fire now, late (none: it skips them)
+    next_run_at: datetime | None  # its next time after now
+
+
+def due_after_downtime(schedule: Schedule, now: datetime, zone: tzinfo) -> Due:
+    """What `schedule`, whose next time passed while udl was stopped, does `now`: when its
+    misfire is once, it fires the latest time it missed within misfire_grace (late); either way
+    it goes on from its next time after now."""
+    fire: datetime | None = None
+    if schedule.misfire is Misfire.ONCE and schedule.next_run_at is not None:
+        since = max(schedule.next_run_at, now - schedule.misfire_grace)
+        for time in _times(schedule.spec, zone, since - _TICK):
+            if time > now:
+                break
+            fire = time
+    return Due(fire=fire, next_run_at=next_time(schedule.spec, zone, now))

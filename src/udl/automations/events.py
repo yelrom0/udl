@@ -27,6 +27,7 @@ import re
 from collections.abc import Callable, Iterable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final, Self, cast
 from uuid import UUID
@@ -554,6 +555,29 @@ def _account_error(data: AccountEventData) -> str:
     return f"{data.account}: {data.error.message if data.error else 'it failed'}"
 
 
+class ScheduleFiredData(_Data):
+    """A schedule that came due: schedule.fired."""
+
+    schedule: str
+    """The schedule's name."""
+    scheduled_for: AwareDatetime
+    """The time it was due at (without its jitter)."""
+    fired_at: AwareDatetime
+    """When it fired."""
+    late: bool = False
+    """Whether it fired late: its time passed while udl was stopped (its misfire is once)."""
+    manual: bool = False
+    """Whether it was run by hand (run_schedule) rather than by its time."""
+    data: JsonObject = Field(default_factory=dict)
+    """What the schedule passes on (its data)."""
+
+
+def _schedule_fired(data: ScheduleFiredData) -> str:
+    if data.manual:
+        return f"The {data.schedule} schedule was run by hand"
+    return f"The {data.schedule} schedule fired" + (", late" if data.late else "")
+
+
 _EXAMPLE_ID: Final = UUID("00000000-0000-4000-8000-000000000001")
 _DOWNLOAD: Final = DownloadEventData(
     download=_EXAMPLE_ID,
@@ -580,6 +604,7 @@ _RUN: Final = ActionEventData(
 _ACCOUNT: Final = AccountEventData(
     account="gmail:work", account_id=_EXAMPLE_ID, integration="gmail"
 )
+_SCHEDULED: Final = datetime(2026, 1, 5, 8, tzinfo=UTC)
 
 UDL_TYPES: Final[tuple[EventType[Any], ...]] = (
     EventType(
@@ -642,5 +667,17 @@ UDL_TYPES: Final[tuple[EventType[Any], ...]] = (
         example=_ACCOUNT.model_copy(update={"error": _FAILED}),
         subject=_account_error,
     ),
+    EventType(
+        name="schedule.fired",
+        data=ScheduleFiredData,
+        summary="A schedule came due (or was run by hand): which, and the data it passes on.",
+        example=ScheduleFiredData(
+            schedule="digest",
+            scheduled_for=_SCHEDULED,
+            fired_at=_SCHEDULED + timedelta(seconds=2),
+            data={"report": "daily"},
+        ),
+        subject=_schedule_fired,
+    ),
 )
-"""udl's own event types (schedule.fired joins them with the scheduler)."""
+"""udl's own event types."""

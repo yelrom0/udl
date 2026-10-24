@@ -81,11 +81,13 @@ _UDL_KINDS: Final = (
     "udl.automations.subscriptions",
     "udl.plugins.actions.base",
     "udl.automations.runs",
+    "udl.automations.schedules",
 )
 
-type Name = Annotated[
-    str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$", max_length=100)
-]
+NAME_PATTERN: Final = r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+NAME_LENGTH: Final = 100
+
+type Name = Annotated[str, StringConstraints(pattern=NAME_PATTERN, max_length=NAME_LENGTH)]
 """What names a record the user names (a subscription, an action...): letters, digits, `_`,
 `.`, `:` and `-`, starting with a letter or digit."""
 

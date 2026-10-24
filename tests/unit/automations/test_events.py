@@ -45,6 +45,7 @@ UDL_TYPES = {
     "udl.account.connected",
     "udl.account.needs_reauth",
     "udl.account.error",
+    "schedule.fired",
 }
 
 
