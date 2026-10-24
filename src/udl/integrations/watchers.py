@@ -124,20 +124,24 @@ class WatcherStatus(BaseModel):
     """When it last published an event."""
 
 
-async def watcher_statuses(service: UDLService) -> list[WatcherStatus]:
-    """How the watchers are (as their PluginState records say), by account."""
+async def watcher_statuses(
+    service: UDLService, *, running: bool = True, account: Account | None = None
+) -> list[WatcherStatus]:
+    """How the watchers (or `account`'s) are, as their PluginState records say, by account:
+    all stopped unless a udl runs the automations (`running`)."""
     names = await service.accounts.names()
+    where = {} if account is None else {"plugin": account.integration, "account_id": account.id}
     found = [
         WatcherStatus(
             account=names[record.account_id],
             account_id=record.account_id,
             integration=record.plugin,
-            state=record.watcher,
+            state=record.watcher if running else WatcherState.STOPPED,
             failures=record.failures,
             last_error=record.last_error,
             last_event_at=record.last_event_at,
         )
-        for record in await service.db.list_records(PluginState, RecordQuery())
+        for record in await service.db.list_records(PluginState, RecordQuery(where=where))
         if record.account_id in names
     ]
     return sorted(found, key=lambda status: status.account)

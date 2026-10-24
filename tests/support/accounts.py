@@ -23,11 +23,15 @@ from pydantic import BaseModel, SecretStr
 
 # Local Imports
 from support.clock import FakeClock
-from support.integrations import FakeIntegration, fake_integration, http_to
+from support.integrations import FakeIntegration, FakeTokens, fake_integration, http_to
 from support.interfaces import Harness
 from support.oauth import BASE, FakeAuthorizationServer
+from udl.automations.subscriptions import Subscription
+from udl.clock import SystemClock
 from udl.core.service import UDLService
+from udl.db.manager import DBManager
 from udl.integrations.oauth import Tokens
+from udl.plugins.actions.base import Action
 from udl.plugins.integrations.base import (
     Account,
     AccountIdentity,
@@ -56,7 +60,7 @@ def with_fake_integration(harness: Harness, called: str = "fake") -> Fakes:
 
 def issued(
     server: FakeAuthorizationServer,
-    clock: FakeClock,
+    clock: FakeClock | SystemClock,
     *,
     scope: str = "fake.read",
     expires_in: timedelta = timedelta(hours=1),
@@ -121,3 +125,32 @@ class Browser:
         back = self.server.approve(url)
         threading.Thread(target=httpx.get, args=(back,), kwargs={"timeout": 5}, daemon=True).start()
         return True
+
+
+def with_two_accounts(harness: Harness) -> Fakes:
+    """`harness`, with a fake integration and two of its accounts: fake:work (connected with
+    OAuth, for read and write, labelled Work) and fake:home (with an API key), and a
+    subscription (work-things) that names fake:work."""
+    fakes = with_fake_integration(harness)
+
+    async def seed(db: DBManager) -> None:
+        service = harness.service()
+        tokens = issued(fakes.server, SystemClock(), scope="fake.read fake.write")
+        await connected(
+            service, "work", credentials=tokens, access=["read", "write"], options={"label": "Work"}
+        )
+        await connected(
+            service,
+            "home",
+            method=ConnectMethod.TOKENS,
+            credentials=FakeTokens(api_key=SecretStr("key-1234")),
+        )
+        await db.upsert_record(Action(name="hello", plugin="fake"))
+        await db.upsert_record(
+            Subscription(
+                name="work-things", events=["fake.*"], accounts=["fake:work"], actions=["hello"]
+            )
+        )
+
+    harness.seed(seed)
+    return fakes

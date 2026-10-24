@@ -53,6 +53,7 @@ from udl.core.models import (
 )
 from udl.db.models import JobStatus, Site, Strategy, StrategySource
 from udl.errors import AuthRequired, ErrorCode, ErrorInfo, NoStrategyFound
+from udl.integrations.models import AccountInfo
 from udl.integrations.watchers import WatcherState, WatcherStatus
 from udl.interfaces.cli import render
 from udl.plugins.downloaders.base import (
@@ -62,6 +63,7 @@ from udl.plugins.downloaders.base import (
     MediaKind,
     ProbeResult,
 )
+from udl.plugins.integrations.base import Account, AccountHealth, AccountStatus, ConnectMethod
 from udl.plugins.registry import PluginProblem, PluginSource
 from udl.plugins.requirements import Requirement
 
@@ -642,6 +644,37 @@ def test_the_status_says_how_each_watcher_is() -> None:
 
     assert "gmail:work  backoff (failed 3 times: Gmail is down)" in text
     assert "slack:acme  running, last event" in text
+
+
+def test_an_account_says_what_is_wrong_with_it_and_its_watcher() -> None:
+    account = Account(
+        integration="gmail",
+        name="work",
+        method=ConnectMethod.OAUTH,
+        status=AccountStatus.PENDING,
+        enabled=False,
+        pending_until=NOW,
+        last_error=ErrorInfo(code=ErrorCode.NOT_ALLOWED, message="Refused"),
+    )
+    watcher = WatcherStatus(
+        account="gmail:work",
+        account_id=account.id,
+        integration="gmail",
+        state=WatcherState.STOPPED,
+    )
+
+    text = shown(render.account, AccountInfo.of(account, watcher=watcher))
+
+    for said in ("pending", "Enabled", "Until", "Refused", "gmail:work  stopped"):
+        assert said in text
+
+
+def test_an_account_s_health_says_its_problems_and_what_it_was_granted() -> None:
+    sick = shown(render.account_health, AccountHealth(ok=False, problems=["It expired"]))
+    well = shown(render.account_health, AccountHealth(ok=True, scopes=["a.read", "a.send"]))
+
+    assert "It expired" in sick
+    assert "a.read a.send" in well
 
 
 def schedule_info(**fields: object) -> ScheduleInfo:

@@ -65,7 +65,13 @@ from udl.errors import (
     ReauthRequired,
     UDLError,
 )
-from udl.integrations.models import AccountInfo, ConnectAccountRequest, Connection
+from udl.integrations.models import (
+    AccountInfo,
+    ConnectAccountRequest,
+    Connection,
+    Disconnected,
+    SetAccountRequest,
+)
 from udl.integrations.oauth import (
     Authorization,
     LoopbackRedirect,
@@ -73,10 +79,12 @@ from udl.integrations.oauth import (
     OAuthProvider,
     Tokens,
 )
+from udl.integrations.watchers import watcher_statuses
 from udl.plugins.integrations.base import (
     ACCOUNT_NAME_PATTERN,
     Account,
     AccountHandle,
+    AccountHealth,
     AccountIdentity,
     AccountOptions,
     AccountStatus,
@@ -367,6 +375,80 @@ class AccountManager:
                 )
             await store.set(current.secret_ref, SecretStr(revealed(fresh)))
             return fresh
+
+    # -- what the operations do ----------------------------------------------------------------
+
+    async def shown(self, account: Account, *, running: bool) -> AccountInfo:
+        """`account`, as it is shown: with its watcher (stopped unless a udl runs the
+        automations: `running`)."""
+        watchers = await watcher_statuses(self._service, running=running, account=account)
+        return AccountInfo.of(account, watcher=watchers[0] if watchers else None)
+
+    async def change(self, request: SetAccountRequest) -> Account:
+        """Set some of an account's options (null takes one away), or whether udl uses it."""
+        account = await self.get(request.account)
+        plugin = self._service.integrations.plugin(account.integration)
+        merged = {**account.options, **request.options}
+        given: JsonObject = {name: value for name, value in merged.items() if value is not None}
+        update: dict[str, Any] = {"options": _options(plugin, account.name, given)}
+        if request.enabled is not None:
+            update["enabled"] = request.enabled
+        return await self.save(account.model_copy(update=update))
+
+    async def check(self, ref: str) -> AccountHealth:
+        """Whether an account works, as its integration finds."""
+        account = await self.get(ref)
+        integration = await self._service.integrations.get(account.integration)
+        try:
+            return await integration.check(await self.handle(account))
+        except ReauthRequired as e:
+            await self.needs_reauth(account, e)
+            return AccountHealth(ok=False, problems=[e.message])
+        except UDLError as e:
+            return AccountHealth(ok=False, problems=[e.message])
+
+    async def disconnect(self, ref: str) -> Disconnected:
+        """Give an account's credentials back (when there are some to give back), forget them,
+        its watcher's state and the account. The subscriptions that name it are kept."""
+        try:
+            account = await self.get(ref)
+        except DoesNotExist:
+            return Disconnected(deleted=False)
+        revoked: bool | None = None
+        credentials = await self._kept(account)
+        if credentials is not None:
+            integration = await self._service.integrations.get(account.integration)
+            try:
+                revoked = True if await integration.revoke(account, credentials) else None
+            except UDLError as e:
+                revoked = False
+                log.warning("Could not give %s's credentials back: %s", account.ref, e.message)
+        await self._forget(account.id)
+        await self._service.watchers.forget(account)
+        await self.remove(account)
+        log.info("Disconnected %s", account.ref)
+        subscriptions = await self._service.db.list_records(Subscription, RecordQuery())
+        return Disconnected(
+            deleted=True,
+            revoked=revoked,
+            subscriptions=sorted(
+                found.name
+                for found in subscriptions
+                if found.accounts is not None and account.ref in found.accounts
+            ),
+        )
+
+    async def _kept(self, account: Account) -> BaseModel | None:
+        """An account's credentials as they are kept (not refreshed), if it has any here."""
+        if account.secret_ref is None or account.method is ConnectMethod.NONE:
+            return None
+        kept = await self._service.secrets.get(account.secret_ref)
+        if kept is None:
+            return None
+        if account.method is ConnectMethod.TOKENS:
+            plugin = self._service.integrations.plugin(account.integration)
+            return token_model(plugin).model_validate_json(kept.get_secret_value())
+        return Tokens.model_validate_json(kept.get_secret_value())
 
     # -- connecting ----------------------------------------------------------------------------
 

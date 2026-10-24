@@ -52,7 +52,7 @@ from udl.config import Settings
 from udl.db.manager import DBManager
 from udl.db.records import Lease, Record, RecordQuery
 from udl.errors import ConfigError, DatabaseError
-from udl.integrations.watchers import WatcherState, WatcherStatus, watcher_statuses
+from udl.integrations.watchers import WatcherStatus, watcher_statuses
 
 if TYPE_CHECKING:
     from udl.core.service import UDLService
@@ -78,6 +78,11 @@ class AutomationState(StrEnum):
     ELSEWHERE = "elsewhere"  # another udl (the lease's holder)
     STOPPED = "stopped"  # nobody
     DISABLED = "disabled"  # [automations] enabled = false
+
+    @property
+    def runs(self) -> bool:
+        """Whether a udl runs the automations."""
+        return self in (AutomationState.RUNNING, AutomationState.ELSEWHERE)
 
 
 class UpcomingSchedule(BaseModel):
@@ -313,14 +318,11 @@ async def _prune(db: DBManager, kind: type[Record], status: str, before: datetim
     return pruned
 
 
-async def runtime_status(service: UDLService) -> RuntimeStatus:
-    """Who runs the automations, and what waits (read from the database)."""
-    db, now = service.db, service.clock.now()
-
-    async def count(kind: type[Record], status: str) -> int:
-        return len(await db.list_records(kind, RecordQuery(where={"status": status})))
-
-    [lease] = (await db.list_records(Lease, RecordQuery(where={"name": LEASE}, limit=1))) or [None]
+async def automations_state(service: UDLService) -> tuple[AutomationState, Lease | None]:
+    """Who runs the automations (read from the database), and the lease they hold."""
+    now = service.clock.now()
+    found = await service.db.list_records(Lease, RecordQuery(where={"name": LEASE}, limit=1))
+    lease = found[0] if found else None
     runtime = service.runtime
     if not service.settings.automations.enabled:
         state = AutomationState.DISABLED
@@ -330,6 +332,18 @@ async def runtime_status(service: UDLService) -> RuntimeStatus:
         state = AutomationState.RUNNING
     else:
         state = AutomationState.ELSEWHERE
+    return state, lease
+
+
+async def runtime_status(service: UDLService) -> RuntimeStatus:
+    """Who runs the automations, and what waits (read from the database)."""
+    db = service.db
+
+    async def count(kind: type[Record], status: str) -> int:
+        return len(await db.list_records(kind, RecordQuery(where={"status": status})))
+
+    state, lease = await automations_state(service)
+    runtime = service.runtime
     dispatched = await db.list_records(
         EventRecord, RecordQuery(where={"status": EventStatus.DISPATCHED}, limit=1)
     )
@@ -341,9 +355,7 @@ async def runtime_status(service: UDLService) -> RuntimeStatus:
         ),
         key=lambda found: found.next_run_at,
     )
-    watchers = await watcher_statuses(service)
-    if state not in (AutomationState.RUNNING, AutomationState.ELSEWHERE):
-        watchers = [found.model_copy(update={"state": WatcherState.STOPPED}) for found in watchers]
+    watchers = await watcher_statuses(service, running=state.runs)
     return RuntimeStatus(
         automations=state,
         holder=lease.holder if lease is not None else None,

@@ -132,6 +132,8 @@ class Automations:
         exact = not any(mark in request.type for mark in "*?[")
         if exact:
             where["type"] = request.type
+        if request.account is not None:
+            where["account_id"] = (await self.service.accounts.get(request.account)).id
         for name, value in (
             ("source", request.source),
             ("account_id", request.account_id),

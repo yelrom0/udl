@@ -241,8 +241,8 @@ async def test_an_oauth_account_s_tokens_are_revoked() -> None:
     fake = FakeIntegration(FakeSettings(), http=http_to((BASE, server.app())), clock=FakeClock())
     tokens = Tokens(access_token=SecretStr("a"), refresh_token=SecretStr("refresh-1"))
 
-    await fake.revoke(account(access=["read"]), tokens)
-    await fake.revoke(account(method="tokens"), FakeTokens(api_key=SecretStr("k")))
+    assert await fake.revoke(account(access=["read"]), tokens)
+    assert not await fake.revoke(account(method="tokens"), FakeTokens(api_key=SecretStr("k")))
 
     assert server.revoked == ["refresh-1"]  # (and nothing for the tokens the user gave)
 

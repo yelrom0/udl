@@ -114,7 +114,12 @@ def test_every_operation_says_whether_it_is_admin() -> None:
         "preview_schedule": False,
         "delete_schedule": True,
         # The accounts': what connects, changes or disconnects one is admin.
+        "list_accounts": False,
+        "get_account": False,
         "connect_account": True,
+        "set_account": True,
+        "check_account": False,
+        "disconnect_account": True,
     }
 
 

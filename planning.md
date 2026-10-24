@@ -57,7 +57,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 11.4 Integration operations join the registry (8.1) with an `account` argument (optional while one account is connected), through the generated adapters (8.3); read-only ones that list things fan out over several accounts (`account: "*"` or a list), results tagged by account
   - [x] 11.5 Watchers: one per connected account that a subscription could match, in the runtime, restarted with backoff; cursors in `PluginState`; `udl.account.*` events
   - [x] 11.6 Source filters: criteria only the integration can check (e.g. a Gmail search), checked after the generic filter
-  - [ ] 11.7 Account operations via CLI, API and MCP
+  - [x] 11.7 Account operations via CLI, API and MCP
 
 - [ ] **Phase 12: Gmail plugin (`gmail`)**
   - [ ] 12.1 Fake Gmail + fake Google OAuth servers in `tests/support/` (the REST calls udl makes)

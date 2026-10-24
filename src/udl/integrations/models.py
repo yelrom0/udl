@@ -3,8 +3,9 @@
 - models.py -
 -------------
 
-The accounts' operations' requests and responses: connecting an account (connect_account), and
-what is shown of one (secrets never: its credentials are in the secret store)
+The accounts' operations' requests and responses (list_accounts, get_account, connect_account,
+set_account, check_account, disconnect_account), and what is shown of an account: never its
+credentials, which are in the secret store
 """
 
 # System Imports
@@ -16,8 +17,10 @@ from uuid import UUID
 from pydantic import AfterValidator, AwareDatetime, BaseModel, ConfigDict, Field, SecretStr
 
 # Local Imports
+from udl.core.models import Deleted
 from udl.db.models import JsonObject
 from udl.errors import ErrorInfo
+from udl.integrations.watchers import WatcherStatus
 from udl.plugins.integrations.base import (
     Account,
     AccountIdentity,
@@ -95,9 +98,11 @@ class AccountInfo(_Model):
     """When it was last connected."""
     created_at: datetime
     """When it was first added."""
+    watcher: WatcherStatus | None = None
+    """How its watcher is, if it has had one."""
 
     @classmethod
-    def of(cls, account: Account) -> Self:
+    def of(cls, account: Account, *, watcher: WatcherStatus | None = None) -> Self:
         return cls(
             id=account.id,
             account=account.ref,
@@ -113,6 +118,7 @@ class AccountInfo(_Model):
             last_error=account.last_error,
             connected_at=account.connected_at,
             created_at=account.created_at,
+            watcher=watcher,
         )
 
 
@@ -124,3 +130,42 @@ class Connection(_Model):
     authorization_url: str | None = None
     """The page to open in a browser to finish connecting it (OAuth): its answer is waited for
     10 minutes. None: it is connected."""
+
+
+class ListAccountsRequest(_Model):
+    """List the accounts."""
+
+    integration: str | None = None
+    """Only this integration's (e.g. gmail)."""
+
+
+class AccountList(_Model):
+    accounts: list[AccountInfo]
+    """The accounts, by integration and name."""
+
+
+class AccountRequest(_Model):
+    """An account."""
+
+    account: str
+    """The account, as integration:name (e.g. gmail:work)."""
+
+
+class SetAccountRequest(_Model):
+    """Change an account's options, or whether udl uses it."""
+
+    account: str
+    """The account, as integration:name (e.g. gmail:work)."""
+    options: JsonObject = Field(default_factory=dict)
+    """Options to set, over those it has (null takes one away)."""
+    enabled: bool | None = None
+    """Whether udl uses it: a disabled account has no watcher, and operations leave it out."""
+
+
+class Disconnected(Deleted):
+    revoked: bool | None = None
+    """Whether its credentials were given back to the service: None when there was nothing to
+    give back (tokens the user gave are theirs to revoke), false when that failed."""
+    subscriptions: list[str] = Field(default_factory=list[str])
+    """The subscriptions that name it, which are kept: they get none of its events until an
+    account of its name is connected again."""

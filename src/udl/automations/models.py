@@ -136,8 +136,10 @@ class ListEventsRequest(_Paged):
     """Only events whose type this glob matches (e.g. gmail.*)."""
     source: str | None = None
     """Only those this published (e.g. udl, cli, api, mcp, gmail)."""
+    account: str | None = None
+    """Only those of this account (integration:name, e.g. gmail:work)."""
     account_id: UUID | None = None
-    """Only those of this account."""
+    """Only those of the account with this id."""
     status: EventStatus | None = None
     """Only those pending, dispatched or dropped."""
     since: AwareDatetime | None = None

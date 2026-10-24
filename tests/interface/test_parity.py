@@ -70,7 +70,12 @@ MATRIX: dict[str, tuple[str, str]] = {
     "run_schedule": ("schedules run", "POST /schedules/{name}/run"),
     "preview_schedule": ("schedules preview", "POST /schedules/preview"),
     "delete_schedule": ("schedules rm", "DELETE /schedules/{name}"),
+    "list_accounts": ("accounts list", "GET /accounts"),
+    "get_account": ("accounts show", "GET /accounts/{account}"),
     "connect_account": ("accounts add", "POST /accounts"),
+    "set_account": ("accounts set", "PATCH /accounts/{account}"),
+    "check_account": ("accounts check", "POST /accounts/{account}/check"),
+    "disconnect_account": ("accounts rm", "DELETE /accounts/{account}"),
 }
 
 # Interface-only, so exempt: they run the other interfaces, need a browser on the user's

@@ -70,7 +70,7 @@ from udl.automations.models import (
     SubscriptionTestRequest,
 )
 from udl.automations.runner import ActionRunner
-from udl.automations.runtime import AutomationRuntime, RuntimeStatus
+from udl.automations.runtime import AutomationRuntime, RuntimeStatus, automations_state
 from udl.automations.scheduler import Scheduler
 from udl.chains.executor import ChainRun, ChainRunner
 from udl.chains.files import read_chains, write_chains
@@ -144,10 +144,20 @@ from udl.errors import (
 )
 from udl.http import HttpClientFactory, api_client
 from udl.integrations.accounts import AccountManager, Integrations
-from udl.integrations.models import ConnectAccountRequest, Connection
+from udl.integrations.models import (
+    AccountInfo,
+    AccountList,
+    AccountRequest,
+    ConnectAccountRequest,
+    Connection,
+    Disconnected,
+    ListAccountsRequest,
+    SetAccountRequest,
+)
 from udl.integrations.watchers import WatcherSupervisor
 from udl.plugins.downloaders.auth import AuthCookies
 from udl.plugins.downloaders.base import Cookie, ProbeContext, ProbeResult
+from udl.plugins.integrations.base import AccountHealth
 from udl.plugins.registry import (
     ACTIONS,
     DATABASES,
@@ -1354,6 +1364,39 @@ class UDLService:
     # -- accounts ------------------------------------------------------------------------------
 
     @operation(
+        "list_accounts",
+        title="List the accounts",
+        hints=OperationHints(read_only=True),
+        cli=CLISpec(path=("accounts", "list")),
+        api=APISpec(method="GET", path="/accounts"),
+    )
+    async def list_accounts(self, request: ListAccountsRequest) -> AccountList:
+        """List the accounts udl connects to (each integration's logins, and the sources that
+        need no login), by integration and name: how each is (connected, pending, needs_reauth:
+        connect it again), who its login is, what it was connected for, and its watcher."""
+        running = (await automations_state(self))[0].runs
+        return AccountList(
+            accounts=[
+                await self.accounts.shown(account, running=running)
+                for account in await self.accounts.list(request.integration)
+            ]
+        )
+
+    @operation(
+        "get_account",
+        title="Show an account",
+        hints=OperationHints(read_only=True),
+        cli=CLISpec(path=("accounts", "show"), arguments=("account",)),
+        api=APISpec(method="GET", path="/accounts/{account}"),
+    )
+    async def get_account(self, request: AccountRequest) -> AccountInfo:
+        """Show an account (e.g. gmail:work): how it is (connected, pending while its
+        authorization is answered, needs_reauth: connect it again), who its login is, what it
+        was connected for, its options, what last went wrong, and its watcher."""
+        account = await self.accounts.get(request.account)
+        return await self.accounts.shown(account, running=(await automations_state(self))[0].runs)
+
+    @operation(
         "connect_account",
         title="Connect an account",
         hints=OperationHints(open_world=True, admin=True),
@@ -1371,6 +1414,50 @@ class UDLService:
         is then connected again, keeping its options and subscriptions.
         """
         return await self.accounts.connect(request)
+
+    @operation(
+        "set_account",
+        title="Change an account",
+        hints=OperationHints(idempotent=True, admin=True),
+        cli=CLISpec(
+            path=("accounts", "set"),
+            arguments=("account",),
+            options={"options": ("-O", "--option")},
+            pairs=("options",),
+        ),
+        api=APISpec(method="PATCH", path="/accounts/{account}"),
+    )
+    async def set_account(self, request: SetAccountRequest) -> AccountInfo:
+        """Change an account: set some of its options (over those it has; null takes one
+        away), checked by its integration, or whether udl uses it (a disabled account has no
+        watcher, and its integration's operations leave it out)."""
+        account = await self.accounts.change(request)
+        return await self.accounts.shown(account, running=(await automations_state(self))[0].runs)
+
+    @operation(
+        "check_account",
+        title="Check an account",
+        hints=OperationHints(read_only=True, open_world=True),
+        cli=CLISpec(path=("accounts", "check"), arguments=("account",)),
+        api=APISpec(method="POST", path="/accounts/{account}/check"),
+    )
+    async def check_account(self, request: AccountRequest) -> AccountHealth:
+        """Check that an account works, asking its service: whether it does, what is wrong
+        with it, and what it was granted. Credentials found refused mark it needs_reauth."""
+        return await self.accounts.check(request.account)
+
+    @operation(
+        "disconnect_account",
+        title="Disconnect an account",
+        hints=OperationHints(destructive=True, idempotent=True, admin=True),
+        cli=CLISpec(path=("accounts", "rm"), arguments=("account",)),
+        api=APISpec(method="DELETE", path="/accounts/{account}"),
+    )
+    async def disconnect_account(self, request: AccountRequest) -> Disconnected:
+        """Disconnect an account: give its credentials back to its service (OAuth tokens are
+        revoked), forget them, stop its watcher and delete the account. The subscriptions that
+        name it are kept, and listed."""
+        return await self.accounts.disconnect(request.account)
 
     @operation("get_config", title="Show the settings", hints=OperationHints(read_only=True))
     async def get_config(self, request: GetConfigRequest) -> ConfigInfo:

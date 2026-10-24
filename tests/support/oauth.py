@@ -50,6 +50,7 @@ class FakeAuthorizationServer:
     deny: bool = False  # the user refuses on the authorization page
     rotate_refresh_tokens: bool = False  # a refresh gives a new refresh token
     fail_token_endpoint: bool = False  # the token endpoint answers 500
+    fail_revoke: bool = False  # the revocation endpoint answers 500
     grants: dict[str, _Grant] = field(default_factory=dict[str, _Grant])
     refresh_tokens: dict[str, str] = field(default_factory=dict[str, str])  # token: scope
     access_tokens: set[str] = field(default_factory=set[str])
@@ -147,6 +148,8 @@ class FakeAuthorizationServer:
         return _error("unsupported_grant_type")
 
     async def _revoke(self, request: Request) -> Response:
+        if self.fail_revoke:
+            return Response("upstream trouble", status_code=500)
         token = str((await request.form()).get("token", ""))
         if token in self.refresh_tokens:
             del self.refresh_tokens[token]

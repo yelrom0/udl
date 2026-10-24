@@ -87,12 +87,14 @@ def add_commands(
     *,
     renderers: Mapping[str, Callable[..., None]],
     helps: Mapping[str, str],
+    groups: Mapping[tuple[str, ...], typer.Typer] | None = None,
 ) -> None:
     """Add to `app` (udl's) a command for each of udl's own operations in `ops` that has a
     CLISpec path: a top-level one for a word (`udl status`), else in the group of its first
-    words (`udl events list`, the group's help from `helps`), shown by its renderer in
-    `renderers` (by operation name)."""
-    groups: dict[tuple[str, ...], typer.Typer] = {}
+    words (`udl events list`, the group's help from `helps`, or one of `groups`, already in
+    `app` with commands of its own), shown by its renderer in `renderers` (by operation
+    name)."""
+    groups = dict(groups or {})
     for op in ops:
         if op.namespace is not None or op.cli is None or not op.cli.path:
             continue

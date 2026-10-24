@@ -80,10 +80,10 @@ from udl.core.models import (
 )
 from udl.db.models import JobStatus, Strategy
 from udl.errors import ErrorInfo
-from udl.integrations.models import AccountInfo
+from udl.integrations.models import AccountInfo, AccountList, Disconnected
 from udl.integrations.watchers import WatcherState, WatcherStatus
 from udl.plugins.downloaders.base import MediaCandidate, MediaKind
-from udl.plugins.integrations.base import AccountStatus
+from udl.plugins.integrations.base import AccountHealth, AccountStatus
 from udl.plugins.registry import ACTIONS, DATABASES, DOWNLOADERS, INTEGRATIONS, SECRETS, SITES
 
 _STATUS: Final[dict[JobStatus, tuple[str, str]]] = {
@@ -917,7 +917,55 @@ def account(console: Console, info: AccountInfo) -> None:
         rows.append(("Until", _when(info.pending_until)))
     if info.last_error is not None:
         rows.append(("Error", _error(info.last_error)))
+    if info.watcher is not None:
+        rows.append(("Watcher", _watcher(info.watcher)))
     _lines(console, rows)
+
+
+def accounts(console: Console, listed: AccountList) -> None:
+    """The accounts, and how each is."""
+    if not listed.accounts:
+        console.print("No accounts are connected (`udl accounts add` connects one).")
+        return
+    table = Table("Account", "Status", "Login", "For", "Watcher")
+    for found in listed.accounts:
+        table.add_row(
+            escape(found.account) + ("" if found.enabled else " [dim](disabled)[/]"),
+            _ACCOUNT_STATUS[found.status].split(" (")[0],
+            escape(found.identity.display) if found.identity is not None else "-",
+            ", ".join(found.access),
+            found.watcher.state if found.watcher is not None else "-",
+        )
+    console.print(table)
+
+
+def account_health(console: Console, health: AccountHealth) -> None:
+    """Whether an account works."""
+    rows = [("Works", _yes(health.ok))]
+    if health.problems:
+        rows.append(("Problems", escape("\n".join(health.problems))))
+    if health.scopes:
+        rows.append(("Granted", escape(" ".join(health.scopes))))
+    _lines(console, rows)
+
+
+def disconnected(console: Console, answer: Disconnected) -> None:
+    """What disconnecting an account did."""
+    if not answer.deleted:
+        console.print("There was no such account: nothing changed.")
+        return
+    console.print(
+        {
+            True: "Disconnected: its credentials were given back to the service.",
+            None: "Disconnected.",
+            False: "Disconnected, but its credentials could not be given back to the service "
+            "(revoke them there).",
+        }[answer.revoked]
+    )
+    if answer.subscriptions:
+        console.print(
+            f"These subscriptions name it, and are kept: {escape(', '.join(answer.subscriptions))}."
+        )
 
 
 def schedule(console: Console, info: ScheduleInfo) -> None:

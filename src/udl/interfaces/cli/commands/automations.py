@@ -4,8 +4,8 @@
 ------------------
 
 udl events, udl subs, udl actions, udl runs, udl schedules and udl status: the automations'
-commands, made from their operations (udl.interfaces.adapters.add_commands), shown by these
-renderers
+commands, and udl accounts' (but `add`), made from their operations
+(udl.interfaces.adapters.add_commands), shown by these renderers
 """
 
 # System Imports
@@ -42,6 +42,11 @@ RENDERERS: Final[dict[str, Callable[..., None]]] = {
     "run_schedule": render.event,
     "preview_schedule": render.schedule_preview,
     "delete_schedule": render.deleted,
+    "list_accounts": render.accounts,
+    "get_account": render.account,
+    "set_account": render.account,
+    "check_account": render.account_health,
+    "disconnect_account": render.disconnected,
 }
 """How each of the automations' commands shows its response, by operation."""
 

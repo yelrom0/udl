@@ -64,6 +64,11 @@ and `set_site_chain` saves it, so `download` follows it from then on. `export_ch
 data such as `name == "x" and not quiet`; `list_event_types` gives each type's fields). \
 `test_subscription` tries one on recent events; `list_runs` and `get_run` follow what ran; \
 `get_status` says which udl runs them (`udl serve`).
+- Accounts: integrations (e.g. Gmail) connect any number of named accounts (`gmail:work`, \
+`gmail:personal`: `list_accounts`). Each integration's tools take an `account`, which may be \
+left out while it has one; tools that list things also take a list of accounts, or "*" for \
+every one, and tag each item with its account. `connect_account` gives a page for the user to \
+open; `get_account` then shows the account connected.
 """
 
 

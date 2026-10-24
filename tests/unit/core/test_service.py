@@ -198,7 +198,12 @@ def test_the_operations_are_the_feature_matrix_s() -> None:
         "run_schedule",
         "preview_schedule",
         "delete_schedule",
+        "list_accounts",
+        "get_account",
         "connect_account",
+        "set_account",
+        "check_account",
+        "disconnect_account",
     }
 
 

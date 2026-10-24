@@ -184,8 +184,14 @@ app.command("serve")(servers.serve)
 app.command("mcp")(servers.mcp)
 app.add_typer(browser.app, name="browser")
 app.add_typer(accounts.app, name="accounts")
-# (The automations': events, subs, actions, runs, schedules and status.)
-add_commands(app, operations().values(), renderers=automations.RENDERERS, helps=automations.HELPS)
+# (The automations': events, subs, actions, runs, schedules and status; and the accounts'.)
+add_commands(
+    app,
+    operations().values(),
+    renderers=automations.RENDERERS,
+    helps=automations.HELPS,
+    groups={("accounts",): accounts.app},
+)
 
 
 def main() -> None:

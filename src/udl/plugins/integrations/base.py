@@ -439,16 +439,16 @@ class Integration[S: IntegrationSettings, A: AccountOptions](ABC):
         search."""
         raise PluginError(f"The {self.name} integration has no source filter")
 
-    async def revoke(self, account: Account, credentials: Credentials) -> None:
+    async def revoke(self, account: Account, credentials: Credentials) -> bool:
         """Give an account's credentials back, as it is disconnected: OAuth tokens are revoked
         at the provider; tokens the user gave are theirs to revoke, unless the integration
-        says otherwise."""
-        if isinstance(credentials, Tokens):
-            request = self.oauth_request(frozenset(account.access))
-            async with self.http(tool=self.name) as client:
-                await OAuthClient(request.provider, http=client, clock=self.clock).revoke(
-                    credentials
-                )
+        says otherwise. Returns whether it gave anything back."""
+        if not isinstance(credentials, Tokens):
+            return False
+        request = self.oauth_request(frozenset(account.access))
+        async with self.http(tool=self.name) as client:
+            await OAuthClient(request.provider, http=client, clock=self.clock).revoke(credentials)
+        return True
 
 
 def _resolved(cls: type[Integration[Any, Any]], spec: IntegrationOperation) -> IntegrationOperation:
