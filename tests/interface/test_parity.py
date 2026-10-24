@@ -44,13 +44,36 @@ MATRIX: dict[str, tuple[str, str]] = {
     "get_plugin_settings": ("plugins settings", "GET /plugins/{name}/settings"),
     "set_plugin_settings": ("plugins configure", "PUT /plugins/{name}/settings"),
     "get_config": ("config show", "GET /config"),
+    "list_event_types": ("events types", "GET /event-types"),
+    "list_events": ("events list", "GET /events"),
+    "get_event": ("events show", "GET /events/{id}"),
+    "emit_event": ("events emit", "POST /events"),
+    "replay_event": ("events replay", "POST /events/{id}/replay"),
+    "list_subscriptions": ("subs list", "GET /subscriptions"),
+    "get_subscription": ("subs show", "GET /subscriptions/{name}"),
+    "set_subscription": ("subs set", "PUT /subscriptions/{name}"),
+    "test_subscription": ("subs test", "POST /subscriptions/test"),
+    "delete_subscription": ("subs rm", "DELETE /subscriptions/{name}"),
+    "list_actions": ("actions list", "GET /actions"),
+    "get_action": ("actions show", "GET /actions/{name}"),
+    "set_action": ("actions set", "PUT /actions/{name}"),
+    "run_action": ("actions run", "POST /actions/{name}/run"),
+    "delete_action": ("actions rm", "DELETE /actions/{name}"),
+    "list_scripts": ("actions scripts", "GET /actions/scripts"),
+    "list_runs": ("runs list", "GET /runs"),
+    "get_run": ("runs show", "GET /runs/{id}"),
+    "cancel_run": ("runs cancel", "DELETE /runs/{id}"),
+    "get_status": ("status", "GET /status"),
 }
 
 # Interface-only, so exempt: they run the other interfaces, need a browser on the user's
 # machine, or ask the user (the wizard, which runs suggest_chain, test_chain and set_site_chain).
 CLI_ONLY = {"serve", "mcp", "browser login", "chain wizard"}
-# A job's events as they happen (SSE): UDLService.events() is a stream, not an operation.
-API_ONLY = {"GET /downloads/{id}/events": "download_events"}
+# A job's events, and the events and runs, as they happen (SSE): streams, not operations.
+API_ONLY = {
+    "GET /downloads/{id}/events": "download_events",
+    "GET /events/stream": "events_stream",
+}
 
 
 def test_the_matrix_lists_every_operation() -> None:

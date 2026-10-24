@@ -33,13 +33,33 @@ from rich.progress import (
 from rich.table import Column, Table
 
 # Local Imports
+from udl.automations.events import EventStatus, EventTypeList
+from udl.automations.models import (
+    ActionInfo,
+    ActionList,
+    EventDetail,
+    EventInfo,
+    EventList,
+    RunActionResult,
+    RunDetail,
+    RunInfo,
+    RunList,
+    ScriptList,
+    SubscriptionInfo,
+    SubscriptionList,
+    SubscriptionTestReport,
+)
+from udl.automations.runs import RunStatus
+from udl.automations.runtime import AutomationState, RuntimeStatus
 from udl.chains.models import FetchMode, TagChain
 from udl.chains.shorthand import format_steps
+from udl.config import format_duration
 from udl.core.models import (
     ChainReport,
     ChainSuggestions,
     ConfigInfo,
     DatabaseList,
+    Deleted,
     DownloadBatch,
     DownloadList,
     ImportedChains,
@@ -532,6 +552,291 @@ def settings(console: Console, info: PluginSettingsInfo) -> None:
 def config(console: Console, info: ConfigInfo) -> None:
     """The settings, as JSON (secrets hidden)."""
     console.print_json(info.settings.model_dump_json())
+
+
+# ---------------------------------------------------------------------------------------------
+# Automations
+# ---------------------------------------------------------------------------------------------
+
+_RUN_STATUS: Final[dict[RunStatus, tuple[str, str]]] = {
+    RunStatus.QUEUED: ("…", "dim"),
+    RunStatus.RUNNING: ("▶", "blue"),
+    RunStatus.AWAITING_APPROVAL: ("?", "magenta"),
+    RunStatus.SUCCEEDED: ("✓", "green"),
+    RunStatus.FAILED: ("✗", "red"),
+    RunStatus.CANCELLED: ("⊘", "yellow"),
+    RunStatus.SKIPPED: ("-", "dim"),
+}
+_EVENT_STATUS: Final[dict[EventStatus, tuple[str, str]]] = {
+    EventStatus.PENDING: ("…", "dim"),
+    EventStatus.DISPATCHED: ("✓", "green"),
+    EventStatus.DROPPED: ("✗", "yellow"),
+}
+
+
+def _marked[S: enum.Enum](status: S, marks: dict[S, tuple[str, str]]) -> str:
+    mark, style = marks[status]
+    return f"[{style}]{mark} {status.value}[/]"
+
+
+def _json(value: object) -> str:
+    return escape(json.dumps(value, ensure_ascii=False, indent=2, default=str))
+
+
+def _lines(console: Console, rows: list[tuple[str, str]]) -> None:
+    grid = Table.grid(padding=(0, 2))
+    for name, value in rows:
+        grid.add_row(f"[bold]{name}[/]", value)
+    console.print(grid)
+
+
+def event_types(console: Console, listed: EventTypeList) -> None:
+    """The event types, and the fields a filter can name."""
+    table = Table("Type", "From", "What", _folded("Fields"))
+    for found in listed.types:
+        fields = ", ".join(field.path for field in found.fields) or "[dim](any)[/]"
+        table.add_row(found.name, found.source, escape(found.summary), fields)
+    console.print(table)
+
+
+def events(console: Console, listed: EventList) -> None:
+    """The events, newest first."""
+    table = Table("When", "Type", _folded("Subject"), "Status", "Id")
+    for found in listed.events:
+        table.add_row(
+            _when(found.occurred_at),
+            found.type,
+            escape(found.subject),
+            _marked(found.status, _EVENT_STATUS),
+            str(found.id),
+        )
+    console.print(table)
+    if not listed.events:
+        console.print("No events.")
+
+
+def event(console: Console, shown: EventInfo) -> None:
+    """An event: what happened, and how it was dispatched."""
+    rows = [
+        ("Event", str(shown.id)),
+        ("Type", shown.type),
+        ("Subject", escape(shown.subject)),
+        ("From", shown.source),
+        ("Happened", _when(shown.occurred_at)),
+        ("Status", _marked(shown.status, _EVENT_STATUS)),
+    ]
+    if shown.dropped_reason:
+        rows.append(("Dropped", escape(shown.dropped_reason)))
+    if shown.caused_by:
+        rows.append(("Caused by", f"the run {shown.caused_by} (depth {shown.depth})"))
+    rows.append(("Data", _json(shown.data)))
+    _lines(console, rows)
+
+
+def event_detail(console: Console, detail: EventDetail) -> None:
+    """An event and the runs it started."""
+    event(console, detail.event)
+    if detail.runs:
+        runs(console, RunList(runs=detail.runs))
+
+
+def runs(console: Console, listed: RunList) -> None:
+    """The runs, newest first."""
+    table = Table("Queued", "Action", "For", "Status", _folded("What came of it"), "Id")
+    for found in listed.runs:
+        said = found.summary
+        if found.error is not None:
+            said = found.error.message
+        elif found.skipped_reason:
+            said = found.skipped_reason
+        table.add_row(
+            _when(found.queued_at),
+            found.action,
+            escape(found.subscription or found.event_type or "(asked for)"),
+            _marked(found.status, _RUN_STATUS),
+            escape(said),
+            str(found.id),
+        )
+    console.print(table)
+    if not listed.runs:
+        console.print("No runs.")
+
+
+def run(console: Console, shown: RunInfo) -> None:
+    """A run: where it is, what it gave and logged, and why it failed."""
+    rows = [
+        ("Run", str(shown.id)),
+        ("Action", f"{shown.action} [dim]({shown.plugin})[/]"),
+        ("Status", _marked(shown.status, _RUN_STATUS)),
+        ("Attempt", str(shown.attempt)),
+    ]
+    if shown.subscription:
+        rows.append(("Subscription", shown.subscription))
+    if shown.event_id:
+        rows.append(("Event", f"{shown.event_id} [dim]({shown.event_type})[/]"))
+    for name, at in (("Started", shown.started_at), ("Ended", shown.finished_at)):
+        if at is not None:
+            rows.append((name, _when(at)))
+    if shown.next_try_at is not None:
+        rows.append(("Next try", _when(shown.next_try_at)))
+    if shown.summary:
+        rows.append(("Summary", escape(shown.summary)))
+    if shown.skipped_reason:
+        rows.append(("Skipped", escape(shown.skipped_reason)))
+    if shown.error is not None:
+        rows.append(("Error", _error(shown.error)))
+    if isinstance(shown, RunDetail):
+        if shown.output is not None:
+            rows.append(("Output", _json(shown.output)))
+        if shown.log:
+            rows.append(("Log", escape(shown.log.rstrip())))
+    _lines(console, rows)
+
+
+def run_result(console: Console, result: RunActionResult) -> None:
+    """A run asked for, or (a dry run) the options it would have run with."""
+    if result.run is not None:
+        run(console, result.run)
+    else:
+        console.print("Dry run: the action would run with these options.")
+        console.print(_json(result.options))
+
+
+def subscriptions(console: Console, listed: SubscriptionList) -> None:
+    """The subscriptions, by name."""
+    table = Table("Name", "On", _folded("Where"), "Runs", "Throttle", "Enabled")
+    for found in listed.subscriptions:
+        table.add_row(
+            found.name,
+            "\n".join(found.events),
+            escape(found.filter_text or ""),
+            "\n".join(found.actions),
+            str(found.throttle or ""),
+            _yes(found.enabled),
+        )
+    console.print(table)
+    if not listed.subscriptions:
+        console.print("No subscriptions: `udl subs set` makes one.")
+
+
+def subscription(console: Console, info: SubscriptionInfo) -> None:
+    """A subscription."""
+    rows = [
+        ("Subscription", info.name),
+        ("On", ", ".join(info.events)),
+        ("Accounts", ", ".join(info.accounts) if info.accounts is not None else "any"),
+        ("Where", escape(info.filter_text or "(every event)")),
+        ("Runs", ", ".join(info.actions)),
+        ("Enabled", _yes(info.enabled)),
+    ]
+    if info.description:
+        rows.insert(1, ("About", escape(info.description)))
+    if info.throttle is not None:
+        rows.append(("Throttle", str(info.throttle)))
+    if info.source_filter is not None:
+        rows.append(("Source filter", _json(info.source_filter)))
+    _lines(console, rows)
+
+
+def subscription_test(console: Console, report: SubscriptionTestReport) -> None:
+    """What a subscription would have matched."""
+    if report.filter is not None:
+        console.print(f"Where: {escape(report.filter)}")
+    for problem in report.problems:
+        console.print(f"[yellow]![/] {escape(problem)}")
+    table = Table("When", "Type", _folded("Subject"), "Matched", _folded("Failed"))
+    for found in report.events:
+        table.add_row(
+            _when(found.event.occurred_at),
+            found.event.type,
+            escape(found.event.subject),
+            _yes(found.matched),
+            escape(found.failed or ""),
+        )
+    console.print(table)
+    matched = sum(1 for found in report.events if found.matched)
+    console.print(f"It would have matched {matched} of {len(report.events)} events.")
+
+
+def actions(console: Console, listed: ActionList) -> None:
+    """The actions, by name."""
+    table = Table("Name", "Kind", "Run by", "Enabled", _folded("Warnings"))
+    for found in listed.actions:
+        table.add_row(
+            found.name,
+            found.plugin,
+            "\n".join(found.used_by),
+            _yes(found.enabled),
+            escape("\n".join(found.warnings)),
+        )
+    console.print(table)
+    if not listed.actions:
+        console.print("No actions: `udl actions set` makes one.")
+
+
+def action(console: Console, info: ActionInfo) -> None:
+    """An action: its kind and options (secrets hidden)."""
+    rows = [
+        ("Action", info.name),
+        ("Kind", info.plugin),
+        ("Options", _json(info.options)),
+        ("Run by", ", ".join(info.used_by) or "[dim](no subscription)[/]"),
+        ("Timeout", format_duration(info.timeout)),
+        ("Retries", str(info.retries)),
+        ("At once", str(info.max_concurrent)),
+        ("Enabled", _yes(info.enabled)),
+    ]
+    if info.description:
+        rows.insert(1, ("About", escape(info.description)))
+    _lines(console, rows)
+    for warning in info.warnings:
+        console.print(f"[yellow]![/] {escape(warning)}")
+
+
+def scripts(console: Console, listed: ScriptList) -> None:
+    """The programs script actions may run."""
+    if not listed.exists:
+        console.print(
+            f"There is no scripts_dir ({escape(str(listed.dir))}) yet: make it, and put the "
+            "programs script actions run in it."
+        )
+        return
+    table = Table("Name", "Executable", "Size", "Changed")
+    for found in listed.scripts:
+        table.add_row(
+            escape(found.name), _yes(found.executable), decimal(found.size), _when(found.modified)
+        )
+    console.print(f"In {escape(str(listed.dir))}:")
+    console.print(table)
+
+
+def status(console: Console, shown: RuntimeStatus) -> None:
+    """Who runs the automations, and what waits."""
+    said = {
+        AutomationState.RUNNING: "[green]running here[/]",
+        AutomationState.ELSEWHERE: f"running in [bold]{escape(shown.holder or '')}[/]",
+        AutomationState.STOPPED: "[yellow]stopped[/]: nothing runs them (start `udl serve`)",
+        AutomationState.DISABLED: "disabled ([automations] enabled = false)",
+    }[shown.automations]
+    rows = [
+        ("Automations", said),
+        (
+            "Runs",
+            f"{shown.queued_runs} queued, {shown.running_runs} running, "
+            f"{shown.waiting_runs} waiting for approval",
+        ),
+        ("Events", f"{shown.pending_events} pending"),
+    ]
+    if shown.last_dispatch is not None:
+        rows.append(("Last dispatch", _when(shown.last_dispatch)))
+    if shown.lease_expires_at is not None and shown.automations is not AutomationState.STOPPED:
+        rows.append(("Lease until", _when(shown.lease_expires_at)))
+    _lines(console, rows)
+
+
+def deleted(console: Console, done: Deleted) -> None:
+    """Whether something was deleted."""
+    console.print("Deleted." if done.deleted else "There was nothing to delete.")
 
 
 # ---------------------------------------------------------------------------------------------

@@ -161,6 +161,25 @@ def shown(console: Console, thing: Thing) -> None:
     console.print(f"{thing.key} says {thing.said!r}")
 
 
+class LabelRequest(_Model):
+    """Label a thing."""
+
+    key: str
+    """The thing's key."""
+    labels: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue])
+    """Its labels."""
+
+
+class Labelled(_Model):
+    key: str
+    labels: dict[str, JsonValue]
+
+
+async def label(service: UDLService, request: LabelRequest) -> Labelled:
+    """Label a thing (with KEY=VALUE pairs on the command line)."""
+    return Labelled(key=request.key, labels=request.labels)
+
+
 class Nothing(_Model):
     """Ask nothing."""
 
@@ -207,5 +226,14 @@ class Gizmo(SitePlugin):
             ),
             Operation.of(
                 caller, name="caller", title="Who called", hints=OperationHints(read_only=True)
+            ),
+            Operation.of(
+                label,
+                name="label",
+                title="Label a thing",
+                hints=OperationHints(idempotent=True),
+                cli=CLISpec(
+                    arguments=("key",), options={"labels": ("-L", "--label")}, pairs=("labels",)
+                ),
             ),
         ]

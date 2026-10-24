@@ -30,8 +30,8 @@ db = typer.Typer(
     rich_markup_mode="markdown",
 )
 plugins = typer.Typer(
-    help="udl's plugins: databases, downloaders, site plugins and secret stores, and their "
-    "settings.",
+    help="udl's plugins: databases, downloaders, site plugins, secret stores and kinds of "
+    "action, and their settings.",
     no_args_is_help=True,
     rich_markup_mode="markdown",
 )

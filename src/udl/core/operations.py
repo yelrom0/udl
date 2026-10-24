@@ -26,6 +26,8 @@ import importlib
 import inspect
 import logging
 import re
+import types
+import typing
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -79,9 +81,14 @@ class CLISpec:
     """How an operation's generated command looks, where the defaults (`udl <plugin> <op>`, an
     option per field) are not what it should be."""
 
-    path: tuple[str, ...] | None = None  # the command's words, e.g. ("gmail", "list")
+    # The command's words, e.g. ("gmail", "list"); one word is a command of udl's own (`status`).
+    path: tuple[str, ...] | None = None
     arguments: tuple[str, ...] = ()  # the fields given as positional arguments, in order
-    options: Mapping[str, str] = field(default_factory=dict[str, str])  # field: option name
+    # field: its option's name, or names (e.g. ("-O", "--option"))
+    options: Mapping[str, str | tuple[str, ...]] = field(
+        default_factory=dict[str, str | tuple[str, ...]]
+    )
+    pairs: tuple[str, ...] = ()  # dict fields given as KEY=VALUE, repeated (VALUE: JSON, else text)
     render: Callable[..., None] | None = None  # (console, response): how it is shown
 
 
@@ -180,6 +187,11 @@ class Operation:
                 f"A plugin called {namespace!r} cannot add operations: its name must be lower "
                 "case letters, digits, _ and -"
             )
+        if self.cli is not None and self.cli.path is not None and len(self.cli.path) < 2:
+            raise PluginError(
+                f"The {namespace} plugin's {self.name} command is {self.cli.path!r}: a plugin's "
+                "command is two words or more (udl <plugin> <op>; one word is udl's own)"
+            )
         if kind != INTEGRATIONS and self.name in _RESERVED:
             raise PluginError(
                 f"A plugin's operation is not called {self.name!r}: "
@@ -196,9 +208,12 @@ def _check_specs(
     fields = request.model_fields
     named: list[str] = []
     if cli is not None:
-        if cli.path is not None and len(cli.path) < 2:
-            raise PluginError(f"{what}: a command's path is two words or more, not {cli.path!r}")
-        named += [*cli.arguments, *cli.options]
+        if cli.path is not None and not cli.path:
+            raise PluginError(f"{what}: a command's path is a word or more, not {cli.path!r}")
+        named += [*cli.arguments, *cli.options, *cli.pairs]
+        for paired in cli.pairs:
+            if paired in fields and not _is_dict(fields[paired].annotation):
+                raise PluginError(f"{what}: {paired} is given as KEY=VALUE pairs, so it is a dict")
         for argument in cli.arguments:
             if argument in fields and _is_secret(fields[argument].annotation):
                 raise PluginError(
@@ -215,6 +230,16 @@ def _check_specs(
 
 def _is_secret(annotation: Any) -> bool:
     return annotation is SecretStr or SecretStr in getattr(annotation, "__args__", ())
+
+
+def _is_dict(annotation: Any) -> bool:
+    """Whether `annotation` (or None) is a dict (an alias of one too)."""
+    while isinstance(annotation, typing.TypeAliasType):
+        annotation = annotation.__value__
+    args = [arg for arg in typing.get_args(annotation) if arg is not type(None)]
+    if typing.get_origin(annotation) in (types.UnionType, typing.Union) and len(args) == 1:
+        return _is_dict(args[0])
+    return typing.get_origin(annotation) is dict or annotation is dict
 
 
 def route(op: Operation) -> APISpec:

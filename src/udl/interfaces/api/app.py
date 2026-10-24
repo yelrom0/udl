@@ -40,7 +40,7 @@ from udl.core.operations import Caller, current_caller
 from udl.core.service import ServiceFactory, UDLService
 from udl.errors import ErrorCode, ErrorInfo, UDLError, Unauthorized
 from udl.interfaces.adapters import add_routes
-from udl.interfaces.api.routes import chains, downloads, sites, system
+from udl.interfaces.api.routes import chains, downloads, events, sites, system
 from udl.interfaces.mcp.server import create_server
 from udl.interfaces.security import API_KEY_HEADER, check_api_key
 
@@ -59,6 +59,7 @@ _STATUS: Final[dict[ErrorCode, int]] = {
     ErrorCode.REAUTH_REQUIRED: 409,  # (the account needs connecting again)
     ErrorCode.INVALID_FILTER: 400,
     ErrorCode.ALREADY_EXISTS: 409,
+    ErrorCode.IN_USE: 409,  # (an action a subscription runs)
 }
 
 _LOCAL_HOSTS: Final = frozenset({"localhost"})
@@ -109,7 +110,8 @@ def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService)
     )
     app.state.settings = settings
     app.state.service = service
-    for router in (downloads.router, sites.router, chains.router, system.router):
+    # (The event stream before the generated routes: /events/stream is not /events/{id}.)
+    for router in (downloads.router, sites.router, chains.router, system.router, events.router):
         app.include_router(router)
     add_routes(app, service.operations)  # (the operations plugins add)
     # (A route rather than a mount, which would answer only /mcp/...)

@@ -20,11 +20,20 @@ from typer.core import TyperGroup, TyperOption
 
 # Local Imports
 from udl.config import Settings
-from udl.core.operations import OperationRegistry, valid_name
+from udl.core.operations import OperationRegistry, operations, valid_name
 from udl.core.service import UDLService
 from udl.errors import ConfigError
-from udl.interfaces.adapters import cli_groups
-from udl.interfaces.cli.commands import browser, chains, downloads, probe, servers, sites, system
+from udl.interfaces.adapters import add_commands, cli_groups
+from udl.interfaces.cli.commands import (
+    automations,
+    browser,
+    chains,
+    downloads,
+    probe,
+    servers,
+    sites,
+    system,
+)
 from udl.interfaces.cli.common import EXIT_USAGE, Runtime, fail
 from udl.log import configure_logging
 
@@ -173,6 +182,8 @@ app.add_typer(system.config, name="config")
 app.command("serve")(servers.serve)
 app.command("mcp")(servers.mcp)
 app.add_typer(browser.app, name="browser")
+# (The automations': events, subs, actions, runs and status.)
+add_commands(app, operations().values(), renderers=automations.RENDERERS, helps=automations.HELPS)
 
 
 def main() -> None:

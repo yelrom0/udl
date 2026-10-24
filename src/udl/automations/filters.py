@@ -270,7 +270,9 @@ def _from_text(value: object) -> object:
         raise ValueError(e.message) from e
 
 
-type FilterField = Annotated[Filter, BeforeValidator(_from_text, json_schema_input_type=str)]
+type FilterField = Annotated[
+    Filter, BeforeValidator(_from_text, json_schema_input_type=str | Filter)
+]
 """A filter, as its tree or as the shorthand."""
 
 

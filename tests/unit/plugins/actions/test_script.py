@@ -177,7 +177,7 @@ async def test_udl_s_config_file_is_named(tmp_path: Path, scripts: Path) -> None
     config = tmp_path / "config.toml"
     config.write_text(f'[automations]\nscripts_dir = "{scripts}"\n')
     script(scripts, "config.sh", 'echo "$UDL_CONFIG"')
-    harness = Harness(tmp_path)
+    harness = Harness(tmp_path, automations=AutomationsSettings(scripts_dir=scripts))
 
     async with harness.service(Settings.load(config)) as service:
         found = await run(ScriptAction(service), {"command": ["config.sh"]})

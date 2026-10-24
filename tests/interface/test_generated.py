@@ -88,6 +88,7 @@ def test_every_plugin_operation_has_its_cli_command(harness: Harness) -> None:
         "gizmo lookup": "gizmo_lookup",
         "gizmo keep": "gizmo_keep",
         "gizmo caller": "gizmo_caller",
+        "gizmo label": "gizmo_label",
     }
     things = groups["gizmo"].commands["things"]
     assert isinstance(things, TyperGroup)
@@ -398,6 +399,33 @@ def test_a_command_s_spec_gives_its_path_arguments_options_and_rendering(cli: CL
     assert json.loads(as_json.stdout) == {"key": "door", "said": ""}
     assert "--shout" in help_text.stdout
     assert "KEY" in help_text.stdout
+
+
+def test_a_dict_can_be_given_as_key_value_pairs(cli: CLI) -> None:
+    result = cli("gizmo", "label", "door", "-L", "colour=red", "--label", "sizes=[1, 2]", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {
+        "key": "door",
+        "labels": {"colour": "red", "sizes": [1, 2]},
+    }
+
+
+def test_a_pair_that_is_not_one_is_a_usage_error(cli: CLI) -> None:
+    result = cli("gizmo", "label", "door", "-L", "colour")
+
+    assert result.exit_code == 2
+    assert "KEY=VALUE" in result.output
+
+
+def test_pairs_add_to_the_input_s(cli: CLI, tmp_path: Path) -> None:
+    request = tmp_path / "label.yaml"
+    request.write_text("key: door\nlabels:\n  colour: red\n  size: 1\n")
+
+    result = cli("gizmo", "label", "-f", request, "-L", "size=2", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["labels"] == {"colour": "red", "size": 2}
 
 
 def test_an_argument_can_come_from_the_input(cli: CLI) -> None:

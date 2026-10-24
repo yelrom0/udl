@@ -7,10 +7,11 @@ The adapters udl makes for an operation from its request model, so the operation
 are offered by every interface without any interface code of their own:
 
 - the CLI: `udl <plugin> <op>` (or the path its CLISpec gives), with an option per field (a flag
-  for a yes or no, choices for one of a few, repeated for a list, JSON for anything else; a
-  secret is asked for, hidden, never given on the command line), or a positional argument where
-  its CLISpec says, `--input FILE` (`-` for stdin) for the whole request as JSON or YAML, and
-  `--json`;
+  for a yes or no, choices for one of a few, repeated for a list, KEY=VALUE pairs for a dict its
+  CLISpec says, JSON for anything else; a secret is asked for, hidden, never given on the command
+  line), or a positional argument where its CLISpec says, `--input FILE` (`-f`; `-` for stdin)
+  for the whole request as JSON or YAML, and `--json`. udl's own operations that have a CLISpec
+  are commands made the same way (add_commands());
 - the API: `POST /plugins/<plugin>/<op>` (an integration's: /integrations/…), or as its APISpec
   says: its path's `{field}`s are path parameters, and the rest of the request is the body (or,
   for a GET or DELETE, the query), typed in the OpenAPI schema;
@@ -25,7 +26,7 @@ import json
 import re
 import types
 import typing
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
@@ -41,7 +42,15 @@ from typer.core import TyperGroup
 # Local Imports
 from udl.core.operations import APISpec, Operation, OperationRegistry, route
 from udl.interfaces.cli import render
-from udl.interfaces.cli.common import JsonOption, mark, parse, run, show, usage_error
+from udl.interfaces.cli.common import (
+    JsonOption,
+    key_values,
+    mark,
+    parse,
+    run,
+    show,
+    usage_error,
+)
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -52,7 +61,7 @@ _OWN_OPTIONS: Final = frozenset({"input", "json", "help"})
 # as text).
 _PLAIN: Final = (str, int, float, Path)
 
-type FieldKind = Literal["flag", "plain", "list", "json", "json_list", "secret"]
+type FieldKind = Literal["flag", "plain", "list", "json", "json_list", "secret", "pairs"]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -70,6 +79,39 @@ def cli_groups(ops: OperationRegistry) -> dict[str, TyperGroup]:
         path = cli_path(op)
         _group(apps, path[:-1]).command(path[-1], help=op.description)(cli_command(op))
     return {path[0]: typer.main.get_group(app) for path, app in apps.items() if len(path) == 1}
+
+
+def add_commands(
+    app: typer.Typer,
+    ops: Iterable[Operation],
+    *,
+    renderers: Mapping[str, Callable[..., None]],
+    helps: Mapping[str, str],
+) -> None:
+    """Add to `app` (udl's) a command for each of udl's own operations in `ops` that has a
+    CLISpec path: a top-level one for a word (`udl status`), else in the group of its first
+    words (`udl events list`, the group's help from `helps`), shown by its renderer in
+    `renderers` (by operation name)."""
+    groups: dict[tuple[str, ...], typer.Typer] = {}
+    for op in ops:
+        if op.namespace is not None or op.cli is None or not op.cli.path:
+            continue
+        path = op.cli.path
+        command = cli_command(op, shown=renderers.get(op.name))
+        if len(path) == 1:
+            app.command(path[0], help=op.description)(command)
+            continue
+        for depth in range(1, len(path)):
+            group = path[:depth]
+            if group not in groups:
+                groups[group] = typer.Typer(
+                    help=helps.get(" ".join(group), f"udl {' '.join(group)}"),
+                    no_args_is_help=True,
+                    rich_markup_mode="markdown",
+                )
+                parent = app if depth == 1 else groups[group[:-1]]
+                parent.add_typer(groups[group], name=group[-1])
+        groups[path[:-1]].command(path[-1], help=op.description)(command)
 
 
 def cli_path(op: Operation) -> tuple[str, ...]:
@@ -96,22 +138,26 @@ class _Field:
     name: str
     kind: FieldKind
     parameter: inspect.Parameter
+    option_names: tuple[str, ...] = ()
 
 
-def cli_command(op: Operation) -> Callable[..., None]:
-    """The command that runs `op`: its options (and arguments) are the request's fields."""
+def cli_command(op: Operation, *, shown: Callable[..., None] | None = None) -> Callable[..., None]:
+    """The command that runs `op`: its options (and arguments) are the request's fields. Its
+    response is shown by `shown`, else its CLISpec's renderer, else render.model."""
     spec = op.cli
     arguments = spec.arguments if spec is not None else ()
-    names: Mapping[str, str] = spec.options if spec is not None else {}
+    names: Mapping[str, str | tuple[str, ...]] = spec.options if spec is not None else {}
+    pairs = spec.pairs if spec is not None else ()
     fields = [
         _field(name, op.request.model_fields[name], n, argument=True)
         for n, name in enumerate(arguments)
     ] + [
-        _field(name, info, n + len(arguments), option=names.get(name))
+        _field(name, info, n + len(arguments), option=names.get(name), pairs=name in pairs)
         for n, (name, info) in enumerate(op.request.model_fields.items())
         if name not in _OWN_OPTIONS and name not in arguments
     ]
-    show_it = spec.render if spec is not None and spec.render is not None else render.model
+    show_it = shown or (spec.render if spec is not None and spec.render is not None else None)
+    show_it = show_it or render.model
 
     def command(ctx: typer.Context, **options: Any) -> None:
         values = _read_input(options.pop("input_file"))
@@ -124,6 +170,9 @@ def cli_command(op: Operation) -> Callable[..., None]:
                     values[found.name] = typer.prompt(
                         _label(found.name, info), hide_input=True, err=True
                     )
+            elif found.kind == "pairs" and given:
+                option = "/".join(found.option_names)
+                values[found.name] = {**values.get(found.name, {}), **key_values(given, option)}
             elif given is not None and given != [] and given != ():
                 values[found.name] = _value(found.kind, given)
         request = parse(op.request, **values)
@@ -142,6 +191,7 @@ def cli_command(op: Operation) -> Callable[..., None]:
                 str | None,
                 typer.Option(
                     "--input",
+                    "-f",
                     help="The whole request, as JSON or YAML, from FILE (- for stdin); the "
                     "options given beat it.",
                     metavar="FILE",
@@ -163,11 +213,18 @@ def cli_command(op: Operation) -> Callable[..., None]:
 
 
 def _field(
-    name: str, info: FieldInfo, n: int, *, argument: bool = False, option: str | None = None
+    name: str,
+    info: FieldInfo,
+    n: int,
+    *,
+    argument: bool = False,
+    option: str | tuple[str, ...] | None = None,
+    pairs: bool = False,
 ) -> _Field:
     """The option (or the positional argument) for the request field `name`."""
-    kind, python_type = _kind(info.annotation)
-    option = option or f"--{name.replace('_', '-')}"
+    kind, python_type = ("pairs", list[str] | None) if pairs else _kind(info.annotation)
+    names = (option,) if isinstance(option, str) else option or (f"--{name.replace('_', '-')}",)
+    option = next((found for found in names if found.startswith("--")), names[0])
     help_text = info.description or ""
     if argument:
         declared: Any = typer.Argument(help=help_text, metavar=name.upper(), show_default=False)
@@ -175,8 +232,15 @@ def _field(
         declared = typer.Option(f"{option}/--no-{option[2:]}", help=help_text, show_default=False)
     elif kind == "secret":
         declared = typer.Option(
-            option,
+            *names,
             help=f"{help_text} Asked for, hidden, when given (or give it in --input).".strip(),
+            show_default=False,
+        )
+    elif kind == "pairs":
+        declared = typer.Option(
+            *names,
+            help=f"{help_text} KEY=VALUE (VALUE is JSON, else text); repeat for more.".strip(),
+            metavar="KEY=VALUE",
             show_default=False,
         )
     else:
@@ -187,14 +251,14 @@ def _field(
         default = _default(info)
         if default is not None:
             help_text = f"{help_text} [default: {default}]".strip()
-        declared = typer.Option(option, help=help_text, show_default=False)
+        declared = typer.Option(*names, help=help_text, show_default=False)
     parameter = inspect.Parameter(
         f"field_{n}",
         inspect.Parameter.KEYWORD_ONLY,
         annotation=Annotated[python_type, declared],
         default=False if kind == "secret" else None,
     )
-    return _Field(name=name, kind=kind, parameter=parameter)
+    return _Field(name=name, kind=kind, parameter=parameter, option_names=names)
 
 
 def _kind(annotation: Any) -> tuple[FieldKind, Any]:

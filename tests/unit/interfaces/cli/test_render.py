@@ -20,6 +20,15 @@ from pydantic import BaseModel, SecretStr
 from rich.console import Console
 
 # Local Imports
+from udl.automations.models import (
+    ActionInfo,
+    EventInfo,
+    RunDetail,
+    RunList,
+    SubscriptionInfo,
+    SubscriptionTestReport,
+)
+from udl.automations.runtime import AutomationState, RuntimeStatus
 from udl.chains.models import FetchMode, StepTrace, TagChain
 from udl.chains.suggest import ChainSuggestion
 from udl.core.models import (
@@ -446,3 +455,150 @@ def test_any_response_shows_each_field() -> None:
     assert "hidden" not in found
     assert '{"a": 1}' in found
     assert "x, y" in found
+
+
+# ---------------------------------------------------------------------------------------------
+# Automations
+# ---------------------------------------------------------------------------------------------
+
+
+def _event(**fields: object) -> EventInfo:
+    return EventInfo.model_validate(
+        {
+            "id": uuid.uuid4(),
+            "type": "custom.hello",
+            "source": "cli",
+            "account_id": None,
+            "occurred_at": NOW,
+            "stored_at": NOW,
+            "subject": "Hello",
+            "data": {"name": "x"},
+            "dedupe_key": None,
+            "caused_by": None,
+            "depth": 0,
+            "status": "pending",
+            "dispatched_at": None,
+            "dropped_reason": None,
+            **fields,
+        }
+    )
+
+
+def _run(**fields: object) -> RunDetail:
+    return RunDetail.model_validate(
+        {
+            "id": uuid.uuid4(),
+            "action": "hello",
+            "plugin": "fake",
+            "event_id": None,
+            "event_type": None,
+            "subscription": None,
+            "status": "queued",
+            "attempt": 0,
+            "next_try_at": None,
+            "queued_at": NOW,
+            "started_at": None,
+            "finished_at": None,
+            "summary": "",
+            "error": None,
+            "skipped_reason": None,
+            "output": None,
+            "log": "",
+            "depth": 0,
+            "runner": None,
+            **fields,
+        }
+    )
+
+
+def test_an_event_says_why_it_was_dropped_and_what_caused_it() -> None:
+    run_id = uuid.uuid4()
+
+    text = shown(
+        render.event,
+        _event(status="dropped", dropped_reason="it is too deep", caused_by=run_id, depth=9),
+    )
+
+    assert "it is too deep" in text
+    assert f"the run {run_id} (depth 9)" in text
+
+
+def test_a_run_says_when_it_is_tried_again_why_it_was_skipped_and_what_it_logged() -> None:
+    retried = shown(render.run, _run(next_try_at=NOW, attempt=1, log="first line\n"))
+    skipped = shown(render.run, _run(status="skipped", skipped_reason="throttled: 1 per 1h"))
+    listed = shown(render.runs, RunList(runs=[_run(skipped_reason="throttled: 1 per 1h")]))
+
+    assert "Next try" in retried
+    assert "first line" in retried
+    assert "throttled: 1 per 1h" in skipped
+    assert "throttled: 1 per 1h" in listed
+
+
+def test_a_subscription_shows_its_source_filter_and_description() -> None:
+    info = SubscriptionInfo.model_validate(
+        {
+            "id": uuid.uuid4(),
+            "name": "bank",
+            "description": "Bank mail",
+            "events": ["gmail.message.received"],
+            "actions": ["file"],
+            "source_filter": {"query": "has:attachment"},
+            "filter_text": None,
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+    )
+
+    text = shown(render.subscription, info)
+
+    assert "Bank mail" in text
+    assert "has:attachment" in text
+    assert "(every event)" in text
+
+
+def test_a_subscription_test_without_a_filter_says_its_problems() -> None:
+    report = SubscriptionTestReport(
+        filter=None, tree=None, problems=["No event type is 'x'."], events=[]
+    )
+
+    text = shown(render.subscription_test, report)
+
+    assert "No event type is 'x'." in text
+    assert "Where" not in text
+
+
+def test_an_action_shows_its_description() -> None:
+    info = ActionInfo.model_validate(
+        {
+            "id": uuid.uuid4(),
+            "name": "hello",
+            "description": "Says hello",
+            "plugin": "fake",
+            "options_schema": {},
+            "used_by": [],
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+    )
+
+    text = shown(render.action, info)
+
+    assert "Says hello" in text
+    assert "(no subscription)" in text
+
+
+def test_the_status_says_who_holds_the_lease_and_the_last_dispatch() -> None:
+    elsewhere = RuntimeStatus(
+        automations=AutomationState.ELSEWHERE,
+        holder="other:1:a",
+        lease_expires_at=NOW,
+        last_dispatch=NOW,
+    )
+    off = RuntimeStatus(automations=AutomationState.DISABLED)
+
+    text = shown(render.status, elsewhere)
+
+    assert "other:1:a" in text
+    assert "Last dispatch" in text
+    assert "Lease until" in text
+    assert "disabled" in shown(render.status, off)

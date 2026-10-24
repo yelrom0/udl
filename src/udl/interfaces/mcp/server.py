@@ -58,6 +58,12 @@ and `set_site_chain` saves it, so `download` follows it from then on. `export_ch
 `import_chains` move chains as YAML files.
 - A site that needs a login: the user signs in once on their machine, with \
 `udl browser login <url>`; udl then sends the site's cookies.
+- Automations: events (a download ended, a run ended, `custom.<name>` events of your own: \
+`emit_event`) run actions (a script, an operation, a webhook, an event, a notification: \
+`set_action`) through subscriptions (`set_subscription`: event types, and a filter on their \
+data such as `name == "x" and not quiet`; `list_event_types` gives each type's fields). \
+`test_subscription` tries one on recent events; `list_runs` and `get_run` follow what ran; \
+`get_status` says which udl runs them (`udl serve`).
 """
 
 

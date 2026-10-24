@@ -43,6 +43,7 @@ class ErrorCode(StrEnum):
     INVALID_FILTER = "invalid_filter"
     ALREADY_EXISTS = "already_exists"
     ACTION_FAILED = "action_failed"
+    IN_USE = "in_use"
 
 
 class ErrorInfo(BaseModel):
@@ -251,6 +252,12 @@ class AlreadyExists(UDLError):
     udl's own (a subscription named schedule:<name>, which belongs to that schedule)."""
 
     code = ErrorCode.ALREADY_EXISTS
+
+
+class InUse(UDLError):
+    """What was asked to be deleted is used by something else (an action a subscription runs)."""
+
+    code = ErrorCode.IN_USE
 
 
 class ActionFailed(UDLError):

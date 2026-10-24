@@ -28,9 +28,42 @@ from pydantic import BaseModel, JsonValue
 
 # Local Imports
 from udl.automations.bus import EventBus, NewEvent
-from udl.automations.events import DownloadEventData, EventTypes
+from udl.automations.events import DownloadEventData, EventTypeList, EventTypes
+from udl.automations.manager import Automations
+from udl.automations.models import (
+    ActionInfo,
+    ActionList,
+    ActionRequest,
+    EmitEventRequest,
+    EventDetail,
+    EventInfo,
+    EventList,
+    EventRequest,
+    ListActionsRequest,
+    ListEventsRequest,
+    ListEventTypesRequest,
+    ListRunsRequest,
+    ListScriptsRequest,
+    ListSubscriptionsRequest,
+    ReplayEventRequest,
+    RunActionRequest,
+    RunActionResult,
+    RunDetail,
+    RunInfo,
+    RunList,
+    RunRequest,
+    ScriptList,
+    SetActionRequest,
+    SetSubscriptionRequest,
+    StatusRequest,
+    SubscriptionInfo,
+    SubscriptionList,
+    SubscriptionRequest,
+    SubscriptionTestReport,
+    SubscriptionTestRequest,
+)
 from udl.automations.runner import ActionRunner
-from udl.automations.runtime import AutomationRuntime
+from udl.automations.runtime import AutomationRuntime, RuntimeStatus
 from udl.chains.executor import ChainRun, ChainRunner
 from udl.chains.files import read_chains, write_chains
 from udl.chains.models import FetchMode, SiteChain, StepTrace, TagChain
@@ -81,7 +114,7 @@ from udl.core.models import (
     SyncDatabasesRequest,
     SyncReport,
 )
-from udl.core.operations import OperationHints, OperationRegistry, operation
+from udl.core.operations import APISpec, CLISpec, OperationHints, OperationRegistry, operation
 from udl.core.paths import check_output_dir
 from udl.core.plugin_settings import PluginSettingsManager
 from udl.core.resolver import Resolver
@@ -178,6 +211,7 @@ class UDLService:
         self.runner = ActionRunner(self)
         self.runtime: AutomationRuntime | None = None
         """The runtime that runs the automations in this udl, when one does (`udl serve`)."""
+        self.automations = Automations(self)
         self.jobs = JobManager(
             self.executor,
             max_concurrent=settings.max_concurrent,
@@ -912,6 +946,285 @@ class UDLService:
         would run with is checked before anything is kept.
         """
         return await self._plugin_settings.change(request)
+
+    # -- events --------------------------------------------------------------------------------
+
+    @operation(
+        "list_event_types",
+        title="List the event types",
+        hints=OperationHints(read_only=True),
+        cli=CLISpec(path=("events", "types"), arguments=("match",)),
+        api=APISpec(method="GET", path="/event-types"),
+    )
+    async def list_event_types(self, request: ListEventTypesRequest) -> EventTypeList:
+        """List the kinds of event udl knows (udl's own, its plugins', and custom.* ones of
+        your own): what each is, its data's JSON Schema and an example, and its fields, as the
+        dotted paths a subscription's filter names (e.g. from.address)."""
+        return self.automations.event_types(request)
+
+    @operation(
+        "list_events",
+        title="List the events",
+        hints=OperationHints(read_only=True),
+        cli=CLISpec(path=("events", "list")),
+        api=APISpec(method="GET", path="/events"),
+    )
+    async def list_events(self, request: ListEventsRequest) -> EventList:
+        """List what happened (the events udl stored), newest first: optionally of some types
+        (a glob, e.g. udl.action.*), from one source, pending, dispatched or dropped, or in a
+        time range."""
+        return await self.automations.list_events(request)
+
+    @operation(
+        "get_event",
+        title="Show an event",
+        hints=OperationHints(read_only=True),
+        cli=CLISpec(path=("events", "show"), arguments=("id",)),
+        api=APISpec(method="GET", path="/events/{id}"),
+    )
+    async def get_event(self, request: EventRequest) -> EventDetail:
+        """Show an event (its data, and how it was dispatched) and the runs it started."""
+        return await self.automations.get_event(request)
+
+    @operation(
+        "emit_event",
+        title="Emit an event",
+        hints=OperationHints(admin=True),
+        cli=CLISpec(path=("events", "emit"), arguments=("type",)),
+        api=APISpec(method="POST", path="/events", status=201),
+    )
+    async def emit_event(self, request: EmitEventRequest) -> EventInfo:
+        """Publish an event of your own (custom.<name>, with any JSON object as its data): the
+        subscriptions that match it run their actions (in the udl that runs the automations).
+        An event with a dedupe_key seen before is not published again (its first is given)."""
+        return await self.automations.emit_event(request)
+
+    @operation(
+        "replay_event",
+        title="Replay an event",
+        hints=OperationHints(admin=True),
+        cli=CLISpec(path=("events", "replay"), arguments=("id",)),
+        api=APISpec(method="POST", path="/events/{id}/replay"),
+    )
+    async def replay_event(self, request: ReplayEventRequest) -> RunList:
+        """Dispatch an event again (to every subscription that matches it now, or to one): each
+        matching action gets a new run."""
+        return await self.automations.replay_event(request)
+
+    # -- subscriptions -------------------------------------------------------------------------
+
+    @operation(
+        "list_subscriptions",
+        title="List the subscriptions",
+        hints=OperationHints(read_only=True),
+        cli=CLISpec(path=("subs", "list")),
+        api=APISpec(method="GET", path="/subscriptions"),
+    )
+    async def list_subscriptions(self, request: ListSubscriptionsRequest) -> SubscriptionList:
+        """List the subscriptions (which events run which actions), by name."""
+        return await self.automations.list_subscriptions(request)
+
+    @operation(
+        "get_subscription",
+        title="Show a subscription",
+        hints=OperationHints(read_only=True),
+        cli=CLISpec(path=("subs", "show"), arguments=("name",)),
+        api=APISpec(method="GET", path="/subscriptions/{name}"),
+    )
+    async def get_subscription(self, request: SubscriptionRequest) -> SubscriptionInfo:
+        """Show a subscription: the events it wants (types, accounts, filter) and the actions
+        it runs."""
+        return await self.automations.get_subscription(request)
+
+    @operation(
+        "set_subscription",
+        title="Save a subscription",
+        hints=OperationHints(idempotent=True, admin=True),
+        cli=CLISpec(
+            path=("subs", "set"),
+            arguments=("name",),
+            options={
+                "events": "--on",
+                "actions": "--action",
+                "filter": "--where",
+                "accounts": "--account",
+            },
+        ),
+        api=APISpec(method="PUT", path="/subscriptions/{name}"),
+    )
+    async def set_subscription(self, request: SetSubscriptionRequest) -> SubscriptionInfo:
+        """Save a subscription: when an event of these types (or globs, e.g. gmail.*) happens,
+        in these accounts (or any), and its data passes the filter, run these actions (each a
+        run of its own), at most as often as the throttle says.
+
+        The filter is a tree, or a line of shorthand: conditions on the event's data (dotted
+        paths, e.g. from.address) with == != contains startswith endswith ~ (a regex) in < <= >
+        >= exists, joined by and, or, not and parentheses; strings in double quotes (i"..."
+        for any case). E.g. `from.address endswith "@bank.com" and not sent_by_udl`. It is
+        checked against the event types' fields, and each action's options against each type.
+        """
+        return await self.automations.set_subscription(request)
+
+    @operation(
+        "test_subscription",
+        title="Test a subscription",
+        hints=OperationHints(read_only=True),
+        cli=CLISpec(path=("subs", "test"), arguments=("name",)),
+        api=APISpec(method="POST", path="/subscriptions/test"),
+    )
+    async def try_subscription(self, request: SubscriptionTestRequest) -> SubscriptionTestReport:
+        """Try a subscription (a saved one, or one given here, unsaved) on an event, or on the
+        latest events of its types: whether it would have matched each, and if not, what did
+        not (its type, its account, or the part of its filter), and any problems saving it
+        would have."""
+        return await self.automations.try_subscription(request)
+
+    @operation(
+        "delete_subscription",
+        title="Delete a subscription",
+        hints=OperationHints(destructive=True, idempotent=True, admin=True),
+        cli=CLISpec(path=("subs", "rm"), arguments=("name",)),
+        api=APISpec(method="DELETE", path="/subscriptions/{name}"),
+    )
+    async def delete_subscription(self, request: SubscriptionRequest) -> Deleted:
+        """Delete a subscription (its actions, events and runs are kept)."""
+        return await self.automations.delete_subscription(request)
+
+    # -- actions -------------------------------------------------------------------------------
+
+    @operation(
+        "list_actions",
+        title="List the actions",
+        hints=OperationHints(read_only=True),
+        cli=CLISpec(path=("actions", "list"), options={"plugin": "--kind"}),
+        api=APISpec(method="GET", path="/actions"),
+    )
+    async def list_actions(self, request: ListActionsRequest) -> ActionList:
+        """List the actions (named things to run: a script, an operation, a webhook...), by
+        name, with the subscriptions that run each."""
+        return await self.automations.list_actions(request)
+
+    @operation(
+        "list_scripts",
+        title="List the scripts",
+        hints=OperationHints(read_only=True),
+        cli=CLISpec(path=("actions", "scripts")),
+        api=APISpec(method="GET", path="/actions/scripts"),
+    )
+    async def list_scripts(self, request: ListScriptsRequest) -> ScriptList:
+        """List the programs in [automations] scripts_dir: the only ones script actions run."""
+        return await asyncio.to_thread(self.automations.list_scripts, request)
+
+    @operation(
+        "get_action",
+        title="Show an action",
+        hints=OperationHints(read_only=True),
+        cli=CLISpec(path=("actions", "show"), arguments=("name",)),
+        api=APISpec(method="GET", path="/actions/{name}"),
+    )
+    async def get_action(self, request: ActionRequest) -> ActionInfo:
+        """Show an action: its kind and options (secrets hidden), its kind's options' JSON
+        Schema, the subscriptions that run it, and what may keep it from running."""
+        return await self.automations.get_action(request)
+
+    @operation(
+        "set_action",
+        title="Save an action",
+        hints=OperationHints(idempotent=True, admin=True),
+        cli=CLISpec(
+            path=("actions", "set"),
+            arguments=("name",),
+            options={"plugin": "--kind", "options": ("-O", "--option")},
+            pairs=("options",),
+        ),
+        api=APISpec(method="PUT", path="/actions/{name}"),
+    )
+    async def set_action(self, request: SetActionRequest) -> ActionInfo:
+        """Save an action: a named thing to run, of a kind (script: a program from scripts_dir;
+        operation: one of udl's operations, never an admin one; webhook: an HTTP request; emit:
+        an event of your own; notify: a desktop notification), with its kind's options.
+
+        Texts in the options are templates, rendered with each event (e.g. "{{ event.data.url
+        }}", "{{ event.subject }}"); they are checked against the event types of the
+        subscriptions that run it. Secret options (a webhook's secret_headers) go to the secret
+        store, never to a database.
+        """
+        return await self.automations.set_action(request)
+
+    @operation(
+        "run_action",
+        title="Run an action",
+        hints=OperationHints(open_world=True, admin=True),
+        cli=CLISpec(path=("actions", "run"), arguments=("name",)),
+        api=APISpec(method="POST", path="/actions/{name}/run"),
+    )
+    async def run_action(self, request: RunActionRequest) -> RunActionResult:
+        """Run an action now, in this udl (for an event, if one is given), and give its run as
+        it ended; with dry_run, only its options rendered with the event."""
+        return await self.automations.run_action(request)
+
+    @operation(
+        "delete_action",
+        title="Delete an action",
+        hints=OperationHints(destructive=True, idempotent=True, admin=True),
+        cli=CLISpec(path=("actions", "rm"), arguments=("name",)),
+        api=APISpec(method="DELETE", path="/actions/{name}"),
+    )
+    async def delete_action(self, request: ActionRequest) -> Deleted:
+        """Delete an action, and its secrets (its runs are kept). An action a subscription runs
+        is not deleted (in_use): take it out of the subscription first."""
+        return await self.automations.delete_action(request)
+
+    # -- runs ----------------------------------------------------------------------------------
+
+    @operation(
+        "list_runs",
+        title="List the runs",
+        hints=OperationHints(read_only=True),
+        cli=CLISpec(path=("runs", "list")),
+        api=APISpec(method="GET", path="/runs"),
+    )
+    async def list_runs(self, request: ListRunsRequest) -> RunList:
+        """List the runs (each an action that ran, or will, for an event), newest first:
+        optionally only those with a status, of an action or subscription, or for an event."""
+        return await self.automations.list_runs(request)
+
+    @operation(
+        "get_run",
+        title="Show a run",
+        hints=OperationHints(read_only=True),
+        cli=CLISpec(path=("runs", "show"), arguments=("id",)),
+        api=APISpec(method="GET", path="/runs/{id}"),
+    )
+    async def get_run(self, request: RunRequest) -> RunDetail:
+        """Show a run: where it is, what it gave (its output), what it logged, and why it
+        failed."""
+        return await self.automations.get_run(request)
+
+    @operation(
+        "cancel_run",
+        title="Cancel a run",
+        hints=OperationHints(destructive=True, idempotent=True, admin=True),
+        cli=CLISpec(path=("runs", "cancel"), arguments=("id",)),
+        api=APISpec(method="DELETE", path="/runs/{id}"),
+    )
+    async def cancel_run(self, request: RunRequest) -> RunInfo:
+        """Cancel a run: a queued one at once, a running one as soon as it stops (in the udl
+        that runs it). A run that ended is left as it is."""
+        return await self.automations.cancel_run(request)
+
+    @operation(
+        "get_status",
+        title="Show the automations' status",
+        hints=OperationHints(read_only=True),
+        cli=CLISpec(path=("status",)),
+        api=APISpec(method="GET", path="/status"),
+    )
+    async def get_status(self, request: StatusRequest) -> RuntimeStatus:
+        """Say which udl runs the automations (running here, elsewhere, stopped: start `udl
+        serve`, or disabled) and what waits: queued, running and waiting runs, pending events,
+        and when an event was last dispatched."""
+        return await self.automations.status(request)
 
     @operation("get_config", title="Show the settings", hints=OperationHints(read_only=True))
     async def get_config(self, request: GetConfigRequest) -> ConfigInfo:

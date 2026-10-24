@@ -39,7 +39,14 @@ if TYPE_CHECKING:
 
 
 # The operations the Gizmo plugin adds.
-GIZMO = ["gizmo_echo", "gizmo_lookup", "gizmo_find", "gizmo_keep", "gizmo_caller"]
+GIZMO = [
+    "gizmo_echo",
+    "gizmo_lookup",
+    "gizmo_find",
+    "gizmo_keep",
+    "gizmo_caller",
+    "gizmo_label",
+]
 
 
 def gizmo_registry(*plugins: type[SitePlugin]) -> PluginRegistry:
@@ -79,6 +86,27 @@ def test_every_operation_says_whether_it_is_admin() -> None:
         "get_plugin_settings": False,
         "set_plugin_settings": True,
         "get_config": False,
+        # The automations': what changes them, or runs them, is admin.
+        "list_event_types": False,
+        "list_events": False,
+        "get_event": False,
+        "emit_event": True,
+        "replay_event": True,
+        "list_subscriptions": False,
+        "get_subscription": False,
+        "set_subscription": True,
+        "test_subscription": False,
+        "delete_subscription": True,
+        "list_actions": False,
+        "list_scripts": False,
+        "get_action": False,
+        "set_action": True,
+        "run_action": True,
+        "delete_action": True,
+        "list_runs": False,
+        "get_run": False,
+        "cancel_run": True,
+        "get_status": False,
     }
 
 
@@ -156,7 +184,9 @@ def test_an_operation_in_a_namespace_is_named_after_it() -> None:
     [
         ({"cli": CLISpec(arguments=("nope",))}, "nope"),
         ({"cli": CLISpec(options={"nope": "--x"})}, "nope"),
-        ({"cli": CLISpec(path=("one",))}, "path"),
+        ({"cli": CLISpec(path=())}, "path"),
+        ({"cli": CLISpec(pairs=("text",))}, "text"),  # (pairs make a dict, which text is not)
+        ({"cli": CLISpec(pairs=("nope",))}, "nope"),
         ({"cli": CLISpec(arguments=("token",))}, "token"),  # (a secret is never an argument)
         ({"api": APISpec(path="/things/{nope}")}, "nope"),
         ({"api": APISpec(method="TRACE")}, "TRACE"),
@@ -180,6 +210,27 @@ def test_a_plugin_s_operation_is_routed_by_its_kind() -> None:
         route(Operation.of(echo, name="echo", title="Echo", api=APISpec(path="/x/{text}"))).path
         == "/x/{text}"
     )
+
+
+def test_pairs_may_make_an_optional_dict() -> None:
+    class Tagged(BaseModel):
+        tags: dict[str, str] | None = None
+
+    async def tag(service: Service, request: Tagged) -> Found:
+        """Tag."""
+        raise AssertionError
+
+    op = Operation.of(tag, name="tag", title="Tag", cli=CLISpec(pairs=("tags",)))
+
+    assert op.cli is not None
+
+
+def test_a_plugin_s_command_is_in_its_own_group() -> None:
+    # (A one-word command is one of udl's own, such as `udl status`.)
+    op = Operation.of(echo, name="echo", title="Echo", cli=CLISpec(path=("echo",)))
+
+    with pytest.raises(PluginError, match="two words"):
+        op.in_namespace("gizmo", kind=SITES.group)
 
 
 def test_a_plugin_operation_called_settings_is_refused_unless_an_integration_s() -> None:
