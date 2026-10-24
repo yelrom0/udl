@@ -1,8 +1,8 @@
 # UDL: Automations, AI & Web UI Plan
 
 > udl grows from a downloader into a local automation hub. It connects **several Google and Slack
-> accounts**, turns what happens in them (and on a **schedule**) into **events**, and runs the **actions**
-> that **subscribe** to those events: scripts, udl operations, webhooks, or a **local AI** with its own prompts
+> accounts**, watches **web pages that publish nothing**, turns what happens in them (and on a **schedule**)
+> into **events**, and runs the **actions** that **subscribe** to those events: scripts, udl operations, webhooks, or a **local AI** with its own prompts
 > and guidance. Everything stays available through the **CLI**, the **HTTP API** and the **MCP server**, and a
 > **web UI** (React, served by FastAPI) joins them. The UI is built from **UI plugins**, so any plugin can
 > bring its own screens, built with whatever component library it likes.
@@ -77,54 +77,64 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [ ] 13.6 Operations: channels, read a channel or thread, search, send, react, users, save files, manifest
   - [ ] 13.7 Opt-in smoke tests against a real workspace
 
-- [ ] **Phase 14: Local AI**
-  - [ ] 14.1 `udl.ai` plugin kind: `AIProvider` base + contract suite + `FakeAI` (scripted); `AIProviderConnection` records
-  - [ ] 14.2 `ollama` provider: chat with tool calls, models, `keep_alive`, pulling a model
-  - [ ] 14.3 `openai-compatible` provider (llama.cpp's `llama-server`, LM Studio, vLLM…); any provider's optional `command` is started on demand and stopped when idle
-  - [ ] 14.4 Tools from operations: schemas from request models; `ToolPolicy` (allowlist; destructive / open-world tools wait for approval in `ask` mode and run unattended in `auto` mode; `admin` operations never, for now)
-  - [ ] 14.5 The agent loop: tool calls, step / time / size limits, the transcript kept on the run
-  - [ ] 14.6 Approvals (`ask` mode): a run waits (`awaiting_approval`), `decide_run`, a `udl.action.awaiting_approval` event, denied after a timeout
-  - [ ] 14.7 `Prompt` and `Guidance` records; how a prompt is put together (guidance by scope, the prompt, then the event as untrusted data)
-  - [ ] 14.8 The `ai` action
-  - [ ] 14.9 Operations (providers, models, prompts, guidance, `try_prompt`) via CLI, API and MCP
+- [ ] **Phase 14: Web-page watcher (`pages`)**
+  - [ ] 14.1 Fixture site: pages a test can change between checks (a list of posts, a price, an article), served with `ETag` / `Last-Modified`
+  - [ ] 14.2 Chains that give values: a tag chain (Phase 5) run for its last step's values (text, attributes, JSON) rather than media URLs, and within one element (an item)
+  - [ ] 14.3 `PageWatch`: a `pages` account (connected with `none`) that watches `items` + `fields`, a `value`, or the `page`'s text, static or in the browser, every so often
+  - [ ] 14.4 The watcher: conditional requests, the site's cookies, a baseline at the first check (nothing fires for what is already there); `pages.item.added`, `pages.value.changed` and `pages.page.changed`, each fired once
+  - [ ] 14.5 A watch that stops finding anything (the site changed its layout) reports `udl.account.error` once, naming the step, rather than going quiet
+  - [ ] 14.6 `pages_suggest`: find a page's repeated structures (posts, products, results) and propose `items` and `fields`, ranked, with Phase 5's stable selectors
+  - [ ] 14.7 Operations (`pages_preview`, `pages_suggest`, `pages_poll`) via CLI, API and MCP; `udl pages wizard <url>` (suggest → pick → preview → save, optionally with a subscription)
 
-- [ ] **Phase 15: Web UI foundations & UI plugins**
-  - [ ] 15.1 `web/` pnpm workspace and tooling: Vite + SWC, TypeScript strict, Biome, Vitest (+ coverage gate), Playwright, Tailwind CSS + daisyUI; `make web`, `make e2e`, and `make check` runs the web checks
-  - [ ] 15.2 Typed API client generated from udl's OpenAPI schema (`openapi-typescript` + `openapi-fetch`); `make check` fails when it is stale
-  - [ ] 15.3 FastAPI serves the UI at `/ui` (from the package, SPA fallback, CSP, cache headers), and a page saying how to build it when it isn't built
-  - [ ] 15.4 Web sessions: sign in with the API key → a session cookie; a CSRF header and an Origin check on writes
-  - [ ] 15.5 The shell: layout, TanStack Router (file routes, auth guard, a splat route for plugin pages), Zustand stores, light / dark / system theme
-  - [ ] 15.6 Live data: shared SSE connections feeding Zustand stores, reconnecting with backoff
-  - [ ] 15.7 `UIManifest` (Pydantic → JSON Schema → TypeScript), `ui` on every plugin kind, the `udl.ui` kind, local UI plugin dirs, `GET /ui/plugins.json`, UI availability in `list_plugins`
-  - [ ] 15.8 `@udl/ui-sdk`: `defineUIPlugin`, the mount contract, a React adapter, the plugin context, SDK version checks
-  - [ ] 15.9 The plugin host: `<PluginSlot>` (lazy import, Shadow DOM isolation, error boundary) and the contribution points
-  - [ ] 15.10 Proof: an example UI plugin built with shadcn/ui runs isolated inside the daisyUI shell (e2e); a template for new UI plugins
+- [ ] **Phase 15: Local AI**
+  - [ ] 15.1 `udl.ai` plugin kind: `AIProvider` base + contract suite + `FakeAI` (scripted); `AIProviderConnection` records
+  - [ ] 15.2 `ollama` provider: chat with tool calls, models, `keep_alive`, pulling a model
+  - [ ] 15.3 `openai-compatible` provider (llama.cpp's `llama-server`, LM Studio, vLLM…); any provider's optional `command` is started on demand and stopped when idle
+  - [ ] 15.4 Tools from operations: schemas from request models; `ToolPolicy` (allowlist; destructive / open-world tools wait for approval in `ask` mode and run unattended in `auto` mode; `admin` operations never, for now)
+  - [ ] 15.5 The agent loop: tool calls, step / time / size limits, the transcript kept on the run
+  - [ ] 15.6 Approvals (`ask` mode): a run waits (`awaiting_approval`), `decide_run`, a `udl.action.awaiting_approval` event, denied after a timeout
+  - [ ] 15.7 `Prompt` and `Guidance` records; how a prompt is put together (guidance by scope, the prompt, then the event as untrusted data)
+  - [ ] 15.8 The `ai` action
+  - [ ] 15.9 Operations (providers, models, prompts, guidance, `try_prompt`) via CLI, API and MCP
 
-- [ ] **Phase 16: Web UI for the downloader**
-  - [ ] 16.1 Dashboard (recent downloads, runs and events, next schedules, accounts needing attention, approvals; a widget slot)
-  - [ ] 16.2 Downloads: start downloads, live progress, history, cancel
-  - [ ] 16.3 Sites and strategies
-  - [ ] 16.4 Tag chains: the wizard on the web (suggest → pick → test → save), import / export
-  - [ ] 16.5 Databases (health, sync with a dry run), plugins (status, problems, UIs, settings), config (read-only)
-  - [ ] 16.6 End to end against the fixture site
+- [ ] **Phase 16: Web UI foundations & UI plugins**
+  - [ ] 16.1 `web/` pnpm workspace and tooling: Vite + SWC, TypeScript strict, Biome, Vitest (+ coverage gate), Playwright, Tailwind CSS + daisyUI; `make web`, `make e2e`, and `make check` runs the web checks
+  - [ ] 16.2 Typed API client generated from udl's OpenAPI schema (`openapi-typescript` + `openapi-fetch`); `make check` fails when it is stale
+  - [ ] 16.3 FastAPI serves the UI at `/ui` (from the package, SPA fallback, CSP, cache headers), and a page saying how to build it when it isn't built
+  - [ ] 16.4 Web sessions: sign in with the API key → a session cookie; a CSRF header and an Origin check on writes
+  - [ ] 16.5 The shell: layout, TanStack Router (file routes, auth guard, a splat route for plugin pages), Zustand stores, light / dark / system theme
+  - [ ] 16.6 Live data: shared SSE connections feeding Zustand stores, reconnecting with backoff
+  - [ ] 16.7 `UIManifest` (Pydantic → JSON Schema → TypeScript), `ui` on every plugin kind, the `udl.ui` kind, local UI plugin dirs, `GET /ui/plugins.json`, UI availability in `list_plugins`
+  - [ ] 16.8 `@udl/ui-sdk`: `defineUIPlugin`, the mount contract, a React adapter, the plugin context, SDK version checks
+  - [ ] 16.9 The plugin host: `<PluginSlot>` (lazy import, Shadow DOM isolation, error boundary) and the contribution points
+  - [ ] 16.10 Proof: an example UI plugin built with shadcn/ui runs isolated inside the daisyUI shell (e2e); a template for new UI plugins
 
-- [ ] **Phase 17: Web UI for automations + the Gmail and Slack UI plugins**
-  - [ ] 17.1 Events: live, history, detail (the plugin's event view, else JSON), emit, replay
-  - [ ] 17.2 Subscriptions: event type picker, a filter builder from the type's schema (↔ the shorthand), "would have matched" over recent events
-  - [ ] 17.3 Actions and runs: editors for the built-in actions (`auto` AI actions clearly marked), run detail (output, AI transcript), the approvals inbox
-  - [ ] 17.4 Schedules: a cron editor showing the next times, timezone, run now
-  - [ ] 17.5 AI: providers and models, prompts and guidance, a playground that tries a prompt on an event
-  - [ ] 17.6 Accounts: connect (through the integration's UI plugin), status, reconnect, disconnect
-  - [ ] 17.7 `gmail` UI plugin: OAuth client and account setup, mailbox, compose / reply, event view, Gmail-search filter editor
-  - [ ] 17.8 `slack` UI plugin: account setup (manifest + tokens), channels and threads, send, event view
-  - [ ] 17.9 End to end: a subscription made in the UI fires on a fake email, and its run shows up live
+- [ ] **Phase 17: Web UI for the downloader**
+  - [ ] 17.1 Dashboard (recent downloads, runs and events, next schedules, accounts needing attention, approvals; a widget slot)
+  - [ ] 17.2 Downloads: start downloads, live progress, history, cancel
+  - [ ] 17.3 Sites and strategies
+  - [ ] 17.4 Tag chains: the wizard on the web (suggest → pick → test → save), import / export
+  - [ ] 17.5 Databases (health, sync with a dry run), plugins (status, problems, UIs, settings), config (read-only)
+  - [ ] 17.6 End to end against the fixture site
 
-- [ ] **Phase 18: Hardening & docs**
-  - [ ] 18.1 Security review against the [security model](#security-model): secrets at rest, OAuth, untrusted content (templates, scripts, prompt injection), approvals, the UI (CSP, CSRF, sessions, plugin trust), webhooks, logs
-  - [ ] 18.2 Resilience: watchers reconnecting, a provider or database going away, a crash mid-run (recovery tests); an accessibility pass (axe in the e2e tests)
-  - [ ] 18.3 `udl service install`: a systemd user unit, so the runtime is always on
-  - [ ] 18.4 Docs: README, `docs/automations.md`, `docs/plugins.md` (integrations, actions, AI providers, secret stores), `docs/ui-plugins.md`
-  - [ ] 18.5 Opt-in smoke tests: Gmail, Slack and Ollama end to end
+- [ ] **Phase 18: Web UI for automations + the Gmail, Slack and pages UI plugins**
+  - [ ] 18.1 Events: live, history, detail (the plugin's event view, else JSON), emit, replay
+  - [ ] 18.2 Subscriptions: event type picker, a filter builder from the type's schema (↔ the shorthand), "would have matched" over recent events
+  - [ ] 18.3 Actions and runs: editors for the built-in actions (`auto` AI actions clearly marked), run detail (output, AI transcript), the approvals inbox
+  - [ ] 18.4 Schedules: a cron editor showing the next times, timezone, run now
+  - [ ] 18.5 AI: providers and models, prompts and guidance, a playground that tries a prompt on an event
+  - [ ] 18.6 Accounts: connect (through the integration's UI plugin), status, reconnect, disconnect
+  - [ ] 18.7 `gmail` UI plugin: OAuth client and account setup, mailbox, compose / reply, event view, Gmail-search filter editor
+  - [ ] 18.8 `slack` UI plugin: account setup (manifest + tokens), channels and threads, send, event view
+  - [ ] 18.9 `pages` UI plugin: add a watch from a URL (the wizard on the web), each watch's recent changes, event views (a diff for `pages.page.changed`)
+  - [ ] 18.10 End to end: a subscription made in the UI fires on a fake email, and its run shows up live
+
+- [ ] **Phase 19: Hardening & docs**
+  - [ ] 19.1 Security review against the [security model](#security-model): secrets at rest, OAuth, untrusted content (templates, scripts, prompt injection), approvals, the UI (CSP, CSRF, sessions, plugin trust), webhooks, logs
+  - [ ] 19.2 Resilience: watchers reconnecting, a provider or database going away, a crash mid-run (recovery tests); an accessibility pass (axe in the e2e tests)
+  - [ ] 19.3 `udl service install`: a systemd user unit, so the runtime is always on
+  - [ ] 19.4 Docs: README, `docs/automations.md`, `docs/plugins.md` (integrations, actions, AI providers, secret stores), `docs/ui-plugins.md`
+  - [ ] 19.5 Opt-in smoke tests: Gmail, Slack and Ollama end to end, and a `pages` watch on a real site
 
 ---
 
@@ -199,15 +209,16 @@ request model (8.3).
 | 2 | Several Slack accounts, reading and sending messages | 11.2–11.3, 13.2–13.6 |
 | 2a | Pub/sub for Slack | Phase 9, 13.4–13.5 |
 | 2b | Slack as a plugin | 11.1, Phase 13 |
-| 3 | Set up local AI; scripts that run when events fire; prompts and guidance for the AI per event | 9.5 (scripts), Phase 14 |
-| 3a | AI actions that can run unattended (`auto` mode); changing automations and accounts is left to a later AI chat | 8.1 (`admin`), 14.4, 14.8 |
+| 3 | Set up local AI; scripts that run when events fire; prompts and guidance for the AI per event | 9.5 (scripts), Phase 15 |
+| 3a | AI actions that can run unattended (`auto` mode); changing automations and accounts is left to a later AI chat | 8.1 (`admin`), 15.4, 15.8 |
 | 4 | Scheduled events, like cron | Phase 10 |
-| 5 | A web UI for all of it, and for Phases 0–7's features | Phases 15–17 |
-| 5a | React, SWC, Vite, TypeScript, pnpm, Vitest, Playwright, daisyUI (light and dark), Tailwind, Zustand, TanStack Router | 15.1, 15.5 |
-| 5b | Served by FastAPI | 15.3–15.4 |
-| 5c | Each plugin can have a UI plugin for its behaviour and configuration | 8.10, 15.7–15.9, 17.7–17.8 |
-| 5d | A plugin without a UI plugin is used through the CLI, API and MCP only | 8.1–8.3 (generated adapters), 15.7 |
-| 5e | Other component libraries and themes in UI plugins (e.g. shadcn/ui instead of daisyUI) | 15.9 (isolation, themes), 15.10 |
+| 5 | A web UI for all of it, and for Phases 0–7's features | Phases 16–18 |
+| 5a | React, SWC, Vite, TypeScript, pnpm, Vitest, Playwright, daisyUI (light and dark), Tailwind, Zustand, TanStack Router | 16.1, 16.5 |
+| 5b | Served by FastAPI | 16.3–16.4 |
+| 5c | Each plugin can have a UI plugin for its behaviour and configuration | 8.10, 16.7–16.9, 18.7–18.9 |
+| 5d | A plugin without a UI plugin is used through the CLI, API and MCP only | 8.1–8.3 (generated adapters), 16.7 |
+| 5e | Other component libraries and themes in UI plugins (e.g. shadcn/ui instead of daisyUI) | 16.9 (isolation, themes), 16.10 |
+| 6 | Pub/sub for sites that offer none: watch a web page for new items, a changed value or changed text | Phase 14, 18.9 |
 | + | CLI / API / MCP parity for every new operation | 8.2, each phase's operations task |
 | + | TDD, fully typed (Python and TypeScript) | [Working agreement](#working-agreement-tdd--typing) |
 
@@ -225,9 +236,9 @@ The longer-term aim, which this plan builds towards rather than finishes:
 
 | Aim | What this plan lays down | What comes later |
 |---|---|---|
-| 1 | Watchers with cursors and dedupe (11.5) that may poll, diff or scrape; sources that need no login (`none`, 11.3); `custom.*` events from scripts and `POST /events`; MCP clients (agents you run) can already create subscriptions, actions and schedules | Generic watchers (a page through tag chains, a command, a file, a feed); an AI chat that builds flows from a description |
+| 1 | The `pages` watcher (Phase 14): any web page's new items, changed values or changed text as events, and `pages_suggest` to find what to watch; watchers with cursors and dedupe (11.5); sources that need no login (`none`, 11.3); `custom.*` events from scripts and `POST /events`; MCP clients (agents you run) can already create subscriptions, actions and schedules | More watchers (a command, a file, a feed); an AI chat that builds flows from a description |
 | 2 | Any number of accounts per integration (11.2); every integration operation is an MCP tool with an `account` argument; read-only ones fan out over several accounts in one call (11.4) | More integrations |
-| 3 | Integration operations as tools for udl's local AI (14.4) and for any MCP client; AI actions on events, unattended in `auto` mode | Browser-driven integrations for apps without an API; the AI chat |
+| 3 | Integration operations as tools for udl's local AI (15.4) and for any MCP client; AI actions on events, unattended in `auto` mode | Browser-driven integrations for apps without an API; the AI chat |
 
 What that means for the design now:
 
@@ -244,8 +255,8 @@ What that means for the design now:
 
 | Term | Meaning |
 |---|---|
-| **Integration** | A plugin (`udl.integrations`) that connects udl to a service: `gmail`, `slack`. It brings how to connect an account, operations, event types and a watcher |
-| **Account** | One connected login of an integration, named by the user: `gmail:work`, `gmail:personal`, `slack:acme`. Any number per integration; credentials live in the secret store |
+| **Integration** | A plugin (`udl.integrations`) that connects udl to a service or a source: `gmail`, `slack`, `pages` (web pages). It brings how to connect an account, operations, event types and a watcher |
+| **Account** | One connected login of an integration, named by the user: `gmail:work`, `gmail:personal`, `slack:acme`; for a source that needs no login, one configured source (`pages:blog`). Any number per integration; credentials live in the secret store |
 | **Event** | Something that happened: an email arrived, a Slack message was posted, a schedule came due, a download finished, an action ran. Typed by its **event type** (`gmail.message.received`), stored, deduplicated. (A download's progress events from Phase 3, `JobEvent`, are something else; a job's end is published as a `udl.download.*` event) |
 | **Subscription** | "When an event like *this* happens, run *these* actions": event types, accounts, a **filter** on the event's data, and the actions |
 | **Action** | A named, reusable thing to run: a script, a udl operation, a webhook, an AI agent… Action kinds are plugins (`udl.actions`) |
@@ -274,14 +285,14 @@ What that means for the design now:
            ┌──────────────────┬────────────────────┼────────────────────┐
        Watchers           Scheduler            EventBus             ActionRunner
    (one per account)   (cron · every · at)  (store, dedupe,      (script · operation · webhook ·
-    gmail · slack                            match)                emit · notify · ai ─► AIProvider)
+    gmail · slack · pages                    match)                emit · notify · ai ─► AIProvider)
 ```
 
 How an event travels:
 
 ```
  gmail watcher ──┐                        ┌─ "bank mail": gmail.message.received where from.address endswith "@bank.com"
- slack socket ───┤                        │        └─► summarise (ai)    └─► file-it (script)
+ slack · pages ──┤                        │        └─► summarise (ai)    └─► file-it (script)
  scheduler ──────┼─► EventBus.publish ────┼─ "morning": schedule.fired where schedule == "morning"
  downloads ──────┤   store · dedupe       │        └─► digest (ai)
  POST /events ───┘   depth ≤ 8            └─ "done → slack": udl.download.finished
@@ -372,8 +383,9 @@ Phases 0–7 rows are in [planning/01-core.md](planning/01-core.md#feature-matri
 
 **Interface-only (exempt in the parity test):** `GET /events/stream` (SSE of events and run changes),
 `POST /ai/try/stream` (the playground, streamed), `GET /accounts/callback` (OAuth's redirect),
-`POST /session` / `DELETE /session` (web sign-in), everything under `/ui`, and `udl service install`. As in
-Phase 5, methods behind `test_*` operations are named `try_*`, and their request models `…TestRequest`.
+`POST /session` / `DELETE /session` (web sign-in), everything under `/ui`, `udl service install`, and
+`udl pages wizard` (an interactive wrapper, like `udl chain wizard`). As in Phase 5, methods behind
+`test_*` operations are named `try_*`, and their request models `…TestRequest`.
 
 ---
 
@@ -404,6 +416,7 @@ src/udl/
     watchers.py                 # WatcherSupervisor
   plugins/
     integrations/ base.py  gmail/ (plugin.py client.py models.py events.py ui/)  slack/ (… socket.py ui/)
+                  pages/ (plugin.py watch.py suggest.py ui/)
     actions/      base.py  script.py  operation.py  webhook.py  emit.py  notify.py  ai.py
     ai/           base.py  ollama.py  openai.py
     secrets/      base.py  keyring.py  file.py  memory.py
@@ -420,8 +433,8 @@ web/                            # the frontend: a pnpm workspace
     shell/                      # the app (React, TanStack Router, Zustand, daisyUI) → src/udl/interfaces/web/dist
     template/                   # a starting point for a UI plugin
   plugins/
-    gmail/  slack/              # UI plugins → src/udl/plugins/integrations/<name>/ui/
-  examples/shadcn/              # 15.10's proof
+    gmail/  slack/  pages/      # UI plugins → src/udl/plugins/integrations/<name>/ui/
+  examples/shadcn/              # 16.10's proof
   e2e/                          # Playwright tests against a real `udl serve`
 docs/  automations.md  ui-plugins.md  (+ plugins.md)
 tests/support/  clock.py  secrets.py  integrations.py  actions.py  ai.py  google.py  slack.py  e2e.py
@@ -504,7 +517,7 @@ class Operation:
     request: type[BaseModel]
     response: type[BaseModel]
     summary: str
-    description: str               # written for people and AI agents (MCP, and AI tools in 14.4)
+    description: str               # written for people and AI agents (MCP, and AI tools in 15.4)
     method: Callable[..., Awaitable[BaseModel]]
     hints: OperationHints          # read_only, destructive, idempotent, open_world (were the MCP server's _HINTS),
                                    # and admin: it changes automations, accounts, AI setup or settings
@@ -715,7 +728,7 @@ class ActionPlugin[O: ActionOptions](ABC):
     name: ClassVar[str]                                   # "script", "operation", "ai", …
     options_model: ClassVar[type[ActionOptions]]
     requires: ClassVar[tuple[Requirement, ...]] = ()
-    ui: ClassVar[UIBundle | None] = None                  # an editor for its options (15.7)
+    ui: ClassVar[UIBundle | None] = None                  # an editor for its options (16.7)
     async def check(self, options: JsonObject, event_type: EventType[Any] | None) -> None: ...  # when saved
     async def run(self, ctx: ActionContext[O]) -> ActionOutput: ...   # raises ActionFailed or Cancelled
 
@@ -739,7 +752,7 @@ secret store, the clock, a `CancelToken` and a log sink.
 | `webhook` | Sends an HTTP request | `url`, `method`, `headers` (values may be `SecretRef`s), `body` | `http_client()`; keeps the status and the start of the body |
 | `emit` | Fires another event | `type` (`custom.*`), `data` | Depth + 1 |
 | `notify` | A desktop notification | `title`, `body`, `urgency` | `notify-send` (a requirement) |
-| `ai` | Runs an AI agent | see [Phase 14](#phase-14-local-ai) | |
+| `ai` | Runs an AI agent | see [Phase 15](#phase-15-local-ai) | |
 
 An external AI agent (any CLI agent run headless, with udl's MCP server configured) is a `script` action;
 `docs/automations.md` gets an example.
@@ -748,7 +761,7 @@ An external AI agent (any CLI agent run headless, with udl's MCP server configur
 
 - **Publishing:** an event is stored (its `(type, dedupe_key)` unique, so a duplicate is dropped there),
   then matched against the enabled subscriptions, and a run is queued for each matched action.
-- **Runs:** `queued → running → succeeded | failed | cancelled`, with `awaiting_approval` from Phase 14.
+- **Runs:** `queued → running → succeeded | failed | cancelled`, with `awaiting_approval` from Phase 15.
   At most `max_concurrent_runs` run at once and at most `max_concurrent` of one action. Retryable failures
   (`NetworkError`, `RateLimited`, a timeout when the action says so) are tried again `retries` times.
 - **Loops:** an action's own events (an email it sends, a Slack message it posts, an `emit`) carry
@@ -824,8 +837,8 @@ class Schedule(Record):
 ## Phase 11: Integrations & accounts
 
 ### Tests first
-- Integration contract suite, parametrised over every integration (`fake`, `gmail`, `slack`, each against
-  its fake server): its event types' examples validate; every operation has hints and documented fields;
+- Integration contract suite, parametrised over every integration (`fake`; `gmail` and `slack` against
+  their fake servers; `pages` against the fixture site): its event types' examples validate; every operation has hints and documented fields;
   connecting gives an identity; `watch()` emits only its own event types, stops promptly when cancelled,
   and resumes from its saved state without repeating events.
 - Accounts: names are unique per integration; `gmail:work` and `gmail:personal` hold separate credentials;
@@ -853,7 +866,7 @@ class Integration[S: IntegrationSettings, A: AccountOptions]:
     event_types: ClassVar[tuple[EventType[Any], ...]]
     source_filter_model: ClassVar[type[BaseModel] | None] = None
     state_model: ClassVar[type[BaseModel] | None] = None   # its watcher's cursor
-    ui: ClassVar[UIBundle | None] = None                   # its UI plugin (15.7)
+    ui: ClassVar[UIBundle | None] = None                   # its UI plugin (16.7)
 
     def __init__(self, settings: S, *, http: HttpClientFactory, clock: Clock) -> None: ...
     def oauth_request(self, access: set[str]) -> OAuthRequest: ...            # provider, scopes, extra params
@@ -885,7 +898,8 @@ and its name the integration's prefix (`gmail_send_message`).
 `slack_search_messages`, …) is marked `fan_out`, and its response is `items` (each with its `account`) plus
 `failures`. Its `account` then also takes a list or `"*"`: udl runs it on each account concurrently and
 merges the items, so an agent using udl's MCP server searches every inbox in one call. The response has
-the same type for one account or many.
+the same type for one account or many. An operation can also need no account at all (`pages_suggest`,
+Phase 14), and then has no `account` argument.
 
 ### Connecting (11.3)
 
@@ -900,7 +914,7 @@ on) is added with its options only: `udl accounts add <integration> <name> -O KE
 
 Google allows loopback redirects for Desktop OAuth clients, so the UI's flow works when the browser runs on
 udl's machine. Serving the UI to other machines needs a Web OAuth client with the server's HTTPS callback
-registered (documented in 18.4).
+registered (documented in 19.4).
 
 ---
 
@@ -917,7 +931,7 @@ registered (documented in 18.4).
   `attachment_roots` is refused for the API and MCP; `401` refreshes once, then `needs_reauth`; `429` and
   `rateLimitExceeded` are `RateLimited` with the wait Google asks for.
 
-### Setup (documented in 18.4)
+### Setup (documented in 19.4)
 
 1. A Google Cloud project with the Gmail API enabled and an OAuth consent screen (External).
 2. An OAuth client of type **Desktop app**; its id and secret go in `[integrations.gmail]`, or are pasted
@@ -1040,7 +1054,105 @@ Users and channels are looked up once an hour (cached), so filters can say `chan
 
 ---
 
-## Phase 14: Local AI
+## Phase 14: Web-page watcher
+
+The first watcher for something that publishes no events: any web page. "A new post on a blog without RSS",
+"the price dropped" and "the page changed" become events, built on what udl already has for downloads: tag
+chains (Phase 5), the scraper and the browser, and the site's logins (Phase 2).
+
+### Tests first
+- Chains for values (14.2): a chain gives the same values static or in the browser; values are the text as
+  found (whitespace normalised), with `@href` / `@src` resolved against the page; a chain run within an item
+  sees only that item.
+- Against the fixture site's changing pages, on a `FakeClock`:
+  - the first check sets a baseline and fires nothing (unless `fire_existing`);
+  - a new post fires `pages.item.added` once, with its fields; posts moving around, or one coming back after
+    dropping off the page, fire nothing (seen keys are kept, the last `keep_seen` of them);
+  - a price change fires `pages.value.changed` with the old and new values and numbers; the same value again
+    fires nothing;
+  - an edited article fires `pages.page.changed` with a diff; a change only in an `ignore`d part doesn't;
+  - a `304 Not Modified` is not parsed and fires nothing;
+  - a page behind a login works with the site's cookies (`AuthCookies`), and a login wall marks the watch
+    `needs_reauth`, with the `udl browser login <url>` hint.
+- A layout change (the watch finds nothing `broken_after` checks in a row, default 3) fires one
+  `udl.account.error` naming the step that found nothing, and fires again only after the watch has worked
+  in between.
+- `pages_suggest` ranks the post list first on the fixture's blog page and the product grid first on its
+  shop page, with selectors that avoid `nth-child` where a class or attribute exists.
+- `pages` joins the integration contract suite (on the fixture site).
+
+### A watch
+
+Each watch is a `pages` account, connected with `none`, so it has a name (`pages:blog`), options, a status,
+a watcher and state like any other account:
+
+```yaml
+url: https://example.com/blog
+fetch: static                   # static | browser (for pages built by JavaScript)
+every: 15m                      # at least 1m; with jitter
+# Watch one of:
+items: "article.post"           # each item: a selector (or a chain)
+fields:                         # read within each item, as tag chains
+  title: "h2::text"
+  link: "a@href"                # resolved against the page
+  price: ".price::text >> regex:([\d.,]+)"
+key: link                       # what makes an item the same item (default: all its fields)
+# value: ".price::text"         # one value; `number: true` reads the number in it ("$1,299.00" → 1299.0)
+# page: "main"                  # the text of this part of the page (default: body)
+# ignore: ["time", ".ad"]       # parts left out of `page`'s text
+headers: {}                     # extra request headers
+fire_existing: false            # fire for what is already there at the first check
+```
+
+| Event type | When | Data |
+|---|---|---|
+| `pages.item.added` | An item whose key hasn't been seen | watch, url, key, fields, position |
+| `pages.value.changed` | The value differs from the last check's | watch, url, old, new, old_number, new_number, change, change_pct |
+| `pages.page.changed` | The page's text differs from the last check's | watch, url, diff (unified, at most 64 KiB), added, removed |
+
+### Watching
+
+- Each watch is checked every `every` (with jitter), at most `[integrations.pages] max_concurrent`
+  (default 2) at once and one at a time per site. Requests are conditional (`If-None-Match`,
+  `If-Modified-Since`), so an unchanged page costs a `304`.
+- A static watch fetches like the scraper (a browser's User-Agent, the site's cookies); a browser watch
+  renders on udl's profile like the browser downloader (one Chromium at a time).
+- Its state (`PluginState`) is the seen keys (the last `keep_seen`, default 1000), the last value, the last
+  text (at most 256 KiB, for diffs), the validators (`ETag`, `Last-Modified`) and the failures in a row.
+- Failing checks go through the account machinery (11.5): backoff, `needs_reauth` at a login wall, and
+  `udl.account.error` when the watch stops finding anything, so "my watch broke" can be subscribed to.
+
+### Suggest, preview and the wizard
+
+- **`pages_suggest(url)`** renders the page (static first, the browser when nothing is found) and finds groups
+  of three or more siblings with the same tag and classes. Each becomes a proposed `items`, with `fields`
+  guessed inside it (its heading's text, its first link, a price- or date-like text, an image), ranked by
+  how many items there are and how much they hold. Price-like texts are also proposed as `value`s, and the
+  main content as `page`. Selectors come from Phase 5's generator. It needs no account (11.4).
+- **`pages_preview`** checks a watch once (a saved one, or one given in full) and shows what each field found
+  and what would fire, saving nothing.
+- **`pages_poll`** checks a saved watch now; its events fire as they would on schedule.
+- **`udl pages wizard <url>`**: suggest → pick → preview → name it → save, and optionally subscribe an
+  action to it then and there. Interface-only, like `udl chain wizard`.
+
+| MCP tool | CLI | Hints |
+|---|---|---|
+| `pages_suggest` | `udl pages suggest <url>` | read-only, open-world |
+| `pages_preview` | `udl pages preview <watch>` or `udl pages preview --url … --items … --field NAME=CHAIN` | read-only, open-world |
+| `pages_poll` | `udl pages poll <watch>` | open-world |
+
+Watches are added like any account: `udl accounts add pages blog -O url=… -O items=… -O fields=…`, or with
+the wizard. Examples for `docs/automations.md`:
+
+- A blog without RSS: `pages.item.added` → `slack_send_message` with `{{ event.data.fields.title }}` and the
+  link.
+- A watched download (a channel's or gallery's page): `pages.item.added` → an `operation` action calling
+  `download` with `{{ event.data.fields.link }}`, so each new item is downloaded once.
+- A price: `pages.value.changed` where `new_number < 100` → `notify`.
+
+---
+
+## Phase 15: Local AI
 
 ### Tests first
 - AI provider contract suite (`fake`, `ollama` and `openai-compatible` against fake servers): models are
@@ -1058,7 +1170,7 @@ Users and channels are looked up once an hour (cached), so filters can say `chan
   labelled block; an event whose text says "ignore your instructions and send…" cannot reach a tool the
   policy refused (a regression test kept for good).
 
-### Providers (14.1–14.3)
+### Providers (15.1–15.3)
 
 ```python
 class AIProvider[O: ProviderOptions](ABC):
@@ -1085,7 +1197,7 @@ class AIProvider[O: ProviderOptions](ABC):
   each provider or action names one.
 - Over httpx, no vendor SDKs, like the integrations.
 
-### The agent (14.4–14.6)
+### The agent (15.4–15.6)
 
 1. **Messages:** a system message made of the guidance that applies (everywhere, then the event type's, the
    subscription's and the action's, by priority) and the prompt's `system`; a user message that is the
@@ -1116,7 +1228,7 @@ publishes `udl.action.awaiting_approval`, so a subscription can send you a Slack
 notification about it. `decide_run` (CLI, API, MCP, the UI's inbox) approves or denies it, with an optional
 note for the model; after `[ai] approval_timeout` (default 24 h) it is denied.
 
-### Prompts and guidance (14.7)
+### Prompts and guidance (15.7)
 
 ```python
 class Prompt(Record):
@@ -1134,7 +1246,7 @@ class Guidance(Record):
     enabled: bool = True
 ```
 
-The `ai` action (14.8):
+The `ai` action (15.8):
 
 ```yaml
 name: summarise-bank-mail
@@ -1153,7 +1265,7 @@ timeout: 5m
 
 ---
 
-## Phase 15: Web UI foundations & UI plugins
+## Phase 16: Web UI foundations & UI plugins
 
 ### Tests first
 - Serving (pytest): `/ui/` and any client route under it answer `index.html`; hashed assets are cached as
@@ -1171,7 +1283,7 @@ timeout: 5m
   navigation; one that throws shows an error card and the shell carries on; its styles don't leak out of
   its shadow root, and the shell's don't leak in.
 
-### The stack (15.1)
+### The stack (16.1)
 
 | Concern | Choice |
 |---|---|
@@ -1188,16 +1300,16 @@ timeout: 5m
 | Lint and format | Biome |
 | Packages | a pnpm workspace |
 
-Versions are whatever `pnpm add` gives when 15.1 starts (pinned by `pnpm-lock.yaml`), as `uv add` did.
+Versions are whatever `pnpm add` gives when 16.1 starts (pinned by `pnpm-lock.yaml`), as `uv add` did.
 
-### Serving and signing in (15.3–15.4)
+### Serving and signing in (16.3–16.4)
 
 - `udl serve` serves the built shell at **`/ui/`** (static files, falling back to `index.html` for client
   routes). `/` redirects to `/ui/` when a browser asks for HTML. The API keeps its paths: they are
   documented and scripts and MCP clients use them, while the UI needs only one prefix. UI plugins are at
   `/ui/plugins/<name>/` from each plugin's bundle dir.
 - Headers on `/ui`: `Content-Security-Policy: default-src 'self'; connect-src 'self'; frame-ancestors
-  'none'` (styles are adopted stylesheets, so `style-src 'self'` should hold; 15.9 settles it),
+  'none'` (styles are adopted stylesheets, so `style-src 'self'` should hold; 16.9 settles it),
   `Referrer-Policy: same-origin`, `X-Content-Type-Options: nosniff`.
 - The build (`src/udl/interfaces/web/dist/`, and each built-in UI plugin's `ui/`) is package data, built by
   `make web` and not committed. Without it, `/ui/` says "run `make web`".
@@ -1208,7 +1320,7 @@ Versions are whatever `pnpm add` gives when 15.1 starts (pinned by `pnpm-lock.ya
   browser's `EventSource` works without headers, and other sites still can't drive udl. Sessions live in
   the server process: restarting it means signing in again.
 
-### The shell (15.5–15.6)
+### The shell (16.5–16.6)
 
 - **Layout:** a daisyUI drawer (Dashboard, Downloads, Sites, Chains, Events, Subscriptions, Actions, Runs,
   Schedules, AI, Accounts, Plugins, Databases, Settings, and the plugins' nav items) and a navbar (theme
@@ -1225,7 +1337,7 @@ Versions are whatever `pnpm add` gives when 15.1 starts (pinned by `pnpm-lock.ya
 - **Dev:** Vite on :5173 serves `/ui/` with HMR and proxies every other path to `udl serve` on :8765. The
   proxied Host stays `localhost`, so `LocalHostsOnly` lets it through.
 
-### UI plugins (15.7–15.10)
+### UI plugins (16.7–16.10)
 
 Any plugin (an integration, an action kind, a site or downloader plugin) can bring a UI plugin through its
 `ui` class attribute. A UI-only plugin (a dashboard, a theme) is a `udl.ui` entry point, or a folder with a
@@ -1293,12 +1405,12 @@ shared live connection; `theme` (mode, name, tokens, `onChange`); `stores` (read
   account setup in the web UI until someone writes a UI plugin for it (the Plugins page only notes "no web
   UI"). Its events still show in the event log (as JSON), and can be subscribed to, because events and
   subscriptions are udl's own pages.
-- **15.10's proof:** `web/examples/shadcn` is a UI plugin built with shadcn/ui and its own Tailwind setup. It
+- **16.10's proof:** `web/examples/shadcn` is a UI plugin built with shadcn/ui and its own Tailwind setup. It
   adds a route and a dashboard widget, and an e2e test checks it renders with its own styles, follows the
   theme switch, and leaves the shell's styles alone, as Phase 7's MongoDB plugin proved the database
   abstraction. `web/packages/template` is the starting point that `docs/ui-plugins.md` walks through.
 
-### The API client (15.2)
+### The API client (16.2)
 
 `python -m udl.interfaces.api.openapi` writes `create_app()`'s schema (default settings, the built-in
 plugins) to `web/packages/api/openapi.json` (committed); `openapi-typescript` turns it into types and
@@ -1308,7 +1420,7 @@ plugins) to `web/packages/api/openapi.json` (committed); `openapi-typescript` tu
 
 ---
 
-## Phase 16: Web UI for the downloader
+## Phase 17: Web UI for the downloader
 
 ### Tests first
 - Vitest per page against `FakeUdl`; Playwright per flow against `udl serve` on the fixture site:
@@ -1316,24 +1428,24 @@ plugins) to `web/packages/api/openapi.json` (committed); `openapi-typescript` tu
   used; suggest, test and save a chain for `json.html`; sync two databases with a dry run first.
 
 ### Pages
-- **Dashboard (16.1):** recent downloads, runs and events; the next schedules; accounts that need
+- **Dashboard (17.1):** recent downloads, runs and events; the next schedules; accounts that need
   attention; approvals waiting; a `dashboard` widget slot for plugins.
-- **Downloads (16.2):** a form (URLs, output dir, tool, template, re-probe); live jobs with progress bars
+- **Downloads (17.2):** a form (URLs, output dir, tool, template, re-probe); live jobs with progress bars
   from `/downloads/{id}/events`; cancel; history with filters in the URL (status, site, since) and paging.
-- **Sites (16.3):** search; a site's strategies (successes, failures, last error, enabled); set a strategy
+- **Sites (17.3):** search; a site's strategies (successes, failures, last error, enabled); set a strategy
   (tool and its options, validated by the server); delete.
-- **Chains (16.4):** the wizard on the web: a URL → suggestions with previews → pick → test (what each step
+- **Chains (17.4):** the wizard on the web: a URL → suggestions with previews → pick → test (what each step
   found) → save; import a YAML file, export a site's.
-- **Databases, Plugins, Config (16.5):** connections and their health, sync with a dry run; every plugin's
+- **Databases, Plugins, Config (17.5):** connections and their health, sync with a dry run; every plugin's
   kind, availability, what's missing, problems, whether it has a UI and its settings panel; the config,
   read-only, secrets hidden.
 
 ---
 
-## Phase 17: Web UI for automations
+## Phase 18: Web UI for automations
 
 ### Tests first
-- 17.9's e2e, written first: in the UI, connect a Gmail account (udl's `gmail` plugin, pointed at the fake
+- 18.10's e2e, written first: in the UI, connect a Gmail account (udl's `gmail` plugin, pointed at the fake
   Google servers), add a `script` action, subscribe it to mail from one sender with the filter builder, have
   the fake server deliver a matching and a non-matching message, then see exactly one run appear live, open
   it, and read its output.
@@ -1341,26 +1453,26 @@ plugins) to `web/packages/api/openapi.json` (committed); `openapi-typescript` tu
   approving it sends the message to the fake Slack.
 
 ### Pages
-- **Events (17.1):** live (from the `live` store) and history (filters in the URL); detail through the
+- **Events (18.1):** live (from the `live` store) and history (filters in the URL); detail through the
   plugin's `eventViews`, else a JSON tree; emit a `custom.*` event; replay one to all or one subscription.
-- **Subscriptions (17.2):** pick event types from `list_event_types`; build the filter from the type's
+- **Subscriptions (18.2):** pick event types from `list_event_types`; build the filter from the type's
   schema (field paths with their types, operators by type, nested all / any / not), or edit it as the
   shorthand (the two stay in step through `test_subscription`); pick accounts and actions; the plugin's
   `filterEditors` for its source filter; "would have matched" over recent events as you edit.
-- **Actions and runs (17.3):** editors for the built-in kinds (`script` picks from `scripts_dir`,
+- **Actions and runs (18.3):** editors for the built-in kinds (`script` picks from `scripts_dir`,
   `operation` builds arguments from the operation's schema, `ai` from providers, models, prompts and tools),
   plugins' `actionEditors` for theirs, a dry run that renders the templates against a chosen event; runs
   with live status, output, errors and the AI transcript (each tool call and its result); the approvals
   inbox.
-- **Schedules (17.4):** cron / every / at with the next times from `preview_schedule` as you type, the
+- **Schedules (18.4):** cron / every / at with the next times from `preview_schedule` as you type, the
   timezone, the actions to run (the linked subscription), run now.
-- **AI (17.5):** providers (Ollama offered when detected), their health and models, pulling a model; prompts
+- **AI (18.5):** providers (Ollama offered when detected), their health and models, pulling a model; prompts
   and guidance; a playground that renders a prompt against an event and streams the model's answer
   (`POST /ai/try/stream`), with tool calls shown and not run.
-- **Accounts (17.6):** every integration's accounts and their status; connect, reconnect and settings
+- **Accounts (18.6):** every integration's accounts and their status; connect, reconnect and settings
   through the integration's UI plugin; disconnect.
 
-### The Gmail and Slack UI plugins (17.7–17.8)
+### The Gmail, Slack and pages UI plugins (18.7–18.9)
 
 Built with React and daisyUI on the SDK, isolated like any other plugin, so they use only what a third
 party could:
@@ -1370,32 +1482,37 @@ party could:
   `gmail.message.received` event looks, and a Gmail-search editor for the source filter.
 - **slack:** setup (copy the manifest, paste the tokens, check them), channels and threads per account,
   sending, and how `slack.*` events look.
+- **pages:** add a watch from a URL (the wizard on the web: suggestions, pick one, a preview of what each
+  field finds, save, and optionally subscribe an action), each watch's recent changes, and how `pages.*`
+  events look (a diff for `pages.page.changed`).
 
 ---
 
-## Phase 18: Hardening & docs
+## Phase 19: Hardening & docs
 
-- **Security review (18.1)** against the [security model](#security-model), as Phase 7's was: what it finds
+- **Security review (19.1)** against the [security model](#security-model), as Phase 7's was: what it finds
   gets a regression test and a fix, or is documented in the README's Security section.
-- **Resilience (18.2):** kill the runtime mid-run, take the database or a provider away, drop the Socket
+- **Resilience (19.2):** kill the runtime mid-run, take the database or a provider away, drop the Socket
   Mode connection, expire tokens; each recovers as designed (tests on the fakes). An accessibility pass
   with axe (`@axe-core/playwright`) over every page, in both themes.
-- **Always on (18.3):** `udl service install` writes a systemd user unit for `udl serve` (and
+- **Always on (19.3):** `udl service install` writes a systemd user unit for `udl serve` (and
   `udl service uninstall` removes it), since the runtime only runs while the server does.
-- **Docs (18.4):** the README (accounts, automations, schedules, AI, the web UI, the new security notes);
+- **Docs (19.4):** the README (accounts, automations, schedules, AI, the web UI, the new security notes);
   `docs/automations.md` (events, filters, subscriptions, actions, schedules, AI, with worked examples: bank
-  mail summarised to Slack, a morning digest, downloading links mailed to yourself); `docs/plugins.md` gains
+  mail summarised to Slack, a morning digest, downloading links mailed to yourself, a blog without RSS
+  posted to Slack, a watched channel downloaded); `docs/plugins.md` gains
   integrations, action kinds, AI providers and secret stores; `docs/ui-plugins.md` (the manifest, the SDK,
   isolation and theming, using another component library, testing).
-- **Smoke tests (18.5),** opt-in like Phase 7's: a real Gmail account receives a mail udl sends to itself and
-  fires once; a real Slack workspace does the same with a DM; Ollama answers a prompt with a tool call.
+- **Smoke tests (19.5),** opt-in like Phase 7's: a real Gmail account receives a mail udl sends to itself and
+  fires once; a real Slack workspace does the same with a DM; Ollama answers a prompt with a tool call; a
+  `pages` watch reads a real site's list.
 
 ---
 
 ## Security model
 
 What changes: udl now reads content written by strangers (email, Slack), holds long-lived credentials, can
-run programs, and talks to a browser. Each risk has its answer, and 18.1 checks them.
+run programs, and talks to a browser. Each risk has its answer, and 19.1 checks them.
 
 | Risk | Where | Answer |
 |---|---|---|
@@ -1480,7 +1597,7 @@ $ udl schedules set digest --cron "0 8 * * 1-5" --action morning-digest
 
 Settled on 2026-10-24: the bus and the scheduler before Gmail and Slack; isolated UI plugins; the UI at
 `/ui`; a plugin appears in the web UI only through a UI plugin; AI actions may run unattended (`auto`), but
-none may change automations or accounts yet.
+none may change automations or accounts yet; a web-page watcher (Phase 14) is part of this plan.
 
 - **Numbering continues at Phase 8**, so branches (`phase-8`…) and commit history don't collide with
   Phases 0–7.
@@ -1500,6 +1617,9 @@ none may change automations or accounts yet.
 - **Slack accounts connect with tokens** from the user's own app.
 - **Gmail and Slack are built in** (entry points, like `youtube`) but use only the public plugin API (a test
   checks their imports), so either could move to a package of its own.
+- **The first generic watcher is web pages, built on tag chains** (Phase 14): it reuses the extraction,
+  logins and browser udl already has, and comes after Gmail and Slack, so the integration machinery is
+  proven on APIs first.
 - **One runtime per database**, in `udl serve`, held by a lease.
 - **Scripts only from `scripts_dir`, never through a shell.**
 - **Local AI providers built in; no default model.** AI tools are udl's operations, governed by the hints
@@ -1540,9 +1660,9 @@ Things that bit before and will bite again:
 - Automations as files (YAML import/export of subscriptions, actions, schedules, prompts), like chain files.
 - Gmail push notifications through Google Cloud Pub/Sub (mail without polling delay).
 - Slack's OAuth install flow, Enterprise Grid, edited and deleted messages as events.
-- **Generic watchers**, the first step towards pub/sub for apps that have none: a web page through tag
-  chains or the browser, a command's output, a file, a feed (sources that connect with `none`). **Watched
-  downloads** (playlists, channels) are one of these, and also need the download archive below.
+- **More watchers** for things that publish no events, as `pages` does for web pages: a command's output, a
+  file, a feed (sources that connect with `none`). Picking what a page watch reads by clicking on the
+  rendered page.
 - **An AI chat in udl** (the user present) that may also use `admin` operations, each one confirmed, so it
   can build subscriptions, actions and schedules from a description.
 - More integrations (Google Calendar and Drive, sharing one Google account between them; IMAP for other
@@ -1551,6 +1671,8 @@ Things that bit before and will bite again:
 - A 1Password (`op`) secret store.
 - Several runtimes sharing the work (an external queue); PostgreSQL `LISTEN/NOTIFY` instead of polling for
   pending events.
-- Skipping already-downloaded URLs (a download archive), still out from Phases 0–7.
+- Skipping already-downloaded URLs (a download archive), still out from Phases 0–7. Watched downloads (a
+  channel's or gallery's page) already work through `pages` and a `download` action, each item once; the
+  archive would also catch the same media reached another way.
 - Sharing React between UI plugins (an import map), if bundle size ever matters.
 - Translations.
