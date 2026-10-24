@@ -90,7 +90,7 @@ class Operation:
         parameter is its request model, which returns its response model and whose docstring
         describes it. Raises PluginError when it is not one."""
         what = getattr(method, "__qualname__", repr(method))
-        if not _NAME.fullmatch(name):
+        if not valid_name(name):
             raise PluginError(
                 f"{what}: an operation's name is lower case letters, digits, _ and -, not {name!r}"
             )
@@ -131,12 +131,17 @@ class Operation:
 
     def in_namespace(self, namespace: str, *, kind: str) -> Self:
         """This operation as the plugin called `namespace` (of `kind`) adds it."""
-        if not _NAME.fullmatch(namespace):
+        if not valid_name(namespace):
             raise PluginError(
                 f"A plugin called {namespace!r} cannot add operations: its name must be lower "
                 "case letters, digits, _ and -"
             )
         return replace(self, name=f"{namespace}_{self.name}", namespace=namespace, kind=kind)
+
+
+def valid_name(name: str) -> bool:
+    """Whether `name` can name an operation, or a plugin that adds them."""
+    return _NAME.fullmatch(name) is not None
 
 
 def _model(annotation: object) -> type[BaseModel] | None:

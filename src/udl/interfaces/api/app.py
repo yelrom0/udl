@@ -3,8 +3,9 @@
 - app.py -
 ----------
 
-The HTTP API (FastAPI): a route for every operation (planning/01-core.md's Feature Matrix), named
-after it (its operationId), and a download's events as server-sent events. The MCP server is at
+The HTTP API (FastAPI): a route for every operation (planning/01-core.md's Feature Matrix, and
+one made for each operation a plugin adds: udl.interfaces.adapters), named after it (its
+operationId), and a download's events as server-sent events. The MCP server is at
 /mcp (streamable HTTP), on the same service. `udl serve` runs it.
 
 udl's errors are answered as ErrorInfo, with a status that fits (404 for what does not exist,
@@ -35,6 +36,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from udl.config import Settings
 from udl.core.service import ServiceFactory, UDLService
 from udl.errors import ErrorCode, ErrorInfo, UDLError, Unauthorized
+from udl.interfaces.adapters import add_routes
 from udl.interfaces.api.routes import chains, downloads, sites, system
 from udl.interfaces.mcp.server import create_server
 from udl.interfaces.security import API_KEY_HEADER, check_api_key
@@ -96,6 +98,7 @@ def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService)
     app.state.service = service
     for router in (downloads.router, sites.router, chains.router, system.router):
         app.include_router(router)
+    add_routes(app, service.operations)  # (the operations plugins add)
     # (A route rather than a mount, which would answer only /mcp/...)
     app.router.routes.append(Route(MCP_PATH, KeyRequired(mcp_app, settings)))
 

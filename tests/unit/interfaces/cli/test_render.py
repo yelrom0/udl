@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 # Package Imports
+from pydantic import BaseModel, SecretStr
 from rich.console import Console
 
 # Local Imports
@@ -409,3 +410,39 @@ def test_saved_and_imported_chains() -> None:
     assert "(URLs matching '^/watch/')" in imported
     assert "click:a >> video@src (in the browser)" in imported
     assert "example.com: http" in imported
+
+
+# ---------------------------------------------------------------------------------------------
+# Any response (a plugin's operation's)
+# ---------------------------------------------------------------------------------------------
+
+
+class _Item(BaseModel):
+    name: str
+    size: int | None = None
+
+
+class _Anything(BaseModel):
+    items: list[_Item]
+    secret: SecretStr
+    table: dict[str, int]
+    nothing: str | None = None
+    words: list[str]
+
+
+def test_any_response_shows_each_field() -> None:
+    found = shown(
+        render.model,
+        _Anything(
+            items=[_Item(name="first", size=3), _Item(name="second")],
+            secret=SecretStr("hidden"),
+            table={"a": 1},
+            words=["x", "y"],
+        ),
+    )
+
+    assert "first" in found
+    assert "Size" in found  # (a list of models is a table)
+    assert "hidden" not in found
+    assert '{"a": 1}' in found
+    assert "x, y" in found

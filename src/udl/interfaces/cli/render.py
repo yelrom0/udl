@@ -4,17 +4,21 @@
 -------------
 
 How the commands show their results to people (--json shows the response models instead):
-tables, a job's details, and progress bars while downloads run
+tables, a job's details, progress bars while downloads run, and any response at all (model(),
+for the operations plugins add)
 """
 
 # System Imports
+import enum
+import json
 from datetime import datetime
 from types import TracebackType
-from typing import Final, Self
+from typing import Any, Final, Self, cast
 from uuid import UUID
 
 # Package Imports
-from rich.console import Console
+from pydantic import BaseModel, SecretStr
+from rich.console import Console, RenderableType
 from rich.filesize import decimal
 from rich.markup import escape
 from rich.progress import (
@@ -502,3 +506,54 @@ def plugins(console: Console, listed: PluginList) -> None:
 def config(console: Console, info: ConfigInfo) -> None:
     """The settings, as JSON (secrets hidden)."""
     console.print_json(info.settings.model_dump_json())
+
+
+# ---------------------------------------------------------------------------------------------
+# Any response
+# ---------------------------------------------------------------------------------------------
+
+
+def model(console: Console, response: BaseModel) -> None:
+    """Any response: a line for each field (a list of models as a table)."""
+    console.print(_fields(response))
+
+
+def _fields(found: BaseModel) -> Table:
+    grid = Table.grid(padding=(0, 2))
+    for name, value in found:
+        grid.add_row(f"[bold]{escape(name.replace('_', ' ').capitalize())}[/]", _shown(value))
+    return grid
+
+
+def _shown(value: Any) -> RenderableType:
+    """A field's value: a list of models as a table, anything else as a line of text."""
+    listed = cast(list[object], value) if isinstance(value, list) else []
+    items = [item for item in listed if isinstance(item, BaseModel)]
+    if items and len(items) == len(listed):
+        names = list(type(items[0]).model_fields)
+        table = Table(*(name.replace("_", " ").capitalize() for name in names))
+        for item in items:
+            table.add_row(*(escape(_text(getattr(item, name, None))) for name in names))
+        return table
+    if value is None:
+        return "[dim]-[/]"
+    if isinstance(value, bool):
+        return _yes(value)
+    return escape(_text(value))
+
+
+def _text(value: Any) -> str:
+    """A value in a line of text."""
+    if value is None:
+        return "-"
+    if isinstance(value, SecretStr):
+        return "***"
+    if isinstance(value, enum.Enum):
+        return str(value.value)
+    if isinstance(value, BaseModel):
+        return ", ".join(f"{name}: {_text(item)}" for name, item in value)
+    if isinstance(value, list | tuple | set | frozenset):
+        return ", ".join(_text(item) for item in value)  # pyright: ignore[reportUnknownVariableType]
+    if isinstance(value, dict):
+        return json.dumps(value, default=str)
+    return str(value)

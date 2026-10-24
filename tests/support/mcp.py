@@ -21,5 +21,8 @@ from udl.interfaces.mcp.server import create_server
 
 @asynccontextmanager
 async def client_for(harness: Harness) -> AsyncGenerator[Client]:
-    async with harness.service() as service, Client(create_server(lambda: service)) as client:
+    async with (
+        harness.service() as service,
+        Client(create_server(lambda: service, service.operations)) as client,
+    ):
         yield client

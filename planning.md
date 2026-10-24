@@ -20,8 +20,8 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
 
 - [ ] **Phase 8: Groundwork (plugin operations, records, secrets)**
   - [x] 8.1 `Operation` carries its tool hints (read-only, destructive, idempotent, open-world, moving `_HINTS` out of the MCP server) and whether it is `admin` (changes automations, accounts, AI setup or settings); an `OperationRegistry` per service holds udl's operations and its plugins' (`operations()` stays the core set)
-  - [ ] 8.2 🔴 **Parity test first** for generated adapters: an operation a plugin adds must get a CLI command, an API route and an MCP tool, made from its request model
-  - [ ] 8.3 Generated adapters: Typer commands (an option per field, `--input FILE` for the whole request), FastAPI routes (typed in the OpenAPI schema), MCP tools (as today)
+  - [x] 8.2 🔴 **Parity test first** for generated adapters: an operation a plugin adds must get a CLI command, an API route and an MCP tool, made from its request model
+  - [x] 8.3 Generated adapters: Typer commands (an option per field, `--input FILE` for the whole request), FastAPI routes (typed in the OpenAPI schema), MCP tools (as today)
   - [ ] 8.4 `Record` base model + `RecordQuery`; `DatabasePlugin` gains the record methods and `claim_lease`; their contract tests first
   - [ ] 8.5 Records in every DB plugin: `memory`, the SQLAlchemy base (schema version 3: a table per record kind), `mongodb` (a collection per kind); `DBManager` reads and writes them with its policies; `db sync` copies them
   - [ ] 8.6 `udl.secrets` plugin kind: `SecretStore` ABC + contract suite; `keyring` (Secret Service / KWallet), `file` (`0600`) and `memory` built-ins; `SecretRef`; secrets never in a database, the config or a log

@@ -62,11 +62,17 @@ def runs[F: Callable[..., Any]](name: str) -> Callable[[F], F]:
     if name not in operations():
         raise ValueError(f"There is no operation called {name!r}")
 
-    def mark(command: F) -> F:
-        _operations[command] = name
+    def marked(command: F) -> F:
+        mark(command, name)
         return command
 
-    return mark
+    return marked
+
+
+def mark(command: Callable[..., Any], name: str) -> None:
+    """Mark `command` as the one that runs the operation called `name` (udl's own, through
+    runs(), or a plugin's: udl.interfaces.adapters makes their commands)."""
+    _operations[command] = name
 
 
 def operation_of(command: Callable[..., Any]) -> str | None:

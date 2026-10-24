@@ -66,6 +66,10 @@ class EchoRequest(_Model):
     """Any JSON."""
     limit: Annotated[int, Field(ge=1, le=10)] = 5
     """A number with bounds."""
+    points: list[Point] = Field(default_factory=list[Point])
+    """Models in a list."""
+    either: int | str | None = None
+    """A number or some text."""
 
 
 class Echoed(_Model):
@@ -81,6 +85,8 @@ class Echoed(_Model):
     """How long the secret was (the secret itself is never answered)."""
     extra: JsonValue
     limit: int
+    points: list[Point]
+    either: int | str | None
 
 
 def echoed(request: EchoRequest) -> Echoed:
