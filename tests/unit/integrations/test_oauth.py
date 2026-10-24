@@ -25,7 +25,7 @@ from pydantic import SecretStr
 # Local Imports
 from support.clock import T0, FakeClock
 from support.oauth import CLIENT_ID, FakeAuthorizationServer
-from udl.errors import ErrorCode, OAuthError, ReauthRequired
+from udl.errors import ConfigError, ErrorCode, NetworkError, NotAllowed, ReauthRequired
 from udl.integrations.oauth import Authorization, OAuthClient, Tokens, loopback_redirect
 
 REDIRECT = "http://127.0.0.1:12345/callback"
@@ -122,9 +122,9 @@ async def test_a_callback_whose_state_is_not_the_authorization_s_is_refused(
 ) -> None:
     authorization, callback = await sign_in(oauth, server)
 
-    with pytest.raises(OAuthError, match="state"):
+    with pytest.raises(NotAllowed, match="state"):
         await oauth.exchange(authorization, {**callback, "state": "forged"})
-    with pytest.raises(OAuthError, match="state"):
+    with pytest.raises(NotAllowed, match="state"):
         await oauth.exchange(authorization, {"code": callback["code"]})
 
 
@@ -134,16 +134,68 @@ async def test_a_refused_authorization_says_so(
     server.deny = True
     authorization, callback = await sign_in(oauth, server)
 
-    with pytest.raises(OAuthError, match="access_denied") as raised:
+    with pytest.raises(NotAllowed, match="access_denied") as raised:
         await oauth.exchange(authorization, callback)
 
-    assert raised.value.code is ErrorCode.OAUTH_ERROR
+    assert raised.value.code is ErrorCode.NOT_ALLOWED
+
+
+async def test_an_authorization_is_completed_once(
+    oauth: OAuthClient, server: FakeAuthorizationServer, clock: FakeClock
+) -> None:
+    authorization, callback = await sign_in(oauth, server)
+    await oauth.exchange(authorization, callback)
+
+    with pytest.raises(NotAllowed, match="already"):
+        await oauth.exchange(authorization, callback)
+    assert authorization.started_at == clock.now()
+
+
+async def test_who_signed_in(oauth: OAuthClient, server: FakeAuthorizationServer) -> None:
+    found = await tokens(oauth, server)
+
+    assert await oauth.userinfo(found) == {"sub": "1234", "email": "me@example.com"}
+
+
+async def test_who_signed_in_needs_a_userinfo_endpoint(
+    server: FakeAuthorizationServer, clock: FakeClock
+) -> None:
+    async with server.client() as http:
+        oauth = OAuthClient(server.provider(userinfo_url=None), http=http, clock=clock)
+
+        with pytest.raises(ConfigError, match="userinfo"):
+            await oauth.userinfo(Tokens(access_token=SecretStr("a")))
+
+
+@pytest.mark.parametrize("trouble", ["unreachable", "failing"])
+async def test_a_userinfo_endpoint_in_trouble_is_a_network_error(
+    server: FakeAuthorizationServer, clock: FakeClock, trouble: str
+) -> None:
+    def answered(request: httpx.Request) -> httpx.Response:
+        if trouble == "unreachable":
+            raise httpx.ConnectError("connection refused", request=request)
+        return httpx.Response(500)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(answered)) as http:
+        oauth = OAuthClient(server.provider(), http=http, clock=clock)
+
+        with pytest.raises(NetworkError) as raised:
+            await oauth.userinfo(Tokens(access_token=SecretStr("a")))
+
+    assert raised.value.tool == "fake"
+
+
+async def test_a_userinfo_the_server_refuses_means_connecting_again(
+    oauth: OAuthClient, server: FakeAuthorizationServer
+) -> None:
+    with pytest.raises(ReauthRequired):
+        await oauth.userinfo(Tokens(access_token=SecretStr("not-one-it-gave")))
 
 
 async def test_a_callback_without_a_code_is_refused(oauth: OAuthClient) -> None:
     authorization = oauth.authorize(SCOPES, REDIRECT)
 
-    with pytest.raises(OAuthError, match="code"):
+    with pytest.raises(NotAllowed, match="code"):
         await oauth.exchange(authorization, {"state": authorization.state})
 
 
@@ -153,7 +205,7 @@ async def test_a_code_exchanged_with_another_verifier_is_refused(
     authorization, callback = await sign_in(oauth, server)
     other = authorization.model_copy(update={"verifier": SecretStr("x" * 50)})
 
-    with pytest.raises(OAuthError, match="invalid_grant"):
+    with pytest.raises(NotAllowed, match="invalid_grant"):
         await oauth.exchange(other, callback)
 
 
@@ -165,7 +217,7 @@ async def test_a_client_the_server_does_not_know_is_an_error_that_says_so(
         oauth = OAuthClient(wrong, http=http, clock=clock)
         authorization, callback = await sign_in(oauth, server)
 
-        with pytest.raises(OAuthError, match="invalid_client") as raised:
+        with pytest.raises(ConfigError, match="invalid_client") as raised:
             await oauth.exchange(authorization, callback)
 
     assert raised.value.hint is not None
@@ -190,8 +242,10 @@ async def test_a_token_endpoint_that_fails_is_an_oauth_error(
         oauth = OAuthClient(server.provider(), http=http, clock=clock)
         authorization = oauth.authorize(SCOPES, REDIRECT)
 
-        with pytest.raises(OAuthError):
+        with pytest.raises(NetworkError) as raised:
             await oauth.exchange(authorization, {"code": "c", "state": authorization.state})
+
+    assert raised.value.tool == "fake"
 
 
 async def test_a_token_endpoint_that_cannot_be_reached_is_an_oauth_error(
@@ -204,7 +258,7 @@ async def test_a_token_endpoint_that_cannot_be_reached_is_an_oauth_error(
         oauth = OAuthClient(server.provider(), http=http, clock=clock)
         authorization = oauth.authorize(SCOPES, REDIRECT)
 
-        with pytest.raises(OAuthError, match="connection refused"):
+        with pytest.raises(NetworkError, match="connection refused"):
             await oauth.exchange(authorization, {"code": "c", "state": authorization.state})
 
 
@@ -260,7 +314,6 @@ async def test_a_refused_refresh_means_connecting_again(
         await oauth.refresh(found)
 
     assert raised.value.code is ErrorCode.REAUTH_REQUIRED
-    assert isinstance(raised.value, OAuthError)
 
 
 async def test_expired_tokens_without_a_refresh_token_mean_connecting_again(
@@ -287,10 +340,8 @@ async def test_a_refresh_the_server_fails_is_not_a_refusal(
     found = await tokens(oauth, server)
     server.fail_token_endpoint = True
 
-    with pytest.raises(OAuthError) as raised:
+    with pytest.raises(NetworkError):  # (try again later: the access is not refused)
         await oauth.refresh(found)
-
-    assert not isinstance(raised.value, ReauthRequired)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -347,7 +398,7 @@ async def test_a_revocation_the_server_fails_is_an_oauth_error(
     async with httpx.AsyncClient(transport=httpx.MockTransport(failing)) as http:
         broken = OAuthClient(server.provider(), http=http, clock=FakeClock())
 
-        with pytest.raises(OAuthError, match="503"):
+        with pytest.raises(NetworkError, match="503"):
             await broken.revoke(Tokens(access_token=SecretStr("a")))
 
 
@@ -402,7 +453,7 @@ async def test_the_listener_closes_after_one_callback() -> None:
 
 async def test_the_listener_gives_up_after_its_timeout() -> None:
     async with loopback_redirect(answer_within=0.05) as redirect:
-        with pytest.raises(OAuthError, match=r"0\.05 seconds"):
+        with pytest.raises(NotAllowed, match=r"0\.05 seconds"):
             await redirect.wait()
 
         async with httpx.AsyncClient() as browser:
@@ -410,13 +461,13 @@ async def test_the_listener_gives_up_after_its_timeout() -> None:
                 await browser.get(f"{redirect.uri}?code=late")
 
 
-async def test_the_first_callback_is_the_one_taken() -> None:
+async def test_a_second_callback_is_refused() -> None:
     async with loopback_redirect(answer_within=5) as redirect:
         async with httpx.AsyncClient() as browser:
             await browser.get(f"{redirect.uri}?code=first")
             again = await browser.get(f"{redirect.uri}?code=second")
 
-        assert again.status_code == 200
+        assert again.status_code == 409
         assert await redirect.wait() == {"code": "first"}
 
 

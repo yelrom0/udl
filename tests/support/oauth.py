@@ -65,6 +65,7 @@ class FakeAuthorizationServer:
                 "authorize_url": f"{BASE}/authorize",
                 "token_url": f"{BASE}/token",
                 "revoke_url": f"{BASE}/revoke",
+                "userinfo_url": f"{BASE}/userinfo",
                 "client_id": CLIENT_ID,
                 "client_secret": CLIENT_SECRET,
                 **fields,
@@ -81,6 +82,7 @@ class FakeAuthorizationServer:
                 Route("/authorize", self._authorize),
                 Route("/token", self._token, methods=["POST"]),
                 Route("/revoke", self._revoke, methods=["POST"]),
+                Route("/userinfo", self._userinfo),
             ]
         )
 
@@ -147,6 +149,12 @@ class FakeAuthorizationServer:
             return _error("invalid_token")
         self.revoked.append(token)
         return Response(status_code=200)
+
+    async def _userinfo(self, request: Request) -> Response:
+        token = request.headers.get("authorization", "").removeprefix("Bearer ")
+        if token not in self.access_tokens:
+            return _error("invalid_token", 401)
+        return JSONResponse({"sub": "1234", "email": "me@example.com"})
 
     def _tokens(self, scope: str, refresh: str | None) -> Response:
         access = secrets.token_urlsafe(16)

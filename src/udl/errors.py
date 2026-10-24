@@ -39,7 +39,6 @@ class ErrorCode(StrEnum):
     UNAUTHORIZED = "unauthorized"
     SECRET_STORE_ERROR = "secret_store_error"  # noqa: S105 - (a code, not a secret)
     TEMPLATE_FAILED = "template_failed"
-    OAUTH_ERROR = "oauth_error"
     REAUTH_REQUIRED = "reauth_required"
 
 
@@ -235,15 +234,9 @@ class TemplateFailed(ConfigError):
     code = ErrorCode.TEMPLATE_FAILED
 
 
-class OAuthError(UDLError):
-    """Connecting an account (OAuth) failed: the user refused, the answer was not the one asked
-    for, or the authorization server failed or refused udl's client."""
-
-    code = ErrorCode.OAUTH_ERROR
-
-
-class ReauthRequired(OAuthError):
-    """An account's access was taken back, or has expired: it has to be connected again."""
+class ReauthRequired(UDLError):
+    """An account's credentials are refused or missing (its access was taken back, or has
+    expired): it has to be connected again."""
 
     code = ErrorCode.REAUTH_REQUIRED
 

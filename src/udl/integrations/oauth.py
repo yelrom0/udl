@@ -7,12 +7,16 @@ OAuth 2.0, on httpx: how an account is connected to a service that uses it (Goog
 vendor SDK.
 
 - The authorization code flow with PKCE (S256) and a `state`: authorize() gives the page to send
-  the user to, and exchange() checks the callback (its state, an error) and trades the code
-  for tokens.
+  the user to, and exchange() checks the callback (its state, an error, that it is the first)
+  and trades the code for tokens. userinfo() says who signed in.
 - loopback_redirect(): where that page sends the user back to, when udl runs on the user's own
   machine: a listener on 127.0.0.1, on a free port, for one callback (or until its timeout).
 - fresh() refreshes tokens a minute before they expire (on the Clock); a refresh the server
   refuses (the user took the access back, or it expired) is ReauthRequired.
+
+What the user refused, or an answer that is not the one asked for, is NotAllowed; a client the
+server does not know is a ConfigError; a server that fails or cannot be reached is a
+NetworkError (try again later), naming the provider.
 - revoke() gives the tokens back, when an account is disconnected.
 
 The client authenticates at the token endpoint with its id and secret in the form
@@ -35,11 +39,20 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 # Package Imports
 import httpx
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr, ValidationError
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    TypeAdapter,
+    ValidationError,
+)
 
 # Local Imports
 from udl.clock import Clock
-from udl.errors import OAuthError, ReauthRequired
+from udl.db.models import JsonObject
+from udl.errors import ConfigError, NetworkError, NotAllowed, ReauthRequired
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +74,7 @@ class OAuthProvider(_Frozen):
     authorize_url: str
     token_url: str
     revoke_url: str | None = None
+    userinfo_url: str | None = None
     client_id: str
     client_secret: SecretStr | None = None
 
@@ -73,6 +87,7 @@ class Authorization(_Frozen):
     verifier: SecretStr  # (PKCE's code verifier: only the token endpoint is told it)
     redirect_uri: str
     scopes: list[str]
+    started_at: AwareDatetime
 
 
 class Tokens(_Frozen):
@@ -110,6 +125,7 @@ class OAuthClient:
         self.provider = provider
         self._http = http
         self._clock = clock
+        self._completed: set[str] = set()  # (the states of the authorizations exchanged)
 
     def authorize(
         self, scopes: Sequence[str], redirect_uri: str, *, extra: Mapping[str, str] | None = None
@@ -137,24 +153,28 @@ class OAuthClient:
             verifier=SecretStr(verifier),
             redirect_uri=redirect_uri,
             scopes=list(scopes),
+            started_at=self._clock.now(),
         )
 
     async def exchange(self, authorization: Authorization, callback: Mapping[str, str]) -> Tokens:
         """The tokens for an authorization, from the query its callback came with. Raises
-        OAuthError when the user refused, the callback is not this authorization's (its state)
-        or the server refuses the code."""
+        NotAllowed when the user refused, the callback is not this authorization's (its state),
+        the authorization was completed already or the server refuses the code."""
         if "error" in callback:
             described = callback.get("error_description")
             refused = f"{callback['error']}: {described}" if described else callback["error"]
-            raise OAuthError(f"The authorization was refused ({refused})")
+            raise NotAllowed(f"The authorization was refused ({refused})")
         if not secrets.compare_digest(callback.get("state", ""), authorization.state):
-            raise OAuthError(
+            raise NotAllowed(
                 "The callback's state is not the authorization's: it was not the answer to it",
                 hint="Start connecting again.",
             )
+        if authorization.state in self._completed:
+            raise NotAllowed("This authorization was already completed", hint=_START_AGAIN)
         code = callback.get("code")
         if not code:
-            raise OAuthError("The callback brought no code")
+            raise NotAllowed("The callback brought no code", hint=_START_AGAIN)
+        self._completed.add(authorization.state)
         try:
             return await self._tokens(
                 {
@@ -166,8 +186,8 @@ class OAuthClient:
                 authorization.scopes,
             )
         except _Refused as e:
-            raise OAuthError(
-                f"{self.provider.name} refused the code ({e})", hint="Start connecting again."
+            raise NotAllowed(
+                f"{self.provider.name} refused the code ({e})", hint=_START_AGAIN
             ) from e
 
     async def fresh(self, tokens: Tokens) -> Tokens:
@@ -203,9 +223,29 @@ class OAuthClient:
         answer = await self._post(self.provider.revoke_url, {"token": token.get_secret_value()})
         if answer.is_success or _error(answer) == "invalid_token":
             return
-        raise OAuthError(
-            f"{self.provider.name} did not revoke the tokens: HTTP {answer.status_code}"
+        raise NetworkError(
+            f"{self.provider.name} did not revoke the tokens: HTTP {answer.status_code}",
+            tool=self.provider.name,
         )
+
+    async def userinfo(self, tokens: Tokens) -> JsonObject:
+        """Who signed in, as the provider's userinfo endpoint says (e.g. an email address).
+        Raises ReauthRequired when it refuses the access token."""
+        if self.provider.userinfo_url is None:
+            raise ConfigError(f"{self.provider.name} has no userinfo endpoint")
+        bearer = {"Authorization": f"Bearer {tokens.access_token.get_secret_value()}"}
+        try:
+            answer = await self._http.get(self.provider.userinfo_url, headers=bearer)
+        except httpx.HTTPError as e:
+            raise self._unreachable(self.provider.userinfo_url, e) from e
+        if answer.status_code == 401:
+            raise ReauthRequired(f"{self.provider.name} refused the access", hint=_RECONNECT)
+        if not answer.is_success:
+            raise NetworkError(
+                f"{self.provider.name}'s userinfo endpoint failed: HTTP {answer.status_code}",
+                tool=self.provider.name,
+            )
+        return _JSON_OBJECT.validate_json(answer.content)
 
     async def _tokens(self, form: dict[str, str], scopes: list[str]) -> Tokens:
         """Ask the token endpoint for tokens."""
@@ -219,19 +259,22 @@ class OAuthClient:
             if error == "invalid_grant":
                 raise _Refused(_described(answer, error))
             if error == "invalid_client":
-                raise OAuthError(
+                raise ConfigError(
                     f"{self.provider.name} does not know udl's client "
                     f"({_described(answer, error)})",
                     hint="Check the client id and secret udl was given.",
                 )
-            raise OAuthError(
+            raise NetworkError(
                 f"{self.provider.name}'s token endpoint failed: "
-                f"{_described(answer, error or f'HTTP {answer.status_code}')}"
+                f"{_described(answer, error or f'HTTP {answer.status_code}')}",
+                tool=self.provider.name,
             )
         try:
             found = _TokenAnswer.model_validate_json(answer.content)
         except ValidationError as e:
-            raise OAuthError(f"{self.provider.name} answered with no tokens") from e
+            raise NetworkError(
+                f"{self.provider.name} answered with no tokens", tool=self.provider.name
+            ) from e
         return Tokens(
             access_token=found.access_token,
             refresh_token=found.refresh_token,
@@ -248,10 +291,17 @@ class OAuthClient:
         try:
             return await self._http.post(url, data=form, headers={"Accept": "application/json"})
         except httpx.HTTPError as e:
-            raise OAuthError(f"Could not reach {self.provider.name} ({url}): {e}") from e
+            raise self._unreachable(url, e) from e
+
+    def _unreachable(self, url: str, error: httpx.HTTPError) -> NetworkError:
+        return NetworkError(
+            f"Could not reach {self.provider.name} ({url}): {error}", tool=self.provider.name
+        )
 
 
 _RECONNECT: Final = "Connect the account again."
+_START_AGAIN: Final = "Start connecting again."
+_JSON_OBJECT: Final = TypeAdapter[JsonObject](JsonObject)
 
 
 class _Refused(Exception):
@@ -310,13 +360,13 @@ class LoopbackRedirect:
         return cls(server, callback, path, within)
 
     async def wait(self) -> dict[str, str]:
-        """The callback's query, once the page sends the user back. Raises OAuthError when it
+        """The callback's query, once the page sends the user back. Raises NotAllowed when it
         does not within the time given. Either way, the listener is closed."""
         try:
             async with asyncio.timeout(self._within):
                 return await self._callback
         except TimeoutError:
-            raise OAuthError(
+            raise NotAllowed(
                 f"No answer from the authorization page within {self._within:g} seconds",
                 hint="Start connecting again, and finish in the browser.",
             ) from None
@@ -344,10 +394,12 @@ async def _answer(
     parts = urlsplit(target)
     query = dict(parse_qsl(parts.query))
     if method == "GET" and parts.path == path and ("code" in query or "error" in query):
-        if not callback.done():
+        if callback.done():
+            body, status = "This authorization was already answered.", "409 Conflict"
+        else:
             callback.set_result(query)
-        body = _DONE if "code" in query else _refused(query["error"])
-        status = "200 OK"
+            body = _DONE if "code" in query else _refused(query["error"])
+            status = "200 OK"
     else:
         body, status = "Not found", "404 Not Found"
     payload = body.encode()
