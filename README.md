@@ -230,13 +230,23 @@ udl db sync --from shared --to local --dry-run
 
 ## Plugins
 
-udl has three kinds of plugin: databases, downloaders and site plugins. `udl plugins list` shows
-each one with its type, its source (`builtin`, `installed` or `local`), and whether it can run.
+udl has four kinds of plugin: databases, downloaders, site plugins and secret stores. `udl plugins
+list` shows each one with its type, its source (`builtin`, `installed` or `local`), and whether it
+can run.
 
 - **Site plugins** are code for a particular site's behaviour. They can rewrite its URLs (for
   example short links to their usual form), choose its downloader, add the headers or cookies it
   needs, give it a folder, and work on the files after a download. The built-in `youtube` plugin
   is an example.
+- **Secret stores** keep udl's secrets (account tokens, secret settings), never in a database or
+  the config: the system's keyring when it has one (`keyring`), else a file only you can read
+  (`file`). `[secrets] store` picks one.
+- **A plugin's own operations** are commands, routes and MCP tools too, made for it:
+  `udl <plugin> <op>`, `POST /plugins/<plugin>/<op>`, and the `<plugin>_<op>` tool.
+- **A plugin's settings** (a plugin with a settings model) are its defaults, then its
+  `[integrations.<name>]` table in the config, then what `udl plugins configure <name> -O KEY=VALUE`
+  set (`udl plugins settings <name>` shows them). Its secrets go to the secret store, and settings
+  that widen what udl reaches are set in the config file only.
 - **Local plugins:** any `.py` file in a plugin dir (`~/.config/udl/plugins` by default) is
   loaded, with no packaging needed. A local plugin with the same name as a built-in one replaces
   it.
@@ -271,7 +281,10 @@ Every command has a route, named after its operation:
 | list databases | `udl db list` | `GET /databases` | `list_databases` |
 | sync databases | `udl db sync` | `POST /databases/sync` | `sync_databases` |
 | list plugins | `udl plugins list` | `GET /plugins` | `list_plugins` |
+| a plugin's settings | `udl plugins settings` | `GET /plugins/{name}/settings` | `get_plugin_settings` |
+| change them | `udl plugins configure` | `PUT /plugins/{name}/settings` | `set_plugin_settings` |
 | show the config | `udl config show` | `GET /config` | `get_config` |
+| a plugin's operation | `udl <plugin> <op>` | `POST /plugins/<plugin>/<op>` | `<plugin>_<op>` |
 
 - **Starting downloads:** `POST /downloads` answers 202 with the job ids. Add `?wait=true` to get
   the results instead, once the downloads have ended.
@@ -279,7 +292,8 @@ Every command has a route, named after its operation:
   events.
 - **Errors** come back as `{"code", "message", "hint"}`, with a status that fits: 404 for
   something that does not exist, 400 for a tool or options that cannot work, 403 for something
-  not allowed, 401 without the API key, and 503 for a database problem.
+  not allowed, 401 without the API key, 409 for a name that is taken (or an account that needs
+  connecting again), and 503 for a database (or secret store) problem.
 
 ## The MCP server
 
@@ -328,7 +342,14 @@ format = "bv*+ba/b"
 backend = "httpx"                   # httpx | curl | wget
 user_agent = "Mozilla/5.0 ..."      # by default a browser's
 
-# [db] and [[db.connections]]: see Databases
+[secrets]
+store = "auto"                      # auto (the keyring, else a file) | keyring | file | memory
+
+[integrations.gmail]                # a plugin's settings (under what udl plugins configure sets)
+poll_interval = "60s"               # durations: 30s, 5m, 24h, 1h30m
+
+# [db] and [[db.connections]]: see Databases. [automations], [ai] and [web] are for what
+# planning.md's later phases build.
 ```
 
 ## Security

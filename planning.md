@@ -18,7 +18,7 @@
 Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task only when it meets the
 [Definition of Done](#definition-of-done-applies-to-every-task).
 
-- [ ] **Phase 8: Groundwork (plugin operations, records, secrets)**
+- [x] **Phase 8: Groundwork (plugin operations, records, secrets)**
   - [x] 8.1 `Operation` carries its tool hints (read-only, destructive, idempotent, open-world, moving `_HINTS` out of the MCP server) and whether it is `admin` (changes automations, accounts, AI setup or settings); an `OperationRegistry` per service holds udl's operations and its plugins' (`operations()` stays the core set)
   - [x] 8.2 🔴 **Parity test first** for generated adapters: an operation a plugin adds must get a CLI command, an API route and an MCP tool, made from its request model
   - [x] 8.3 Generated adapters: Typer commands (an option per field, `--input FILE` for the whole request), FastAPI routes (typed in the OpenAPI schema), MCP tools (as today)
@@ -988,6 +988,80 @@ class Clock(Protocol):
   `loopback_redirect()` listens on `127.0.0.1` on a free port for one callback; tokens are refreshed a minute
   before they expire; `revoke()` on disconnect. Google and Slack are plain OAuth 2.0 over HTTP, so one
   small typed module on httpx replaces two vendor SDKs.
+
+### Decisions made while building Phase 8
+
+Phase 8 was built from the plan as it stood before these cards were written, then brought in line with
+them. Where it still differs from a card, it is on purpose, as below.
+
+- **Operations (8.1):** as the card. udl's own carry their title and hints in `@operation`; a snapshot test
+  (in `tests/interface/mcp/test_tools.py`) keeps `tools/list`'s annotations. `admin` so far:
+  `sync_databases` (it copies settings, and later automations, over another database's) and
+  `set_plugin_settings`. `Operation.of` reads annotations with `annotationlib`'s FORWARDREF format, so a
+  plugin can import `UDLService` for type checkers only. A plugin's operation that clashes, is not an
+  `Operation`, or (for any plugin but an integration) is called `settings` is a plugin problem.
+- **Generated adapters (8.2–8.3):**
+  - Kept from the first build: an optional `SecretStr` field is a flag that asks for the value (hidden, on
+    stderr) rather than an option that takes it, so a secret never sits in `ps` or shell history, as the
+    Phase 0–7 security notes keep cookies and headers off command lines. A field called `input`, `json` or
+    `help` is given in `--input` only. The generic renderer is `render.model` (the card's
+    `render.generic`). Generated commands are marked with `mark()`; `runs()` keeps checking
+    `operations()` for hand-written ones.
+  - A generated command hands the service its request as data (`model_dump`), which the service reads as
+    its own operation's request: trying a local plugin file from the real CLI showed its models are other
+    classes in each service.
+  - `route(op)` gives an operation's APISpec with its default path. A route's path, query and body are put
+    together and checked as one request, so a model validator across them is a 422.
+  - Known limit, from the MCP SDK: it reads a string argument that is JSON (`null`, `true`, a list...) as
+    JSON unless its parameter is exactly `str`, so a secret (or any text) that is one of those does not stay
+    text over MCP (udl's own tools too). The CLI and the API keep it; hypothesis found it.
+  - `current_caller` lives in `udl.core.operations` (`Caller`: cli, api, mcp, automation). Python callers
+    (udl itself, tests) are `None` and, like the CLI, not checked. The API sets it in a plain ASGI
+    middleware (in the request's task). `check_output_dir` moved to `udl.core.paths`.
+- **Clock (8.7):** as the card. `timeout()` on the FakeClock cancels the block as `asyncio.timeout` does;
+  the OAuth listener's wait uses `asyncio.timeout` (it waits for a person, not a schedule).
+- **Records (8.4–8.5):**
+  - A record's table holds its own fields as JSON in `data` (the id and times are columns only).
+    `RecordQuery` has no `check()`: `Record.where()` reads and checks a query's values by the fields' types.
+    A field called `data` cannot be indexed. Kinds register themselves when defined (`RECORD_KINDS`, also the
+    tests'), and one defined after a database connected gets its table on first use.
+  - `claim_lease` is a conditional `UPDATE` then an `INSERT` that the unique name refuses (one portable
+    statement each), not the dialects' upsert: of udls claiming at once one wins, and SQLite never upgrades
+    a read lock (two connections that both read first would deadlock). MongoDB's is one
+    `find_one_and_update` with `upsert`.
+  - `list_records` of config kinds merges every connection's answers, as sites and downloads do, whatever
+    the read policy; `get_record` takes the highest-priority connection's. The test MongoDB container now
+    has 64000 open files: every test database is a set of collections and indexes, and Docker's 1024 ran
+    out partway.
+- **Secrets (8.6):**
+  - A stored model holds a kept secret as `KeptSecret` (`{"secret": "<ref>"}`): the card's
+    `SecretStr | SecretRef` cannot be told apart in JSON, where both are a string. `SecretField` is
+    `SecretStr | KeptSecret`.
+  - A keyring cannot list what it holds, so the keyring store keeps the list of its references beside them
+    (`#refs`), changed under a lock file, for `delete_prefix()`.
+  - `SecretRef` parts may hold capitals (`[A-Za-z0-9._-]`, never starting with a dot). `[secrets]` also has
+    `keyring_service`. Plugin settings keep their secrets in the store directly
+    (`plugins/<name>/<field>`): a plugin's settings model types them `SecretStr`, as its authors write it.
+- **Templates (8.8):** Jinja's *immutable* sandbox (the card's, but nothing changed in place either), and
+  more than the card asked, since the event is written by anyone: 100,000 loop steps in all, numbers up to
+  65,536 bits, and what grows measured before it is made (operators, text methods, `str.format` widths,
+  udl's own `replace`, `join`, `center` and `indent`, every filter's answer). `~` and loops compile outside
+  the sandbox's hooks, so the template's tree is rewritten in `_parse` (Jinja's own, pinned by the tests).
+  `dict` is a function rather than the type. `Templates` is a class (`render_text`, `render_value`,
+  `check`, `check_value`).
+- **OAuth (8.9):** the card's behaviour and errors, the first build's names: `OAuthClient(provider, http=,
+  clock=)` with `authorize()` / `exchange()` / `refresh()` / `fresh()` / `revoke()` / `userinfo()`,
+  `Authorization` (the card's `PendingAuthorization`, with `started_at`) and `Tokens` (`TokenSet`,
+  `expiring()` for `needs_refresh`); the client id and secret are on `OAuthProvider`.
+  `loopback_redirect(path=, answer_within=)` (ruff's ASYNC109 forbids an async `timeout` parameter). A
+  server that fails, or cannot be reached, is a `NetworkError` naming the provider.
+- **Settings (8.10):** durations are written `30s`, `5m`, `24h`, `1h30m`, `250ms`, `2d` (or seconds) and shown
+  as written. A plugin's settings: `PluginSettingsInfo` has `json_schema` (a field called `schema` shadows
+  Pydantic's `BaseModel.schema`, a warning, so an error here) and `secrets`, the fields that are secrets.
+  `FileOnly` lives in `udl.plugins.settings` (plugins import it), the layering in
+  `udl.core.plugin_settings.PluginSettingsManager`; `--secret KEY` asks for a secret's value, hidden.
+- **Fixed on the way:** the job manager's concurrency tests downloaded every URL to one file, so under load
+  one job found it emptied by another (`test_no_more_than_max_concurrent_jobs_run_at_once`, now and then).
 
 ---
 
@@ -3522,9 +3596,11 @@ above:
 
 Things that bit before and will bite again:
 
-- A new operation needs a `MATRIX` row in `tests/interface/test_parity.py`, a CLI command marked
-  `@runs("<op>")`, an API route with `**documented("<op>")`, its tool hints (in `_HINTS` until 8.1 moves them
-  onto `Operation`), and an attribute docstring on every request field (a test checks).
+- A new operation of udl's own needs a `MATRIX` row in `tests/interface/test_parity.py`, its title and hints
+  in `@operation(name, title=…, hints=OperationHints(…))`, its `admin` choice in
+  `tests/unit/core/test_operations.py`, an attribute docstring on every request field (a test checks), and
+  either a CLISpec and APISpec or a hand-written command (`@runs("<op>")`) and route
+  (`**documented("<op>")`).
 - Typer 0.26+ vendors Click: never import `click` in the CLI; use `typer.Context` / `typer.core`.
 - FastAPI includes routers lazily: read routes from `app.openapi()`, not `app.routes`.
 - Async fixtures that hold an anyio task group (the API's lifespan, MCP clients, and now the runtime and the
@@ -3533,7 +3609,10 @@ Things that bit before and will bite again:
   `try_subscription`. Pytest collects `Test*` classes, so request models are `SubscriptionTestRequest`.
 - SQLModel can't read PEP 695 `type X = Annotated[...]` aliases on table fields; record tables use plain
   aliases.
-- Ruff (py314 target) rewrites `except (A, B):` to `except A, B:`.
+- Ruff (py314 target) rewrites `except (A, B):` to `except A, B:`, and unquotes annotations (3.14 defers
+  them): read a function's annotations with `annotationlib` (`Format.FORWARDREF`), as `Operation.of` does.
+- Test a plugin's operations from a plugin dir too, not only from a registry the test fills: a local plugin
+  file is imported again by every service, so its models are other classes there (Phase 8 found it so).
 - A new entry point or dependency needs `uv tool install --editable '.[browser]' --reinstall` for the global
   `udl`. This plan adds several plugin kinds.
 - The postgres and mongodb tests start Docker containers (or use `UDL_TEST_POSTGRES_URL` /
