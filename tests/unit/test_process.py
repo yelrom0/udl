@@ -196,3 +196,11 @@ async def test_a_cancelled_program_says_what_was_cancelled(tmp_path: Path) -> No
 
     with pytest.raises(Cancelled, match="The run was cancelled"):
         await run_process(python("pass"), cancel=token, cancelled="The run was cancelled")
+
+
+async def test_an_empty_input_is_no_input() -> None:
+    result = await run_process(
+        python("import sys; print(repr(sys.stdin.read()))"), cancel=CancelToken(), stdin=b""
+    )
+
+    assert result.stdout == "''\n"

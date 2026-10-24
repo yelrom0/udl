@@ -20,11 +20,11 @@ from starlette.types import Message, Receive, Scope, Send
 # Local Imports
 from support.api import client_for
 from support.interfaces import A, Harness
-from udl.config import APISettings
+from udl.config import APISettings, AutomationsSettings
 from udl.core.models import DownloadList
 from udl.core.operations import operations
 from udl.errors import DuplicateKey, ErrorCode, ErrorInfo
-from udl.interfaces.api.app import LocalHostsOnly
+from udl.interfaces.api.app import LocalHostsOnly, create_app
 
 
 def keyed(tmp_path: Path, key: str = "s3cret") -> Harness:
@@ -167,3 +167,17 @@ async def test_the_host_check_leaves_the_lifespan_alone() -> None:
     await LocalHostsOnly(app)({"type": "lifespan"}, receive, send)
 
     assert seen == ["lifespan"]
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_udl_serve_runs_the_automations_unless_told_not_to(
+    tmp_path: Path, enabled: bool
+) -> None:
+    harness = Harness(tmp_path, automations=AutomationsSettings(enabled=enabled))
+    app = create_app(harness.settings, make_service=harness.service)
+
+    async with app.router.lifespan_context(app):
+        running = app.state.service.runtime is not None
+
+    assert running is enabled
+    assert app.state.service.runtime is None

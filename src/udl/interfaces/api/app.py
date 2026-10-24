@@ -32,6 +32,8 @@ from starlette.datastructures import Headers
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from udl.automations.runtime import AutomationRuntime
+
 # Local Imports
 from udl.config import Settings
 from udl.core.operations import Caller, current_caller
@@ -92,7 +94,11 @@ def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService)
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         async with service, mcp.session_manager.run():
-            yield
+            if not settings.automations.enabled:
+                yield
+                return
+            async with AutomationRuntime(service):  # (unless [automations] enabled = false)
+                yield
 
     app = FastAPI(
         title="udl",

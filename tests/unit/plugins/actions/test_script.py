@@ -310,3 +310,35 @@ async def test_its_arguments_are_checked_with_the_event_type_s_example(
 def test_its_options_need_a_command(plugin: ScriptAction) -> None:
     with pytest.raises(ConfigError):
         plugin.options({"command": []})
+
+
+async def test_a_folder_that_is_not_there_fails_the_run(
+    plugin: ScriptAction, scripts: Path, tmp_path: Path
+) -> None:
+    script(scripts, "ok.sh", "true")
+
+    with pytest.raises(ActionFailed, match="not a folder"):
+        await run(plugin, {"command": ["ok.sh"], "cwd": str(tmp_path / "nowhere")})
+
+
+async def test_a_program_that_cannot_be_run_fails_the_run(
+    plugin: ScriptAction, scripts: Path
+) -> None:
+    no_shebang = scripts / "plain.sh"
+    no_shebang.write_bytes(b"\x00\x01 not a program")
+    no_shebang.chmod(0o755)
+
+    with pytest.raises(ActionFailed, match="cannot be run"):
+        await run(plugin, {"command": ["plain.sh"]})
+
+
+async def test_a_program_that_went_away_fails_the_run(
+    plugin: ScriptAction, scripts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def gone(named: str) -> Path:
+        return scripts / "gone.sh"
+
+    monkeypatch.setattr(plugin, "program", gone)
+
+    with pytest.raises(ActionFailed, match="cannot be run"):
+        await run(plugin, {"command": ["gone.sh"]})

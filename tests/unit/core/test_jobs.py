@@ -29,7 +29,7 @@ from support.engine import StaticCookies, databases, registry, script, settings
 from udl.config import Settings
 from udl.core.executor import Execution, Executor, JobSpec, RetryPolicy, ToolProgress
 from udl.core.jobs import InstanceLock, JobManager, recover_interrupted
-from udl.core.models import JobEvent, JobEventType
+from udl.core.models import JobEvent, JobEventType, JobInfo
 from udl.core.resolver import Resolver
 from udl.core.tools import Toolbox
 from udl.core.urls import URL
@@ -39,6 +39,7 @@ from udl.errors import DatabaseError, DoesNotExist, ErrorCode
 from udl.plugins.downloaders.base import CancelToken
 
 A = "https://example.com/a"
+GONE = "https://example.com/gone"
 B = "https://example.com/b"
 SLOW = FakeMedia(content=b"x" * 2000, delay=0.02)  # 100 chunks of 20 bytes: about 2 s
 
@@ -63,6 +64,7 @@ class Harness:
         keep: int = 1000,
         runner: Any = None,
         grace: float = 5.0,
+        on_end: Any = None,
     ) -> None:
         toolbox = Toolbox(config, registry())
         executor = Executor(
@@ -80,6 +82,7 @@ class Harness:
             progress_interval=progress_interval,
             keep=keep,
             grace=grace,
+            on_end=on_end,
         )
 
     async def __aenter__(self) -> Self:
@@ -145,6 +148,47 @@ async def test_a_batch_runs_every_url_as_a_job(tmp_path: Path) -> None:
         assert done is not None
         assert [job.status for job in done.jobs] == [JobStatus.FINISHED, JobStatus.FINISHED]
         assert [[p.read_bytes() for p in job.files] for job in done.jobs] == [[b"a"], [b"b"]]
+
+
+async def test_each_job_s_end_is_told_but_a_cancelled_one_s(tmp_path: Path) -> None:
+    told: list[JobInfo] = []
+
+    async def ended(job: JobInfo) -> None:
+        told.append(job)
+
+    media = {
+        A: FakeMedia(content=b"a", filename="a.mp4"),
+        B: FakeMedia(content=b"b", filename="b.mp4", delay=0.5),
+    }
+    config = settings(tmp_path, tools={"http": script(media, errors={GONE: "not_found"})})
+    async with Harness(config, on_end=ended, grace=0.1) as harness:
+        done, gone, slow = await harness.submit(A, GONE, B)
+        await harness.jobs.wait(done)
+        await harness.jobs.wait(gone)
+        await harness.jobs.cancel(slow)
+
+    assert {(job.url, job.status) for job in told} == {
+        (A, JobStatus.FINISHED),
+        (GONE, JobStatus.FAILED),
+    }
+
+
+async def test_a_job_whose_end_cannot_be_told_still_ends(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def failing(job: JobInfo) -> None:
+        raise RuntimeError("nobody listens")
+
+    config = settings(tmp_path, tools={"http": script({A: FakeMedia(content=b"a")})})
+    async with Harness(config, on_end=failing) as harness:
+        [job] = await harness.submit(A)
+        await harness.jobs.wait(job)
+
+        found = harness.jobs.get(job)
+
+    assert found is not None
+    assert found.status is JobStatus.FINISHED
+    assert "nobody listens" in caplog.text
 
 
 async def test_an_empty_batch_is_done_at_once(tmp_path: Path) -> None:

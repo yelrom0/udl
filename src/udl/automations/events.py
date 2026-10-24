@@ -470,7 +470,7 @@ class DownloadEventData(_Data):
 
     download: UUID
     """The download's id (`udl jobs show`, get_download)."""
-    batch: UUID
+    batch: UUID | None = None
     """The id of the download request it was one URL of."""
     url: str
     """The URL that was downloaded."""

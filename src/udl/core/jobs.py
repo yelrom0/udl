@@ -22,7 +22,7 @@ import fcntl
 import itertools
 import logging
 from collections import deque
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -151,8 +151,10 @@ class JobManager:
         progress_interval: float = 0.25,
         keep: int = 1000,
         grace: float = 5.0,
+        on_end: Callable[[JobInfo], Awaitable[None]] | None = None,
     ) -> None:
         self._runner = runner
+        self._on_end = on_end
         self._grace = grace
         self._turns = asyncio.Semaphore(max_concurrent)
         self._max_per_site = max_per_site
@@ -288,6 +290,11 @@ class JobManager:
         self._publish(job, _ENDINGS[status])
         await self._save(job)
         self._forget_old(job)
+        if self._on_end is not None and status is not JobStatus.CANCELLED:
+            try:
+                await self._on_end(job.info())
+            except Exception:  # (it never fails the job)
+                log.exception("Telling what came of the download of %s failed", job.spec.url)
 
     def _progress(self, job: _Job, tool: str, progress: DownloadProgress) -> None:
         job.progress = progress

@@ -612,3 +612,24 @@ async def test_serving_runs_what_is_queued_and_what_comes_due(
         serving.cancel()
         with pytest.raises(asyncio.CancelledError):
             await serving
+
+
+@pytest.mark.parametrize("status", list(RunStatus))
+def test_a_run_has_ended_once_it_ran_or_was_skipped(status: RunStatus) -> None:
+    run = ActionRun(action_id=uuid4(), action="x", plugin="fake", status=status)
+
+    assert run.ended() is (status not in ("queued", "running", "awaiting_approval"))
+
+
+async def test_a_udl_that_cannot_read_the_runs_it_left_still_starts(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def gone(self: ActionRunner) -> int:
+        raise DatabaseError("The database went away")
+
+    monkeypatch.setattr(ActionRunner, "recover_direct", gone)
+
+    async with harness.service():
+        pass
+
+    assert "The database went away" in caplog.text

@@ -142,6 +142,11 @@ async def flaky(service: UDLService, request: ChoreRequest) -> ChoreDone:
     raise NetworkError("The connection was reset")
 
 
+async def broken(service: UDLService, request: ChoreRequest) -> ChoreDone:
+    """Fail as a bug does."""
+    raise RuntimeError("a bug in the operation")
+
+
 async def do(service: UDLService, request: ChoreRequest) -> ChoreDone:
     """Do a chore, saying who asked."""
     caller = current_caller.get()
@@ -159,6 +164,9 @@ class Chores(SitePlugin):
             Operation.of(wait, name="wait", title="Wait", hints=OperationHints(read_only=True)),
             Operation.of(flaky, name="flaky", title="Fail", hints=OperationHints(read_only=True)),
             Operation.of(do, name="do", title="Do a chore", hints=OperationHints(read_only=True)),
+            Operation.of(
+                broken, name="broken", title="Break", hints=OperationHints(read_only=True)
+            ),
         ]
 
 

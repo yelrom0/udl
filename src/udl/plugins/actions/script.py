@@ -110,7 +110,7 @@ class ScriptAction(ActionPlugin[ScriptOptions]):
             case text:
                 stdin = text.encode()
         settings = self.service.settings
-        cwd = _folder(options.cwd) if options.cwd else settings.automations.scripts_dir
+        cwd = _folder(options.cwd or settings.automations.scripts_dir)
         with _event_file(event) as event_file:
             env = {
                 **options.env,
@@ -151,8 +151,12 @@ class ScriptAction(ActionPlugin[ScriptOptions]):
         return _output(result.stdout)
 
 
-def _folder(named: str) -> Path:
-    return Path(named).expanduser()
+def _folder(named: str | Path) -> Path:
+    """The folder a program runs in. Raises ActionFailed when it is not one."""
+    found = Path(named).expanduser()
+    if not found.is_dir():
+        raise ActionFailed(f"{found} is not a folder: the program cannot run in it")
+    return found
 
 
 @contextlib.contextmanager

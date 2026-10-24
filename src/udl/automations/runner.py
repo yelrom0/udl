@@ -98,25 +98,30 @@ class ActionRunner:
 
     # -- running what is queued ----------------------------------------------------------------
 
-    async def serve(self) -> None:
-        """Run the queued runs as their time comes, for ever (until cancelled): when woken,
-        when a run ends, when a retry is due, and every [automations] dispatch_interval."""
-        while True:
+    async def serve(self, stop: asyncio.Event | None = None) -> None:
+        """Run the queued runs as their time comes (when woken, when a run ends, when a retry
+        is due, and every [automations] dispatch_interval), until `stop` is set (or for ever).
+        It stops between runs' starts, never in the middle of one."""
+        stop = stop or asyncio.Event()
+        while not stop.is_set():
             await self.run_due()
             clock = self.service.clock
             until = clock.now() + self.service.settings.automations.dispatch_interval
             if self._next_due is not None:
                 until = min(until, self._next_due)
-            await self._wait(until)
+            await self._wait(until, stop)
 
-    async def _wait(self, until: datetime) -> None:
-        woken = asyncio.ensure_future(self._woken.wait())
-        slept = asyncio.ensure_future(self.service.clock.sleep_until(until))
+    async def _wait(self, until: datetime, stop: asyncio.Event) -> None:
+        waits = [
+            asyncio.ensure_future(self._woken.wait()),
+            asyncio.ensure_future(stop.wait()),
+            asyncio.ensure_future(self.service.clock.sleep_until(until)),
+        ]
         try:
-            await asyncio.wait([woken, slept], return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            woken.cancel()
-            slept.cancel()
+            for wait in waits:
+                wait.cancel()
             self._woken.clear()
 
     async def run_due(self) -> int:

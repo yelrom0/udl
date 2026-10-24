@@ -168,4 +168,22 @@ async def test_without_an_example_its_plain_arguments_are_checked(
     )
 
     with pytest.raises(ConfigError, match="nope"):
-        await plugin.check({"operation": "list_sites", "arguments": {"nope": 1}}, None)
+        await plugin.check(
+            {"operation": "get_site", "arguments": {"site": "{{ event.data.site }}", "nope": 1}},
+            None,
+        )
+
+
+async def test_a_bug_in_the_operation_fails_the_run(
+    plugin: OperationAction, caplog: pytest.LogCaptureFixture
+) -> None:
+    with pytest.raises(ActionFailed, match="a bug in the operation"):
+        await run(plugin, {"operation": "chores_broken"})
+
+    assert "chores_broken" in caplog.text
+
+
+async def test_arguments_made_whole_by_a_template_are_checked_when_it_runs(
+    plugin: OperationAction,
+) -> None:
+    await plugin.check({"operation": "list_sites", "arguments": "{{ event.data }}"}, None)

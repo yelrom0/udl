@@ -27,9 +27,10 @@ from uuid import UUID
 from pydantic import BaseModel, JsonValue
 
 # Local Imports
-from udl.automations.bus import EventBus
-from udl.automations.events import EventTypes
+from udl.automations.bus import EventBus, NewEvent
+from udl.automations.events import DownloadEventData, EventTypes
 from udl.automations.runner import ActionRunner
+from udl.automations.runtime import AutomationRuntime
 from udl.chains.executor import ChainRun, ChainRunner
 from udl.chains.files import read_chains, write_chains
 from udl.chains.models import FetchMode, SiteChain, StepTrace, TagChain
@@ -88,7 +89,7 @@ from udl.core.sites import load_site_plugins
 from udl.core.tools import Toolbox
 from udl.core.urls import URL
 from udl.db.manager import DBManager
-from udl.db.models import DownloadQuery, Site, SiteQuery, Strategy, StrategySource
+from udl.db.models import DownloadQuery, JobStatus, Site, SiteQuery, Strategy, StrategySource
 from udl.db.sync import sync
 from udl.errors import (
     AuthRequired,
@@ -175,11 +176,14 @@ class UDLService:
         self.event_types = EventTypes.discover(registry)
         self.bus = EventBus(self.db, self.event_types, self.clock, settings.automations)
         self.runner = ActionRunner(self)
+        self.runtime: AutomationRuntime | None = None
+        """The runtime that runs the automations in this udl, when one does (`udl serve`)."""
         self.jobs = JobManager(
             self.executor,
             max_concurrent=settings.max_concurrent,
             max_per_site=settings.max_per_site,
             progress_interval=progress_interval,
+            on_end=self._download_ended,
         )
         self._lock = lock if lock is not None else InstanceLock(data_dir() / "udl.lock")
         self._secrets = secrets
@@ -252,6 +256,32 @@ class UDLService:
                 f"not a {type(request).__name__}"
             )
         return await op.method(self, request)
+
+    async def _download_ended(self, job: JobInfo) -> None:
+        """Publish what came of a download: udl.download.finished, or udl.download.failed."""
+        data = DownloadEventData(
+            download=job.id,
+            batch=job.batch_id,
+            url=job.url,
+            site=job.site_key,
+            tool=job.tool,
+            title=job.title,
+            files=[str(path) for path in job.files],
+            size=job.size_bytes,
+            output_dir=str(job.output_dir) if job.output_dir is not None else None,
+            error=job.error,
+        )
+        ended = "finished" if job.status is JobStatus.FINISHED else "failed"
+        try:
+            await self.bus.publish(
+                NewEvent(
+                    type=f"udl.download.{ended}",
+                    data=data.model_dump(mode="json"),
+                    dedupe_key=str(job.id),
+                )
+            )
+        except UDLError as e:
+            log.warning("Could not publish what came of the download of %s: %s", job.url, e)
 
     def events(self, id_: UUID) -> AsyncGenerator[JobEvent]:
         """What happens to a download job, or to every job of a batch, until they have ended
