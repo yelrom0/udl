@@ -123,6 +123,14 @@ def test_load_reads_an_explicit_config_file(tmp_path: Path) -> None:
     assert Settings.load(path).max_concurrent == 8
 
 
+def test_settings_say_which_config_file_they_were_read_from(tmp_path: Path) -> None:
+    path = write_config("max_concurrent = 8\n", tmp_path / "custom.toml")
+
+    assert Settings.load(path).config_file == path
+    assert Settings.load(path).model_copy(update={"max_concurrent": 2}).config_file == path
+    assert Settings().config_file is None
+
+
 def test_load_reads_the_config_file_named_by_udl_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

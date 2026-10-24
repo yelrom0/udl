@@ -61,7 +61,9 @@ __all__ = [
     "ActionPlugin",
     "RunLog",
     "example_event",
+    "has_template",
     "template_context",
+    "untemplated_problems",
 ]
 
 MAX_LOG: Final = 16 * 1024
@@ -174,18 +176,11 @@ class ActionPlugin[O: ActionOptions](ABC):
             )
             return self.options(_object(templates.render_value(options, context)))
         _parse_templates(templates, options)
-        templated = {name for name, value in options.items() if _has_template(value)}
-        if not templated:
+        if not has_template(options):
             return self.options(options)
-        try:
-            self.options_model.model_validate(options)
-        except ValidationError as e:
-            problems = [p for p in e.errors() if not p["loc"] or p["loc"][0] not in templated]
-            if problems:
-                raise ConfigError(
-                    f"The {self.name} action's options are not valid: "
-                    + "; ".join(f"{'.'.join(map(str, p['loc']))}: {p['msg']}" for p in problems)
-                ) from e
+        problems = untemplated_problems(self.options_model, options)
+        if problems is not None:
+            raise ConfigError(f"The {self.name} action's options are not valid: {problems}")
         return None
 
     @abstractmethod
@@ -204,14 +199,28 @@ def _object(value: JsonValue) -> JsonObject:
     return value if isinstance(value, dict) else {}
 
 
-def _has_template(value: JsonValue) -> bool:
+def has_template(value: JsonValue) -> bool:
+    """Whether a text in `value` is a template (rather than plain text)."""
     if isinstance(value, str):
         return any(mark in value for mark in _TEMPLATE_MARKS)
     if isinstance(value, list):
-        return any(_has_template(item) for item in value)
+        return any(has_template(item) for item in value)
     if isinstance(value, dict):
-        return any(_has_template(item) for item in value.values())
+        return any(has_template(item) for item in value.values())
     return False
+
+
+def untemplated_problems(model: type[BaseModel], values: JsonObject) -> str | None:
+    """What is wrong with `values` as `model`, leaving out the fields that hold templates
+    (which only an event can tell), or None when nothing is."""
+    templated = {name for name, value in values.items() if has_template(value)}
+    try:
+        model.model_validate(values)
+    except ValidationError as e:
+        problems = [p for p in e.errors() if not p["loc"] or p["loc"][0] not in templated]
+        if problems:
+            return "; ".join(f"{'.'.join(map(str, p['loc']))}: {p['msg']}" for p in problems)
+    return None
 
 
 def _parse_templates(templates: Templates, value: JsonValue) -> None:

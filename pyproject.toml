@@ -61,6 +61,12 @@ file = "udl.plugins.secrets.file:FileSecretStore"
 keyring = "udl.plugins.secrets.keyring:KeyringSecretStore"
 memory = "udl.plugins.secrets.memory:MemorySecretStore"
 
+[project.entry-points."udl.actions"]
+notify = "udl.plugins.actions.notify:NotifyAction"
+operation = "udl.plugins.actions.operation:OperationAction"
+script = "udl.plugins.actions.script:ScriptAction"
+webhook = "udl.plugins.actions.webhook:WebhookAction"
+
 [build-system]
 requires = ["uv_build>=0.13.5,<0.14.0"]
 build-backend = "uv_build"

@@ -5,19 +5,26 @@
 
 FakeAction: an action plugin that does what its options say (succeed with an output, fail,
 fail retryably, wait until it is cancelled, hang, or fail as a bug would) and records each run
-it is given, for the runner's and the bus's tests
+it is given, for the runner's and the bus's tests; and Chores, a plugin whose operations wait,
+fail retryably or say who called, for operation actions to call; and a fake notify-send
 """
 
 # System Imports
 import asyncio
+from collections.abc import Generator
+from contextlib import contextmanager
 from enum import StrEnum
-from typing import ClassVar
+from pathlib import Path
+from typing import TYPE_CHECKING, ClassVar
 
 # Package Imports
-from pydantic import Field, JsonValue
+import pytest
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 # Local Imports
-from udl.errors import Cancelled
+from support.interfaces import Harness
+from udl.core.operations import Operation, OperationHints, current_caller
+from udl.errors import Cancelled, NetworkError
 from udl.plugins.actions.base import (
     ActionContext,
     ActionFailed,
@@ -25,6 +32,11 @@ from udl.plugins.actions.base import (
     ActionOutput,
     ActionPlugin,
 )
+from udl.plugins.registry import SITES
+from udl.plugins.sites.base import SitePlugin
+
+if TYPE_CHECKING:
+    from udl.core.service import UDLService
 
 
 class Outcome(StrEnum):
@@ -95,3 +107,92 @@ def fake_action(called: str = "fake") -> type[FakeAction]:
 
     Fake.__qualname__ = Fake.__name__ = f"FakeAction[{called}]"
     return Fake
+
+
+# ---------------------------------------------------------------------------------------------
+# Operations for operation actions to call
+# ---------------------------------------------------------------------------------------------
+
+
+class _Model(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
+
+
+class ChoreRequest(_Model):
+    """A chore."""
+
+    what: str = "nothing"
+    """What to do."""
+
+
+class ChoreDone(_Model):
+    what: str
+    caller: str | None
+    """Who called (cli, api, mcp, automation), or None from Python."""
+
+
+async def wait(service: UDLService, request: ChoreRequest) -> ChoreDone:
+    """Wait until cancelled."""
+    await asyncio.Event().wait()
+    raise AssertionError  # (never: it waits for ever)
+
+
+async def flaky(service: UDLService, request: ChoreRequest) -> ChoreDone:
+    """Fail as a dropped connection does."""
+    raise NetworkError("The connection was reset")
+
+
+async def do(service: UDLService, request: ChoreRequest) -> ChoreDone:
+    """Do a chore, saying who asked."""
+    caller = current_caller.get()
+    return ChoreDone(what=request.what, caller=None if caller is None else caller.value)
+
+
+class Chores(SitePlugin):
+    """A site plugin (for no sites) whose operations wait, fail or say who called."""
+
+    name = "chores"
+
+    @classmethod
+    def operations(cls) -> list[Operation]:
+        return [
+            Operation.of(wait, name="wait", title="Wait", hints=OperationHints(read_only=True)),
+            Operation.of(flaky, name="flaky", title="Fail", hints=OperationHints(read_only=True)),
+            Operation.of(do, name="do", title="Do a chore", hints=OperationHints(read_only=True)),
+        ]
+
+
+def with_chores(harness: Harness) -> Harness:
+    """`harness`, with the Chores plugin."""
+    harness.registry.register(SITES, Chores)
+    return harness
+
+
+# ---------------------------------------------------------------------------------------------
+# A notify-send
+# ---------------------------------------------------------------------------------------------
+
+
+# A notify-send that writes its arguments (one a line) to $FAKE_NOTIFY_LOG, fails for the title
+# "fail" and waits for the title "wait".
+FAKE_NOTIFY_SEND = """#!/bin/sh
+printf '%s\\n' "$@" > "$FAKE_NOTIFY_LOG"
+while [ "$1" != "--" ]; do shift; done
+case "$2" in
+    fail) echo "Cannot connect to the notification server" >&2; exit 1 ;;
+    wait) exec sleep 30 ;;
+esac
+"""
+
+
+@contextmanager
+def fake_notify_send(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """A fake notify-send on PATH, which logs its arguments to tmp_path / "notified"."""
+    folder = tmp_path / "bin"
+    folder.mkdir(exist_ok=True)
+    program = folder / "notify-send"
+    program.write_text(FAKE_NOTIFY_SEND)
+    program.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{folder}:/usr/bin:/bin")
+    monkeypatch.setenv("FAKE_NOTIFY_LOG", str(tmp_path / "notified"))
+    yield

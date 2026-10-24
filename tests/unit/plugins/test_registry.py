@@ -25,6 +25,7 @@ from udl.errors import PluginError
 from udl.plugins.databases.memory import MemoryDatabase
 from udl.plugins.databases.sqlite import SQLitePlugin
 from udl.plugins.registry import (
+    ACTIONS,
     DATABASES,
     DOWNLOADERS,
     SITES,
@@ -367,6 +368,12 @@ def test_udls_own_plugins_are_registered_as_builtins() -> None:
     assert registry.get(DATABASES, "memory") is MemoryDatabase
     assert registry.get(DATABASES, "sqlite") is SQLitePlugin
     assert {info.source for info in registry.plugins(DATABASES)} == {PluginSource.BUILTIN}
+    assert {info.name for info in registry.plugins(ACTIONS)} >= {
+        "notify",
+        "operation",
+        "script",
+        "webhook",
+    }
     assert registry.problems == []
 
 

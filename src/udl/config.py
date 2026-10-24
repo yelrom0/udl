@@ -28,6 +28,7 @@ from pydantic import (
     JsonValue,
     PlainSerializer,
     PositiveInt,
+    PrivateAttr,
     SecretStr,
     ValidationError,
     model_validator,
@@ -334,6 +335,12 @@ class Settings(BaseSettings):
     # Per-plugin settings, e.g. [integrations.gmail]: the file's layer of a plugin's settings,
     # under what is set through udl (set_plugin_settings). Each plugin validates its own.
     integrations: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
+    _config_file: Path | None = PrivateAttr(default=None)
+
+    @property
+    def config_file(self) -> Path | None:
+        """The config file these settings were read from (load()), if there was one."""
+        return self._config_file
 
     @classmethod
     def settings_customise_sources(
@@ -363,7 +370,7 @@ class Settings(BaseSettings):
 
         token = _config_file.set(path)
         try:
-            return cls()
+            loaded = cls()
         except tomllib.TOMLDecodeError as e:
             raise ConfigError(f"Could not parse {path}: {e}") from e
         except ValidationError as e:
@@ -376,3 +383,5 @@ class Settings(BaseSettings):
             ) from e
         finally:
             _config_file.reset(token)
+        loaded._config_file = path if path.is_file() else None
+        return loaded
