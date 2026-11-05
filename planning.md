@@ -163,6 +163,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [ ] 21.3 `udl service install`: a systemd user unit, so the runtime is always on
   - [ ] 21.4 Docs: README, `docs/automations.md`, `docs/plugins.md` (integrations, actions, AI providers, secret stores), `docs/ui-plugins.md`
   - [ ] 21.5 Opt-in smoke tests: Gmail, Slack and Ollama end to end, and a `pages` watch on a real site
+- [ ] **Phase 22: Proxmox plugin (`proxmox`)**: VM management for Liively dev/staging (user, 5 Nov 2026). Independent of Phases 13–21. Tracker and spec: [planning/02-proxmox.md](planning/02-proxmox.md)
 
 ---
 
