@@ -1,8 +1,6 @@
-# udl (Ultra Downloader)
+# udl (Ultra Data Layer)
 
-One command for downloading from anywhere. Give udl a URL and it works out how to download it:
-yt-dlp, gallery-dl, a plain HTTP download, the media in the page's HTML, or a real browser. It
-remembers what worked for each site, so the next download from that site goes straight to it.
+The ultimate tool for downloading, interacting with and automating data, extensible, AI native (but not required). 
 
 Everything udl does is available three ways, with the same options and results:
 
