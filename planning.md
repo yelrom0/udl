@@ -76,7 +76,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
 
 The user's (13 and 17 Nov 2026): these phases come **before** Phases 13–22. They pull Phase 18 forward (as 24.1) and tasks 17.1 and 17.3 (as 25.2), and every plugin gets a generated web UI. The spec, the decisions and every task's card are in [planning/02-agent-orchastrator.md](planning/02-agent-orchastrator.md); **this tracker is the one to mark**. Four implementation agents build them (`ernie-a`…`ernie-d`, queues in [planning/agent-queues/](planning/agent-queues/)); Claude reviews; the user is told what is ready in [planning/human-comms.md](planning/human-comms.md).
 
-Marks: `- [ ]` open · `- [r]` the agent's PR is green and reviewed by the bot, waiting for review and merge · `- [~]` built by the implementation agent, PR merged into `main` (the agent writes what it did, the PR and anything it hit under the task's card in the plan file) · `- [!]` blocked on something only the user or Claude can do (the reason follows `BLOCKED:`) · `- [x]` **only Claude**, after reviewing the work against the plan. Tasks marked **(Claude)** or **(user)** are not for implementation agents.
+Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing open, waiting for Claude's review and the merge (**set by the agent in its own queue file**, `planning/agent-queues/<agent>.md`, which is local and not in git; this tracker never shows `[r]`) · `- [~]` built by the implementation agent, PR merged into `main` (the agent writes what it did, the PR and anything it hit under the task's card in the plan file) · `- [!]` blocked on something only the user or Claude can do (the reason follows `BLOCKED:`) · `- [x]` **only Claude**, after reviewing the work against the plan. Tasks marked **(Claude)** or **(user)** are not for implementation agents.
 
 - [ ] **Phase 23: Repo workflow and the bot workspace on jeff-wiggle**
   - [x] 23.1 CI workflow: `make check` on every PR to `main` and on pushes to `main`
@@ -331,14 +331,22 @@ signed commits, linear history, squash merges). For each task:
    **Build** bullets. `main` is never left red, so a contract suite whose other plugins come in a later
    task runs only on the plugins done so far.
 3. **In the same PR, mark the task:** its tracker line here goes from `- [ ]` to `- [~]`, and a note under
-   its card says what was built, the tests, anything hit, and any name that changed and why.
+   its card says what was built, the tests, anything hit, and any name that changed and why. A task
+   marked **(Claude)** is ticked `[x]` in its own PR instead, since Claude is its reviewer.
 4. **Push and open the PR into `main`,** naming its task (``Task: `24.2` ``). Implementation agents push
    only with `agent-push` (it runs `make check` first); people and Claude run `make check` themselves.
 5. **CI and the review bot:** fix everything `check` and the bot report, nits included, test-first, until
-   the bot's verification has nothing open (no PARTIALLY FIXED, NOT FIXED or NEW ISSUE row).
-6. **Claude reviews the PR against its card and merges it** (squash), and marks the task `[x]`; the user
-   may too. Implementation agents never merge. At the end of a phase, its "Decisions made while building
+   the bot's verification has nothing open (no PARTIALLY FIXED, NOT FIXED or NEW ISSUE row). An agent
+   then marks `[r]` in its queue file.
+6. **Claude reviews the PR against its card and merges it** (squash); the user may too. Implementation
+   agents never merge. Since `main` is locked, the `[~]` → `[x]` ticks for reviewed tasks go in a batched
+   `docs: tick …` PR, not one PR per task. At the end of a phase, its "Decisions made while building
    Phase N" section lands the same way.
+7. **A PR that can change its own checks is read in full by whoever merges it:** one that touches
+   `.github/workflows/`, the Makefile's `check` or `fmt`, or the coverage, ruff or pyright settings in
+   `pyproject.toml`. A PR that changes `.github/workflows/claude-review.yml` gets **no bot review at all**
+   (claude-code-action skips a review workflow that differs from `main`'s, and the `review` check then
+   passes empty), so **only the user merges it**, after reading the whole diff.
 
 The names in the cards are defaults. If building finds a better name, use it and record it in the
 phase's decisions.
