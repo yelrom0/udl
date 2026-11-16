@@ -155,7 +155,21 @@ def workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def files_under(*dirs: Path) -> set[Path]:
-    return {path for directory in dirs for path in directory.rglob("*") if path.is_file()}
+    """The files under `dirs`, but for fontconfig's cache: Chromium's fontconfig writes one into
+    the (isolated) home when the machine's own is stale, as on a fresh CI runner. udl never does."""
+    return {
+        path
+        for directory in dirs
+        for path in directory.rglob("*")
+        if path.is_file() and not path.is_relative_to(directory / ".cache" / "fontconfig")
+    }
+
+
+def test_files_under_leaves_out_only_fontconfig_s_cache(tmp_path: Path) -> None:
+    for name in [".cache/fontconfig/x-le64.cache-11", ".cache/udl/kept", "out/video.mp4"]:
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text("")
+    assert files_under(tmp_path) == {tmp_path / ".cache/udl/kept", tmp_path / "out/video.mp4"}
 
 
 async def assert_no_connection_left_open() -> None:
