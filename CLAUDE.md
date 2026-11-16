@@ -19,7 +19,7 @@ The plan is the spec: [planning.md](planning.md) (its "Progress tracker", the "W
 
 1. One branch and one worktree per task, from `origin/main`: `feat/<task>-<slug>` (or `fix/…`, `test/…`, `docs/…`). A task stacked on another's unmerged branch says "Merge after #N" in its PR.
 2. Tests first; commit as you go (`feat(<area>): …`, `test(…)`, `fix(…)`, `docs: …`).
-3. **In the same PR:** the task's tracker line in planning.md goes `[ ]` → `[~]`, and a note under its card says what was built, the tests and anything hit.
+3. **In the same PR:** the task's tracker line in planning.md goes `[ ]` → `[~]`, and a note under its card says what was built, the tests and anything hit. (A **(Claude)** task is ticked `[x]` in its own PR instead, since Claude is its reviewer.)
 4. Implementation agents push only with `agent-push` (it runs `make check` first), then follow the PR with `pr-status --wait`; they never merge, and mark `[r]` in their own queue file when it is READY.
 5. Fix every item CI and the bot raise, nits included, until the bot's verification has nothing open.
 6. A PR that touches `.github/workflows/`, the Makefile's `check`/`fmt` or the gate's settings in `pyproject.toml` can change its own checks: whoever merges it reads the whole diff. One that changes `claude-review.yml` gets no bot review (the `review` check passes empty), so only the user merges it.
