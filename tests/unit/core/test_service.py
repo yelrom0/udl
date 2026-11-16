@@ -11,6 +11,7 @@ model. The CLI, the API and the MCP server only call these (Phase 4).
 import asyncio
 import json
 import re
+import shutil
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from pathlib import Path
@@ -83,7 +84,7 @@ from udl.plugins.registry import (
     SITES,
     PluginRegistry,
 )
-from udl.plugins.requirements import Requirement
+from udl.plugins.requirements import Requirement, RequirementKind
 from udl.plugins.secrets.keyring import KeyringSecretStore
 from udl.plugins.sites.base import SitePlugin
 from udl.plugins.sites.youtube import YouTubePlugin
@@ -1263,8 +1264,15 @@ async def test_a_service_made_from_the_settings_alone_uses_udl_s_own_plugins() -
     assert {"http", "yt-dlp", "gallery-dl", "scraper", "browser", "sqlite", "youtube"} <= {
         p.name for p in plugins.plugins
     }
-    # (All but the keyring store: the tests have no keyring.)
-    assert {p.name for p in plugins.plugins if not p.available} == {"keyring"}
+    # All but the keyring store (the tests have no keyring), and any plugin whose tool this machine
+    # doesn't have (`notify` without notify-send on a CI runner), which says what to install.
+    unavailable = {p.name for p in plugins.plugins if not p.available}
+    lacking = {p.name for p in plugins.plugins if not p.available and p.missing}
+    assert unavailable - lacking == {"keyring"}
+    for p in plugins.plugins:
+        for need in p.missing:
+            assert need.kind == RequirementKind.BINARY, (p.name, need)
+            assert shutil.which(need.name) is None, (p.name, need)
     assert [(d.name, d.plugin, d.healthy) for d in databases_.databases] == [
         ("local", "sqlite", True)
     ]

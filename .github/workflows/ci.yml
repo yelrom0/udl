@@ -1,0 +1,37 @@
+name: CI
+
+# `make check` (the same gates as the pre-commit hook) on every PR into main and every push to main.
+# Never `pull_request_target`: the repo is public, and a fork's PR must not see secrets.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      # uv reads .python-version and fetches that Python itself. setup-uv publishes no floating major tag.
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --locked --all-extras
+
+      - name: Install Chromium for Playwright
+        run: uv run playwright install --with-deps chromium
+
+      - name: make check
+        run: make check
