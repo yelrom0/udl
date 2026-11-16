@@ -1,0 +1,97 @@
+name: Claude PR Review
+
+# Copied from Liively's (admin-2.0), with udl's branch and runner. The job is named `review`:
+# main's ruleset requires it beside CI's `check`.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Check review model variable
+        if: vars.CLAUDE_REVIEW_MODEL == ''
+        run: |
+          echo "::error::Repo variable CLAUDE_REVIEW_MODEL is not set"
+          exit 1
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      # ---- FULL REVIEW on PR open/reopen ----
+      - name: Full PR Review
+        if: github.event.action == 'opened' || github.event.action == 'reopened'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          use_sticky_comment: true
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Please perform a FULL code review of this pull request.
+
+            Focus on:
+            - Code quality and best practices
+            - Potential bugs or logic errors (including implications for other parts of the app)
+            - Security implications (hardcoded secrets, injection, auth issues)
+            - Performance considerations
+            - Adherence to project conventions in CLAUDE.md (if file is defined)
+
+            The spec for this work is in `planning/`: check the change against the task the PR names, and that its tests were written to fail first.
+
+            Note: The PR branch is already checked out in the current working directory.
+
+            Use `mcp__github_inline_comment__create_inline_comment` to leave inline comments on specific lines with issues.
+            After all inline comments, use `gh pr comment` to post a summary comment with:
+            1. Overall assessment (approve / request changes)
+            2. A numbered list of all issues found
+            3. Any positive observations about the code
+
+            Only post GitHub comments - don't submit review text as messages.
+
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Read"
+            --model ${{ vars.CLAUDE_REVIEW_MODEL }}
+
+      # ---- VERIFICATION REVIEW on subsequent pushes ----
+      - name: Verify Fixes Review
+        if: github.event.action == 'synchronize'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          use_sticky_comment: true
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            This is a FOLLOW-UP review. New commits have been pushed to this PR.
+
+            Your task:
+            1. Read the previous review comments on this PR using `gh pr view` and `gh api`
+            2. Check the latest changes using `gh pr diff`
+            3. Verify whether the issues from the previous review have been addressed
+            4. For each previously raised issue, state whether it is:
+               - FIXED: The issue has been resolved
+               - PARTIALLY FIXED: Some progress but not fully resolved
+               - NOT FIXED: The issue remains
+               - NEW ISSUE: A new problem introduced by the fix
+
+            Use `gh pr comment` to post a verification summary.
+            If there are new issues introduced, use `mcp__github_inline_comment__create_inline_comment` for inline comments.
+
+            Only post GitHub comments - don't submit review text as messages.
+
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Read"
+            --model ${{ vars.CLAUDE_VERIFY_MODEL || vars.CLAUDE_REVIEW_MODEL }}
