@@ -72,6 +72,85 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [x] 12.8 Operations (fetch, batches, pages, challenges, cookies) via CLI, API and MCP; `udl fetch <url>…`
   - [x] 12.9 End to end: an MCP client's batch over three fixture hosts, each check passed once
 
+### Next to build: Phases 23–30, the agent orchestrator (highest priority)
+
+The user's (13 and 17 Nov 2026): these phases come **before** Phases 13–22. They pull Phase 18 forward (as 24.1) and tasks 17.1 and 17.3 (as 25.2), and every plugin gets a generated web UI. The spec, the decisions and every task's card are in [planning/02-agent-orchastrator.md](planning/02-agent-orchastrator.md); **this tracker is the one to mark**. Four implementation agents build them (`ernie-a`…`ernie-d`, queues in [planning/agent-queues/](planning/agent-queues/)); Claude reviews; the user is told what is ready in [planning/human-comms.md](planning/human-comms.md).
+
+Marks: `- [ ]` open · `- [r]` the agent's PR is green and reviewed by the bot, waiting for review and merge · `- [~]` built by the implementation agent, PR merged into `main` (the agent writes what it did, the PR and anything it hit under the task's card in the plan file) · `- [!]` blocked on something only the user or Claude can do (the reason follows `BLOCKED:`) · `- [x]` **only Claude**, after reviewing the work against the plan. Tasks marked **(Claude)** or **(user)** are not for implementation agents.
+
+- [ ] **Phase 23: Repo workflow and the bot workspace on jeff-wiggle**
+  - [ ] 23.1 CI workflow: `make check` on every PR to `main` and on pushes to `main`
+  - [ ] 23.2 Claude review bot workflow on every PR (full review on open, verification on each push)
+  - [ ] 23.3 **(Claude + user)** Secrets and variables for the bot; `main` locked with a ruleset
+  - [ ] 23.4 Working agreement updated: feature branch → PR → `main`; no more fast-forwarding `main`
+  - [ ] 23.5 **(Claude)** oc-guard on jeff-wiggle with a udl `agent-push` profile and `pr-status`
+  - [ ] 23.6 **(Claude)** Agent queues, rules and briefs in `planning/agent-queues/`; four ERNIE-5.5-Flash-Preview agents (OpenRouter, free) registered, with a watchdog
+- [ ] **Phase 24: Web UI foundations, and a generated UI for every plugin**
+  - [ ] 24.1 Phase 18 (18.1–18.10, ticked in their own tracker below), pulled forward and built as written, with the amendments in 24.1's card
+  - [ ] 24.2 `UISpec` on operations and `ui_field()` on request, settings and account fields
+  - [ ] 24.3 `GET /ui/generated.json`: every plugin's operations, settings, accounts and event types, with their schemas
+  - [ ] 24.4 `<SchemaForm>`: a form from any request model's JSON Schema
+  - [ ] 24.5 `<ResultView>`: a table, a detail list or a tree from any response
+  - [ ] 24.6 The generated plugin page (`/ui/p/<plugin>`): Operations, Settings, Accounts, Events; nav for every plugin
+  - [ ] 24.7 UI plugins guide the generated UI: `generated` in the manifest, and the `operationViews`, `resultViews` and `fieldWidgets` points
+  - [ ] 24.8 Proof (e2e): a plugin with no UI plugin is fully usable on the web; a UI plugin reshapes its generated page
+  - [ ] 24.9 planning.md amended: requirement 5d, "Without a UI plugin", Phases 19–20's plugin tasks
+- [ ] **Phase 25: Connections: 1Password, OpenRouter, GitHub, hosts and runners**
+  - [ ] 25.1 Secret references: `op://…` anywhere udl takes a secret, read at use through the `op` CLI (`onepassword` resolver)
+  - [ ] 25.2 17.1 (the `udl.ai` kind) and 17.3 (`openai-compatible`), pulled forward as written (ticked in Phase 17's tracker below)
+  - [ ] 25.3 `openrouter` AI provider: models with prices, the key's credit, cost per reply
+  - [ ] 25.4 Fake GitHub server in `tests/support/`; typed GitHub client
+  - [ ] 25.5 `github` integration: accounts, PR / checks / comments operations, the PR watcher and its events
+  - [ ] 25.6 `Host` records and `HostShell`: run a process here or on another machine over SSH
+  - [ ] 25.7 `udl.runners` plugin kind: `AgentRunner` + contract suite + `FakeRunner`
+  - [ ] 25.8 `claude-code` runner: the `claude` CLI on any host, on that host's own login (so subscription models)
+  - [ ] 25.9 `opencode` runner: OpenCode 2's server API on any host (OpenRouter and any other provider it has)
+  - [ ] 25.10 `command` runner (any other AI's CLI)
+  - [ ] 25.11 Managing harnesses on every host: status (version, signed in, plan, limits), install and update, sign-in started from the hub
+- [ ] **Phase 26: Work tracking: projects, features, tasks, links**
+  - [ ] 26.1 `udl.apps` plugin kind: `AppPlugin` + contract suite + `FakeApp`; app services in the runtime
+  - [ ] 26.2 `Project` and `Repo` records
+  - [ ] 26.3 `Feature` and `Task` records, task states and their transitions
+  - [ ] 26.4 `Link` records: everything linked, both ways; GitHub links kept current by the watcher
+  - [ ] 26.5 `Note` records: what was done, decisions, findings, on a task or feature
+  - [ ] 26.6 Operations (projects, repos, features, tasks, links, notes) via CLI, API and MCP
+  - [ ] 26.7 Markdown import: a planning file's tracker, cards and spec sections become features and tasks
+- [ ] **Phase 27: Agents, assignment and the dispatcher**
+  - [ ] 27.1 `Agent` records: runner, model, host, role, manager (the hierarchy), permissions
+  - [ ] 27.2 Agent tokens: an agent calls udl as itself, and only the operations its role allows
+  - [ ] 27.3 Queues: assign, reorder, unassign
+  - [ ] 27.4 Suggested next tasks, ranked, each with its reasons
+  - [ ] 27.5 Worktrees and the gate lane: `orch_push` runs the repo's gates, pushes, opens or updates the PR
+  - [ ] 27.6 PR readiness: CI, the review bot's verdict, mergeability, stacks, holds
+  - [ ] 27.7 The dispatcher: start, prompt, nudge, resume and stop agent sessions; limits and crashes
+  - [ ] 27.8 Managers: a manager agent's duties over its reports, each one switchable
+  - [ ] 27.9 Operations (agents, queues, sessions, suggestions) via CLI, API and MCP
+- [ ] **Phase 28: Human comms: Q&A, Ready to merge, To action**
+  - [ ] 28.1 `Question` records and their thread; an answer reaches the agent and is written into the tasks it concerns
+  - [ ] 28.2 `HumanAction` records ("To action") with a result
+  - [ ] 28.3 Ready to merge: ready now (in merge order), coming soon, held, done; merging and what follows a merge
+  - [ ] 28.4 `orch_inbox`: the three sections in one call; `udl orch inbox`
+  - [ ] 28.5 Events for all of it, and a `notify` example
+  - [ ] 28.6 End to end on fakes: task → agent → question → answer → PR → ready → merged
+- [ ] **Phase 29: Screens (Google Stitch) and the `orch` UI plugin**
+  - [ ] 29.1 **(Claude)** A new Stitch project: design system from the shell's daisyUI themes; every screen below, desktop and phone, light and dark
+  - [ ] 29.2 The `orch` UI plugin's skeleton: manifest, routes, stores, live data
+  - [ ] 29.3 Inbox (home)
+  - [ ] 29.4 Board: features and tasks, agents' queues, the suggested list, drag to assign
+  - [ ] 29.5 Feature and task pages (specs, notes, links)
+  - [ ] 29.6 Agents: the hierarchy, assigning models to models, an agent's page with its live session
+  - [ ] 29.7 Q&A
+  - [ ] 29.8 Ready to merge and To action
+  - [ ] 29.9 Connections and import (generated pages, guided by the manifest)
+  - [ ] 29.10 End to end (Playwright) on fakes, both themes
+- [ ] **Phase 30: Moving in, docs and the live check**
+  - [ ] 30.1 Security review of Phases 24–29
+  - [ ] 30.2 Docs: README, `docs/orchestrator.md`, `docs/plugins.md` (apps, runners, generated UIs)
+  - [ ] 30.3 **(Claude)** udl's own plans imported (planning.md's open phases, 03-proxmox.md); the markdown retired
+  - [ ] 30.4 **(Claude + user)** Live check: a real task done by a real agent, on jeff-wiggle and on thevault
+
+### After that
+
 - [ ] **Phase 13: Passing for a person: stealth, solvers and sign-ins**
   - [ ] 13.1 Bot checks in the fixture site: a page running the usual automation and headless checks, a TLS listener measuring JA4 and HTTP/2 fingerprints, checkbox / press-and-hold / audio widgets that want a person's input, a login with a TOTP step and a lockout
   - [ ] 13.2 The disguised browser: `patchright` on the system's Chrome, on a virtual display (`Xvfb`) or new headless; GPU, screen, locale and client hints the machine's own; one engine for all of udl's browser use
@@ -112,9 +191,9 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [ ] 16.7 Operations (`pages_preview`, `pages_suggest`, `pages_poll`) via CLI, API and MCP; `udl pages wizard <url>` (suggest → pick → preview → save, optionally with a subscription)
 
 - [ ] **Phase 17: Local AI**
-  - [ ] 17.1 `udl.ai` plugin kind: `AIProvider` base + contract suite + `FakeAI` (scripted); `AIProviderConnection` records
+  - [ ] 17.1 `udl.ai` plugin kind: `AIProvider` base + contract suite + `FakeAI` (scripted); `AIProviderConnection` records (pulled forward, built as part of **25.2**)
   - [ ] 17.2 `ollama` provider: chat with tool calls, models, `keep_alive`, pulling a model
-  - [ ] 17.3 `openai-compatible` provider (llama.cpp's `llama-server`, LM Studio, vLLM…); any provider's optional `command` is started on demand and stopped when idle
+  - [ ] 17.3 `openai-compatible` provider (llama.cpp's `llama-server`, LM Studio, vLLM…); any provider's optional `command` is started on demand and stopped when idle (pulled forward, built as part of **25.2**)
   - [ ] 17.4 Tools from operations: schemas from request models; `ToolPolicy` (allowlist; destructive / open-world tools wait for approval in `ask` mode and run unattended in `auto` mode; `admin` operations never, for now)
   - [ ] 17.5 The agent loop: tool calls, step / time / size limits, the transcript kept on the run
   - [ ] 17.6 Approvals (`ask` mode): a run waits (`awaiting_approval`), `decide_run`, a `udl.action.awaiting_approval` event, denied after a timeout
@@ -123,7 +202,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [ ] 17.9 Operations (providers, models, prompts, guidance, `try_prompt`) via CLI, API and MCP
   - [ ] 17.10 The `vision` solver: image challenges (reCAPTCHA's and hCaptcha's grids) answered by a local vision model
 
-- [ ] **Phase 18: Web UI foundations & UI plugins**
+- [ ] **Phase 18: Web UI foundations & UI plugins**: pulled forward and built now as **24.1** (see "Next to build")
   - [ ] 18.1 `web/` pnpm workspace and tooling: Vite + SWC, TypeScript strict, Biome, Vitest (+ coverage gate), Playwright, Tailwind CSS + daisyUI; `make web`, `make e2e`, and `make check` runs the web checks
   - [ ] 18.2 Typed API client generated from udl's OpenAPI schema (`openapi-typescript` + `openapi-fetch`); `make check` fails when it is stale
   - [ ] 18.3 FastAPI serves the UI at `/ui` (from the package, SPA fallback, CSP, cache headers), and a page saying how to build it when it isn't built
@@ -163,7 +242,8 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
   - [ ] 21.3 `udl service install`: a systemd user unit, so the runtime is always on
   - [ ] 21.4 Docs: README, `docs/automations.md`, `docs/plugins.md` (integrations, actions, AI providers, secret stores), `docs/ui-plugins.md`
   - [ ] 21.5 Opt-in smoke tests: Gmail, Slack and Ollama end to end, and a `pages` watch on a real site
-- [ ] **Phase 22: Proxmox plugin (`proxmox`)**: VM management for Liively dev/staging (user, 5 Nov 2026). Independent of Phases 13–21. Tracker and spec: [planning/02-proxmox.md](planning/02-proxmox.md)
+- [ ] **Phase 22: Proxmox plugin (`proxmox`)**: VM management for Liively dev/staging (user, 5 Nov 2026). Independent of Phases 13–21. Tracker and spec: [planning/03-proxmox.md](planning/03-proxmox.md)
+- Phases 23–30 (the agent orchestrator) are tracked [above, under "Next to build"](#next-to-build-phases-2330-the-agent-orchestrator-highest-priority).
 
 ---
 
