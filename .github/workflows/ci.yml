@@ -22,8 +22,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # uv reads .python-version and fetches that Python itself.
-      - uses: astral-sh/setup-uv@v10
+      # uv reads .python-version and fetches that Python itself. setup-uv publishes no floating major tag.
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
 
