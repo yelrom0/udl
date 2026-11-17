@@ -57,6 +57,10 @@ jobs:
             1. Overall assessment (approve / request changes)
             2. A numbered list of all issues found
             3. Any positive observations about the code
+            4. As the comment's very last line, on its own, exactly one of:
+               **Verdict: all clear**
+               **Verdict: changes needed**
+               "All clear" only when there is nothing to change at all: no issue, no nit, no optional item. An observation that you say needs no change does not stop an all clear.
 
             Only post GitHub comments - don't submit review text as messages.
 
@@ -87,7 +91,10 @@ jobs:
                - NOT FIXED: The issue remains
                - NEW ISSUE: A new problem introduced by the fix
 
-            Use `gh pr comment` to post a verification summary.
+            Use `gh pr comment` to post a verification summary. As its very last line, on its own, write exactly one of:
+               **Verdict: all clear**
+               **Verdict: changes needed**
+            "All clear" only when every earlier item is FIXED and there is no new issue, nit or optional item to act on. An observation that you say needs no change does not stop an all clear.
             If there are new issues introduced, use `mcp__github_inline_comment__create_inline_comment` for inline comments.
 
             Only post GitHub comments - don't submit review text as messages.
