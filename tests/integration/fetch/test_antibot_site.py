@@ -10,6 +10,7 @@ plain client (httpx) and to a browser (Chromium), and FakePerson gets past its c
 # System Imports
 import asyncio
 from collections.abc import AsyncIterator
+from datetime import timedelta
 
 # Package Imports
 import httpx
@@ -296,6 +297,42 @@ async def test_a_person_gets_past_the_check(antibot: AntiBotSite, browser: Brows
     assert antibot.visits("/checked/page")[-1].user_agent == agent
     # (The clearance is bound to the browser's User-Agent.)
     assert cookie.get("httpOnly") is True
+
+
+async def test_a_person_keeps_looking_at_a_check_that_shows_late(
+    antibot: AntiBotSite, browser: BrowserContext
+) -> None:
+    # On a loaded CI runner a check page can take a while to show its button: a person keeps
+    # looking for as long as their patience lasts.
+    page = await browser.new_page()
+    person = FakePerson(patience=timedelta(seconds=5))
+
+    attending = asyncio.create_task(person.attend(page))
+    await asyncio.sleep(1)  # (the check shows after the person started looking)
+    await page.goto(antibot.url("/checked/late"))
+    await asyncio.wait_for(attending, timeout=10)
+    await settled(page, "Checked late")
+
+    assert "The page behind the check: late." in await page.content()
+
+
+async def test_a_person_whose_patience_runs_out_leaves_the_check(
+    antibot: AntiBotSite, browser: BrowserContext
+) -> None:
+    # Bounded, so a check that never shows fails a test instead of hanging it.
+    page = await browser.new_page()
+    person = FakePerson(patience=timedelta(seconds=0.5))
+
+    await asyncio.wait_for(person.attend(page), timeout=5)
+    await page.goto(antibot.url("/checked/late"))
+
+    assert await page.title() == CHALLENGE_TITLE
+
+
+def test_a_person_is_as_patient_as_the_tests_window() -> None:
+    # The window tests give the window 120 s (test_window.FETCH): a person who left sooner
+    # would make a slow run fail for the person, not for udl.
+    assert FakePerson().patience == timedelta(seconds=120)
 
 
 async def test_a_person_who_ignores_the_check_leaves_it(

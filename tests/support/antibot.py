@@ -39,6 +39,7 @@ import socket
 import threading
 from collections.abc import Generator
 from dataclasses import dataclass, field
+from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Final, Self
@@ -430,10 +431,15 @@ class Manner(StrEnum):
 class FakePerson:
     """Stands in for the user at a check: given a tab on one, presses its "I am human" button
     (through Playwright, as a person's click), leaves it, or closes the window. `attended`
-    lists the URLs of the tabs it was given."""
+    lists the URLs of the tabs it was given. A person looks for the check for `patience` (as
+    long as the window tests give the window, so a slow machine fails for udl, not for the
+    person), and never longer, so a check that never shows fails a test rather than hangs it."""
 
-    def __init__(self, manner: Manner = Manner.PASSES) -> None:
+    def __init__(
+        self, manner: Manner = Manner.PASSES, *, patience: timedelta = timedelta(seconds=120)
+    ) -> None:
         self.manner = manner
+        self.patience = patience
         self.attended: list[str] = []
 
     async def attend(self, tab: Page) -> None:
@@ -446,6 +452,7 @@ class FakePerson:
             return
         with contextlib.suppress(PlaywrightError):  # (a tab that was passed, or closed, meanwhile)
             button = tab.locator("#human")
-            await button.wait_for(timeout=10_000)
+            patience = self.patience.total_seconds() * 1000
+            await button.wait_for(timeout=patience)
             await asyncio.sleep(0.1)  # (as a person looks before clicking)
-            await button.click(timeout=10_000)
+            await button.click(timeout=patience)
