@@ -99,7 +99,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [ ] 25.1 Secret references: `op://…` anywhere udl takes a secret, read at use through the `op` CLI (`onepassword` resolver)
   - [ ] 25.2 17.1 (the `udl.ai` kind) and 17.3 (`openai-compatible`), pulled forward as written (ticked in Phase 17's tracker below)
   - [ ] 25.3 `openrouter` AI provider: models with prices, the key's credit, cost per reply
-  - [ ] 25.4 Fake GitHub server in `tests/support/`; typed GitHub client
+  - [~] 25.4 Fake GitHub server in `tests/support/`; typed GitHub client
   - [ ] 25.5 `github` integration: accounts, PR / checks / comments operations, the PR watcher and its events
   - [ ] 25.6 `Host` records and `HostShell`: run a process here or on another machine over SSH
   - [ ] 25.7 `udl.runners` plugin kind: `AgentRunner` + contract suite + `FakeRunner`

@@ -36,7 +36,10 @@ from udl.fetch.ladder import FetchOptions, Via
 from udl.fetch.models import BatchStatus, FetchBatch, ItemStatus
 
 FETCH = {
-    "timeout": "15s",
+    # Room for a loaded CI runner: Chromium's first launch and the checked page's load are both
+    # slower there than here, and a 15 s request timeout failed a batch that was fine (a run on
+    # PR #4's branch). A test that relies on a request timing out sets its own, short timeout.
+    "timeout": "60s",
     "challenge_grace": "1s",
     # Room for a loaded CI runner: the window closes as soon as every check is passed, so this
     # only bounds how long a broken run takes to fail. A test that relies on the window timing
@@ -83,7 +86,9 @@ async def kits(tmp_path: Path, **fetch: Any) -> AsyncGenerator[tuple[DBManager, 
 
 async def fetched(kit: FetchKit, urls: list[str], **fields: Any) -> FetchBatch:
     batch = await kit.queue.submit(urls, FetchOptions(), **fields)
-    return await kit.queue.wait(batch.id, within=timedelta(seconds=90))
+    # (Longer than challenge_timeout above: a batch waiting for a person may legitimately still
+    # be running at 90 s, and that was a failure on main.)
+    return await kit.queue.wait(batch.id, within=timedelta(seconds=150))
 
 
 async def ended(kit: FetchKit, batch: FetchBatch) -> FetchBatch:
