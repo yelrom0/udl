@@ -178,7 +178,7 @@ def test_any_argv_and_folder_round_trip_through_the_remote_sh(
 def test_the_remote_command_changes_directory_and_exports_the_environment() -> None:
     script = remote_command(Command(("echo", "hi"), cwd="/srv/work dir", env={"B": "2", "A": "1"}))
 
-    assert script == "cd -- '/srv/work dir' && { export A=1; export B=2; exec echo hi; }"
+    assert script == "cd -- '/srv/work dir' && { export A=1 && export B=2 && exec echo hi; }"
 
 
 def test_a_secret_is_read_from_stdin_and_never_in_the_command_line() -> None:
@@ -246,6 +246,14 @@ def test_an_ssh_host_name_that_looks_like_an_option_is_refused() -> None:
         Host(
             name="h", transport=HostTransport.SSH, ssh="-oProxyCommand=touch /tmp/x", work_dir="/w"
         )
+
+
+def test_a_failed_read_stops_the_command_before_the_program_runs() -> None:
+    """The body is one `&&` chain: a read that gets nothing stops it, so the program never runs
+    with an empty secret."""
+    script = remote_command(Command(("tool",), secret_env={"TOKEN": "x"}))
+
+    assert script == "IFS= read -r TOKEN && export TOKEN && exec tool"
 
 
 def test_a_command_that_quotes_nothing_stays_readable() -> None:
@@ -427,6 +435,24 @@ async def test_an_interaction_reads_nothing_when_nothing_is_printed() -> None:
     talked = await local().interact([sys.executable, "-c", "import time; time.sleep(0.2)"])
 
     assert await talked.read() == ""
+    await talked.close()
+
+
+async def test_a_read_that_follows_buffered_text_waits_again() -> None:
+    """A read that drains text it already had must not leave the next one returning "" at once."""
+    talked = await local().interact(
+        [
+            sys.executable,
+            "-u",
+            "-c",
+            "import time; print('one', flush=True); time.sleep(0.3); print('two')",
+        ]
+    )
+
+    assert (await talked.read()).strip() == "one"
+    # (It waits for the second line rather than giving "" straight away, because the wake-up was
+    # already set by the first.)
+    assert (await talked.read()).strip() == "two"
     await talked.close()
 
 

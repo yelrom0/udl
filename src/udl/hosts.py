@@ -59,6 +59,8 @@ LOCAL: Final = "local"
 DEFAULT_TIMEOUT: Final = timedelta(seconds=30)
 """How long a command gets when the caller names no `within`."""
 
+# What a command that was stopped says (udl's own words: it is not a download).
+STOPPED: Final = "The command was stopped"
 # How much of a program's output run() keeps: the start of its stdout and the end of its stderr.
 KEPT: Final = 64 * 1024
 
@@ -293,11 +295,12 @@ def remote_command(command: Command) -> str:
     # NAME=value line of its own only sets a shell variable, so export them all.)
     parts += [f"export {name}={shlex.quote(value)}" for name, value in sorted(command.env.items())]
     parts.append("exec " + " ".join(shlex.quote(part) for part in command.argv))
-    body = "; ".join(parts)
+    body = " && ".join(parts)
     if command.cwd is None:
         return body
-    # (A brace group after `&&`: a folder that is not there stops the whole command, so the
-    # program never runs somewhere else. Local run() refuses the same case, so the shells agree.)
+    # (Joined with `&&`: a folder that is not there, or a secret line that never comes, stops the
+    # whole command, so the program never runs with an empty secret or somewhere else. Local
+    # run() refuses the same cases, so the shells agree.)
     return f"cd -- {shlex.quote(command.cwd)} && {{ {body}; }}"
 
 
@@ -584,7 +587,7 @@ class _Interaction:
             left = max(self._deadline - asyncio.get_event_loop().time(), 0)
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._woken.wait(), left)
-            self._woken.clear()
+        self._woken.clear()  # (also when it drained text it already had: it would end the next)
         said, self._so_far = self._so_far, ""
         return said
 
@@ -657,6 +660,7 @@ class LocalShell:
                 env=_environment(command, self.host),
                 cwd=None if command.cwd is None else Path(command.cwd),
                 max_output=KEPT,
+                cancelled=STOPPED,
             ),
             within,
         )
@@ -758,6 +762,7 @@ class SshShell:
                 cancel=cancel or CancelToken(),
                 stdin=remote_stdin(command),
                 max_output=KEPT,
+                cancelled=STOPPED,
             ),
             within,
         )

@@ -214,7 +214,7 @@ async def test_both_shells_cancel_a_running_program(both: list[tuple[str, HostSh
         task = asyncio.ensure_future(run())
         await asyncio.sleep(0.3)
         cancel.cancel()
-        with pytest.raises(Cancelled):
+        with pytest.raises(Cancelled, match="command was stopped"):
             await task
 
 
