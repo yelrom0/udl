@@ -30,7 +30,7 @@ import pytest
 
 # Local Imports
 from support.ssh_server import sshd
-from udl.errors import Cancelled, PluginFailed
+from udl.errors import Cancelled, PluginFailed, ToolUnavailable
 from udl.hosts import SSH_CONFIG, Host, HostShell, HostTransport, shell_for, ssh_forward_argv
 from udl.process import CancelToken
 
@@ -120,6 +120,63 @@ async def test_both_shells_give_a_secret_to_the_environment_but_not_the_argv(
         assert result.stdout.strip() == SECRET, name
 
 
+async def test_a_secret_and_stdin_do_not_mix(both: list[tuple[str, HostShell]]) -> None:
+    """A secret is in the environment, not in the program's input: a program that reads stdin
+    reads only what the caller gave it."""
+    for name, shell in both:
+        result = await shell.run(
+            _python("import os, sys; print(sys.stdin.read().upper(), os.environ['TOKEN'])"),
+            secret_env={"TOKEN": SECRET},
+            stdin=b"payload",
+        )
+
+        assert result.stdout.split() == ["PAYLOAD", SECRET], name
+
+
+async def test_a_secret_reaches_a_streaming_program(both: list[tuple[str, HostShell]]) -> None:
+    """A program read through stream() gets its secret in its environment, so a harness that
+    prints one while it works still has it."""
+    for name, shell in both:
+        chunks = [
+            chunk
+            async for chunk in shell.stream(
+                _python("import os; print(os.environ['TOKEN'])"),
+                secret_env={"TOKEN": SECRET},
+            )
+        ]
+
+        assert b"".join(chunks).decode().strip() == SECRET, name
+
+
+async def test_a_secret_reaches_a_program_that_is_talked_to(
+    both: list[tuple[str, HostShell]],
+) -> None:
+    """A program read and written while it runs gets its secret too (25.11's sign-in)."""
+    for name, shell in both:
+        talked = await shell.interact(
+            _python("import os; print('token=' + os.environ['TOKEN'])"),
+            secret_env={"TOKEN": SECRET},
+        )
+
+        said = ""
+        for _ in range(50):
+            said += await talked.read()
+            if "token=" in said:
+                break
+        assert f"token={SECRET}" in said, name
+        await talked.close()
+
+
+async def test_a_missing_folder_is_an_error_on_both_shells(
+    both: list[tuple[str, HostShell]],
+) -> None:
+    """A folder that is not there is refused, not quietly replaced by the shell's own (which is
+    what a remote `cd` failing would do)."""
+    for _name, shell in both:
+        with pytest.raises(PluginFailed):
+            await shell.run(["/bin/pwd"], cwd="/no/such/folder/udl-test")
+
+
 async def test_both_shells_give_a_programs_input(both: list[tuple[str, HostShell]]) -> None:
     for name, shell in both:
         result = await shell.run(
@@ -159,6 +216,42 @@ async def test_both_shells_cancel_a_running_program(both: list[tuple[str, HostSh
         cancel.cancel()
         with pytest.raises(Cancelled):
             await task
+
+
+async def test_a_program_that_is_not_on_the_host_is_tool_unavailable(
+    both: list[tuple[str, HostShell]],
+) -> None:
+    """ssh answers 127 for a command that is not there: udl says the program is not installed,
+    not that it failed."""
+    for _name, shell in both:
+        with pytest.raises(ToolUnavailable, match="not installed"):
+            await shell.run(["udl-no-such-program-42"])
+
+
+async def test_an_unreachable_host_is_a_connection_failure(tmp_path: Path) -> None:
+    """ssh's own 255 is not the program failing: it is udl not reaching the host."""
+    host = Host(
+        name="udl-no-such-host",
+        transport=HostTransport.SSH,
+        ssh="udl-no-such-host",
+        work_dir=str(tmp_path),
+    )
+    with pytest.raises(PluginFailed, match="Could not reach the host"):
+        await shell_for(host).run(["true"], within=timedelta(seconds=30))
+
+
+async def test_a_tunnel_that_cannot_be_made_fails_instead_of_hanging(tmp_path: Path) -> None:
+    """forward() waits for the tunnel to be ready, so a broken host is an error, not a URL that
+    leads nowhere."""
+    host = Host(
+        name="udl-no-such-host",
+        transport=HostTransport.SSH,
+        ssh="udl-no-such-host",
+        work_dir=str(tmp_path),
+    )
+    with pytest.raises(PluginFailed):
+        async with shell_for(host).forward(9):
+            pass  # pragma: no cover - (it must not get here)
 
 
 async def test_both_shells_stream_a_programs_output(both: list[tuple[str, HostShell]]) -> None:

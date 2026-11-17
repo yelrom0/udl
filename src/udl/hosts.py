@@ -39,16 +39,15 @@ from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Final, Protocol, Self
+from typing import Any, ClassVar, Final, Protocol, Self
 
 # Package Imports
 from pydantic import Field, model_validator
 
 # Local Imports
-from udl.clock import Clock, SystemClock
-from udl.config import Duration
 from udl.db.records import Name, Record
-from udl.errors import PluginFailed
+from udl.errors import PluginFailed, ToolUnavailable
+from udl.plugins.requirements import Requirement
 from udl.process import CancelToken, ProcessResult, run_process
 
 type HostName = Name
@@ -71,6 +70,8 @@ GRACE: Final = timedelta(seconds=2)
 # How long a program being talked to gets to end by itself (after its input is closed) before it
 # is asked to stop.
 END: Final = timedelta(seconds=5)
+# How long an SSH tunnel gets to be ready before it is called a failure.
+FORWARD_WAIT: Final = timedelta(seconds=15)
 
 # The SSH command's own options: the user gives a ~/.ssh/config host name, never a command line.
 _SSH_OPTIONS: Final = (
@@ -110,7 +111,7 @@ class Host(Record):
     transport: HostTransport
     ssh: str | None = None
     """The ~/.ssh/config host name to reach it by (SSH only): never a command line the user
-    typed."""
+    typed, and never anything ssh would take as an option (it must not start with `-`)."""
     work_dir: str
     """Where worktrees go on it."""
     env: dict[str, str] = Field(default_factory=dict)
@@ -124,6 +125,10 @@ class Host(Record):
                 f"{self.name!r} is {'this machine' if self.name == LOCAL else 'not this machine'},"
                 f" so its transport cannot be {self.transport.value!r}"
             )
+        if self.ssh is not None and self.ssh.startswith("-"):
+            raise ValueError(
+                f"{self.ssh!r} looks like an ssh option, not a ~/.ssh/config host name"
+            )
         if (self.transport is HostTransport.SSH) != (self.ssh is not None):
             raise ValueError(
                 f"the host {self.name!r} "
@@ -131,6 +136,13 @@ class Host(Record):
                 f" it {'needs' if self.transport is HostTransport.SSH else 'has no'} ssh (a"
                 " ~/.ssh/config host name)"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _check_env(self) -> Self:
+        for name in self.env:
+            if not _VAR.fullmatch(name):
+                raise ValueError(f"{name!r} cannot name an environment variable")
         return self
 
     @classmethod
@@ -252,6 +264,13 @@ class Command:
                 raise ValueError(f"{name!r} cannot name an environment variable")
             if name in self.env:
                 raise ValueError(f"{name!r} is given as both env and secret_env")
+            # (A secret is framed on one line, so a newline in one would spill the rest of it
+            # into whatever the program reads next.)
+            if "\n" in self.secret_env[name] or "\r" in self.secret_env[name]:
+                raise ValueError(f"The secret {name!r} has a newline: it cannot be framed")
+        for name in self.env:
+            if not _VAR.fullmatch(name):
+                raise ValueError(f"{name!r} cannot name an environment variable")
 
 
 def remote_command(command: Command) -> str:
@@ -267,8 +286,6 @@ def remote_command(command: Command) -> str:
     in no `ps` output and in no log.
     """
     parts: list[str] = []
-    if command.cwd is not None:
-        parts.append(f"cd -- {shlex.quote(command.cwd)}")
     for name in command.secret_env:
         parts.append(f"IFS= read -r {name}")  # (from the command's stdin, a line each)
         parts.append(f"export {name}")
@@ -276,15 +293,40 @@ def remote_command(command: Command) -> str:
     # NAME=value line of its own only sets a shell variable, so export them all.)
     parts += [f"export {name}={shlex.quote(value)}" for name, value in sorted(command.env.items())]
     parts.append("exec " + " ".join(shlex.quote(part) for part in command.argv))
-    return "; ".join(parts)
+    body = "; ".join(parts)
+    if command.cwd is None:
+        return body
+    # (A brace group after `&&`: a folder that is not there stops the whole command, so the
+    # program never runs somewhere else. Local run() refuses the same case, so the shells agree.)
+    return f"cd -- {shlex.quote(command.cwd)} && {{ {body}; }}"
 
 
-def command_stdin(command: Command) -> bytes | None:
-    """What the shell's stdin is: the secrets (a line each), then what the program reads."""
+def _secrets(command: Command) -> bytes | None:
+    """The secret lines alone (a line each), which a remote shell reads first."""
     if not command.secret_env:
+        return None
+    return "".join(f"{value}\n" for value in command.secret_env.values()).encode()
+
+
+def remote_stdin(command: Command) -> bytes | None:
+    """What the remote shell's stdin is: the secrets (a line each), then what the program reads.
+
+    Only the remote shell reads its secrets this way (its environment cannot be set from here):
+    a local program gets them in its environment, so its stdin is untouched."""
+    secrets = _secrets(command)
+    if secrets is None:
         return command.stdin
-    secrets = "".join(f"{value}\n" for value in command.secret_env.values()).encode()
     return secrets + (command.stdin or b"")
+
+
+def _check_cwd(command: Command) -> None:
+    """Refuse a folder that is not there, before running anything.
+
+    A remote `cd` that fails stops the command (remote_command's `&&`), and local would fail in
+    the child with a FileNotFoundError that looks like a missing program, so both say the same
+    thing here."""
+    if command.cwd is not None and not Path(command.cwd).is_dir():
+        raise PluginFailed(f"There is no folder {command.cwd}")
 
 
 def _environment(command: Command, host: Host) -> dict[str, str]:
@@ -314,6 +356,9 @@ def ssh_forward_argv(host: Host, port: int, *, local: int) -> tuple[str, ...]:
         "ssh",
         *_config_argv(),
         *_SSH_OPTIONS,
+        # (Exit rather than sit there silently when the tunnel cannot be set up.)
+        "-o",
+        "ExitOnForwardFailure=yes",
         "-N",
         "-L",
         f"127.0.0.1:{local}:127.0.0.1:{port}",
@@ -364,6 +409,17 @@ async def _started(
     )
 
 
+async def _write(process: asyncio.subprocess.Process, data: bytes | None) -> None:
+    """Give a program `data` on its stdin and leave it open (a program that is talked to)."""
+    if process.stdin is None or not data:
+        return
+    try:
+        process.stdin.write(data)
+        await process.stdin.drain()
+    except BrokenPipeError, ConnectionResetError:  # (it stopped reading)
+        pass
+
+
 async def _feed(process: asyncio.subprocess.Process, data: bytes | None) -> None:
     """Give a program `data` on its stdin, then close it (so `input()` and `cat` see the end)."""
     if process.stdin is None:
@@ -406,17 +462,22 @@ async def _stopped(process: asyncio.subprocess.Process) -> None:
             await process.wait()
 
 
-def _checked(argv: Sequence[str], result: ProcessResult) -> ProcessResult:
-    """A program's result, or PluginFailed when it says it failed (its stderr's last line is the
-    message, and its last lines are the hint)."""
+def _checked(result: ProcessResult, *, program: str, via_ssh: bool = False) -> ProcessResult:
+    """A program's result, or what its failure means (its stderr's last line is the message, and
+    its last lines are the hint).
+
+    ssh's own codes are not the program's: 255 is ssh failing to reach the host (a connection
+    failure), and 127 is the remote command not being found (the program is not installed)."""
     if result.returncode == 0:
         return result
     lines = [line for line in (result.stderr or result.stdout).strip().splitlines() if line]
-    raise PluginFailed(
-        f"{argv[0]} failed with exit code {result.returncode}"
-        + (f": {lines[-1]}" if lines else ""),
-        hint="\n".join(lines[-5:]) or None,
-    )
+    detail = f": {lines[-1]}" if lines else ""
+    hint = "\n".join(lines[-5:]) or None
+    if via_ssh and result.returncode == 255:
+        raise PluginFailed(f"Could not reach the host over SSH{detail}", hint=hint)
+    if via_ssh and result.returncode == 127:
+        raise ToolUnavailable(f"{program} is not installed there{detail}", hint=hint)
+    raise PluginFailed(f"{program} failed with exit code {result.returncode}{detail}", hint=hint)
 
 
 @asynccontextmanager
@@ -440,47 +501,92 @@ async def _forwarded_ssh(host: Host, port: int) -> AsyncGenerator[str]:
         stderr=asyncio.subprocess.PIPE,
     )
     try:
+        await _tunnel_up(process, local)
         yield f"http://127.0.0.1:{local}"
     finally:
         await _stopped(process)
 
 
-class _Interaction:
-    """A program started by a shell, read and written while it runs (an Interaction)."""
+async def _tunnel_up(process: asyncio.subprocess.Process, local: int) -> None:
+    """Wait until the tunnel's local port accepts a connection (or ssh gives up).
 
-    def __init__(self, process: asyncio.subprocess.Process, idle: Duration) -> None:
+    ssh would otherwise sit there silently when the tunnel cannot be set up, and a caller would
+    hand out a URL that leads nowhere."""
+    deadline = asyncio.get_event_loop().time() + FORWARD_WAIT.total_seconds()
+    while True:
+        if process.returncode is not None:
+            detail = (
+                (await process.stderr.read()).decode(errors="replace").strip()
+                if process.stderr
+                else ""
+            )
+            raise PluginFailed(
+                f"The SSH tunnel closed before it was ready{detail and ': ' + detail}",
+                hint="Check the host's ssh entry (a ~/.ssh/config host name) and its sshd.",
+            )
+        try:
+            _, writer = await asyncio.open_connection("127.0.0.1", local)
+        except OSError:
+            if asyncio.get_event_loop().time() >= deadline:
+                raise PluginFailed(
+                    f"The SSH tunnel to port {local} was not ready in time",
+                    hint="Check the host is reachable (udl hosts check <host>).",
+                ) from None
+            await asyncio.sleep(0.05)
+            continue
+        writer.close()
+        with contextlib.suppress(OSError):
+            await writer.wait_closed()
+        return
+
+
+class _Interaction:
+    """A program started by a shell, read and written while it runs (an Interaction).
+
+    `within` is how long the whole call gets: when it passes, the program is asked to end, so a
+    sign-in that is never finished cannot outlive it. read() waits for output only until then."""
+
+    def __init__(self, process: asyncio.subprocess.Process, within: timedelta) -> None:
         self._process = process
-        self._idle = idle.total_seconds()
-        self._lines: asyncio.Queue[str] = asyncio.Queue()
+        self._deadline = asyncio.get_event_loop().time() + within.total_seconds()
+        self._so_far: str = ""
+        self._woken = asyncio.Event()
         self._task: asyncio.Task[None] = asyncio.create_task(self._pump())
+        self._timer: asyncio.Task[None] = asyncio.create_task(self._expire())
 
     async def _pump(self) -> None:
-        """Read the program's output into a queue (a line at a time), so read() waits for some
-        when it has printed nothing yet."""
+        """Read the program's output as it comes, so read() can give everything since the last
+        read and wake when more arrives."""
         stdout = self._process.stdout
         if stdout is None:  # pragma: no cover - (always piped by its shell)
-            self._lines.put_nowait("")
+            self._woken.set()
             return
-        buffer = b""
         while chunk := await stdout.read(4096):
-            buffer += chunk
-            while (end := buffer.find(b"\n")) >= 0:
-                line, buffer = buffer[: end + 1], buffer[end + 1 :]
-                self._lines.put_nowait(line.decode(errors="replace"))
-        if buffer:
-            self._lines.put_nowait(buffer.decode(errors="replace"))
-        self._lines.put_nowait("")  # (it ended: read() stops waiting)
+            self._so_far += chunk.decode(errors="replace")
+            self._woken.set()
+        self._woken.set()  # (it ended: read() stops waiting)
+
+    async def _expire(self) -> None:
+        """End the program when the call's own time is up."""
+        await asyncio.sleep(max(self._deadline - asyncio.get_event_loop().time(), 0))
+        if self._process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                self._process.terminate()
 
     @property
     def running(self) -> bool:
         return self._process.returncode is None
 
     async def read(self) -> str:
-        """What it has printed since the last read (waiting up to its idle time for some)."""
-        try:
-            return await asyncio.wait_for(self._lines.get(), self._idle)
-        except TimeoutError:
-            return ""
+        """Everything it has printed since the last read (waiting, until the call's time is up,
+        for the first of it)."""
+        if not self._so_far:
+            left = max(self._deadline - asyncio.get_event_loop().time(), 0)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._woken.wait(), left)
+            self._woken.clear()
+        said, self._so_far = self._so_far, ""
+        return said
 
     async def write(self, text: str) -> None:
         """Give it a line to read."""
@@ -500,9 +606,10 @@ class _Interaction:
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self._process.wait(), timeout=END.total_seconds())
         await _stopped(self._process)
-        self._task.cancel()
+        for task in (self._task, self._timer):
+            task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            await self._task
+            await asyncio.gather(self._task, self._timer, return_exceptions=True)
 
     async def wait(self) -> int:
         """Wait for it to end, and give its exit code."""
@@ -517,11 +624,10 @@ class _Interaction:
 class LocalShell:
     """A shell on this machine: udl.process."""
 
-    def __init__(self, host: Host, *, clock: Clock | None = None) -> None:
+    def __init__(self, host: Host) -> None:
         if host.transport is not HostTransport.LOCAL:
             raise ValueError(f"{host.name!r} is not this machine")
         self.host = host
-        self.clock: Clock = clock or SystemClock()
 
     def run(
         self,
@@ -542,18 +648,19 @@ class LocalShell:
         within: timedelta | None,
         cancel: CancelToken | None,
     ) -> ProcessResult:
+        _check_cwd(command)
         result = await _timed(
             run_process(
                 command.argv,
                 cancel=cancel or CancelToken(),
-                stdin=command_stdin(command),
+                stdin=command.stdin,
                 env=_environment(command, self.host),
                 cwd=None if command.cwd is None else Path(command.cwd),
                 max_output=KEPT,
             ),
             within,
         )
-        return _checked(command.argv, result)
+        return _checked(result, program=command.argv[0])
 
     def stream(
         self,
@@ -572,9 +679,10 @@ class LocalShell:
         command: Command,
         within: timedelta | None,
     ) -> AsyncGenerator[bytes]:
+        _check_cwd(command)
         process = await _started(
             *command.argv,
-            stdin=command_stdin(command),
+            stdin=command.stdin,
             env=_environment(command, self.host),
             cwd=command.cwd,
         )
@@ -596,6 +704,7 @@ class LocalShell:
     ) -> Interaction:
         """Start a program on this machine to be talked to."""
         command = _command(argv, cwd, env, secret_env, None)
+        _check_cwd(command)
         process = await asyncio.create_subprocess_exec(
             *command.argv,
             stdin=asyncio.subprocess.PIPE,
@@ -604,6 +713,7 @@ class LocalShell:
             env=_environment(command, self.host),
             cwd=command.cwd,
         )
+        # (A local program reads its secrets from its environment, so nothing is written first.)
         return _Interaction(process, within or DEFAULT_TIMEOUT)
 
     def forward(self, port: int) -> AbstractAsyncContextManager[str]:
@@ -615,11 +725,13 @@ class SshShell:
     """A shell on another host: `ssh <host> -- <one sh -c line>`, a connection kept between
     commands (ControlMaster) so a session does not pay for one each time."""
 
-    def __init__(self, host: Host, *, clock: Clock | None = None) -> None:
+    requires: ClassVar[tuple[Requirement, ...]] = (Requirement.binary("ssh"),)
+    """ssh has to be on the machine udl runs on (not on the host: it is reached with ssh)."""
+
+    def __init__(self, host: Host) -> None:
         if host.transport is not HostTransport.SSH:
             raise ValueError(f"{host.name!r} is not reached over SSH")
         self.host = host
-        self.clock: Clock = clock or SystemClock()
 
     def run(
         self,
@@ -644,12 +756,12 @@ class SshShell:
             run_process(
                 ssh_argv(self.host, command),
                 cancel=cancel or CancelToken(),
-                stdin=command_stdin(command),
+                stdin=remote_stdin(command),
                 max_output=KEPT,
             ),
             within,
         )
-        return _checked(command.argv, result)
+        return _checked(result, program=command.argv[0], via_ssh=True)
 
     def stream(
         self,
@@ -669,10 +781,10 @@ class SshShell:
         within: timedelta | None,
     ) -> AsyncGenerator[bytes]:
         process = await _started(
-            *ssh_argv(self.host, command), stdin=command_stdin(command), env=None, cwd=None
+            *ssh_argv(self.host, command), stdin=remote_stdin(command), env=None, cwd=None
         )
         try:
-            await _feed(process, command.stdin)
+            await _feed(process, remote_stdin(command))
             async for chunk in _output(process, within):
                 yield chunk
         finally:
@@ -695,14 +807,15 @@ class SshShell:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
+        await _write(process, _secrets(command))  # (the remote shell's secret lines)
         return _Interaction(process, within or DEFAULT_TIMEOUT)
 
     def forward(self, port: int) -> AbstractAsyncContextManager[str]:
         return _forwarded_ssh(self.host, port)
 
 
-def shell_for(host: Host, *, clock: Clock | None = None) -> HostShell:
+def shell_for(host: Host) -> HostShell:
     """The shell that acts on `host`: LocalShell for this machine, SshShell for another."""
     if host.transport is HostTransport.LOCAL:
-        return LocalShell(host, clock=clock)
-    return SshShell(host, clock=clock)
+        return LocalShell(host)
+    return SshShell(host)

@@ -179,7 +179,6 @@ from udl.host_models import (
     HostsList,
     SetHostRequest,
 )
-from udl.hosts import LOCAL
 from udl.http import HttpClientFactory, api_client
 from udl.integrations.accounts import AccountManager, Integrations
 from udl.integrations.models import (
@@ -1540,8 +1539,7 @@ class UDLService:
     async def list_hosts(self, request: HostsList) -> HostList:
         """List the hosts agents run on: this machine (local, always there) and any others
         (reached over SSH), with how each is reached and whether udl uses it."""
-        await self.hosts.get(LOCAL)  # (makes local, the first time)
-        return await self.hosts.shown_list()
+        return await self.hosts.shown_list()  # (makes local, the first time)
 
     @operation(
         "set_host",

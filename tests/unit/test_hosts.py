@@ -31,8 +31,8 @@ from udl.hosts import (
     HostTransport,
     LocalShell,
     SshShell,
-    command_stdin,
     remote_command,
+    remote_stdin,
     shell_for,
     ssh_argv,
 )
@@ -88,7 +88,7 @@ def through_sh(
     """Run the remote command line the way ssh runs it: `sh -c` on it, its stdin the command's."""
     return subprocess.run(  # noqa: S603 - (a fixture's own command, and only sh's own quoting)
         ["sh", "-c", remote_command(command)],  # noqa: S607 - (sh is always at /bin/sh's place)
-        input=command_stdin(command),
+        input=remote_stdin(command),
         capture_output=True,
         env=env,
         check=False,
@@ -178,10 +178,7 @@ def test_any_argv_and_folder_round_trip_through_the_remote_sh(
 def test_the_remote_command_changes_directory_and_exports_the_environment() -> None:
     script = remote_command(Command(("echo", "hi"), cwd="/srv/work dir", env={"B": "2", "A": "1"}))
 
-    assert script.startswith("cd -- '/srv/work dir'")
-    assert "A=1" in script
-    assert "B=2" in script
-    assert script.endswith("exec echo hi")
+    assert script == "cd -- '/srv/work dir' && { export A=1; export B=2; exec echo hi; }"
 
 
 def test_a_secret_is_read_from_stdin_and_never_in_the_command_line() -> None:
@@ -212,8 +209,8 @@ def test_a_secret_reaches_the_programs_environment_not_its_argv() -> None:
 def test_the_stdin_has_the_secrets_first_a_line_each() -> None:
     command = Command(("tool",), secret_env={"A": "one", "B": "two"}, stdin=b"payload")
 
-    assert command_stdin(command) == b"one\ntwo\npayload"
-    assert command_stdin(Command(("tool",), stdin=b"payload")) == b"payload"
+    assert remote_stdin(command) == b"one\ntwo\npayload"
+    assert remote_stdin(Command(("tool",), stdin=b"payload")) == b"payload"
 
 
 def test_a_secret_name_has_to_be_an_environment_name() -> None:
@@ -224,6 +221,31 @@ def test_a_secret_name_has_to_be_an_environment_name() -> None:
 def test_a_name_cannot_be_both_environment_and_secret() -> None:
     with pytest.raises(ValueError, match="both env and secret_env"):
         Command(("tool",), env={"A": "1"}, secret_env={"A": "2"})
+
+
+def test_an_environment_name_has_to_be_one() -> None:
+    """An env name that is not a name would be spliced into the remote command line."""
+    with pytest.raises(ValueError, match="cannot name an environment variable"):
+        Command(("tool",), env={"BAD NAME": "1"})
+
+
+def test_a_host_environment_name_has_to_be_one() -> None:
+    with pytest.raises(ValueError, match="cannot name an environment variable"):
+        Host(name="h", transport=HostTransport.SSH, ssh="h", work_dir="/w", env={"A B": "1"})
+
+
+def test_a_secret_with_a_newline_is_refused() -> None:
+    """A secret is framed on one line, so a newline would spill the rest into the input."""
+    with pytest.raises(ValueError, match="has a newline"):
+        Command(("tool",), secret_env={"TOKEN": "a\nb"})
+
+
+def test_an_ssh_host_name_that_looks_like_an_option_is_refused() -> None:
+    """`ssh -oProxyCommand=… <host>` would run a command on this machine."""
+    with pytest.raises(ValueError, match="looks like an ssh option"):
+        Host(
+            name="h", transport=HostTransport.SSH, ssh="-oProxyCommand=touch /tmp/x", work_dir="/w"
+        )
 
 
 def test_a_command_that_quotes_nothing_stays_readable() -> None:
