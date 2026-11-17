@@ -9,19 +9,25 @@ the UDLErrors they mean). It needs no vendor SDK: the calls are few, and what a 
 is an HTTP client, not a third-party package.
 
 What GitHub answers an error with becomes the error udl has for it (401: ReauthRequired;
-403/429 that are its rate limit: RateLimited; other 403 and 404: NotAllowed / DoesNotExist;
-409 and 422 on a merge: NotAllowed, with GitHub's own message; 5xx: the retry policy, then
-PluginError). A list GitHub pages is followed by the Link header, and a link off GitHub's own
-host is never followed (the header is the only part of a request udl does not choose).
+403/429 that are its rate limit: RateLimited, saying when the window opens; other 403 and 404:
+NotAllowed / DoesNotExist; 409 and 422 on a merge: NotAllowed, with GitHub's own message; 5xx:
+the retry policy, then PluginError). A list GitHub pages is followed by the Link header, and a
+link off GitHub's own host is never followed (the header is the one part of a request udl does
+not choose).
+
+A request is tried again only when trying it again is safe: a GET that failed on a connection or
+a 5xx. A POST, a PATCH or a PUT is never sent twice — GitHub may already have done what it
+asked, and a second comment or a second merge is worse than a failure the caller can see.
 """
 
 # System Imports
 import importlib.metadata
 import logging
-from collections.abc import Mapping
+import re
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
-from typing import ClassVar, Final
+from typing import ClassVar, Final, Literal
 
 # Package Imports
 import httpx
@@ -39,12 +45,14 @@ from pydantic import (
 # Local Imports
 from udl.clock import Clock, SystemClock
 from udl.errors import (
+    ConfigError,
     DoesNotExist,
     NotAllowed,
     PluginError,
     RateLimited,
     ReauthRequired,
     UDLError,
+    is_retryable,
 )
 from udl.http import HttpClientFactory, api_client
 from udl.plugins.integrations.github.models import (
@@ -57,7 +65,15 @@ from udl.plugins.integrations.github.models import (
     GhUser,
 )
 
-__all__ = ["GhRateLimit", "GitHubClient", "new_client", "rate_limit_of", "user_agent"]
+__all__ = [
+    "GhRateLimit",
+    "GitHubClient",
+    "MergeMethod",
+    "PullStateFilter",
+    "new_client",
+    "rate_limit_of",
+    "user_agent",
+]
 
 log = logging.getLogger(__name__)
 
@@ -69,6 +85,11 @@ PAGE_SIZE: Final = 100
 # No list is longer than this: it keeps a paging bug (or a Link header that loops) from running
 # for ever. GitHub's own longest list is far shorter.
 MAX_PAGES: Final = 100
+# What a rate limit says when it says nothing else (the fallback of last resort).
+A_MINUTE: Final = 60.0
+# A repository, as GitHub names one: an owner, a slash, a name (no more, so nothing can climb
+# out of /repos/ with a ".." segment or reach another endpoint).
+_REPO: Final = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$")
 
 _REAUTH_HINT: Final = (
     "GitHub refused the token: check it is current, and that it may write pull requests to the "
@@ -80,6 +101,15 @@ _PERMISSION_HINT: Final = (
     "repository (and Actions: write to rerun its jobs)."
 )
 _NOT_THERE_HINT: Final = "Check the repository (owner/name) and the number."
+
+type MergeMethod = Literal["merge", "squash", "rebase"]
+"""How to merge a pull request: a merge commit, squash, or rebase."""
+
+type PullStateFilter = Literal["open", "closed", "all"]
+"""Which pull requests to list."""
+
+type PullStateChange = Literal["open", "closed"]
+"""What a pull request's state may be changed to."""
 
 
 def user_agent() -> str:
@@ -100,10 +130,6 @@ class GhRateLimit(BaseModel):
     """When the window starts again."""
 
 
-_OBJECT: Final = TypeAdapter[dict[str, JsonValue]](dict[str, JsonValue])
-_ANY_JSON: Final = TypeAdapter[JsonValue](JsonValue)
-
-
 class _CheckRuns(BaseModel):
     """What a commit's check-runs call answers: a count, and the runs on the page read."""
 
@@ -111,6 +137,21 @@ class _CheckRuns(BaseModel):
 
     total_count: int = 0
     check_runs: list[GhCheckRun] = Field(default_factory=list[GhCheckRun])
+
+
+_OBJECT: Final = TypeAdapter[dict[str, JsonValue]](dict[str, JsonValue])
+_ANY_JSON: Final = TypeAdapter[JsonValue](JsonValue)
+
+
+def repo_name(repo: str) -> str:
+    """`repo` as owner/name, checked. Raises ConfigError for anything else, so a value from
+    config (or an agent's request) cannot climb out of /repos/ or reach another endpoint."""
+    if not _REPO.match(repo):
+        raise ConfigError(
+            f"{repo!r} is not a repository: it is owner/name (e.g. udl/udl)",
+            hint="Check the repository's name.",
+        )
+    return repo
 
 
 class GitHubClient:
@@ -121,7 +162,7 @@ class GitHubClient:
     max_pages: ClassVar[int] = MAX_PAGES
     """The most pages a list reads (a Link header that loops stops there)."""
     retries: ClassVar[int] = 3
-    """How many times a request that failed on a connection or a 5xx is tried again."""
+    """How many times a GET that failed on a connection or a 5xx is tried again."""
     backoff: ClassVar[tuple[timedelta, ...]] = (
         timedelta(seconds=1),
         timedelta(seconds=2),
@@ -150,7 +191,7 @@ class GitHubClient:
 
     @property
     def rate_limit(self) -> GhRateLimit | None:
-        """The rate limit GitHub last reported (None: it has not reported one)."""
+        """The rate limit GitHub last reported, of any answer (None: it has not reported one)."""
         return self._rate_limit
 
     # -- the calls -----------------------------------------------------------------------------
@@ -161,14 +202,15 @@ class GitHubClient:
 
     async def get_repo(self, owner: str, repo: str) -> GhRepo:
         """A repository (GET /repos/{owner}/{repo}). Raises DoesNotExist when there is none, or
-        the token cannot see it."""
-        return await self._get(f"/repos/{owner}/{repo}", GhRepo)
+        the token cannot see it. Without a token GitHub says less of it (no permissions), which
+        the model allows."""
+        return await self._get(f"/repos/{repo_name(f'{owner}/{repo}')}", GhRepo)
 
     async def list_pulls(
         self,
         repo: str,
         *,
-        state: str = "open",
+        state: PullStateFilter = "open",
         head: str | None = None,
         base: str | None = None,
     ) -> list[GhPull]:
@@ -179,11 +221,11 @@ class GitHubClient:
             query["head"] = head
         if base is not None:
             query["base"] = base
-        return await self.paginate(f"/repos/{repo}/pulls", GhPull, query=query)
+        return await self.paginate(f"/repos/{repo_name(repo)}/pulls", GhPull, query=query)
 
     async def get_pull(self, repo: str, number: int) -> GhPull:
         """One pull request, by number (GET /repos/{repo}/pulls/{number})."""
-        return await self._get(f"/repos/{repo}/pulls/{number}", GhPull)
+        return await self._get(f"/repos/{repo_name(repo)}/pulls/{number}", GhPull)
 
     async def open_pull(
         self,
@@ -197,11 +239,11 @@ class GitHubClient:
     ) -> GhPull:
         """Open a pull request of `head` (owner:branch) into `base` (POST /repos/{repo}/pulls).
         Raises NotAllowed when GitHub refuses it (a branch that is not there, a pull already
-        open for that head)."""
+        open for that head). Never tried twice: a second POST would be another pull request."""
         sent: dict[str, object] = {"head": head, "base": base, "title": title, "body": body}
         if draft:
             sent["draft"] = True
-        return await self._send("POST", f"/repos/{repo}/pulls", sent, GhPull)
+        return await self._send("POST", f"/repos/{repo_name(repo)}/pulls", sent, GhPull)
 
     async def update_pull(
         self,
@@ -210,7 +252,7 @@ class GitHubClient:
         *,
         title: str | None = None,
         body: str | None = None,
-        state: str | None = None,
+        state: PullStateChange | None = None,
     ) -> GhPull:
         """Change a pull request's title, body or state (PATCH /repos/{repo}/pulls/{number});
         what is None is left as it is."""
@@ -219,51 +261,72 @@ class GitHubClient:
             for name, value in (("title", title), ("body", body), ("state", state))
             if value is not None
         }
-        return await self._send("PATCH", f"/repos/{repo}/pulls/{number}", sent, GhPull)
+        return await self._send("PATCH", f"/repos/{repo_name(repo)}/pulls/{number}", sent, GhPull)
 
     async def merge_pull(
-        self, repo: str, number: int, *, sha: str | None, method: str = "squash"
+        self,
+        repo: str,
+        number: int,
+        *,
+        sha: str | None,
+        method: MergeMethod = "squash",
     ) -> GhMerge:
         """Merge a pull request (PUT /repos/{repo}/pulls/{number}/merge) as `method` (merge,
         squash, rebase). With `sha`, GitHub refuses unless the head is that commit, so what was
         reviewed is what is merged. Raises NotAllowed, with GitHub's own message, when it will
-        not merge (or answers 200 saying it did not)."""
+        not merge (or answers 200 saying it did not). Never tried twice."""
+        sent: dict[str, object] = {"merge_method": method}
+        if sha is not None:  # (GitHub refuses a merge unless the head is that commit)
+            sent["sha"] = sha
         found = await self._send(
-            "PUT",
-            f"/repos/{repo}/pulls/{number}/merge",
-            {"merge_method": method, "sha": sha},
-            GhMerge,
+            "PUT", f"/repos/{repo_name(repo)}/pulls/{number}/merge", sent, GhMerge
         )
         if not found.merged:
             raise NotAllowed(f"GitHub did not merge the pull request ({found.message})")
         return found
 
     async def list_check_runs(self, repo: str, sha: str) -> list[GhCheckRun]:
-        """The check runs of a commit (GET /repos/{repo}/commits/{sha}/check-runs)."""
-        found = await self._get(f"/repos/{repo}/commits/{sha}/check-runs", _CheckRuns)
-        return found.check_runs
+        """Every check run of a commit (GET /repos/{repo}/commits/{sha}/check-runs), all its
+        pages: a commit of a matrix build has more than one pageful, and a run left behind
+        could be the one that failed."""
+        path = f"/repos/{repo_name(repo)}/commits/{sha}/check-runs"
+        runs: list[GhCheckRun] = []
+        total = 0
+
+        def read(body: JsonValue, where: str) -> list[GhCheckRun]:
+            nonlocal total
+            found = self._parsed(_CheckRuns, body, where)
+            total = max(total, found.total_count)
+            return found.check_runs
+
+        runs = await self._walk(path, read)
+        if total > len(runs):
+            log.warning("%s: %d check runs, %d read", path, total, len(runs))
+        return runs
 
     async def list_comments(self, repo: str, number: int) -> list[GhComment]:
         """The comments on a pull request's conversation (GET /repos/{repo}/issues/{number}/
         comments)."""
-        return await self.paginate(f"/repos/{repo}/issues/{number}/comments", GhComment)
+        path = f"/repos/{repo_name(repo)}/issues/{number}/comments"
+        return await self.paginate(path, GhComment)
 
     async def add_comment(self, repo: str, number: int, body: str) -> GhComment:
-        """Comment on a pull request (POST /repos/{repo}/issues/{number}/comments)."""
-        return await self._send(
-            "POST", f"/repos/{repo}/issues/{number}/comments", {"body": body}, GhComment
-        )
+        """Comment on a pull request (POST /repos/{repo}/issues/{number}/comments). Never tried
+        twice: a second POST would post the comment twice."""
+        path = f"/repos/{repo_name(repo)}/issues/{number}/comments"
+        return await self._send("POST", path, {"body": body}, GhComment)
 
     async def list_review_comments(self, repo: str, number: int) -> list[GhReviewComment]:
         """The comments on a pull request's diff (GET /repos/{repo}/pulls/{number}/comments)."""
-        return await self.paginate(f"/repos/{repo}/pulls/{number}/comments", GhReviewComment)
+        path = f"/repos/{repo_name(repo)}/pulls/{number}/comments"
+        return await self.paginate(path, GhReviewComment)
 
-    async def rerun_failed_jobs(self, repo: str, run_id: int) -> None:
-        """Run again the failed jobs of an Actions run (POST /repos/{repo}/actions/runs/{id}/
-        rerun-failed-jobs). Raises NotAllowed when it has none that failed, or may not."""
-        await self._ask(
-            "POST", f"{self.base_url}/repos/{repo}/actions/runs/{run_id}/rerun-failed-jobs"
-        )
+    async def rerun_failed_jobs(self, repo: str, number: int, run_id: int) -> None:
+        """Run again the failed jobs of one of a pull request's Actions runs (POST /repos/{repo}/
+        actions/runs/{id}/rerun-failed-jobs). Raises NotAllowed when it has none that failed, or
+        may not. Never tried twice."""
+        path = f"/repos/{repo_name(repo)}/actions/runs/{run_id}/rerun-failed-jobs"
+        await self._ask("POST", path)
 
     # -- paging --------------------------------------------------------------------------------
 
@@ -272,12 +335,22 @@ class GitHubClient:
     ) -> list[T]:
         """Every item of a list GitHub pages (its Link header's rel="next"), read into `model`.
         At most MAX_PAGES pages are read, and a next link on another host is not followed."""
+        return await self._walk(path, lambda body, where: self._each(model, body, where), query)
+
+    async def _walk[T](
+        self,
+        path: str,
+        read: Callable[[JsonValue, str], list[T]],
+        query: Mapping[str, str] | None = None,
+    ) -> list[T]:
+        """Every page of `path` (as `read` reads one), following the Link header. `query` goes
+        with the first page; later pages carry the Link header's own."""
         items: list[T] = []
         url = f"{self.base_url}{path}"
-        params: dict[str, str] | None = dict(query) if query is not None else None
+        params: dict[str, str] = {"per_page": str(PAGE_SIZE), **(query or {})}
         for _ in range(self.max_pages):
             answer, response = await self._ask("GET", url, params=params)
-            items.extend(self._each(model, answer, path))
+            items.extend(read(answer, path))
             nxt = self._next(response, url)
             if nxt is None:
                 return items
@@ -306,7 +379,7 @@ class GitHubClient:
                 hint="This is udl's bug: the answer needs reading as a page.",
             )
         try:
-            return _page(model, answer)
+            return [model.model_validate(item) for item in answer]
         except ValidationError as e:
             raise PluginError(
                 f"GitHub answered {path} with something that is not a list of "
@@ -318,7 +391,7 @@ class GitHubClient:
         """GitHub's JSON as `model`. Raises PluginError when it is not (a shape udl does not
         know, which is a bug here rather than something to retry)."""
         try:
-            return adapter(model).validate_python(answer)
+            return model.model_validate(answer)
         except ValidationError as e:
             raise PluginError(
                 f"GitHub answered {path} with something that is not {model.__name__} "
@@ -334,11 +407,14 @@ class GitHubClient:
         params: Mapping[str, str] | None = None,
         json: Mapping[str, object] | None = None,
     ) -> tuple[JsonValue, httpx.Response]:
-        """A request's answer (as plain JSON) and the response it came in. A connection error or
-        a 5xx is tried again (retries times, backoff apart), then PluginError; any other status
-        raises what it means."""
-        query = {"per_page": str(PAGE_SIZE)} if params is not None else None
-        query = {**(query or {}), **(params or {})}
+        """A request's answer (as plain JSON) and the response it came in.
+
+        A GET that failed on a connection, or that GitHub answered with a 5xx, is tried again
+        (retries times, backoff apart), then PluginError. Any other method is tried once: it may
+        already have been done, and doing it twice is worse than saying it failed. An error that
+        is not retryable (a 401, a 404, a 403 that is not the rate limit) is raised at once.
+        """
+        query = dict(params) if params is not None else None
         headers = {
             "Accept": ACCEPT,
             "X-GitHub-Api-Version": API_VERSION,
@@ -346,26 +422,37 @@ class GitHubClient:
         }
         if self._token is not None:
             headers["Authorization"] = f"Bearer {self._token.get_secret_value()}"
+        retryable = method in ("GET", "HEAD")
         failed: UDLError | None = None
         status = 0
-        for attempt in range(self.retries + 1):
+        for attempt in range(self.retries + 1 if retryable else 1):
             try:
+                # (udl.http's own factory also retries a connection twice; that is its business,
+                # and this loop adds a wait between its tries.)
                 async with self._http(tool=TOOL) as client:
                     response = await client.request(
-                        method, url, params=query or None, headers=headers, json=json
+                        method, url, params=query, headers=headers, json=json
                     )
             except UDLError as e:
+                if not is_retryable(e):
+                    raise
                 failed = e
             else:
                 failed = None
                 status = response.status_code
                 if status < 500:
                     return self._read(response, url), response
-            if attempt == self.retries:
+            if attempt == (self.retries if retryable else 0):
                 if failed is not None:
                     # (A connection problem, as udl.http raises it: keep what it means, so the
                     # caller knows trying again later may work.)
                     raise failed
+                if not retryable:
+                    raise PluginError(
+                        f"Could not reach GitHub ({url}): GitHub answered {status} for {method}. "
+                        "It was not tried again, since it may already have been done.",
+                        hint="Check whether it happened (a pull, a comment) before trying again.",
+                    ) from None
                 raise PluginError(
                     f"Could not reach GitHub ({url}): GitHub answered {status} "
                     f"{self.retries + 1} times",
@@ -376,9 +463,11 @@ class GitHubClient:
 
     def _read(self, response: httpx.Response, url: str) -> JsonValue:
         """An answer's body, as plain JSON; None for a 204. Raises what an error status means,
-        and PluginError for a body that is not JSON (an HTML page from something in between)."""
-        _raise_for(response, url)
+        and PluginError for a body that is not JSON (an HTML page from something in between).
+        What the answer says of the rate limit is kept either way: a caller reads it after a
+        RateLimited too."""
         self._keep(response)
+        _raise_for(response, url, self._clock.now())
         if response.status_code == 204 or not response.content:
             return None
         try:
@@ -408,23 +497,6 @@ class GitHubClient:
             return None
         parts = httpx.URL(link)
         return str(parts.copy_with(query=None)), dict(parts.params)
-
-
-_ADAPTERS: dict[type[BaseModel], TypeAdapter[BaseModel]] = {}
-
-
-def _page[T: BaseModel](model: type[T], answer: list[JsonValue]) -> list[T]:
-    """A page of `answer` as a list of `model`, reading each item with the model's adapter."""
-    return [adapter(model).validate_python(item) for item in answer]
-
-
-def adapter[T: BaseModel](model: type[T]) -> TypeAdapter[T]:
-    """The (cached) adapter that reads GitHub's JSON into `model`."""
-    found = _ADAPTERS.get(model)
-    if found is None:
-        found = TypeAdapter(model)
-        _ADAPTERS[model] = found
-    return found  # pyright: ignore[reportReturnType]
 
 
 def rate_limit_of(response: httpx.Response) -> GhRateLimit | None:
@@ -460,7 +532,7 @@ def new_client(
 # ---------------------------------------------------------------------------------------------
 
 
-def _raise_for(response: httpx.Response, url: str) -> None:
+def _raise_for(response: httpx.Response, url: str, now: datetime) -> None:
     """Raise the error an error status means; nothing for a 2xx."""
     status = response.status_code
     if status < 400:
@@ -472,7 +544,7 @@ def _raise_for(response: httpx.Response, url: str) -> None:
         if _is_rate_limit(response):
             raise RateLimited(
                 f"GitHub is limiting requests ({message})",
-                retry_after=_retry_after(response) or 60.0,
+                retry_after=_wait(response, now),
                 tool=TOOL,
                 hint=_RATE_HINT,
             ) from None
@@ -490,8 +562,20 @@ def _is_rate_limit(response: httpx.Response) -> bool:
     return "retry-after" in {name.lower() for name in response.headers}
 
 
-def _retry_after(response: httpx.Response) -> float | None:
-    """A Retry-After header (seconds, or a date), as seconds from now."""
+def _wait(response: httpx.Response, now: datetime) -> float:
+    """How long to wait before asking again, as GitHub's answer says: a Retry-After (seconds or
+    a date) if it sent one, else when its rate-limit window opens, else a minute."""
+    given = _retry_after(response, now)
+    if given is not None:
+        return given
+    reset = response.headers.get("X-RateLimit-Reset", "").strip()
+    if reset.isdigit():
+        return max(datetime.fromtimestamp(int(reset), tz=UTC) - now, timedelta()).total_seconds()
+    return A_MINUTE
+
+
+def _retry_after(response: httpx.Response, now: datetime) -> float | None:
+    """A Retry-After header (seconds, or a date), as seconds from `now`."""
     value = (response.headers.get("Retry-After") or "").strip()
     if not value:
         return None
@@ -503,7 +587,7 @@ def _retry_after(response: httpx.Response) -> float | None:
         return None
     if when.tzinfo is None:
         when = when.replace(tzinfo=UTC)
-    return max((when - datetime.now(UTC)).total_seconds(), 0.0)
+    return max((when - now).total_seconds(), 0.0)
 
 
 def _message(response: httpx.Response) -> str:

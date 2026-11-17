@@ -27,6 +27,7 @@ from support.clock import FakeClock
 from support.github import BASE, TOKEN, Body, FakeGitHub, check_run_body
 from support.github import repo_body as gh_repo_body
 from udl.errors import (
+    ConfigError,
     DoesNotExist,
     NetworkError,
     NotAllowed,
@@ -64,7 +65,9 @@ def api_of(answer: Answer) -> Any:
             except httpx.HTTPError as e:  # (as udl.http maps them, for a real client)
                 raise httpx_error(e, tool=tool) from e
 
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handle), base_url=BASE
+        ) as client:
             yield client
 
     return factory
@@ -136,11 +139,11 @@ async def test_a_repo_is_read_by_its_full_name(client: GitHubClient, gh: FakeGit
 
 
 async def test_pulls_are_listed_by_state_and_head(client: GitHubClient, gh: FakeGitHub) -> None:
-    found = await client.list_pulls(REPO, state="all", head="acme:feat/widgets")
+    found = await client.list_pulls(REPO, state="all", head="acme:feat/widgets", base="main")
 
     assert [pull.number for pull in found] == [7]
     assert gh.calls == [
-        "GET /repos/acme/widgets/pulls?per_page=100&state=all&head=acme%3Afeat%2Fwidgets"
+        "GET /repos/acme/widgets/pulls?per_page=100&state=all&head=acme%3Afeat%2Fwidgets&base=main"
     ]
 
 
@@ -203,7 +206,7 @@ async def test_the_check_runs_of_a_commit_are_listed(client: GitHubClient, gh: F
     found = await client.list_check_runs(REPO, "abc1234")
 
     assert [run.name for run in found] == ["check"]
-    assert gh.calls == ["GET /repos/acme/widgets/commits/abc1234/check-runs"]
+    assert gh.calls == ["GET /repos/acme/widgets/commits/abc1234/check-runs?per_page=100"]
 
 
 async def test_the_comments_on_a_pull_are_listed(client: GitHubClient, gh: FakeGitHub) -> None:
@@ -212,7 +215,7 @@ async def test_the_comments_on_a_pull_are_listed(client: GitHubClient, gh: FakeG
     found = await client.list_comments(REPO, 7)
 
     assert [note.body for note in found] == ["Looks good"]
-    assert gh.calls == ["GET /repos/acme/widgets/issues/7/comments"]
+    assert gh.calls == ["GET /repos/acme/widgets/issues/7/comments?per_page=100"]
 
 
 async def test_a_comment_is_posted_as_the_token_s_user(
@@ -233,11 +236,11 @@ async def test_the_review_comments_of_a_pull_are_listed(
 
     assert (found.body, found.path, found.line) == ("Rename this", "src/app.py", 42)
     assert found.in_reply_to_id is None
-    assert gh.calls == ["GET /repos/acme/widgets/pulls/7/comments"]
+    assert gh.calls == ["GET /repos/acme/widgets/pulls/7/comments?per_page=100"]
 
 
 async def test_failed_jobs_are_rerun_by_run_id(client: GitHubClient, gh: FakeGitHub) -> None:
-    await client.rerun_failed_jobs(REPO, 4242)
+    await client.rerun_failed_jobs(REPO, 7, 4242)
 
     assert gh.reruns == ["acme/widgets@4242"]
     assert gh.calls == ["POST /repos/acme/widgets/actions/runs/4242/rerun-failed-jobs"]
@@ -403,19 +406,6 @@ async def test_a_refused_token_is_reauthentication(gh: FakeGitHub) -> None:
 
     assert "Bad credentials" in raised.value.message
     assert raised.value.hint is not None
-
-
-async def test_an_exhausted_rate_limit_is_rate_limiting(
-    client: GitHubClient, gh: FakeGitHub
-) -> None:
-    gh.exhausted = True
-
-    with pytest.raises(RateLimited) as raised:
-        await client.user()
-
-    assert raised.value.retry_after == 60.0
-    assert raised.value.tool == "github"
-    assert raised.value.to_info().retry_after == 60.0
 
 
 async def test_a_secondary_rate_limit_says_how_long(client: GitHubClient, gh: FakeGitHub) -> None:
@@ -630,11 +620,13 @@ async def test_an_answer_with_nothing_in_it_is_none() -> None:
     client = GitHubClient(
         base_url=BASE,
         token=SecretStr(TOKEN),
-        http=api_of(lambda request: httpx.Response(204)),
+        http=api_of(
+            lambda request: httpx.Response(204, request=httpx.Request("POST", request.url))
+        ),
         clock=FakeClock(),
     )
 
-    assert await client.rerun_failed_jobs(REPO, 1) is None
+    assert await client.rerun_failed_jobs(REPO, 7, 1) is None
 
 
 def test_the_client_can_be_built_for_an_integration() -> None:
@@ -656,20 +648,6 @@ async def test_an_error_answer_without_a_message_says_the_status() -> None:
         await client.user()
 
 
-async def test_a_retry_after_that_is_a_date_is_seconds_from_now(
-    client: GitHubClient, gh: FakeGitHub
-) -> None:
-    when = datetime.now(UTC) + timedelta(seconds=120)
-    gh.rate_limited = True
-    gh.retry_after = when.strftime("%a, %d %b %Y %H:%M:%S GMT")
-
-    with pytest.raises(RateLimited) as raised:
-        await client.user()
-
-    assert raised.value.retry_after is not None
-    assert 110 <= raised.value.retry_after <= 120
-
-
 async def test_a_page_whose_item_is_not_the_model_is_refused(gh: FakeGitHub) -> None:
     gh.mangle = _without_a_number
 
@@ -679,11 +657,31 @@ async def test_a_page_whose_item_is_not_the_model_is_refused(gh: FakeGitHub) -> 
     assert "udl's bug" in (raised.value.hint or "")
 
 
-async def test_a_retry_after_that_is_not_a_time_falls_back_to_a_minute(
-    client: GitHubClient, gh: FakeGitHub
-) -> None:
+async def test_a_retry_after_that_is_not_a_time_falls_back_to_the_window(gh: FakeGitHub) -> None:
+    clock = FakeClock()
     gh.rate_limited = True
     gh.retry_after = "soon"
+    gh.now = clock.now
+    client = GitHubClient(base_url=BASE, token=SecretStr(TOKEN), http=gh.http(), clock=clock)
+
+    with pytest.raises(RateLimited) as raised:
+        await client.user()
+
+    # (The fake's window opens in 30 minutes, and that is what GitHub's headers say.)
+    assert raised.value.retry_after == 1800.0
+
+
+async def test_a_limit_that_says_nothing_at_all_falls_back_to_a_minute() -> None:
+    client = GitHubClient(
+        base_url=BASE,
+        token=SecretStr(TOKEN),
+        http=api_of(
+            lambda request: httpx.Response(
+                429, json={"message": "slow down"}, headers={"X-RateLimit-Remaining": "0"}
+            )
+        ),
+        clock=FakeClock(),
+    )
 
     with pytest.raises(RateLimited) as raised:
         await client.user()
@@ -692,30 +690,107 @@ async def test_a_retry_after_that_is_not_a_time_falls_back_to_a_minute(
 
 
 async def test_a_retry_after_that_is_a_date_without_a_zone_is_still_a_date(
-    client: GitHubClient, gh: FakeGitHub
+    gh: FakeGitHub,
 ) -> None:
-    when = datetime.now(UTC) + timedelta(seconds=120)
+    clock = FakeClock()
     gh.rate_limited = True
-    gh.retry_after = when.strftime("%a, %d %b %Y %H:%M:%S")
+    gh.now = clock.now
+    gh.retry_after = (clock.now() + timedelta(seconds=120)).strftime("%a, %d %b %Y %H:%M:%S")
+    client = GitHubClient(base_url=BASE, token=SecretStr(TOKEN), http=gh.http(), clock=clock)
 
     with pytest.raises(RateLimited) as raised:
         await client.user()
 
-    assert raised.value.retry_after is not None
-    assert 110 <= raised.value.retry_after <= 120
+    assert raised.value.retry_after == 120.0
+
+
+async def test_a_retry_after_that_is_a_date_with_a_zone_says_the_same(
+    gh: FakeGitHub,
+) -> None:
+    clock = FakeClock()
+    gh.rate_limited = True
+    gh.retry_after = (clock.now() + timedelta(seconds=120)).strftime("%a, %d %b %Y %H:%M:%S GMT")
+    client = GitHubClient(base_url=BASE, token=SecretStr(TOKEN), http=gh.http(), clock=clock)
+
+    with pytest.raises(RateLimited) as raised:
+        await client.user()
+
+    assert raised.value.retry_after == 120.0
+
+
+async def test_an_exhausted_limit_says_when_the_window_opens(gh: FakeGitHub) -> None:
+    clock = FakeClock()
+    gh.exhausted = True
+    gh.now = clock.now
+    client = GitHubClient(base_url=BASE, token=SecretStr(TOKEN), http=gh.http(), clock=clock)
+
+    with pytest.raises(RateLimited) as raised:
+        await client.user()
+
+    assert raised.value.retry_after == 1800.0
+    assert raised.value.tool == "github"
+    assert raised.value.to_info().retry_after == 1800.0
+
+
+async def test_a_retry_after_header_beats_the_window(client: GitHubClient, gh: FakeGitHub) -> None:
+    gh.exhausted = True
+    gh.retry_after = "9"
+
+    with pytest.raises(RateLimited) as raised:
+        await client.user()
+
+    assert raised.value.retry_after == 9.0
+
+
+async def test_the_rate_limit_of_an_error_answer_is_kept(
+    client: GitHubClient, gh: FakeGitHub
+) -> None:
+    gh.exhausted = True
+
+    with pytest.raises(RateLimited):
+        await client.user()
+
+    assert client.rate_limit is not None
+    assert client.rate_limit.remaining == 0
+
+
+async def test_a_check_run_list_is_read_to_its_last_page(gh: FakeGitHub) -> None:
+    runs = [check_run_body(f"check-{index}", "success") for index in range(120)]
+    gh.set_checks("abc1234", *runs)
+
+    found = await client_of(gh).list_check_runs(REPO, "abc1234")
+
+    assert [run.name for run in found] == [run.name for run in runs]
+    assert gh.calls[0] == "GET /repos/acme/widgets/commits/abc1234/check-runs?per_page=100"
+
+
+async def test_check_runs_stop_at_the_page_cap_with_a_warning(
+    gh: FakeGitHub, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(GitHubClient, "max_pages", 1)
+    gh.page_size = 1
+    gh.set_checks("abc1234", *[check_run_body(f"check-{index}", "success") for index in range(3)])
+
+    found = await client_of(gh).list_check_runs(REPO, "abc1234")
+
+    assert len(found) == 1
+    assert "3 check runs, 1 read" in caplog.text
 
 
 def test_whether_a_token_may_write_pulls() -> None:
     repo = gh_repo_body(REPO)
 
-    assert repo.permissions.writes_pulls is True
+    assert repo.may_write_pulls is True
 
     readonly = repo.model_copy(
-        update={
-            "permissions": GhRepo.Permissions(admin=False, push=False, pull=True),
-        }
+        update={"permissions": GhRepo.Permissions(admin=False, push=False, pull=True)}
     )
+    assert readonly.permissions is not None
     assert readonly.permissions.writes_pulls is False
+    assert readonly.may_write_pulls is False
+
+    unknown = repo.model_copy(update={"permissions": None})
+    assert unknown.may_write_pulls is False
 
 
 def _without_a_number(body: Body) -> Body:
@@ -723,3 +798,132 @@ def _without_a_number(body: Body) -> Body:
     if isinstance(body, list):
         return [{name: value for name, value in item.items() if name != "number"} for item in body]
     return body
+
+
+# ---------------------------------------------------------------------------------------------
+# The review's items (17 Nov): what a watcher in 25.5 leans on
+# ---------------------------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------------------------
+# What is never tried twice, and what is
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_comment_that_fails_on_a_5xx_is_not_posted_twice(gh: FakeGitHub) -> None:
+    clock = FakeClock()
+    gh.fail = {"POST /repos/acme/widgets/issues/7/comments": 502}
+    client = GitHubClient(base_url=BASE, token=SecretStr(TOKEN), http=gh.http(), clock=clock)
+
+    with pytest.raises(PluginError) as raised:
+        await client.add_comment(REPO, 7, "Running the checks")
+
+    assert len(gh.calls) == 1
+    assert "not tried again" in raised.value.message
+
+
+async def test_a_pull_that_fails_on_a_5xx_is_not_opened_twice(gh: FakeGitHub) -> None:
+    clock = FakeClock()
+    gh.fail = {"POST /repos/acme/widgets/pulls": 502}
+    client = GitHubClient(base_url=BASE, token=SecretStr(TOKEN), http=gh.http(), clock=clock)
+
+    with pytest.raises(PluginError):
+        await client.open_pull(REPO, head="feat/x", base="main", title="X", body=None)
+
+    assert len(gh.calls) == 1
+
+
+async def test_a_merge_that_fails_on_a_5xx_is_not_tried_again(gh: FakeGitHub) -> None:
+    clock = FakeClock()
+    gh.fail = {"PUT /repos/acme/widgets/pulls/7/merge": 502}
+    client = GitHubClient(base_url=BASE, token=SecretStr(TOKEN), http=gh.http(), clock=clock)
+
+    with pytest.raises(PluginError):
+        await client.merge_pull(REPO, 7, sha="abc1234")
+
+    assert len(gh.calls) == 1
+
+
+async def test_a_read_that_fails_on_a_5xx_is_tried_again(gh: FakeGitHub) -> None:
+    clock = FakeClock()
+    gh.fail = {"GET /repos/acme/widgets": 502}
+    client = GitHubClient(base_url=BASE, token=SecretStr(TOKEN), http=gh.http(), clock=clock)
+
+    with pytest.raises(PluginError):
+        await moved(clock, client.get_repo("acme", "widgets"))
+
+    assert len(gh.calls) == GitHubClient.retries + 1
+
+
+async def test_an_error_that_is_not_retryable_is_raised_at_once(
+    client: GitHubClient, gh: FakeGitHub
+) -> None:
+    gh.forbidden = True
+
+    with pytest.raises(NotAllowed):
+        await client.list_comments(REPO, 7)
+
+    assert len(gh.calls) == 1
+
+
+def test_a_merge_without_a_sha_does_not_send_one() -> None:
+    gh = FakeGitHub()
+    client = GitHubClient(base_url=BASE, token=SecretStr(TOKEN), http=gh.http(), clock=FakeClock())
+
+    import asyncio
+
+    asyncio.run(client.merge_pull(REPO, 7, sha=None))
+
+    assert "sha" not in gh.bodies[0]
+
+
+# ---------------------------------------------------------------------------------------------
+# The repository's name, and a token that is not there
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("owner", "name"),
+    [
+        ("acme", ""),
+        ("", "widgets"),
+        ("acme", "widgets/extra"),
+        ("acme", ".."),
+        ("acme", "wid get"),
+        ("acme/../..", "user"),
+    ],
+    ids=["no-name", "no-owner", "too-far", "a-dot-dot", "a-space", "a-climb"],
+)
+async def test_a_repository_that_is_not_owner_name_is_refused(owner: str, name: str) -> None:
+    client = GitHubClient(base_url=BASE, token=SecretStr(TOKEN), http=FakeGitHub().http())
+
+    with pytest.raises(ConfigError, match="owner/name"):
+        await client.get_repo(owner, name)
+
+
+async def test_a_repository_without_a_token_is_read_from_what_github_says(
+    gh: FakeGitHub,
+) -> None:
+    gh.token = None
+    anon = GitHubClient(base_url=BASE, token=None, http=gh.http(), clock=FakeClock())
+
+    repo = await anon.get_repo("acme", "widgets")
+
+    assert repo.full_name == "acme/widgets"
+    assert repo.permissions is None
+    assert repo.may_write_pulls is False
+
+
+async def test_an_error_that_is_not_retryable_is_not_retried_at_all() -> None:
+    def gone(request: httpx.Request) -> httpx.Response:
+        raise DoesNotExist("the pull request is gone")
+
+    client = GitHubClient(
+        base_url=BASE,
+        token=SecretStr(TOKEN),
+        http=api_of(gone),
+        clock=FakeClock(),
+    )
+
+    with pytest.raises(DoesNotExist):
+        await client.get_pull(REPO, 7)

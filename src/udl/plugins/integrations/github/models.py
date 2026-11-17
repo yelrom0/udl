@@ -52,8 +52,9 @@ class GhRepo(GhModel):
     """The branch a pull is opened against by default."""
     private: bool
     """Whether it is private."""
-    permissions: GhRepo.Permissions
-    """What the token may do to it."""
+    permissions: GhRepo.Permissions | None = None
+    """What the token may do to it (None: GitHub said nothing, as for a request without a
+    token)."""
 
     class Permissions(GhModel):
         """What the authenticated token may do to a repository."""
@@ -69,6 +70,12 @@ class GhRepo(GhModel):
         def writes_pulls(self) -> bool:
             """Whether the token may write pull requests here (push, or admin)."""
             return self.push or self.admin
+
+    @property
+    def may_write_pulls(self) -> bool:
+        """Whether the token may write pull requests here (False: GitHub did not say, so udl
+        does not assume it may)."""
+        return self.permissions is not None and self.permissions.writes_pulls
 
 
 class PullState(StrEnum):

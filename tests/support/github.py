@@ -167,6 +167,10 @@ class FakeGitHub:
     """Whether the token's rate limit is used up (then every call is 403)."""
     rate_limited: bool = False
     """Whether every call is 429, with a Retry-After."""
+    now: Callable[[], datetime] | None = None
+    """What time it is, for the rate limit's window (None: the system clock). A test that runs a
+    client on a FakeClock gives it `clock.now`, so the window it reports is the one that clock
+    sees."""
     retry_after: str | None = None
     """What a 429's Retry-After says (None: twelve seconds, as GitHub's secondary limit)."""
     forbidden: bool = False
@@ -201,6 +205,8 @@ class FakeGitHub:
     """Every call made, as "METHOD /path?query"."""
     sent: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
     """The headers of every call made (what udl sends: its token, its User-Agent)."""
+    bodies: list[JsonObject] = field(default_factory=list[JsonObject])
+    """The JSON body of every call that had one (what udl asks for)."""
 
     def __post_init__(self) -> None:
         self.repos.setdefault("acme/widgets", repo_body("acme/widgets"))
@@ -370,12 +376,16 @@ class FakeGitHub:
         repo = self.repos.get(self._name(request))
         if repo is None:
             return self._answer(request, 404, {"message": "Not Found"})
-        return self._answer(request, 200, _json(repo))
+        body = _json(repo)
+        if self.token is None:
+            # (GitHub says nothing of permissions to a request that has no token.)
+            body.pop("permissions", None)
+        return self._answer(request, 200, body)
 
     async def _pulls(self, request: Request) -> Response:
         repo = self._name(request)
         if request.method == "POST":
-            body = _JSON.validate_json(await request.body())
+            body = await self._read(request)
             number = max((pull.number for pull in self.pulls.get(repo, [])), default=0) + 1
             made = pull_body(
                 repo,
@@ -404,7 +414,7 @@ class FakeGitHub:
         repo = self._name(request)
         pull = self.pull_of(repo, int(request.path_params["number"]))
         if request.method == "PATCH":
-            body = _JSON.validate_json(await request.body())
+            body = await self._read(request)
             pull = pull.model_copy(
                 update={name: value for name, value in body.items() if value is not None}
             )
@@ -417,7 +427,7 @@ class FakeGitHub:
         repo = self._name(request)
         number = int(request.path_params["number"])
         pull = self.pull_of(repo, number)
-        body = _JSON.validate_json(await request.body())
+        body = await self._read(request)
         sha = body.get("sha")
         if sha is not None and pull.head.sha != sha:
             return self._answer(
@@ -435,20 +445,23 @@ class FakeGitHub:
     async def _check_runs(self, request: Request) -> Response:
         repo = self._name(request)
         found = self.checks.get(f"{repo}@{request.path_params['sha']}", [])
+        window, link = self._window(request, len(found))
+        headers = {"Link": link} if link else None
         return self._answer(
             request,
             200,
             {
                 "total_count": len(found),
-                "check_runs": [_json(run) for run in found],
+                "check_runs": [_json(run) for run in found[window[0] : window[1]]],
             },
+            headers,
         )
 
     async def _comments(self, request: Request) -> Response:
         repo = self._name(request)
         number = int(request.path_params["number"])
         if request.method == "POST":
-            body = _JSON.validate_json(await request.body())
+            body = await self._read(request)
             found = self.comment(_text(body, "body"), repo=repo, number=number)
             return self._answer(request, 201, _json(found))
         return self._page(
@@ -485,19 +498,20 @@ class FakeGitHub:
             and request.headers.get("Authorization") != f"Bearer {self.token}"
         ):
             return self._respond(request, 401, {"message": "Bad credentials"}, self._rate_headers())
+        rate = {"Retry-After": self.retry_after} if self.retry_after else {}
         if self.rate_limited:
             return self._respond(
                 request,
                 429,
                 {"message": "You have exceeded a secondary rate limit. Please wait."},
-                self._rate_headers() | {"Retry-After": self.retry_after or "12"},
+                self._rate_headers() | (rate or {"Retry-After": "12"}),
             )
         if self.exhausted:
             return self._respond(
                 request,
                 403,
                 {"message": "API rate limit exceeded for this token."},
-                self._rate_headers(),
+                self._rate_headers() | rate,
             )
         if self.forbidden:
             return self._respond(
@@ -528,10 +542,17 @@ class FakeGitHub:
 
     def _page(self, request: Request, items: list[JsonObject]) -> Response:
         """One page of a list, with a Link header when there is another (or a previous one)."""
+        window, link = self._window(request, len(items))
+        headers = {"Link": link} if link else None
+        return self._answer(request, 200, items[window[0] : window[1]], headers)
+
+    def _window(self, request: Request, count: int) -> tuple[tuple[int, int], str]:
+        """The slice of a list of `count` this page shows, and its Link header ("" when it is
+        the only page)."""
         size = min(int(request.query_params.get("per_page", self.page_size)), self.page_size)
         page = max(int(request.query_params.get("page", 1)), 1)
         start = (page - 1) * size
-        last = max((len(items) + size - 1) // size, 1)
+        last = max((count + size - 1) // size, 1)
         path = request.url.path
         base = self.link_base or BASE
         link = ""
@@ -541,24 +562,30 @@ class FakeGitHub:
                 f'<{base}{path}?page={page}&per_page={size}>; rel="next", '
                 f'<{base}{path}?page={page}&per_page={size}>; rel="last"'
             )
-        elif len(items) > start + size:
+        elif count > start + size:
             link = (
                 f'<{base}{path}?page={page + 1}&per_page={size}>; rel="next", '
                 f'<{base}{path}?page={last}&per_page={size}>; rel="last"'
             )
         elif page > 1:
             link = f'<{base}{path}?page=1&per_page={size}>; rel="prev"'
-        return self._answer(
-            request, 200, items[start : start + size], {"Link": link} if link else None
-        )
+        return (start, start + size), link
 
     def _rate_headers(self) -> dict[str, str]:
         """The rate-limit headers GitHub sends on every answer."""
         return {
             "X-RateLimit-Limit": "5000",
             "X-RateLimit-Remaining": "0" if (self.exhausted or self.rate_limited) else "4998",
-            "X-RateLimit-Reset": str(int((datetime.now(UTC) + timedelta(minutes=30)).timestamp())),
+            "X-RateLimit-Reset": str(
+                int(((self.now or _utcnow)() + timedelta(minutes=30)).timestamp())
+            ),
         }
+
+    async def _read(self, request: Request) -> JsonObject:
+        """The JSON body of a request, kept (so a test can see what udl asked for)."""
+        body = _JSON.validate_json(await request.body())
+        self.bodies.append(body)
+        return body
 
     def _record(self, request: Request) -> None:
         """Keep what a call asked, and what it sent."""
@@ -596,6 +623,11 @@ def _optional(body: JsonObject, name: str) -> str | None:
     """A string-or-nothing field of a request's body."""
     value = body.get(name)
     return value if isinstance(value, str) else None
+
+
+def _utcnow() -> datetime:
+    """The time now, as GitHub's headers are measured from."""
+    return datetime.now(UTC)
 
 
 def _dump(body: Body) -> str:
