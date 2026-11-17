@@ -290,7 +290,6 @@ class GitHubClient:
         pages: a commit of a matrix build has more than one pageful, and a run left behind
         could be the one that failed."""
         path = f"/repos/{repo_name(repo)}/commits/{sha}/check-runs"
-        runs: list[GhCheckRun] = []
         total = 0
 
         def read(body: JsonValue, where: str) -> list[GhCheckRun]:
@@ -321,10 +320,10 @@ class GitHubClient:
         path = f"/repos/{repo_name(repo)}/pulls/{number}/comments"
         return await self.paginate(path, GhReviewComment)
 
-    async def rerun_failed_jobs(self, repo: str, number: int, run_id: int) -> None:
-        """Run again the failed jobs of one of a pull request's Actions runs (POST /repos/{repo}/
-        actions/runs/{id}/rerun-failed-jobs). Raises NotAllowed when it has none that failed, or
-        may not. Never tried twice."""
+    async def rerun_failed_jobs(self, repo: str, run_id: int) -> None:
+        """Run again the failed jobs of an Actions run (POST /repos/{repo}/actions/runs/{id}/
+        rerun-failed-jobs). Raises NotAllowed when it has none that failed, or may not. Never
+        tried twice: a second run of the jobs would queue them twice."""
         path = f"/repos/{repo_name(repo)}/actions/runs/{run_id}/rerun-failed-jobs"
         await self._ask("POST", path)
 
@@ -449,8 +448,8 @@ class GitHubClient:
                     raise failed
                 if not retryable:
                     raise PluginError(
-                        f"Could not reach GitHub ({url}): GitHub answered {status} for {method}. "
-                        "It was not tried again, since it may already have been done.",
+                        f"GitHub answered {status} for {method} {url}. It was not tried again, "
+                        "since it may already have been done.",
                         hint="Check whether it happened (a pull, a comment) before trying again.",
                     ) from None
                 raise PluginError(

@@ -240,7 +240,7 @@ async def test_the_review_comments_of_a_pull_are_listed(
 
 
 async def test_failed_jobs_are_rerun_by_run_id(client: GitHubClient, gh: FakeGitHub) -> None:
-    await client.rerun_failed_jobs(REPO, 7, 4242)
+    await client.rerun_failed_jobs(REPO, 4242)
 
     assert gh.reruns == ["acme/widgets@4242"]
     assert gh.calls == ["POST /repos/acme/widgets/actions/runs/4242/rerun-failed-jobs"]
@@ -626,7 +626,7 @@ async def test_an_answer_with_nothing_in_it_is_none() -> None:
         clock=FakeClock(),
     )
 
-    assert await client.rerun_failed_jobs(REPO, 7, 1) is None
+    assert await client.rerun_failed_jobs(REPO, 1) is None
 
 
 def test_the_client_can_be_built_for_an_integration() -> None:
