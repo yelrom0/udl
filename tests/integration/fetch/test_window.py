@@ -38,7 +38,9 @@ from udl.fetch.models import BatchStatus, FetchBatch, ItemStatus
 FETCH = {
     "timeout": "15s",
     "challenge_grace": "1s",
-    "challenge_timeout": "20s",
+    # Room for a loaded CI runner: the window closes as soon as every check is passed, so this
+    # only bounds how long a broken run takes to fail. The timeout's own test sets 3 s.
+    "challenge_timeout": "120s",
     "site_delay": "0s",
     "browser_idle": "1s",
 }

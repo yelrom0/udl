@@ -446,6 +446,8 @@ class FakePerson:
             return
         with contextlib.suppress(PlaywrightError):  # (a tab that was passed, or closed, meanwhile)
             button = tab.locator("#human")
-            await button.wait_for(timeout=10_000)
+            # A person looks for as long as the tab is open (timeout 0: no limit), however slow
+            # the machine is to show the check; the window bounds it with challenge_timeout.
+            await button.wait_for(timeout=0)
             await asyncio.sleep(0.1)  # (as a person looks before clicking)
-            await button.click(timeout=10_000)
+            await button.click(timeout=0)

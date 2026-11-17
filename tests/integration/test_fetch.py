@@ -40,7 +40,7 @@ FETCH = FetchSettings(
     site_delay=timedelta(0),
     timeout=timedelta(seconds=15),
     challenge_grace=timedelta(seconds=1),
-    challenge_timeout=timedelta(seconds=30),
+    challenge_timeout=timedelta(seconds=120),  # (room for a loaded CI runner; see test_window)
     browser_idle=timedelta(seconds=1),
 )
 

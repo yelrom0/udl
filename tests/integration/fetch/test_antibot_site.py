@@ -298,6 +298,24 @@ async def test_a_person_gets_past_the_check(antibot: AntiBotSite, browser: Brows
     assert cookie.get("httpOnly") is True
 
 
+async def test_a_person_keeps_looking_at_a_tab_whose_check_shows_late(
+    antibot: AntiBotSite, browser: BrowserContext
+) -> None:
+    # On a loaded CI runner a check page can take a while to show its button: a person keeps
+    # looking for as long as the tab is open, as the window waits until its challenge_timeout.
+    page = await browser.new_page()
+    person = FakePerson()
+    url = antibot.url("/checked/late")
+
+    attending = asyncio.create_task(person.attend(page))
+    await asyncio.sleep(10.5)  # (longer than a person used to look before giving up)
+    await page.goto(url)
+    await asyncio.wait_for(attending, timeout=30)
+    await settled(page, "Checked late")
+
+    assert "The page behind the check: late." in await page.content()
+
+
 async def test_a_person_who_ignores_the_check_leaves_it(
     antibot: AntiBotSite, browser: BrowserContext
 ) -> None:
