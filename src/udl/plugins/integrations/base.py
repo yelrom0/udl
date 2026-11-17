@@ -38,7 +38,14 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstrai
 from udl.automations.events import Event, EventType
 from udl.clock import Clock
 from udl.config import Duration
-from udl.core.operations import APISpec, CLISpec, Operation, OperationHints, valid_name
+from udl.core.operations import (
+    APISpec,
+    CLISpec,
+    Operation,
+    OperationHints,
+    UISpec,
+    valid_name,
+)
 from udl.db.models import JsonObject, utcnow
 from udl.db.records import Record
 from udl.errors import ErrorInfo, PluginError
@@ -67,6 +74,7 @@ __all__ = [
     "OAuthRequest",
     "OperationHints",
     "StateStore",
+    "UISpec",
     "integration_operation",
 ]
 
@@ -296,6 +304,7 @@ class IntegrationOperation:
     needs_account: bool
     cli: CLISpec | None
     api: APISpec | None
+    ui: UISpec | None  # how the generated UI shows it (None: the defaults)
     method: Callable[..., Awaitable[BaseModel]]  # (integration, account, request) -> response
     request: type[BaseModel] = BaseModel  # (read from its method by operation_specs())
     response: type[BaseModel] = BaseModel  # (an ItemsPage[T] when it fans out)
@@ -312,13 +321,14 @@ def integration_operation[F: Callable[..., Awaitable[BaseModel]]](
     needs_account: bool = True,
     cli: CLISpec | None = None,
     api: APISpec | None = None,
+    ui: UISpec | None = None,
 ) -> Callable[[F], F]:
     """Mark an integration's method as the operation called `name` (offered as
     `<integration>_<name>`): `async def m(self, account: AccountHandle[A], request: R) -> T`
     (or, with needs_account=False, `(self, request: R)`), whose docstring describes it, for
     people and AI agents. It needs the account to have been connected for `access`. One that
     fans out lists things: it gives an ItemsPage[T] for one account, and runs on several at
-    once (so it is read-only)."""
+    once (so it is read-only). Its command, route and UI are as `cli`, `api` and `ui` say."""
 
     def mark(method: F) -> F:
         spec = IntegrationOperation(
@@ -330,6 +340,7 @@ def integration_operation[F: Callable[..., Awaitable[BaseModel]]](
             needs_account=needs_account,
             cli=cli,
             api=api,
+            ui=ui,
             method=method,
         )
         setattr(method, _MARK, spec)

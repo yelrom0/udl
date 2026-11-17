@@ -110,7 +110,13 @@ def _operation(plugin: type[Integration[Any, Any]], spec: IntegrationOperation) 
     call.__doc__ = inspect.getdoc(spec.method)
     call.__qualname__ = f"{plugin.__qualname__}.{getattr(spec.method, '__name__', spec.name)}"
     return Operation.of(
-        call, name=spec.name, title=spec.title, hints=spec.hints, cli=spec.cli, api=spec.api
+        call,
+        name=spec.name,
+        title=spec.title,
+        hints=spec.hints,
+        cli=spec.cli,
+        api=spec.api,
+        ui=spec.ui,
     )
 
 
