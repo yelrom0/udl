@@ -14,7 +14,7 @@ import ast
 import re
 import types
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 # Package Imports
 import pytest
@@ -282,15 +282,27 @@ def _udl_imports(path: Path) -> set[str]:
     return {name for name in found if name == "udl" or name.startswith("udl.")}
 
 
+_INTEGRATIONS: Final = Path(udl.__file__).parent / "plugins" / "integrations"
+"""Where the built-in integrations live."""
+
+
 def _built_in_integrations() -> list[Path]:
-    root = Path(udl.__file__).parent / "plugins" / "integrations"
-    return sorted(path for path in root.rglob("*.py") if path.parent != root)
+    return sorted(path for path in _INTEGRATIONS.rglob("*.py") if path.parent != _INTEGRATIONS)
 
 
 @pytest.mark.parametrize(
     "path",
     [*_built_in_integrations(), TESTS / "support" / "integrations.py"],
-    ids=lambda path: path.name if path.parent.name == "support" else str(path.parent.name),
+    # (Each file by its path below its integration's folder: a plugin of several modules — the
+    # github one has client.py and models.py — gives each its own test.)
+    ids=lambda path: (
+        path.name
+        if path.parent.name == "support"
+        else "/".join(path.relative_to(_INTEGRATIONS).with_suffix("").parts)
+    ),
 )
 def test_an_integration_imports_only_the_public_plugin_api(path: Path) -> None:
-    assert _udl_imports(path) <= PUBLIC_API
+    # (And its own modules: a plugin of more than one file imports the others of itself.)
+    own = f"udl.plugins.integrations.{path.parent.name}."
+    found = _udl_imports(path)
+    assert all(name in PUBLIC_API or name.startswith(own) for name in found)
