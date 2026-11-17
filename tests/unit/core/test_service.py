@@ -217,6 +217,10 @@ def test_the_operations_are_the_feature_matrix_s() -> None:
         "import_cookies",
         "list_cookies",
         "delete_cookies",
+        "list_hosts",
+        "set_host",
+        "delete_host",
+        "check_host",
     }
 
 

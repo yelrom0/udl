@@ -170,6 +170,16 @@ from udl.fetch.models import (
     SolveChallengesRequest,
     SolveReport,
 )
+from udl.host_manager import Hosts
+from udl.host_models import (
+    HostCheck,
+    HostInfo,
+    HostList,
+    HostRequest,
+    HostsList,
+    SetHostRequest,
+)
+from udl.hosts import LOCAL
 from udl.http import HttpClientFactory, api_client
 from udl.integrations.accounts import AccountManager, Integrations
 from udl.integrations.models import (
@@ -267,6 +277,8 @@ class UDLService:
         """What makes the HTTP clients integrations talk to their services with."""
         self.integrations = Integrations(self)
         self.accounts = AccountManager(self)
+        self.hosts = Hosts(self)
+        """The machines agents run on (udl.host_manager.Hosts)."""
         self.watchers = WatcherSupervisor(self)
         """The accounts' watchers (which the runtime runs)."""
         self.bus = EventBus(
@@ -1515,6 +1527,58 @@ class UDLService:
         revoked), forget them, stop its watcher and delete the account. The subscriptions that
         name it are kept, and listed."""
         return await self.accounts.disconnect(request.account)
+
+    # -- hosts ---------------------------------------------------------------------------------
+
+    @operation(
+        "list_hosts",
+        title="List the hosts",
+        hints=OperationHints(read_only=True),
+        cli=CLISpec(path=("hosts", "list")),
+        api=APISpec(method="GET", path="/hosts"),
+    )
+    async def list_hosts(self, request: HostsList) -> HostList:
+        """List the hosts agents run on: this machine (local, always there) and any others
+        (reached over SSH), with how each is reached and whether udl uses it."""
+        await self.hosts.get(LOCAL)  # (makes local, the first time)
+        return await self.hosts.shown_list()
+
+    @operation(
+        "set_host",
+        title="Add or change a host",
+        hints=OperationHints(idempotent=True, admin=True),
+        cli=CLISpec(path=("hosts", "set")),
+        api=APISpec(method="PUT", path="/hosts"),
+    )
+    async def set_host(self, request: SetHostRequest) -> HostInfo:
+        """Add a host (its name, transport, ssh config name, work_dir, env), or change the one
+        that is there with `update` (its work_dir, env, ssh or enabled). `local` is this machine
+        and cannot become anything else."""
+        return await self.hosts.set(request)
+
+    @operation(
+        "delete_host",
+        title="Delete a host",
+        hints=OperationHints(destructive=True, idempotent=True, admin=True),
+        cli=CLISpec(path=("hosts", "rm"), arguments=("host",)),
+        api=APISpec(method="DELETE", path="/hosts/{host}"),
+    )
+    async def delete_host(self, request: HostRequest) -> Deleted:
+        """Delete a host. `local` is this machine and is always there, so it cannot be
+        deleted."""
+        return Deleted(deleted=await self.hosts.delete(request.host))
+
+    @operation(
+        "check_host",
+        title="Check a host",
+        hints=OperationHints(read_only=True, open_world=True),
+        cli=CLISpec(path=("hosts", "check"), arguments=("host",)),
+        api=APISpec(method="POST", path="/hosts/{host}/check"),
+    )
+    async def check_host(self, request: HostRequest) -> HostCheck:
+        """Check a host: run `uname -a` there, and look for the tools the runners need (git,
+        gh, claude, opencode), so a bad host is found before an agent is sent to it."""
+        return await self.hosts.check(request.host)
 
     # -- reading pages -------------------------------------------------------------------------
 

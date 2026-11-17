@@ -90,6 +90,7 @@ from udl.fetch.models import (
     ItemStatus,
     SolveReport,
 )
+from udl.host_models import HostCheck, HostInfo, HostList
 from udl.integrations.models import AccountInfo, AccountList, Disconnected
 from udl.integrations.watchers import WatcherState, WatcherStatus
 from udl.plugins.downloaders.base import MediaCandidate, MediaKind
@@ -1220,3 +1221,52 @@ def _text(value: Any) -> str:
     if isinstance(value, dict):
         return json.dumps(value, default=str)
     return str(value)
+
+
+# ---------------------------------------------------------------------------------------------
+# Hosts
+# ---------------------------------------------------------------------------------------------
+
+
+def hosts(console: Console, listed: HostList) -> None:
+    """The hosts agents run on: how each is reached, where its worktrees go, and whether it is
+    used."""
+    table = Table("Host", "Transport", "SSH", "Work dir", "Enabled")
+    for host in listed.hosts:
+        table.add_row(
+            escape(host.name),
+            host.transport.value,
+            escape(host.ssh or "-"),
+            escape(host.work_dir),
+            _yes(host.enabled),
+        )
+    console.print(table)
+
+
+def host(console: Console, info: HostInfo) -> None:
+    """A host in full: how it is reached, where its worktrees go, and the environment."""
+    rows = [("Host", escape(info.name)), ("Transport", info.transport.value)]
+    if info.ssh is not None:
+        rows.append(("SSH", escape(info.ssh)))
+    rows.append(("Work dir", escape(info.work_dir)))
+    rows.append(("Enabled", _yes(info.enabled)))
+    if info.env:
+        rows.append(
+            ("Environment", escape("\n".join(f"{k}={v}" for k, v in sorted(info.env.items()))))
+        )
+    _lines(console, rows)
+
+
+def host_check(console: Console, report: HostCheck) -> None:
+    """What checking a host found: whether it answered, what it is, and its tools."""
+    rows = [("Host", escape(report.host)), ("Works", _yes(report.ok))]
+    if report.uname is not None:
+        rows.append(("System", escape(report.uname)))
+    if report.problem is not None:
+        rows.append(("Problem", escape(report.problem)))
+    _lines(console, rows)
+    if report.tools:
+        table = Table("Tool", "Installed", "Version")
+        for tool in report.tools:
+            table.add_row(escape(tool.name), _yes(tool.found), escape(tool.version or "-"))
+        console.print(table)
