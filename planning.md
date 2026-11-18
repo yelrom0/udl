@@ -4150,9 +4150,16 @@ timeout: 5m
 - **Decisions:**
   - The `webServer` runs `.venv/bin/python -u -m support.e2e` with an **absolute** path: the venv compares its
     `sys.prefix` against it, and a relative one makes the interpreter refuse to import `support`.
-  - The harness listens on **8765** (not a free port) so Playwright's `webServer.url` can be a fixed
-    `http://127.0.0.1:8765/docs`, and checks the port is free first: `webServer.url` takes a URL only (a regex
-    and a string were both rejected), so a port read off the server's stdout is not possible.
+  - **The harness listens on a free port, picked per run** (Claude's review, 18 Nov): `playwright.config.ts`
+    asks the OS for one (`node:net`), puts it in `UDL_E2E_PORT` so every worker reads the same one, and uses it
+    for `baseURL`, `webServer.url` and the harness's `--port`; told no `--port`, the harness picks a free one
+    itself. Never 8765, which is `udl serve`'s own default (`udl/config.py`): with a real udl answering there,
+    `make e2e` would run against the user's own server and data (today's tests only read `/docs`; from 18.5 on
+    they post mails and drive the UI), and two worktrees' runs would test each other's servers. The port is
+    checked free before use, and `reuseExistingServer: false`, always: a server Playwright did not start is not
+    the one under test. (`webServer.url` takes a URL only — a regex and a string were both rejected — so a port
+    read off the server's stdout is not possible; the config's top-level `await` is why it is ESM,
+    `web/package.json`'s `"type": "module"`.)
   - The harness is isolated from the developer's udl: a config in a temp dir with `[[db.connections]]` (SQLite
     under it), `[secrets] store = "memory"`, `ui_plugin_dirs` under the temp dir, and an environment that
     redirects every `XDG_*` dir there and drops every `UDL_*` of the caller's but `UDL_CONFIG`.
