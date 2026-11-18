@@ -1,12 +1,21 @@
 # udl (Ultra Data Layer)
 
-The ultimate tool for downloading, interacting with and automating data, extensible, AI native (but not required). 
+**The shared data layer for people and AI agents.** udl downloads, reads, watches and automates data,
+and keeps it where every person and every agent on a team can use it. It is extensible by plugins and AI
+native, but never needs AI to work.
+
+The idea in one line: **udl is the back end, and AI is the front end.** AI is good at turning data into
+dashboards, code and answers, and it is getting good at working as several agents together. What it lacks
+is one back end that many agents and many people share, and that both can read. udl is that back end.
+Your AI (Claude, ChatGPT, Codex, a local model) reads and writes udl's data over MCP, while people use the
+web UI or the command line.
 
 Everything udl does is available three ways, with the same options and results:
 
 - the **command line** (`udl`)
 - an **HTTP API** (`udl serve`)
-- an **MCP server** (`udl mcp`), so AI agents can download things and teach udl new sites
+- an **MCP server** (`udl mcp`), so AI agents can use all of it: download things, read pages, teach udl
+  new sites, set up automations
 
 ```console
 $ udl https://youtu.be/jNQXAC9IVRw
@@ -15,20 +24,78 @@ $ udl https://youtu.be/jNQXAC9IVRw
 
 ## Contents
 
+- [What udl is becoming](#what-udl-is-becoming)
+- [Where it stands](#where-it-stands)
 - [Install](#install)
 - [Downloading](#downloading)
 - [How udl picks a downloader](#how-udl-picks-a-downloader)
 - [Sites and strategies](#sites-and-strategies)
 - [Sites that need a login](#sites-that-need-a-login)
 - [Tag chains: sites no downloader handles](#tag-chains-sites-no-downloader-handles)
+- [Reading pages a plain fetch can't](#reading-pages-a-plain-fetch-cant)
 - [Databases](#databases)
 - [Automations](#automations)
+- [Schedules](#schedules)
+- [Accounts](#accounts)
+- [Hosts](#hosts)
 - [Plugins](#plugins)
 - [The HTTP API](#the-http-api)
 - [The MCP server](#the-mcp-server)
 - [Configuration](#configuration)
 - [Security](#security)
 - [Development](#development)
+
+## What udl is becoming
+
+udl started as a downloader that works out how to download any URL. It has grown into a local
+automation hub (events, subscriptions, schedules, integrations, a page fetcher), and it is heading
+towards a place where a team of people and AI agents works on the same data:
+
+```
+ People: web UI · CLI · their own AI (Claude, ChatGPT, Codex…) over MCP
+                               |
+ HUB    workspaces, each with its own projects, people, secrets and data:
+        plans and tasks · docs and memories · datasets · events and automations · who did what, when
+                               |
+        links to the machines people work on (each link its own way: wss, SSH or a private network)
+           ┌───────────────────┴───────────────────┐
+ CLIENT (your workstation)                  CLIENT (a teammate's laptop)
+   runs agents: Claude Code, OpenCode, Codex   linked to several hubs, as a different person on each
+   downloads, fetches, scripts, on this machine  its own Gmail, Slack and browser apps push data up
+   its owner decides what each hub may use     its secrets never leave it
+```
+
+- **One hub, many workspaces.** A hub can be one machine of yours or a shared server that many teams use.
+  Each workspace has its own members, projects, secrets and data.
+- **A client on every machine.** udl itself, linked to one or more hubs: the machine's safe way to and
+  from each hub, and its manager. A device belongs to whoever installed it, and its owner decides what
+  each hub and each person may use on it.
+- **Work, for people and agents alike.** Projects, features and tasks, assigned by dragging them to a
+  person or an agent. Agents can manage other agents. Questions, answers and ready-to-merge PRs land in one
+  inbox. Agents run through their own harnesses (Claude Code, OpenCode, Codex) and finish their work on
+  GitHub.
+- **Who did what, when.** Every change is recorded, whether a person, an agent, a device or an automation
+  made it, and on whose behalf, in a tamper-evident log. Decisions can be signed with a passkey or an SSH
+  key.
+- **A data bank.** Datasets that plugins, agents and people fill; docs; memories that every agent reads,
+  synced both ways with the files agents already use (`AGENTS.md`, `CLAUDE.md`, Claude's memory folders);
+  search over all of it; and conversations (a meeting's transcript, an email) turned into plan changes
+  that a person accepts, each traceable to where it was said.
+- **Pages.** Dashboards and public read-only pages made from udl's data, written by people or by AI.
+- **Pub/sub across everything.** An email about a bug can become a task; a new row in a dataset can start
+  an agent; a plugin's events can drive another plugin's actions. Plugins are optional: install only
+  what you need.
+
+udl is open source, and it stays self-hostable.
+
+## Where it stands
+
+| | What |
+|---|---|
+| **Works today** | Downloading anything (yt-dlp, gallery-dl, HTTP, the page's HTML, a browser), learning what works per site, and tag chains for sites nothing handles; several databases at once (SQLite, PostgreSQL, MongoDB) with sync; events, subscriptions and actions; schedules; the framework for integrations and accounts; a page fetcher that reads what a plain fetch can't; secret stores; hosts reached over SSH; CI with a review bot and a locked `main` |
+| **Being built** | The web UI, with a generated page for every plugin; 1Password references, OpenRouter, GitHub; agent runners (Claude Code, OpenCode); the orchestrator: projects, features, tasks, agents and managers, the dispatcher, Q&A, ready to merge ([planning/02-agent-orchastrator.md](planning/02-agent-orchastrator.md)) |
+| **Planned next** | Workspaces and hubs, people and sign-in, the audit trail, clients on every machine, macOS and a Codex runner, the data bank, pages, analytics, hosting a hub for others, browser-driven integrations, sandboxed agents ([planning/04-shared-data-layer.md](planning/04-shared-data-layer.md)) |
+| **After that** | A browser that passes for a person's and solves anti-bot checks, Gmail, Slack, a web-page watcher, local AI, the rest of the web UI, Proxmox ([planning.md](planning.md)) |
 
 ## Install
 
@@ -42,7 +109,7 @@ uv run playwright install chromium         # (in the checkout) Chromium, for the
 
 | Extra | Adds |
 |---|---|
-| `browser` | the `browser` downloader (Playwright), and `udl browser login` |
+| `browser` | the `browser` downloader (Playwright), `udl browser login`, and the fetcher's browser |
 | `postgres` | the `postgres` database plugin (psycopg) |
 | `mongodb` | the `mongodb` database plugin (pymongo) |
 
@@ -171,9 +238,38 @@ In the one-line form, steps are separated by `>>`:
 A chain runs in the scraper (static HTML) or in the browser, and hands the media off to `http`
 or `yt-dlp`. Chains set by hand are tried before anything udl has learned.
 
+## Reading pages a plain fetch can't
+
+`udl fetch` reads a page's content (as Markdown, text or HTML) when a plain request gets a 5xx, a 403,
+an anti-bot check, a page built by JavaScript, or a login wall. It is also what an AI agent can call
+over MCP (`fetch_pages`) when its own fetch tool is turned away.
+
+```sh
+udl fetch https://example.com/a https://example.org/b   # the same as `udl fetch get …`
+udl fetch get -F text --select 'main article' <url>      # text, only what the selector matches
+udl fetch get --via browser <url>                        # start at the browser
+udl fetch list                                           # the fetches (batches), newest first
+udl fetch show <id>                                      # a batch: each URL's status and content
+udl fetch page <page-id> -F html                         # a page again, in another format
+udl fetch challenges                                     # the sites waiting for you to pass a check
+udl fetch solve                                          # pass them, a tab per site
+```
+
+- **The ladder:** each URL climbs only as far as it has to: a plain request, then with the site's
+  cookies, then udl's browser, then **you**, at an anti-bot check udl can't pass. The rung that worked is
+  remembered per site.
+- **Batches and the queue:** the URLs of one request are a batch. Each site has its own lane, with limits
+  and delays; a site's check holds its other URLs until it is passed, in whichever udl fetches them.
+- **At a check:** `--person ask` (the default, `[fetch] person`) opens one window on udl's profile with a
+  tab per waiting site; `wait` waits for someone to run `udl fetch solve`; `fail` gives up. A clearance
+  you earn is kept.
+- **Cookies, both ways:** `udl browser cookies import cookies.txt` (or a JSON export; or, with `--site`,
+  a `Cookie:` header or `--from-browser firefox`) brings cookies into udl's profile, with the User-Agent
+  they belong to; `udl browser cookies list` and `rm` show and delete them (never their values).
+
 ## Databases
 
-udl keeps sites, strategies and download history in one or more databases. With no
+udl keeps sites, strategies, download history and its other records in one or more databases. With no
 configuration it uses a single SQLite file (`~/.local/share/udl/udl.db`). Each database is a
 plugin:
 
@@ -219,7 +315,7 @@ udl db sync --from local --to shared          # copy what one knows into others
 udl db sync --from shared --to local --dry-run
 ```
 
-`db sync` copies sites, strategies and the downloads that have ended:
+`db sync` copies sites, strategies, the downloads that have ended and udl's other records:
 
 - **Ids:** records keep their ids (UUIDs), so a record is the same in every database.
 - **Conflicts:** what the target lacks is added. What it has differently is replaced by the
@@ -229,12 +325,13 @@ udl db sync --from shared --to local --dry-run
 
 ## Automations
 
-udl turns what happens into **events** (a download ended, an action's run ended, an event of your
-own), and runs **actions** for the **subscriptions** an event matches. An action is a named
-thing to run, of a kind: `script` (a program from `[automations] scripts_dir`, never through a
-shell, with the event as JSON on its stdin), `operation` (one of udl's operations), `webhook`
-(an HTTP request), `emit` (an event of your own) or `notify` (a desktop notification). Its
-options are templates, rendered with the event (`"{{ event.data.url }}"`).
+udl turns what happens into **events** (a download ended, an action's run ended, a schedule came due,
+an account's watcher saw something, an event of your own), and runs **actions** for the
+**subscriptions** an event matches. An action is a named thing to run, of a kind: `script` (a program
+from `[automations] scripts_dir`, never through a shell, with the event as JSON on its stdin),
+`operation` (one of udl's operations), `webhook` (an HTTP request), `emit` (an event of your own) or
+`notify` (a desktop notification). Its options are templates, rendered with the event
+(`"{{ event.data.url }}"`).
 
 ```sh
 udl actions set hello --kind script -O 'command=["hello.sh"]'      # ~/.config/udl/scripts/hello.sh
@@ -250,23 +347,78 @@ udl events list                                 # the event, and the run's udl.a
   `udl events types` lists each event type's fields; a filter that names one its types lack is
   refused when it is saved. `udl subs test <name>` tries a subscription on the latest events.
 - **The runtime** runs in `udl serve` (unless `[automations] enabled = false`): it dispatches the
-  events (whichever udl published them) and runs their actions. One udl runs them per database,
-  the one that holds its lease; `udl status` says which. A failure that trying again may help is
-  tried again (an action's `retries`, with backoff); a subscription's throttle (`10 per 1h`) and
-  `max_event_depth` (events caused by runs caused by events...) keep anything from running for
-  ever.
+  events (whichever udl published them), runs their actions, fires the schedules and runs the accounts'
+  watchers. One udl runs them per database, the one that holds its lease; `udl status` says which. A
+  failure that trying again may help is tried again (an action's `retries`, with backoff); a
+  subscription's throttle (`10 per 1h`) and `max_event_depth` (events caused by runs caused by
+  events...) keep anything from running for ever.
 - **Live:** `GET /events/stream` sends the events and the runs' changes as they happen.
+
+## Schedules
+
+A schedule fires `schedule.fired` at its times, like cron, and can run actions itself, so a cron job
+is one command:
+
+```sh
+udl schedules set nightly --cron '0 3 * * *' --tz Australia/Melbourne --action backup
+udl schedules set poll --every 15m --jitter 30s --action check-feed
+udl schedules set once --at '2026-12-01T09:00' --action remind
+udl schedules preview '0 9 * * MON-FRI'           # the next times it would fire (or 'every 15m')
+udl schedules run nightly                         # fire it now, by hand
+udl schedules list                                # and `show <name>`, `rm <name>`
+```
+
+A schedule's times are worked out in its time zone, across daylight-saving changes. `--misfire skip`
+(the default) or `once` says what happens to the times missed while udl was stopped.
+
+## Accounts
+
+An **integration** is a plugin that connects udl to a service or a source; an **account** is one
+connected login of it, named by you (`gmail:work`, `gmail:personal`), with any number per integration.
+Its credentials live in the secret store. Its operations become commands, routes and MCP tools that take
+an `account`, and its watcher turns what happens there into events.
+
+```sh
+udl accounts add <integration> <name>     # OAuth opens the browser; tokens are asked for, hidden
+udl accounts list
+udl accounts show gmail:work              # connected, needing a new sign-in, or failing
+udl accounts check gmail:work             # ask the service whether it still works
+udl accounts set gmail:work -O KEY=VALUE
+udl accounts rm gmail:work                # give the credentials back and forget them
+```
+
+Read-only operations that list things can fan out over several accounts at once (`account: "*"`), with
+each result tagged by its account. That gives an AI agent several inboxes, workspaces or sign-ins where
+its own connector sees one. The first integrations (GitHub, Gmail, Slack, web-page watching) are being
+built; see [Where it stands](#where-it-stands).
+
+## Hosts
+
+Hosts are the machines udl's agents run on: `local` (this one, always there), and others reached over
+SSH, by a name in your `~/.ssh/config`.
+
+```sh
+udl hosts list
+udl hosts set --host '{"name": "thevault", "transport": "ssh", "ssh": "thevault", "work_dir": "~/udl-wt"}'
+udl hosts check thevault     # uname, and which of git, gh, claude and opencode it has
+udl hosts rm thevault
+```
+
+Remote commands run in a login shell, with every argument quoted, and a secret is passed on the
+command's stdin, never in its arguments.
 
 ## Plugins
 
-udl has five kinds of plugin: databases, downloaders, site plugins, secret stores and kinds of
-action. `udl plugins list` shows each one with its type, its source (`builtin`, `installed` or
+udl has six kinds of plugin: databases, downloaders, site plugins, secret stores, kinds of action, and
+integrations. `udl plugins list` shows each one with its type, its source (`builtin`, `installed` or
 `local`), and whether it can run.
 
 - **Site plugins** are code for a particular site's behaviour. They can rewrite its URLs (for
   example short links to their usual form), choose its downloader, add the headers or cookies it
   needs, give it a folder, and work on the files after a download. The built-in `youtube` plugin
   is an example.
+- **Integrations** connect accounts (by OAuth, tokens, or nothing for a source that needs no login),
+  and bring operations, event types and a watcher. See [Accounts](#accounts).
 - **Secret stores** keep udl's secrets (account tokens, secret settings), never in a database or
   the config: the system's keyring when it has one (`keyring`), else a file only you can read
   (`file`). `[secrets] store` picks one.
@@ -280,7 +432,9 @@ action. `udl plugins list` shows each one with its type, its source (`builtin`, 
   loaded, with no packaging needed. A local plugin with the same name as a built-in one replaces
   it.
 
-See **[docs/plugins.md](docs/plugins.md)** to write your own.
+Being built: app plugins (the orchestrator is one), agent runners, AI providers, and UI plugins that guide
+the page the web UI generates for every plugin. See **[docs/plugins.md](docs/plugins.md)** to write your
+own.
 
 ## The HTTP API
 
@@ -289,7 +443,8 @@ udl serve                       # http://127.0.0.1:8765, docs at /docs
 udl serve --host 0.0.0.0 --port 8765
 ```
 
-Every command has a route, named after its operation:
+Every command has a route, named after its operation, and every operation is an MCP tool of the same
+name:
 
 | Operation | CLI | API | MCP tool |
 |---|---|---|---|
@@ -307,6 +462,11 @@ Every command has a route, named after its operation:
 | save a chain | `udl chain set` | `PUT /sites/{key}/chain` | `set_site_chain` |
 | import chains | `udl chain import` | `POST /chains/import` | `import_chains` |
 | export chains | `udl chain export` | `GET /sites/{key}/chain` | `export_chain` |
+| read pages | `udl fetch get` | `POST /fetches` | `fetch_pages` |
+| fetches | `udl fetch list` / `show` / `page` | `GET /fetches`, `GET /fetches/{id}`, `GET /fetches/pages/{id}` | `list_fetches`, `get_fetch`, `get_fetched_page` |
+| cancel / retry a fetch | `udl fetch cancel` / `retry` | `DELETE /fetches/{id}`, `POST /fetches/{id}/retry` | `cancel_fetch`, `retry_fetch` |
+| anti-bot checks | `udl fetch challenges` / `solve` | `GET /fetches/challenges`, `POST /fetches/challenges/solve` | `list_challenges`, `solve_challenges` |
+| cookies | `udl browser cookies import` / `list` / `rm` | `POST /browser/cookies`, `GET /browser/cookies`, `DELETE /browser/cookies/{site}` | `import_cookies`, `list_cookies`, `delete_cookies` |
 | list databases | `udl db list` | `GET /databases` | `list_databases` |
 | sync databases | `udl db sync` | `POST /databases/sync` | `sync_databases` |
 | list plugins | `udl plugins list` | `GET /plugins` | `list_plugins` |
@@ -316,12 +476,17 @@ Every command has a route, named after its operation:
 | event types | `udl events types` | `GET /event-types` | `list_event_types` |
 | events | `udl events list` / `show` | `GET /events`, `GET /events/{id}` | `list_events`, `get_event` |
 | emit / replay an event | `udl events emit` / `replay` | `POST /events`, `POST /events/{id}/replay` | `emit_event`, `replay_event` |
-| subscriptions | `udl subs list` / `show` / `set` / `rm` | `/subscriptions`, `/subscriptions/{name}` | `list_subscriptions`, `get_subscription`, `set_subscription`, `delete_subscription` |
+| subscriptions | `udl subs list` / `show` / `set` / `rm` | `GET /subscriptions`, `GET` / `PUT` / `DELETE /subscriptions/{name}` | `list_subscriptions`, `get_subscription`, `set_subscription`, `delete_subscription` |
 | test a subscription | `udl subs test` | `POST /subscriptions/test` | `test_subscription` |
-| actions | `udl actions list` / `show` / `set` / `rm` | `/actions`, `/actions/{name}` | `list_actions`, `get_action`, `set_action`, `delete_action` |
+| actions | `udl actions list` / `show` / `set` / `rm` | `GET /actions`, `GET` / `PUT` / `DELETE /actions/{name}` | `list_actions`, `get_action`, `set_action`, `delete_action` |
 | run an action | `udl actions run` | `POST /actions/{name}/run` | `run_action` |
 | scripts | `udl actions scripts` | `GET /actions/scripts` | `list_scripts` |
 | runs | `udl runs list` / `show` / `cancel` | `GET /runs`, `GET` / `DELETE /runs/{id}` | `list_runs`, `get_run`, `cancel_run` |
+| schedules | `udl schedules list` / `show` / `set` / `rm` | `GET /schedules`, `GET` / `PUT` / `DELETE /schedules/{name}` | `list_schedules`, `get_schedule`, `set_schedule`, `delete_schedule` |
+| run / preview a schedule | `udl schedules run` / `preview` | `POST /schedules/{name}/run`, `POST /schedules/preview` | `run_schedule`, `preview_schedule` |
+| accounts | `udl accounts list` / `show` / `add` / `set` / `rm` | `GET` / `POST /accounts`, `GET` / `PATCH` / `DELETE /accounts/{account}` | `list_accounts`, `get_account`, `connect_account`, `set_account`, `disconnect_account` |
+| check an account | `udl accounts check` | `POST /accounts/{account}/check` | `check_account` |
+| hosts | `udl hosts list` / `set` / `rm` / `check` | `GET` / `PUT /hosts`, `DELETE /hosts/{host}`, `POST /hosts/{host}/check` | `list_hosts`, `set_host`, `delete_host`, `check_host` |
 | the automations' status | `udl status` | `GET /status` | `get_status` |
 | a plugin's operation | `udl <plugin> <op>` | `POST /plugins/<plugin>/<op>` | `<plugin>_<op>` |
 
@@ -337,8 +502,8 @@ Every command has a route, named after its operation:
 ## The MCP server
 
 The MCP server offers the same operations as tools, with descriptions written for agents. An
-agent can download things, look at what udl knows, and teach udl a site itself
-(`suggest_chain`, `test_chain`, then `set_site_chain`).
+agent can download things, read pages its own fetch tool can't, look at what udl knows, set up
+automations, and teach udl a site itself (`suggest_chain`, `test_chain`, then `set_site_chain`).
 
 ```json
 {"mcpServers": {"udl": {"command": "udl", "args": ["mcp"]}}}
@@ -346,7 +511,8 @@ agent can download things, look at what udl knows, and teach udl a site itself
 
 `udl mcp` serves it over stdio. `udl serve` also serves it over streamable HTTP at `/mcp`,
 behind the same API key. By default, `download` waits up to 120 s and reports progress as MCP
-progress notifications.
+progress notifications. Operations that change automations, accounts or settings are marked `admin`,
+and no action ever calls one: an `operation` action that names one is refused.
 
 ## Configuration
 
@@ -394,8 +560,8 @@ scripts_dir = "~/.config/udl/scripts"   # script actions run programs from here 
 [integrations.gmail]                # a plugin's settings (under what udl plugins configure sets)
 poll_interval = "60s"               # durations: 30s, 5m, 24h, 1h30m
 
-# [db] and [[db.connections]]: see Databases. [ai] and [web] are for what planning.md's later
-# phases build.
+# [db] and [[db.connections]]: see Databases. [ai], [web], [apps.*] and [hub] are for what the
+# plans' later phases build.
 ```
 
 ## Security
@@ -435,9 +601,20 @@ make smoke                      # udl against real sites (needs the internet; ne
 make fmt                        # format, and fix what ruff can
 ```
 
-udl is built test first and fully typed. [planning.md](planning.md) is the current plan (accounts,
-automations, web-page watching, local AI and a web UI), and [planning/](planning/) keeps the finished ones with the
-decisions made along the way ([planning/01-core.md](planning/01-core.md): the downloader). The tests run against a local fixture site. The PostgreSQL and
-MongoDB tests start throwaway Docker containers (`postgres:18-alpine`, `mongo:8`). Without
-Docker they are skipped, unless `UDL_TEST_POSTGRES_URL` or `UDL_TEST_MONGODB_URL` names a server
-to use.
+udl is built test first and fully typed (`pyright --strict`, Pydantic and SQLModel at every boundary,
+90 % branch coverage as a floor). The tests run against a local fixture site and fake servers. The
+PostgreSQL and MongoDB tests start throwaway Docker containers (`postgres:18-alpine`, `mongo:8`).
+Without Docker they are skipped, unless `UDL_TEST_POSTGRES_URL` or `UDL_TEST_MONGODB_URL` names a
+server to use.
+
+**The plan is the spec.** [planning.md](planning.md) holds the progress tracker and the working
+agreement; each phase's tasks have a card (what it needs, what to build, the tests to write first, when
+it is done). The orchestrator's phases are in [planning/02-agent-orchastrator.md](planning/02-agent-orchastrator.md),
+the shared data layer's in [planning/04-shared-data-layer.md](planning/04-shared-data-layer.md), and
+finished plans, with the decisions made along the way, in [planning/](planning/)
+([planning/01-core.md](planning/01-core.md): the downloader).
+
+**Contributing.** `main` is locked: every change is a branch and a pull request naming its task, and it
+merges once CI's `make check` and the Claude review bot both pass with nothing left open. Much of udl is
+built by AI agents working through that same flow, which udl's orchestrator is being built to run.
+[CLAUDE.md](CLAUDE.md) has the rules agents (and people) follow.

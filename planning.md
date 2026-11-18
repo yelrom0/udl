@@ -12,6 +12,11 @@
 > Phases 0–7 (the downloader) are done: their plan and the decisions made along the way are in
 > [planning/01-core.md](planning/01-core.md). Numbering continues from there. The work is still **TDD-style**
 > and fully **typed**, now in TypeScript too. See [Working agreement](#working-agreement-tdd--typing).
+>
+> Since November 2026 the plan goes further: an agent orchestrator (Phases 23–30,
+> [planning/02-agent-orchastrator.md](planning/02-agent-orchastrator.md)), then the **shared data layer**
+> people and AI agents work in together, with workspaces, accounts, an audit trail, a client on every
+> machine, a data bank and pages (Phases 31–41, [planning/04-shared-data-layer.md](planning/04-shared-data-layer.md)).
 
 ---
 
@@ -149,6 +154,108 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [ ] 30.3 **(Claude)** udl's own plans imported (planning.md's open phases, 03-proxmox.md); the markdown retired
   - [ ] 30.4 **(Claude + user)** Live check: a real task done by a real agent, on jeff-wiggle and on thevault
 
+### Then: Phases 31–41, the shared data layer
+
+The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents work in together ("udl is the back end, AI is the front end"): a hub serving many workspaces, people with accounts and roles, an audit of who did what and when, a client on every machine (owned by whoever installed it), a data bank (datasets, docs, memories synced both ways, search, conversations turned into plans), pages over the data, analytics, then browser-driven integrations and sandboxed agents. These phases come **after Phase 30 and before Phases 13–22**; Phase 40 needs Phase 13 and 16.2, so it is built after them. The spec, the decisions and every task's card are in [planning/04-shared-data-layer.md](planning/04-shared-data-layer.md); **this tracker is the one to mark**, with the marks above.
+
+- [ ] **Phase 31: Workspaces and the hub**
+  - [ ] 31.1 Node roles (`standalone`, `hub`) and the hub database; PostgreSQL schemas per workspace
+  - [ ] 31.2 `Workspace` records; a `UDLService` and a runtime per workspace
+  - [ ] 31.3 Secrets per workspace (`NamespacedStore`), 1Password vaults allowed per workspace
+  - [ ] 31.4 `local` operations: refused on a hub's machine unless the workspace is allowed, else run `on=<device>`
+  - [ ] 31.5 `udl hub init`: a standalone udl becomes a hub, its database workspace `default`
+  - [ ] 31.6 Choosing a call's workspace: `X-UDL-Workspace`, `/w/<ws>/mcp`, `-W`
+  - [ ] 31.7 Workspace operations: create, suspend, delete, export, import
+  - [ ] 31.8 The isolation proof, generated over the registry, on every database plugin
+- [ ] **Phase 32: People: users, sign-in, roles and tokens**
+  - [ ] 32.1 `User`, `Membership` and `Invite` records
+  - [ ] 32.2 Passwords (argon2id) and TOTP, recovery codes, lockout
+  - [ ] 32.3 Passkeys (WebAuthn)
+  - [ ] 32.4 Web sessions for people; the sign-in, invite and account pages
+  - [ ] 32.5 Personal tokens; `udl login <hub>` (device code)
+  - [ ] 32.6 `Principal` for every caller; `RemoteService`, so the CLI works against a hub (`udl --hub`)
+  - [ ] 32.7 Roles and permissions, per workspace and per project; who may make which decision
+  - [ ] 32.8 The orchestrator learns about people: users as assignees, agents' owners, an inbox each
+  - [ ] 32.9 Remote MCP authorization (OAuth 2.1) for Claude's and ChatGPT's connectors
+  - [ ] 32.10 Operations (users, members, sessions, tokens, OAuth grants) via CLI, API and MCP
+- [ ] **Phase 33: Audit: who did what, when**
+  - [ ] 33.1 `AuditEntry`: every call that changes something (and every sensitive read), whoever made it and for whom
+  - [ ] 33.2 Redaction: no secret ever in an entry
+  - [ ] 33.3 The hash chain, and checkpoints signed by the hub's key
+  - [ ] 33.4 Signed decisions: passkeys and SSH keys; agents never sign
+  - [ ] 33.5 `udl audit verify`, and exports that verify offline
+  - [ ] 33.6 Querying and `audit_trace`: anything back to the person who started it
+  - [ ] 33.7 Retention that keeps the chain verifiable
+  - [ ] 33.8 The audit in the UI: an Audit page, a History tab, the signing dialog
+- [ ] **Phase 34: Devices and the client**
+  - [ ] 34.1 A device's identity (an ed25519 key)
+  - [ ] 34.2 `Device` records: owned by a user, or managed by a workspace
+  - [ ] 34.3 Enrolling a device (`udl hubs add`), approved by its owner
+  - [ ] 34.4 Links to several hubs, and the ceiling in the device's own config
+  - [ ] 34.5 The hub ↔ client protocol (JSON-RPC 2.0, typed)
+  - [ ] 34.6 Transports: `wss`, SSH stdio, direct
+  - [ ] 34.7 Grants: what a device's owner shares with whom; the device's own audit of what hubs did on it
+  - [ ] 34.8 `ClientShell`: runners on a device as on `local`
+  - [ ] 34.9 Running a `local` operation on a device (`--on`)
+  - [ ] 34.10 Data up: a device's events and items pushed, once, credentials never
+  - [ ] 34.11 Agents on a device reach the hub through the client's MCP
+  - [ ] 34.12 Placement: an agent's sessions on any granted device with room
+  - [ ] 34.13 Device operations (list, revoke, transfer, grants, update udl) via CLI, API and MCP
+  - [ ] 34.14 21.3 (`udl service install`) pulled forward (ticked in Phase 21's tracker)
+  - [ ] 34.15 End to end: a hub and two devices over real sockets
+- [ ] **Phase 35: macOS, the `codex` runner, and trying udl alone**
+  - [ ] 35.1 macOS: CI, notifications, the Keychain, launchd
+  - [ ] 35.2 `codex` runner (`codex exec --json`), its status, install and sign-in
+  - [ ] 35.3 The quickstart and `udl doctor`
+  - [ ] 35.4 `udl plugins new`: plugins written by agents, contract test first
+- [ ] **Phase 36: The data bank: datasets, docs, memories, search and sources**
+  - [ ] 36.1 Datasets and items, filled by plugins, agents and people; `data.item.*` events
+  - [ ] 36.2 Full-text search in every database plugin; `kb_search`
+  - [ ] 36.3 Semantic search through an AI provider's embeddings (optional)
+  - [ ] 36.4 Docs (a wiki) with revisions
+  - [ ] 36.5 Memories for every agent, scoped and pinned, in `orch_my_task`; only a person writes the ones other agents get
+  - [ ] 36.6 Two-way memory sync with Claude's memory folders and `AGENTS.md` / `CLAUDE.md`
+  - [ ] 36.7 Sources and proposals: conversations become plan changes a person accepts, traced to where they were said
+  - [ ] 36.8 Operations, events and the knowledge pages
+  - [ ] 36.9 End to end
+  - [ ] 36.10 Meeting notes from Google Drive (built after Phase 14)
+- [ ] **Phase 37: Pages: dashboards and public pages**
+  - [ ] 37.1 Views: saved read-only queries, projected to named fields
+  - [ ] 37.2 Pages: private, workspace or public; agents draft, people publish
+  - [ ] 37.3 Markdown pages with components, rendered with no script
+  - [ ] 37.4 HTML pages rendered on the hub with the network off; viewers get static HTML, no script
+  - [ ] 37.5 Serving pages, public ones with no sign-in
+  - [ ] 37.6 Templates: roadmap, upcoming, changelog, wiki, team, models
+  - [ ] 37.7 Guides written by agents, accepted by people
+  - [ ] 37.8 Exporting a page as static files
+  - [ ] 37.9 The pages editor
+- [ ] **Phase 38: Analytics: tasks, agents, models and budgets**
+  - [ ] 38.1 Task timelines: time per state and what it waited on
+  - [ ] 38.2 Metrics: tasks, agents, where things are stuck
+  - [ ] 38.3 Comparing models
+  - [ ] 38.4 Budgets per agent, project or workspace
+  - [ ] 38.5 Dashboards
+- [ ] **Phase 39: Running a hub for others**
+  - [ ] 39.1 A container image, compose and a Helm chart
+  - [ ] 39.2 Behind a proxy: trusted proxies, the Host check, health routes
+  - [ ] 39.3 OIDC sign-in (and GitHub)
+  - [ ] 39.4 Quotas and limits per workspace
+  - [ ] 39.5 Backup and restore
+  - [ ] 39.6 Mail for invites and resets
+  - [ ] 39.7 Security review of Phases 31–39
+  - [ ] 39.8 Docs: the hub, clients, audit, knowledge, pages
+  - [ ] 39.9 **(Claude + user)** Live check
+- [ ] **Phase 40: Browser-driven integrations** (built after Phase 13 and 16.2)
+  - [ ] 40.1 `BrowserApp`: an integration read through udl's browser
+  - [ ] 40.2 The live watcher
+  - [ ] 40.3 Acting through the page, only through allowed operations
+  - [ ] 40.4 A fixture chat app and the `fakechat` example plugin
+  - [ ] 40.5 Docs
+- [ ] **Phase 41: Agent sandboxes**
+  - [ ] 41.1 Harness sandboxes on and checked; a project's `sandbox` setting
+  - [ ] 41.2 `ContainerShell`
+  - [ ] 41.3 Sandbox images per repo
+
 ### After that
 
 - [ ] **Phase 13: Passing for a person: stealth, solvers and sign-ins**
@@ -239,11 +346,11 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
 - [ ] **Phase 21: Hardening & docs**
   - [ ] 21.1 Security review against the [security model](#security-model): secrets at rest, OAuth, untrusted content (templates, scripts, prompt injection), approvals, the UI (CSP, CSRF, sessions, plugin trust), webhooks, logs
   - [ ] 21.2 Resilience: watchers reconnecting, a provider or database going away, a crash mid-run (recovery tests); an accessibility pass (axe in the e2e tests)
-  - [ ] 21.3 `udl service install`: a systemd user unit, so the runtime is always on
+  - [ ] 21.3 `udl service install`: a systemd user unit, so the runtime is always on (pulled forward as **34.14**, with a launchd agent for macOS in 35.1)
   - [ ] 21.4 Docs: README, `docs/automations.md`, `docs/plugins.md` (integrations, actions, AI providers, secret stores), `docs/ui-plugins.md`
   - [ ] 21.5 Opt-in smoke tests: Gmail, Slack and Ollama end to end, and a `pages` watch on a real site
 - [ ] **Phase 22: Proxmox plugin (`proxmox`)**: VM management for Liively dev/staging (user, 5 Nov 2026). Independent of Phases 13–21. Tracker and spec: [planning/03-proxmox.md](planning/03-proxmox.md)
-- Phases 23–30 (the agent orchestrator) are tracked [above, under "Next to build"](#next-to-build-phases-2330-the-agent-orchestrator-highest-priority).
+- Phases 23–30 (the agent orchestrator) are tracked [above, under "Next to build"](#next-to-build-phases-2330-the-agent-orchestrator-highest-priority), and Phases 31–41 (the shared data layer) [under "Then"](#then-phases-3141-the-shared-data-layer).
 
 ---
 
@@ -376,6 +483,17 @@ phase's decisions.
 | 7 | Get a page's content when a plain fetch fails (a 500, a block, an anti-bot page): batches of sites, queued; cookies added; anti-bot checks passed by hand where they appear | Phase 12, 19.6 |
 | 7a | A browser that looks like a regular one, inside and out; anti-bot checks solved automatically before the user is asked | 13.2–13.7, 17.10 |
 | 7b | Requests that keep cookies and navigate signed-in sessions: cookies both ways, signing in by itself, walking a site before reading it | 12.5, 13.8–13.9 |
+| 8 | Plan, assign, follow and merge the work of AI agents and people, replacing the markdown trackers, with web, CLI and MCP interfaces | Phases 23–30 |
+| 9 | One hub for many teams (workspaces), with people's accounts, sign-in (passkeys, passwords with TOTP, later OIDC), roles, and who may make which decision | Phases 31–32, 39.3 |
+| 9a | Any AI as a person's interface: Claude, ChatGPT or Codex reach a hub over remote MCP | 32.9, 35.2–35.3 |
+| 10 | Auditing: who did what, when, traceable to a user or an agent; decisions signed (passkeys, SSH keys) | Phase 33 |
+| 11 | A client on every machine, linked to one or more hubs, each link its own way; owned by whoever installed it, who decides what it shares | Phase 34 |
+| 12 | A shared data bank: datasets, docs, memories (synced both ways with agents' files), search, and conversations turned into plan changes | Phase 36 |
+| 13 | Dashboards and public read-only pages made from udl's data, by people or AI | Phase 37 |
+| 14 | Analytics on tasks, agents and models, with budgets | Phase 38 |
+| 15 | Self-hosted, or run as a shared hosted hub for many teams | Phases 31, 39 |
+| 16 | Integrations for apps with no API, through udl's browser | Phase 40 |
+| 17 | Agents' processes kept in sandboxes | Phase 41 |
 | + | CLI / API / MCP parity for every new operation | 8.2, each phase's operations task |
 | + | TDD, fully typed (Python and TypeScript) | [Working agreement](#working-agreement-tdd--typing) |
 
@@ -390,12 +508,17 @@ The longer-term aim, which this plan builds towards rather than finishes:
 2. **Multi-account access for AIs that only offer one account**, such as an assistant whose mail connector
    sees a single inbox.
 3. **AI for apps that have none (or none that's good)**, through their integrations' operations.
+4. **A shared data layer for people and AI agents** (the user, 18 Nov 2026): udl is the back end and AI
+   the front end. Many agents and many people work on the same data, readable by both: tasks and plans,
+   docs, memories, datasets, events, and who did what. People reach it from the web, the CLI or their own
+   AI; every machine's client keeps its secrets and runs its agents.
 
 | Aim | What this plan lays down | What comes later |
 |---|---|---|
 | 1 | The `pages` watcher (Phase 16): any web page's new items, changed values or changed text as events, and `pages_suggest` to find what to watch; watchers with cursors and dedupe (11.5); sources that need no login (`none`, 11.3); `custom.*` events from scripts and `POST /events`; MCP clients (agents you run) can already create subscriptions, actions and schedules | More watchers (a command, a file, a feed); an AI chat that builds flows from a description |
 | 2 | Any number of accounts per integration (11.2); every integration operation is an MCP tool with an `account` argument; read-only ones fan out over several accounts in one call (11.4); `fetch_pages` (Phase 12) reads the pages an agent's own fetch tool can't, with the user's logins and, at an anti-bot check, the user's hand; `web` accounts (Phase 13) give an agent several sign-ins to any website | More integrations |
-| 3 | Integration operations as tools for udl's local AI (17.4) and for any MCP client; AI actions on events, unattended in `auto` mode | Browser-driven integrations for apps without an API; the AI chat |
+| 3 | Integration operations as tools for udl's local AI (17.4) and for any MCP client; AI actions on events, unattended in `auto` mode | Browser-driven integrations for apps without an API (Phase 40); the AI chat |
+| 4 | The orchestrator (Phases 23–30); workspaces, people, audit, clients, the data bank, pages and analytics (Phases 31–39) | Hubs sharing with hubs; analytics over a product's own data |
 
 What that means for the design now:
 
@@ -4965,8 +5088,9 @@ Things that bit before and will bite again:
   rendered page.
 - **An AI chat in udl** (the user present) that may also use `admin` operations, each one confirmed, so it
   can build subscriptions, actions and schedules from a description.
-- More integrations (Google Calendar and Drive, sharing one Google account between them; IMAP for other
-  mail; Discord; Matrix), and browser-driven integrations for apps without an API.
+- More integrations (Google Calendar, sharing one Google account with Gmail and Drive (36.10); IMAP for
+  other mail; Discord; Matrix; WhatsApp on Phase 40's kit). Browser-driven integrations for apps without
+  an API are now Phase 40.
 - Remote AI providers (e.g. Anthropic's API) as plugins; letting AI actions use other MCP servers' tools.
 - A 1Password (`op`) secret store.
 - Several runtimes sharing the work (an external queue); PostgreSQL `LISTEN/NOTIFY` instead of polling for
