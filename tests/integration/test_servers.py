@@ -26,9 +26,11 @@ from mcp import Client, StdioServerParameters
 
 # Local Imports
 from support.fixture_site import FixtureSite, Page
+from udl.config import Settings
 from udl.core.models import ConfigInfo, DownloadBatch, ProbeReport
-from udl.core.operations import operations
+from udl.core.operations import Operation
 from udl.db.models import JobStatus
+from udl.interfaces.api.app import create_app
 
 
 def free_port() -> int:
@@ -116,6 +118,11 @@ def test_udl_serve_stops_on_ctrl_c(served: Served) -> None:
     assert served.process.wait(timeout=30) == 0
 
 
+def served_operations() -> list[Operation]:
+    """Every operation a udl on the installed plugins has (its own, and each plugin's)."""
+    return [op for op in create_app(Settings()).state.service.operations if op.hints.mcp]
+
+
 async def test_udl_serve_serves_the_mcp_server_at_mcp(
     served: Served, fixture_site: FixtureSite
 ) -> None:
@@ -123,7 +130,7 @@ async def test_udl_serve_serves_the_mcp_server_at_mcp(
         tools = await client.list_tools()
         result = await client.call_tool("probe_url", {"url": fixture_site.url(Page.VIDEO)})
 
-    assert {tool.name for tool in tools.tools} == set(operations())
+    assert {tool.name for tool in tools.tools} == {op.name for op in served_operations()}
     assert not result.is_error, result.content
     report = ProbeReport.model_validate(result.structured_content)
     assert [(r.tool, r.ok) for r in report.results] == [("http", False), ("yt-dlp", True)]
