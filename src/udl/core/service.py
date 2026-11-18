@@ -27,6 +27,7 @@ from uuid import UUID
 from pydantic import BaseModel, JsonValue
 
 # Local Imports
+from udl.automations.apps import AppSupervisor
 from udl.automations.bus import EventBus, NewEvent
 from udl.automations.events import DownloadEventData, EventTypeList, EventTypes
 from udl.automations.manager import Automations
@@ -197,6 +198,7 @@ from udl.plugins.downloaders.base import Cookie, ProbeContext, ProbeResult
 from udl.plugins.integrations.base import AccountHealth
 from udl.plugins.registry import (
     ACTIONS,
+    APPS,
     DATABASES,
     DOWNLOADERS,
     INTEGRATIONS,
@@ -290,6 +292,8 @@ class UDLService:
         )
         self.runner = ActionRunner(self)
         self.scheduler = Scheduler(self.db, self.bus, self.clock, settings.automations)
+        self.apps = AppSupervisor(self)
+        """The apps' services (which the runtime runs while it holds the automations' lease)."""
         self.runtime: AutomationRuntime | None = None
         """The runtime that runs the automations in this udl, when one does (`udl serve`)."""
         self.automations = Automations(self)
@@ -1010,6 +1014,8 @@ class UDLService:
             missing = unmet(self.registry.get(ACTIONS, info.name).requires)
         elif info.kind == INTEGRATIONS.group:
             missing = unmet(self.registry.get(INTEGRATIONS, info.name).requires)
+        elif info.kind == APPS.group:
+            missing = unmet(self.registry.get(APPS, info.name).requires)
         else:  # a database
             missing = unmet(self.registry.get(DATABASES, info.name).requires)
         return PluginStatus.model_validate(
@@ -1056,6 +1062,7 @@ class UDLService:
         """
         changed = await self._plugin_settings.change(request)
         self.integrations.changed(request.name)  # (made again, with its new settings)
+        self.apps.changed(request.name)  # (an app's service too, at its next start)
         return changed
 
     # -- events --------------------------------------------------------------------------------
@@ -1813,8 +1820,8 @@ def _hidden(table: dict[str, JsonValue]) -> dict[str, JsonValue]:
 
 def _without_secrets(settings: Settings) -> Settings:
     """The settings to show: the API key is a SecretStr (hidden when shown already), database
-    URLs lose their passwords and the [tools.<name>] and [integrations.<name>] tables their
-    secrets."""
+    URLs lose their passwords and the [tools.<name>], [integrations.<name>] and [apps.<name>]
+    tables their secrets."""
     connections = [
         connection.model_copy(update={"url": hide_password(connection.url)})
         for connection in settings.db.connections
@@ -1824,5 +1831,6 @@ def _without_secrets(settings: Settings) -> Settings:
             "db": settings.db.model_copy(update={"connections": connections}),
             "tools": {name: _hidden(table) for name, table in settings.tools.items()},
             "integrations": {name: _hidden(table) for name, table in settings.integrations.items()},
+            "apps": {name: _hidden(table) for name, table in settings.apps.items()},
         }
     )

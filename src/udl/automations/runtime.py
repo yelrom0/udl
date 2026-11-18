@@ -16,7 +16,8 @@ host, its process and a random part). While it holds it, it runs:
   a pending event, or a run that waits);
 - the scheduler (udl.automations.scheduler), which fires the schedules as they come due;
 - the watchers (udl.integrations.watchers), one for each account a subscription wants events
-  from.
+  from;
+- the apps' services (udl.automations.apps), one for each app of the udl.apps kind.
 
 A runtime that loses the lease stops them (interrupting its runs) until it has it again;
 closing releases it, so another `udl serve` takes over at once. It will not start with a
@@ -44,6 +45,7 @@ from typing import TYPE_CHECKING, Final, Self
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, NonNegativeInt
 
 # Local Imports
+from udl.automations.apps import AppStatus
 from udl.automations.events import EventRecord, EventStatus
 from udl.automations.runs import ActionRun, RunStatus
 from udl.automations.schedules import Schedule
@@ -124,6 +126,8 @@ class RuntimeStatus(BaseModel):
     """The next schedules to fire (five at most), soonest first."""
     watchers: list[WatcherStatus] = Field(default_factory=list[WatcherStatus])
     """How each account's watcher is (stopped, all, while nothing runs the automations)."""
+    apps: list[AppStatus] = Field(default_factory=list[AppStatus])
+    """How each app's service is (stopped, all, while nothing runs the automations)."""
 
 
 def check_scripts_dir(settings: Settings) -> None:
@@ -248,6 +252,7 @@ class AutomationRuntime:
             group.create_task(self._retention(stop))
             group.create_task(self._forever("schedule", self.service.scheduler.serve, stop))
             group.create_task(self._forever("watch", self.service.watchers.serve, stop))
+            group.create_task(self._forever("apps", self.service.apps.serve, stop))
 
     # -- the work ------------------------------------------------------------------------------
 
@@ -368,4 +373,5 @@ async def runtime_status(service: UDLService) -> RuntimeStatus:
         last_dispatch=dispatched[0].dispatched_at if dispatched else None,
         next_schedules=upcoming[:UPCOMING],
         watchers=watchers,
+        apps=service.apps.statuses(),
     )
