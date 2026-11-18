@@ -4476,7 +4476,7 @@ timeout: 5m
 - Tests first: Vitest with a fake `EventSource`: the backoff, the bounded buffer, and the invalidation on
   reconnect.
 - Done when: a run started from the CLI shows up live in the shell.
-- **Built (deepseek-a, 2026-11-19, PR #N):** live data, in the shell.
+- **Built (deepseek-a, 2026-11-19, PR #20):** live data, in the shell.
   - `src/live/connection.ts`: `LiveConnection` follows one stream per path (`watch(path, names,
     received)`), reconnects after 1 s doubling to 30 s with jitter (half to one and a half times the
     wait), starts again at 1 s once a stream opens, and calls the page's `reload` on every open after
