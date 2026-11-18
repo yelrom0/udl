@@ -35,7 +35,7 @@ from contextlib import AbstractContextManager, contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import FrameType
-from typing import Any, Final
+from typing import Final
 
 # Package Imports
 from pydantic import TypeAdapter, ValidationError
@@ -202,10 +202,8 @@ def serving(control: Control) -> Generator[int]:
 # ---------------------------------------------------------------------------------------------
 
 
-def stop(process: subprocess.Popen[Any]) -> None:
-    """Ask a server to stop (SIGTERM, as Playwright's webServer does), and wait for it.
-
-    (`Any` is the process's own type: a test's server may be started with text or bytes.)"""
+def stop(process: subprocess.Popen[bytes]) -> None:
+    """Ask a server to stop (SIGTERM, as Playwright's webServer does), and wait for it."""
     if process.poll() is not None:
         return
     process.terminate()
@@ -216,7 +214,7 @@ def stop(process: subprocess.Popen[Any]) -> None:
         process.wait(timeout=5)
 
 
-def answering(url: str, process: subprocess.Popen[Any]) -> bool:
+def answering(url: str, process: subprocess.Popen[bytes]) -> bool:
     """Whether udl answers `url` yet (and has not died trying)."""
     if process.poll() is not None:
         raise RuntimeError(f"udl serve stopped with {process.returncode}")
@@ -259,12 +257,25 @@ def environment(config: Path, home: Path) -> dict[str, str]:
     return env
 
 
+def port_from(argv: list[str] | None, default: int) -> int:
+    """The port the command line asks for (`--port N`), else `default`."""
+    given = list(argv or ())
+    for index, arg in enumerate(given):
+        if arg == "--port" and index + 1 < len(given):
+            return int(given[index + 1])
+        if arg.startswith("--port="):
+            return int(arg.split("=", 1)[1])
+    return default
+
+
 def main(
     *,
     port: int = PORT,
     self_stop: float = SELF_STOP,
     make_site: Callable[[], AbstractContextManager[object]] | None = None,
+    argv: list[str] | None = None,
 ) -> int:
+    port = port_from(argv, port)
     control = Control()
     stopping = threading.Event()
 
@@ -314,4 +325,4 @@ def main(
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(argv=sys.argv[1:]))

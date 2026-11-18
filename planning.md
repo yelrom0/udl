@@ -4160,6 +4160,9 @@ timeout: 5m
     refuses the install otherwise, and CI's `--frozen-lockfile` would fail. The script only checks that the
     native binding (the platform package) loads; Vite loads it fine.
   - `packages/*/coverage` is written by Vitest and ignored, like `test-results` and `playwright-report`.
+  - **Reflinks, checked with the card's command:** `btrfs filesystem du -s "$(pnpm store path)"
+    web/node_modules` → `web/node_modules` 247.19 MiB total, 30.00 MiB exclusive, 133.03 MiB shared with the
+    store: the files are reflinked, not copied.
   - **The tests were written first:** `web/e2e/shell.spec.ts` before the workspace, `theme.test.ts` before the
     store, and `tests/unit/support/test_e2e.py` before the harness. The last one was watched failing for each
     helper as it was written (`No module named 'support.e2e'`, then the missing `main`, `stop` and the XDG

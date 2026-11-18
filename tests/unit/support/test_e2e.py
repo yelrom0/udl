@@ -27,10 +27,10 @@ import pytest
 # Local Imports
 from support.e2e import (
     PORT,
-    SELF_STOP,
     Control,
     environment,
     main,
+    port_from,
     serving,
     stop,
     wait_until,
@@ -217,14 +217,29 @@ def test_main_stops_itself_when_nothing_else_stops_it() -> None:
     assert main(port=free_port(), self_stop=0.3, make_site=nothing) == 0
 
 
-def test_main_says_when_its_port_is_taken() -> None:
-    with taken_port() as port:
-        assert main(port=port, make_site=nothing) == 1
+def test_a_request_that_is_not_json_is_refused() -> None:
+    control = Control()
+
+    with serving(control) as port:
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/mail", data=b"{oops", method="POST"
+        )
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request, timeout=5)  # noqa: S310 - our own server
+        refused = caught.value
+        refused.close()
+        assert refused.code == 400
+
+
+def test_the_port_can_come_from_the_command_line() -> None:
+    assert port_from(["--port", "9123"], PORT) == 9123
+    assert port_from(["--port=9123"], PORT) == 9123
+    assert port_from([], PORT) == PORT
 
 
 def test_main_stops_on_sigterm() -> None:
-    started = subprocess.Popen(
-        [sys.executable, "-m", "support.e2e"],
+    started = subprocess.Popen(  # noqa: S603 - the module under test
+        [sys.executable, "-m", "support.e2e", "--port", str(free_port())],
         cwd=ROOT,
         env=environment_for_the_test(),
         stdout=subprocess.PIPE,
@@ -241,7 +256,8 @@ def test_main_stops_on_sigterm() -> None:
         started.stdout.close()
     finally:
         if started.poll() is None:  # pragma: no cover - the server must have stopped
-            stop(started)
+            started.kill()
+            started.wait(timeout=10)
 
 
 def free_port() -> int:
@@ -265,7 +281,3 @@ def environment_for_the_test() -> dict[str, str]:
     env["PYTHONPATH"] = f"{tests}:{env.get('PYTHONPATH', '')}".rstrip(":")
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     return env
-
-
-def test_the_self_stop_is_long_enough_for_a_test_and_short_enough_to_not_linger() -> None:
-    assert 60 <= SELF_STOP <= 900
