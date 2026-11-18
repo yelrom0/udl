@@ -98,9 +98,8 @@ def _write_key(path: Path) -> None:
 
     (asyncssh's generator is typed with a partial `**kwargs`, so this is the one place it is
     called, with its type pinned here.)"""
-    # (asyncssh's key generator is typed with a partial **kwargs; it returns a full SSHKey.)
-    private = asyncssh.generate_private_key("ssh-ed25519")  # pyright: ignore[reportUnknownMemberType]
-    private.write_private_key(str(path))  # pyright: ignore[reportUnknownMemberType]
+    private = asyncssh.generate_private_key("ssh-ed25519")  # pyright: ignore[reportUnknownMemberType] - (asyncssh's key helpers are untyped)
+    private.write_private_key(str(path))  # pyright: ignore[reportUnknownMemberType] - (asyncssh's key helpers are untyped)
     path.chmod(0o600)
 
 

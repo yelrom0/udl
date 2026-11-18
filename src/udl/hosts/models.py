@@ -1,13 +1,13 @@
 """
-------------------
-- host_models.py -
-------------------
+------------
+- models.py -
+------------
 
 The host operations' requests and responses: which hosts there are, adding and changing one, and
 a check's answer (the machine's `uname`, and whether each tool the runners need is installed).
 
-The shell that acts on a host and the Host record itself are in udl.hosts, beside each other:
-nothing above them knows which transport a host uses.
+The shell that acts on a host and the Host record itself are in udl.hosts.shell: nothing
+above them knows which transport a host uses.
 """
 
 # System Imports
@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 # Local Imports
 from udl.db.models import JsonObject
-from udl.hosts import Host, HostTransport
+from udl.hosts.shell import Host, HostTransport
 
 type HostRef = Annotated[str, StringConstraints(min_length=1, max_length=100)]
 """A host, by name: thevault, local."""

@@ -27,9 +27,8 @@ import shlex
 import socket
 from collections.abc import (
     AsyncGenerator,
+    AsyncIterator,
     Awaitable,
-    Callable,
-    Coroutine,
     Mapping,
     Sequence,
 )
@@ -39,7 +38,7 @@ from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, ClassVar, Final, Protocol, Self
+from typing import ClassVar, Final, Protocol, Self
 
 # Package Imports
 from pydantic import Field, model_validator
@@ -206,18 +205,40 @@ class HostShell(Protocol):
     host: Host
     """The host it acts on."""
 
-    run: Callable[..., Awaitable[ProcessResult]]
-    """Run a program to completion: its exit code and what it printed (the start of its stdout
-    and the end of its stderr, when it printed more than udl keeps). Named arguments: cwd (the
-    folder it runs in), env (its environment, over the host's), secret_env (secrets for its
-    environment, never in an argv), stdin (what it reads), within (how long it gets) and cancel
-    (a CancelToken that stops it). Raises ToolUnavailable when it is not installed, PluginFailed
-    when it exits with an error, Cancelled when it is stopped, and TimeoutError when it runs past
-    the time it gets."""
+    def run(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        secret_env: Mapping[str, str] | None = None,
+        stdin: bytes | None = None,
+        within: timedelta | None = None,
+        cancel: CancelToken | None = None,
+    ) -> Awaitable[ProcessResult]:
+        """Run a program to completion: its exit code and what it printed (the start of its
+        stdout and the end of its stderr, when it printed more than udl keeps).
 
-    stream: Callable[..., AsyncGenerator[bytes]]
-    """Run a program and give its output as it comes (what a harness prints while it works): the
-    same arguments as run(), but for cancel."""
+        `cwd` is the folder it runs in, `env` its environment (over the host's), `secret_env`
+        secrets for its environment (never in an argv), `stdin` what it reads, `within` how long
+        it gets, and `cancel` a CancelToken that stops it. Raises ToolUnavailable when it is not
+        installed, PluginFailed when it exits with an error, Cancelled when it is stopped, and
+        TimeoutError when it runs past the time it gets."""
+        ...
+
+    def stream(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        secret_env: Mapping[str, str] | None = None,
+        stdin: bytes | None = None,
+        within: timedelta | None = None,
+    ) -> AsyncIterator[bytes]:
+        """Run a program and give its output as it comes (what a harness prints while it works):
+        the arguments run() takes, but for cancel."""
+        ...
 
     def interact(
         self,
@@ -227,16 +248,17 @@ class HostShell(Protocol):
         env: Mapping[str, str] | None = None,
         secret_env: Mapping[str, str] | None = None,
         within: timedelta | None = None,
-    ) -> Coroutine[Any, Any, Interaction]:
+    ) -> Awaitable[Interaction]:
         """Start a program whose output is read and whose input is written while it runs (a
-        harness's sign-in, relayed). The same arguments as run(), but for stdin. The caller ends
-        it with the handle's close(), or by waiting for it (wait())."""
+        harness's sign-in, relayed): the arguments run() takes, but for stdin. The caller ends it
+        with the handle's close(), or by waiting for it (wait())."""
         ...
 
-    forward: Callable[[int], AbstractAsyncContextManager[str]]
-    """A context manager giving a base URL on this machine for the loopback port `port` on the
-    host: this machine's own for local, an SSH tunnel for another host. The URL is ready in the
-    block, and the tunnel is closed at its end."""
+    def forward(self, port: int) -> AbstractAsyncContextManager[str]:
+        """A context manager giving a base URL on this machine for the loopback port `port` on
+        the host: this machine's own for local, an SSH tunnel for another host. The URL is ready
+        in the block, and the tunnel is closed at its end."""
+        ...
 
 
 # ---------------------------------------------------------------------------------------------
@@ -338,17 +360,27 @@ def _environment(command: Command, host: Host) -> dict[str, str]:
     return {**os.environ, **host.env, **command.env, **command.secret_env}
 
 
+def remote_line(host: Host, command: Command) -> str:
+    """The one command line ssh runs on `host` for `command`.
+
+    It is a *login* shell (`sh -lc`), so the program gets the environment its user gets on that
+    host: a harness in ~/.local/bin (which sshd's default PATH lacks, and only the login
+    profile adds) is found, and so is a version manager's shims. The host's own environment is
+    exported in it too (it is not in ssh's, which is the login's, not the host record's)."""
+    line = remote_command(replace(command, env={**host.env, **command.env}))
+    return f"sh -lc {shlex.quote(line)}"
+
+
 def ssh_argv(host: Host, command: Command) -> tuple[str, ...]:
-    """The argv that runs `command` on `host`: its config host name, then the remote `sh -c`
-    line remote_command() built. The host's own environment is exported there too (it is not in
-    ssh's, which is the login's, not the host record's)."""
+    """The argv that runs `command` on `host`: its config host name, then the one remote command
+    line (remote_line())."""
     return (
         "ssh",
         *_config_argv(),
         *_SSH_OPTIONS,
         host.ssh or host.name,
         "--",
-        remote_command(replace(command, env={**host.env, **command.env})),
+        remote_line(host, command),
     )
 
 

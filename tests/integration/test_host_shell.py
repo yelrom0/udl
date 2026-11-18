@@ -31,7 +31,15 @@ import pytest
 # Local Imports
 from support.ssh_server import sshd
 from udl.errors import Cancelled, PluginFailed, ToolUnavailable
-from udl.hosts import SSH_CONFIG, Host, HostShell, HostTransport, shell_for, ssh_forward_argv
+from udl.hosts import (
+    SSH_CONFIG,
+    Host,
+    HostShell,
+    HostTransport,
+    shell_for,
+    ssh_forward_argv,
+)
+from udl.hosts.manager import Hosts
 from udl.process import CancelToken
 
 pytestmark = pytest.mark.integration
@@ -254,6 +262,29 @@ async def test_a_tunnel_that_cannot_be_made_fails_instead_of_hanging(tmp_path: P
             pass  # pragma: no cover - (it must not get here)
 
 
+async def test_a_tool_in_the_users_profile_is_found_over_ssh(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`udl hosts check` finds a harness its user installed: a host's shell is a login shell, so
+    ~/.profile's PATH (which sshd's own default PATH lacks) is the one the program gets."""
+    bin_dir = home / ".local" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    (bin_dir / "claude").write_text("#!/bin/sh\necho claude-fake\n")
+    (bin_dir / "claude").chmod(0o755)
+    (home / ".profile").write_text('PATH="$HOME/.local/bin:$PATH"\nexport PATH\n')
+
+    _ssh(monkeypatch)
+    async with sshd(home) as name:
+        monkeypatch.setenv(SSH_CONFIG, str(home / ".ssh" / "config"))
+        shell = shell_for(
+            Host(name=name, transport=HostTransport.SSH, ssh=name, work_dir=str(home))
+        )
+        statuses = {tool.name: tool for tool in await Hosts.tools(shell)}
+
+    assert statuses["claude"].found is True
+    assert statuses["claude"].version == "claude-fake"
+
+
 async def test_both_shells_stream_a_programs_output(both: list[tuple[str, HostShell]]) -> None:
     for name, shell in both:
         chunks = [
@@ -277,6 +308,13 @@ async def test_both_shells_interact_with_a_program(both: list[tuple[str, HostShe
         assert said.strip() == "hi", name
         await talked.close()  # (no more input, then it is ended)
         assert await talked.wait() == 0, name
+
+
+def _fetch(url: str) -> bytes:
+    """Read `url` (a loopback one), on a worker thread: urllib blocks, so it is not called on
+    the loop."""
+    with urllib.request.urlopen(url, timeout=10) as answer:  # noqa: S310 - (a loopback URL)
+        return bytes(answer.read())
 
 
 async def test_both_shells_forward_a_loopback_port(
@@ -312,8 +350,8 @@ async def test_both_shells_forward_a_loopback_port(
                 if name == "local":
                     # (For this machine the port is already on it: the URL is itself.)
                     assert url == f"http://127.0.0.1:{port}", name
-                    with urllib.request.urlopen(url, timeout=10) as answer:  # noqa: S310, ASYNC210
-                        assert answer.read() == b"hello", name
+                    body = await asyncio.to_thread(_fetch, url)
+                    assert body == b"hello", name
                     continue
                 # (For another host it is a tunnel to a loopback port on that host: the command
                 # is `ssh -N -L 127.0.0.1:<local>:127.0.0.1:<port> <host>`.)

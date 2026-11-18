@@ -11,6 +11,7 @@ secret_env must reach the program's environment without ever appearing in the co
 # System Imports
 import asyncio
 import json
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -87,9 +88,10 @@ def argvs(draw: st.DrawFn) -> tuple[str, ...]:
 def through_sh(
     command: Command, *, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[bytes]:
-    """Run the remote command line the way ssh runs it: `sh -c` on it, its stdin the command's."""
+    """Run the remote command line the way ssh runs it: a login `sh -lc` on it, its stdin the
+    command's (a login shell, so the program gets the PATH its user gets on the host)."""
     return subprocess.run(  # noqa: S603 - (a fixture's own command, and only sh's own quoting)
-        ["sh", "-c", remote_command(command)],  # noqa: S607 - (sh is always at /bin/sh's place)
+        ["sh", "-lc", remote_command(command)],  # noqa: S607 - (sh is always at /bin/sh's place)
         input=remote_stdin(command),
         capture_output=True,
         env=env,
@@ -299,7 +301,8 @@ def test_the_ssh_argv_names_the_config_host_and_never_a_command_line() -> None:
     assert "ControlMaster=auto" in argv
     assert "thevault" in argv
     assert "--" in argv
-    assert argv[-1].startswith("exec echo hi")
+    # (A login shell, so the program gets the PATH its user gets on that host.)
+    assert argv[-1] == f"sh -lc {shlex.quote('exec echo hi')}"
 
 
 def local() -> LocalShell:

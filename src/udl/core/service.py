@@ -170,8 +170,8 @@ from udl.fetch.models import (
     SolveChallengesRequest,
     SolveReport,
 )
-from udl.host_manager import Hosts
-from udl.host_models import (
+from udl.hosts.manager import Hosts
+from udl.hosts.models import (
     HostCheck,
     HostInfo,
     HostList,
@@ -277,7 +277,7 @@ class UDLService:
         self.integrations = Integrations(self)
         self.accounts = AccountManager(self)
         self.hosts = Hosts(self)
-        """The machines agents run on (udl.host_manager.Hosts)."""
+        """The machines agents run on (udl.hosts.manager.Hosts)."""
         self.watchers = WatcherSupervisor(self)
         """The accounts' watchers (which the runtime runs)."""
         self.bus = EventBus(

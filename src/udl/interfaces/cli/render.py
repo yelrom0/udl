@@ -90,7 +90,7 @@ from udl.fetch.models import (
     ItemStatus,
     SolveReport,
 )
-from udl.host_models import HostCheck, HostInfo, HostList
+from udl.hosts.models import HostCheck, HostInfo, HostList
 from udl.integrations.models import AccountInfo, AccountList, Disconnected
 from udl.integrations.watchers import WatcherState, WatcherStatus
 from udl.plugins.downloaders.base import MediaCandidate, MediaKind

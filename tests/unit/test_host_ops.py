@@ -22,8 +22,8 @@ from udl.config import DBSettings, SecretsSettings, Settings
 from udl.core.jobs import InstanceLock
 from udl.core.service import UDLService
 from udl.errors import DoesNotExist, NotAllowed
-from udl.host_models import HostCheck, HostInfo, HostRequest, HostsList, SetHostRequest
 from udl.hosts import Host, HostTransport
+from udl.hosts.models import HostCheck, HostInfo, HostRequest, HostsList, SetHostRequest
 from udl.plugins.secrets.memory import MemorySecretStore
 
 

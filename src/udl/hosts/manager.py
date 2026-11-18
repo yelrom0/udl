@@ -1,6 +1,6 @@
 """
 -------------------
-- host_manager.py -
+- manager.py -
 -------------------
 
 Hosts (UDLService.hosts): the machines agents run on, as the operations see them.
@@ -16,17 +16,18 @@ host uses, and neither does anything above it.
 
 # System Imports
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 # Package Imports
 from pydantic import ValidationError
 
 # Local Imports
 from udl.config import data_dir
+from udl.db.models import JsonObject
 from udl.db.records import RecordQuery
 from udl.errors import DoesNotExist, NotAllowed
-from udl.host_models import HostCheck, HostInfo, HostList, SetHostRequest, ToolStatus
-from udl.hosts import LOCAL, Host, HostShell, shell_for
+from udl.hosts.models import HostCheck, HostInfo, HostList, SetHostRequest, ToolStatus
+from udl.hosts.shell import LOCAL, Host, HostShell, shell_for
 
 if TYPE_CHECKING:
     from udl.core.service import UDLService
@@ -95,7 +96,7 @@ class Hosts:
         log.info("Saved the host %s", saved.name)
         return self.shown(saved)
 
-    def _changed(self, host: Host, update: dict[str, Any]) -> Host:
+    def _changed(self, host: Host, update: JsonObject) -> Host:
         """`host` with the fields `update` names. Raises NotAllowed for a field it has none of,
         or a change that does not fit its transport."""
         unknown = sorted(set(update) - set(Host.model_fields))
@@ -145,11 +146,15 @@ class Hosts:
         except Exception as e:  # noqa: BLE001 - (any failure is reported, not raised)
             return HostCheck(host=name, ok=False, problem=str(e))
         return HostCheck(
-            host=name, ok=True, uname=uname.stdout.strip(), tools=await self._tools(shell)
+            host=name, ok=True, uname=uname.stdout.strip(), tools=await self.tools(shell)
         )
 
-    async def _tools(self, shell: HostShell) -> list[ToolStatus]:
-        """Each tool a runner needs, and whether it is on the host (and its version)."""
+    @staticmethod
+    async def tools(shell: HostShell) -> list[ToolStatus]:
+        """Each tool a runner needs, and whether it is on the host (and its version).
+
+        A host's shell is a login shell (udl.hosts.shell.remote_line), so a tool its user
+        installs in ~/.local/bin is found, as it would be for the user themselves."""
         found: list[ToolStatus] = []
         for tool in TOOLS:
             try:
