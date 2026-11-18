@@ -158,6 +158,11 @@ class ChallengeWindow:
             except PlaywrightError as e:  # (the person closed it while udl was reading)
                 log.debug("udl's window closed: %s", e)
             finally:
+                log.debug(
+                    "udl's window ends: %s passed, %s left",
+                    ", ".join(site for site, tab in self._tabs.items() if tab.passed) or "none",
+                    ", ".join(site for site, tab in self._tabs.items() if not tab.passed) or "none",
+                )
                 self._done = True
                 self._context = None
                 self._tabs.clear()
@@ -176,6 +181,7 @@ class ChallengeWindow:
             self._tabs[waiting.site] = _SiteTab(waiting=waiting, page=page, tab=tab)
             with contextlib.suppress(PlaywrightError):  # (a check is what it shows: fine)
                 await page.goto(waiting.url, timeout=self.settings.timeout.total_seconds() * 1000)
+            log.debug("Showing the check of %s in udl's window: %s", waiting.site, waiting.url)
             if self.person is not None:
                 attending = asyncio.create_task(self.person.attend(page))
                 self._people.add(attending)

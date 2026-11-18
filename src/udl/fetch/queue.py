@@ -749,6 +749,9 @@ class FetchQueue:
             changed = await self.db.upsert_record(changed)
         except DatabaseError as e:
             log.warning("Could not save the fetch of %s: %s", item.url, e)
+        else:
+            if "status" in changes:
+                log.debug("Saved %s as %s", item.url, changed.status)
         running.items[item.id] = changed
         return changed
 

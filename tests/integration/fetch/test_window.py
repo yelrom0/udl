@@ -265,6 +265,43 @@ async def test_a_solve_from_another_udl_writes_the_page_and_requeues_the_rest(
     assert [item.via for item in items] == [Via.PERSON, Via.BROWSER, Via.BROWSER]
 
 
+async def test_the_log_tells_what_was_saved_shown_and_passed(
+    antibot: AntiBotSite, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # (What a flaky run's report needs to say why a solve passed no site: when each URL was
+    # saved as waiting, what the window showed, and what the solve found.)
+    url = checked(antibot, HOSTS[0], 1)
+    async with kits(tmp_path) as (db, config):
+        kit = kit_on(db, config, person=FakePerson())
+        try:
+            batch = await fetched(kit, [url], person=PersonMode.WAIT)
+            await kit.solve()
+            await ended(kit, batch)
+        finally:
+            await kit.close()
+
+    assert f"Saved {url} as challenge" in caplog.text
+    assert f"Showing the check of {HOSTS[0]} in udl's window" in caplog.text
+    assert f"udl's window ends: {HOSTS[0]} passed, none left" in caplog.text
+    assert f"The solve passed {HOSTS[0]}; nothing still waits" in caplog.text
+
+
+async def test_the_log_tells_a_solve_that_found_nothing_waiting(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    async with kits(tmp_path) as (db, config):
+        kit = kit_on(db, config)
+        try:
+            report = await kit.solve()
+            only = await kit.solve([HOSTS[1]])
+        finally:
+            await kit.close()
+
+    assert (report.passed, only.passed) == ([], [])
+    assert "No check waits, so no window opens" in caplog.text
+    assert f"No check waits on {HOSTS[1]}, so no window opens" in caplog.text
+
+
 async def test_listing_what_waits(antibot: AntiBotSite, tmp_path: Path) -> None:
     async with kits(tmp_path) as (db, config):
         kit = kit_on(db, config)
