@@ -540,6 +540,11 @@ async def _forwarded_ssh(host: Host, port: int) -> AsyncGenerator[str]:
         yield f"http://127.0.0.1:{local}"
     finally:
         await _stopped(process)
+        # (Drain its stderr: a pipe nobody reads is left open, and asyncio warns about the
+        # transport at the next collection.)
+        if process.stderr is not None:
+            with contextlib.suppress(Exception):
+                await process.stderr.read()
 
 
 async def _tunnel_up(process: asyncio.subprocess.Process, local: int) -> None:

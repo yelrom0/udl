@@ -87,8 +87,12 @@ async def _serve(process: asyncssh.SSHServerProcess[str]) -> None:
         if shell.returncode is None:
             with contextlib.suppress(ProcessLookupError):
                 shell.terminate()
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(shell.wait(), timeout=2)
+            try:
+                await asyncio.wait_for(shell.wait(), timeout=5)
+            except TimeoutError:  # (a slow machine, or a command that ignores the ask)
+                with contextlib.suppress(ProcessLookupError):
+                    shell.kill()
+                await shell.wait()
         with contextlib.suppress(Exception):  # (the channel may already be gone)
             process.exit(shell.returncode or 0)
 
