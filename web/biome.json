@@ -12,7 +12,11 @@
 			"!**/coverage",
 			"!**/test-results",
 			"!**/playwright-report",
-			"!pnpm-lock.yaml"
+			"!pnpm-lock.yaml",
+			"!packages/api/openapi.json",
+			"!packages/api/src/schema.d.ts",
+			"!packages/api/src/operations.ts",
+			"!packages/api/src/fixtures.ts"
 		]
 	},
 	"formatter": {
