@@ -1,0 +1,21 @@
+{
+	"name": "@udl/api",
+	"private": true,
+	"version": "0.0.0",
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./testing": "./src/testing.ts"
+	},
+	"scripts": {
+		"generate": "node scripts/generate.mjs",
+		"check-generated": "node scripts/generate.mjs --check",
+		"test": "vitest run --coverage"
+	},
+	"dependencies": {
+		"openapi-fetch": "0.17.0"
+	},
+	"devDependencies": {
+		"openapi-typescript": "7.13.0"
+	}
+}

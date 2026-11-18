@@ -393,6 +393,8 @@ class BrowserSettings(_Frozen):
 
 # The config file Settings() reads; Settings.load() sets it.
 _config_file: ContextVar[Path | None] = ContextVar("udl_config_file", default=None)
+# Whether the settings being built are the defaults only, with no UDL_* variable read.
+_defaults_only: ContextVar[bool] = ContextVar("udl_defaults_only", default=False)
 
 
 class Settings(BaseSettings):
@@ -454,8 +456,20 @@ class Settings(BaseSettings):
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         # The TOML file takes the place of .env and secrets-dir support.
+        if _defaults_only.get():
+            return (init_settings,)
         toml = TomlConfigSettingsSource(settings_cls, toml_file=_config_file.get())
         return (init_settings, env_settings, toml)
+
+    @classmethod
+    def defaults(cls) -> Self:
+        """The settings' defaults only: no config file and no UDL_* variable, so what is made
+        from them (the API's schema) is the same on every machine."""
+        token = _defaults_only.set(True)
+        try:
+            return cls()
+        finally:
+            _defaults_only.reset(token)
 
     @classmethod
     def load(cls, config_file: Path | None = None) -> Self:
