@@ -44,9 +44,10 @@ from pydantic.json_schema import GenerateJsonSchema, JsonSchemaMode, JsonSchemaV
 from pydantic_core import CoreSchema
 
 # Local Imports
-from udl.errors import DoesNotExist, PluginError
+from udl.errors import DoesNotExist, NotAllowed, PluginError
 
 if TYPE_CHECKING:
+    from udl.core.service import UDLService
     from udl.plugins.registry import PluginRegistry
 
 log = logging.getLogger(__name__)
@@ -301,6 +302,9 @@ class OperationHints(BaseModel):
     """It reaches outside udl: the web, a service, someone else's inbox."""
     admin: bool = False
     """It changes automations, accounts, AI setup or settings: never a tool for an AI action."""
+    mcp: bool = True
+    """It is an MCP tool (False: a merge, or a power command, is the person's own: no tool, and
+    it refuses an MCP or automation caller itself)."""
 
 
 @dataclass(frozen=True)
@@ -398,7 +402,7 @@ class Operation:
             response=response,
             summary=doc.partition("\n")[0],
             description=doc,
-            method=method,
+            method=method if given.mcp else _person_only(method, name),
             hints=given,
             cli=cli,
             api=api,
@@ -431,6 +435,21 @@ class Operation:
                 hint="Rename the operation.",
             )
         return replace(self, name=f"{namespace}_{self.name}", namespace=namespace, kind=kind)
+
+
+def _person_only(method: OperationMethod, name: str) -> OperationMethod:
+    """`method`, refusing an MCP or automation caller: the operation is no MCP tool (a merge, a
+    power command), and a prompt-injected agent must not reach it through an action either."""
+
+    async def refuse_agents(service: UDLService, request: BaseModel) -> BaseModel:
+        if current_caller.get() in (Caller.MCP, Caller.AUTOMATION):
+            raise NotAllowed(
+                f"{name} is not a tool for an AI agent: a person runs it",
+                hint="Run it with its command, or from its page.",
+            )
+        return await method(service, request)
+
+    return refuse_agents
 
 
 def _check_specs(

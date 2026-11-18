@@ -170,4 +170,6 @@ async def test_every_operation_has_its_mcp_tool() -> None:
 
     server = create_server(no_service)
 
-    assert {tool.name for tool in await server.list_tools()} == set(operations())
+    assert {tool.name for tool in await server.list_tools()} == {
+        op.name for op in operations().values() if op.hints.mcp
+    }
