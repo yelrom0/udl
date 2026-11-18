@@ -126,6 +126,10 @@ describe("the theme store", () => {
 		systemIs(false);
 		expect(document.documentElement.dataset.theme).toBe("light");
 
+		// (Stopped: back on the system, and the system changing does not reach the page.)
 		stop();
+		act(() => setTheme("system"));
+		systemIs(true);
+		expect(document.documentElement.dataset.theme).toBe("light");
 	});
 });

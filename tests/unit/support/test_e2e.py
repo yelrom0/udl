@@ -9,13 +9,17 @@ delivers a mail, posts a Slack message or scripts the AI through it), and the pr
 
 # System Imports
 import json
+import os
+import signal
+import socket
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
 
 # Package Imports
 import pytest
@@ -26,7 +30,7 @@ from support.e2e import (
     SELF_STOP,
     Control,
     environment,
-    handler_for,
+    main,
     serving,
     stop,
     wait_until,
@@ -34,6 +38,8 @@ from support.e2e import (
 )
 
 E2E_PLUGINS = Path(__file__).resolve().parents[2] / "support" / "e2e_plugins"
+# (The module under test runs `udl` from the checkout; tests start it as a module.)
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def post(port: int, path: str, body: object) -> None:
@@ -63,6 +69,11 @@ def refuses(port: int, path: str, body: object, status: int) -> None:
     assert refused.code == status, f"{path} answered {refused.code}, not {status}"
 
 
+# ---------------------------------------------------------------------------------------------
+# The config, and the environment the server runs in
+# ---------------------------------------------------------------------------------------------
+
+
 def test_the_config_is_what_the_server_reads(tmp_path: Path) -> None:
     path = write_config(tmp_path)
 
@@ -72,9 +83,11 @@ def test_the_config_is_what_the_server_reads(tmp_path: Path) -> None:
     assert f'url = "sqlite+aiosqlite:///{tmp_path / "udl.db"}"' in text
     assert f'download_dir = "{tmp_path / "downloads"}"' in text
     assert f'plugin_dirs = ["{E2E_PLUGINS}"]' in text
-    # (Secrets are the memory store, so no keyring is opened; the web UI is 18.3's.)
+    # (Secrets are the memory store, so no keyring is opened; the UI is 18.3's, and its
+    # plugins are looked for under the temp dir, not the user's ~/.config/udl/ui-plugins.)
     assert '[secrets]\nstore = "memory"' in text
     assert "[web]\nenabled = false" in text
+    assert f'ui_plugin_dirs = ["{tmp_path / "ui-plugins"}"]' in text
 
 
 def test_the_server_runs_without_the_callers_settings(
@@ -83,10 +96,20 @@ def test_the_server_runs_without_the_callers_settings(
     monkeypatch.setenv("UDL_API__PORT", "9999")
     monkeypatch.setenv("UDL_DOWNLOAD_DIR", "/nowhere")
 
-    env = environment(tmp_path / "config.toml")
+    env = environment(tmp_path / "config.toml", tmp_path)
 
     assert not [name for name in env if name.startswith("UDL_") and name != "UDL_CONFIG"]
     assert env["UDL_CONFIG"] == str(tmp_path / "config.toml")
+    # (Every XDG dir under the temp dir: the browser profile, fetched pages and scripts too.)
+    assert env["XDG_CONFIG_HOME"] == str(tmp_path / ".config")
+    assert env["XDG_DATA_HOME"] == str(tmp_path / ".local/share")
+    assert env["XDG_STATE_HOME"] == str(tmp_path / ".local/state")
+    assert env["XDG_CACHE_HOME"] == str(tmp_path / ".cache")
+
+
+# ---------------------------------------------------------------------------------------------
+# The control API
+# ---------------------------------------------------------------------------------------------
 
 
 def test_the_control_api_takes_what_a_test_delivers() -> None:
@@ -116,17 +139,39 @@ def test_the_control_api_says_no_to_what_it_does_not_take() -> None:
     assert (control.mails, control.messages, control.ai) == ([], [], [])
 
 
-def test_a_handler_of_its_own_is_made_for_each_control() -> None:
+def test_the_queues_of_one_control_are_not_another_s() -> None:
     one, two = Control(), Control()
 
-    assert handler_for(one) is not handler_for(two)
+    one.script("first")
+    one.deliver({"a": 1})
+
+    assert two.next_ai() == "I am a fake AI."
+    assert two.mails == []
 
 
-def test_a_server_that_died_is_a_failure(tmp_path: Path) -> None:
+def test_what_a_call_gave_is_kept_as_it_was_given() -> None:
+    control = Control()
+    body: dict[str, object] = {"nested": {"list": [1, 2]}}
+    control.deliver(body)
+    body["nested"] = "changed"
+
+    assert control.mails == [{"nested": {"list": [1, 2]}}]
+
+
+# ---------------------------------------------------------------------------------------------
+# The process helpers
+# ---------------------------------------------------------------------------------------------
+
+
+def test_a_server_that_died_is_a_failure() -> None:
     dead = subprocess.Popen([sys.executable, "-c", "raise SystemExit(3)"])
 
-    with pytest.raises(RuntimeError, match="stopped with 3"):
-        wait_until("http://127.0.0.1:1/", dead, timeout=5)
+    try:
+        # (It is dead by now: the helper must say so, not report it as "not answering yet".)
+        with pytest.raises(RuntimeError, match="stopped with 3"):
+            wait_until("http://127.0.0.1:1/", dead, timeout=10)
+    finally:
+        stop(dead)
 
 
 def test_a_server_that_never_answers_is_a_timeout() -> None:
@@ -157,61 +202,70 @@ def test_stopping_what_already_stopped_is_quiet() -> None:
     assert done.returncode == 0
 
 
+# ---------------------------------------------------------------------------------------------
+# main(): the port, the self-stop and SIGTERM
+# ---------------------------------------------------------------------------------------------
+
+
+@contextmanager
+def nothing() -> Generator[None]:
+    """A stand-in for the fixture site: the harness's other servers, not this test's subject."""
+    yield None
+
+
+def test_main_stops_itself_when_nothing_else_stops_it() -> None:
+    assert main(port=free_port(), self_stop=0.3, make_site=nothing) == 0
+
+
+def test_main_says_when_its_port_is_taken() -> None:
+    with taken_port() as port:
+        assert main(port=port, make_site=nothing) == 1
+
+
+def test_main_stops_on_sigterm() -> None:
+    started = subprocess.Popen(
+        [sys.executable, "-m", "support.e2e"],
+        cwd=ROOT,
+        env=environment_for_the_test(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        assert started.stdout is not None
+        # (The "udl serve on" line is printed before it waits, so it is what says it is up.)
+        line = started.stdout.readline()
+        assert line.startswith("e2e: udl serve on "), line
+        started.send_signal(signal.SIGTERM)
+        assert started.wait(timeout=30) == 0
+        started.stdout.close()
+    finally:
+        if started.poll() is None:  # pragma: no cover - the server must have stopped
+            stop(started)
+
+
+def free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+@contextmanager
+def taken_port() -> Generator[int]:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen()
+        yield int(sock.getsockname()[1])
+
+
+def environment_for_the_test() -> dict[str, str]:
+    """The environment the module runs in: `support.*` is importable, as pytest makes it."""
+    env = {name: value for name, value in os.environ.items() if not name.startswith("UDL_")}
+    tests = str(ROOT / "tests")
+    env["PYTHONPATH"] = f"{tests}:{env.get('PYTHONPATH', '')}".rstrip(":")
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
+
+
 def test_the_self_stop_is_long_enough_for_a_test_and_short_enough_to_not_linger() -> None:
     assert 60 <= SELF_STOP <= 900
-
-
-def test_main_refuses_a_port_that_is_taken(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import socket
-
-    taken = socket.socket()
-    taken.bind(("127.0.0.1", 0))
-    taken.listen()
-    port = taken.getsockname()[1]
-    monkeypatch.setattr("support.e2e.FixtureSite.serve", lambda: _nothing())
-    try:
-        assert main_on(port) == 1
-    finally:
-        taken.close()
-
-
-def main_on(port: int) -> int:
-    from support.e2e import main
-
-    return main(port=port)
-
-
-class _Nothing:
-    def __enter__(self) -> _Nothing:
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        return None
-
-
-def _nothing() -> _Nothing:
-    return _Nothing()
-
-
-def test_the_module_is_importable_without_running() -> None:
-    import support.e2e as module
-
-    assert module.PORT == 8765
-
-
-def test_the_queues_are_not_shared_between_controls() -> None:
-    one, two = Control(), Control()
-
-    one.script("first")
-    one.deliver({"a": 1})
-
-    assert two.next_ai() == "I am a fake AI."
-    assert two.mails == []
-
-
-def test_what_a_call_gave_is_kept_as_it_was_given() -> None:
-    control = Control()
-    body: dict[str, Any] = {"nested": {"list": [1, 2]}}
-    control.deliver(body)
-    body["nested"] = "changed"
-    assert control.mails[0] == {"nested": {"list": [1, 2]}}

@@ -4154,12 +4154,16 @@ timeout: 5m
     `http://127.0.0.1:8765/docs`, and checks the port is free first: `webServer.url` takes a URL only (a regex
     and a string were both rejected), so a port read off the server's stdout is not possible.
   - The harness is isolated from the developer's udl: a config in a temp dir with `[[db.connections]]` (SQLite
-    under it), `[secrets] store = "memory"`, and `environment()` drops every `UDL_*` of the caller's but
-    `UDL_CONFIG`.
+    under it), `[secrets] store = "memory"`, `ui_plugin_dirs` under the temp dir, and an environment that
+    redirects every `XDG_*` dir there and drops every `UDL_*` of the caller's but `UDL_CONFIG`.
   - `@swc/core`'s postinstall is the one build script allowed (`allowBuilds` in `pnpm-workspace.yaml`): pnpm 12
     refuses the install otherwise, and CI's `--frozen-lockfile` would fail. The script only checks that the
     native binding (the platform package) loads; Vite loads it fine.
   - `packages/*/coverage` is written by Vitest and ignored, like `test-results` and `playwright-report`.
+  - **The tests were written first:** `web/e2e/shell.spec.ts` before the workspace, `theme.test.ts` before the
+    store, and `tests/unit/support/test_e2e.py` before the harness. The last one was watched failing for each
+    helper as it was written (`No module named 'support.e2e'`, then the missing `main`, `stop` and the XDG
+    entries in `environment()`).
   - Playwright 1.63.0 (npm) matches the Python 1.63.0 in `uv.lock`, so both use Chromium 1243.
   - Tests: `web/packages/shell/src/stores/theme.test.ts` (the store: system/light/dark, persisted, read back on
     the next visit, an invalid or unreadable saved value, following the system, the media-query listener),

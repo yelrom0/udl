@@ -30,12 +30,12 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Generator
-from contextlib import contextmanager
+from collections.abc import Callable, Generator
+from contextlib import AbstractContextManager, contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import FrameType
-from typing import Final
+from typing import Any, Final
 
 # Package Imports
 from pydantic import TypeAdapter, ValidationError
@@ -81,6 +81,7 @@ port = {port}
 
 [web]
 enabled = false
+ui_plugin_dirs = ["{ui}"]
 
 [automations]
 enabled = false
@@ -97,6 +98,7 @@ def write_config(root: Path, port: int = PORT) -> Path:
             downloads=root / "downloads",
             database=root / "udl.db",
             plugins=E2E_PLUGINS,
+            ui=root / "ui-plugins",
             port=port,
         )
     )
@@ -200,8 +202,10 @@ def serving(control: Control) -> Generator[int]:
 # ---------------------------------------------------------------------------------------------
 
 
-def stop(process: subprocess.Popen[bytes]) -> None:
-    """Ask a server to stop (SIGTERM, as Playwright's webServer does), and wait for it."""
+def stop(process: subprocess.Popen[Any]) -> None:
+    """Ask a server to stop (SIGTERM, as Playwright's webServer does), and wait for it.
+
+    (`Any` is the process's own type: a test's server may be started with text or bytes.)"""
     if process.poll() is not None:
         return
     process.terminate()
@@ -212,7 +216,7 @@ def stop(process: subprocess.Popen[bytes]) -> None:
         process.wait(timeout=5)
 
 
-def answering(url: str, process: subprocess.Popen[bytes]) -> bool:
+def answering(url: str, process: subprocess.Popen[Any]) -> bool:
     """Whether udl answers `url` yet (and has not died trying)."""
     if process.poll() is not None:
         raise RuntimeError(f"udl serve stopped with {process.returncode}")
@@ -235,15 +239,32 @@ def wait_until(
     raise TimeoutError(f"udl serve did not answer {url} in {timeout:g}s")
 
 
-def environment(config: Path) -> dict[str, str]:
-    """The environment `udl serve` runs in: the config, its own checkout first on the path,
-    and nothing of the caller's `UDL_*` (which would override the config)."""
+def environment(config: Path, home: Path) -> dict[str, str]:
+    """The environment `udl serve` runs in: the config, the XDG dirs under `home` (so every
+    other default of udl's — the browser profile, fetched pages, scripts — is the temp dir's
+    too), its own checkout on the path, and nothing of the caller's `UDL_*` (which would
+    override the config)."""
     env = {name: value for name, value in os.environ.items() if not name.startswith("UDL_")}
-    env.update({"UDL_CONFIG": str(config), "PYTHONPATH": str(ROOT), "PYTHONDONTWRITEBYTECODE": "1"})
+    env.update(
+        {
+            "UDL_CONFIG": str(config),
+            "PYTHONPATH": str(ROOT),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "XDG_CONFIG_HOME": str(home / ".config"),
+            "XDG_DATA_HOME": str(home / ".local/share"),
+            "XDG_STATE_HOME": str(home / ".local/state"),
+            "XDG_CACHE_HOME": str(home / ".cache"),
+        }
+    )
     return env
 
 
-def main(*, port: int = PORT, self_stop: float = SELF_STOP) -> int:
+def main(
+    *,
+    port: int = PORT,
+    self_stop: float = SELF_STOP,
+    make_site: Callable[[], AbstractContextManager[object]] | None = None,
+) -> int:
     control = Control()
     stopping = threading.Event()
 
@@ -258,7 +279,7 @@ def main(*, port: int = PORT, self_stop: float = SELF_STOP) -> int:
     with (
         tempfile.TemporaryDirectory(prefix="udl-e2e-") as work,
         serving(control) as controls,
-        FixtureSite.serve() as site,
+        (make_site or FixtureSite.serve)(),
     ):
         # (Playwright's webServer waits for a URL, so the port is fixed: it must match the one
         # in web/playwright.config.ts. A port already in use is said, not fought over.)
@@ -266,11 +287,12 @@ def main(*, port: int = PORT, self_stop: float = SELF_STOP) -> int:
             if sock.connect_ex(("127.0.0.1", port)) == 0:
                 print(f"e2e: {port} is taken", file=sys.stderr, flush=True)  # noqa: T201
                 return 1
-        config = write_config(Path(work), port)
+        home = Path(work)
+        config = write_config(home, port)
         udl = subprocess.Popen(
             [sys.executable, "-m", "udl", "serve"],
             cwd=ROOT,
-            env=environment(config),
+            env=environment(config, home),
             stdout=subprocess.DEVNULL,
         )
         # (udl answers /docs whether or not the UI is built, so it is what says it is up; the
@@ -279,9 +301,7 @@ def main(*, port: int = PORT, self_stop: float = SELF_STOP) -> int:
         # (Both lines are printed before waiting: a server that is up must say so even if its
         # /docs never answers, or the test would only time out.)
         print(f"e2e: udl serve on {url}", file=sys.stdout, flush=True)  # noqa: T201
-        print(  # noqa: T201 - where the fakes are, for a person reading the log
-            f"e2e: fixture site on {site.url('/')}, controls on :{controls}", flush=True
-        )
+        print(f"e2e: controls on :{controls}", flush=True)  # noqa: T201
         try:
             wait_until(url, udl)
             stopping.wait(self_stop)  # (Playwright's webServer kills after a few minutes)
