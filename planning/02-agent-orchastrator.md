@@ -369,7 +369,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - `RUNNERS` in `PLUGIN_KINDS`; `tests/support/runners.py`: `FakeRunner`, scripted per prompt, able to call back into a `UDLService` as an agent would (so e2e tests need no model); and `fake_harness.py`, a small script the real runners' tests point their binary at.
 - Tests first: `tests/contract/test_runner_contract.py` over `fake`: the phase's second bullet.
 - Done when: `FakeRunner` passes the contract.
-- **Built (deepseek-a, 2026-11-19, PR #N):** the kind, its contract and the fake.
+- **Built (deepseek-a, 2026-11-19, PR #22):** the kind, its contract and the fake.
   - `udl/plugins/runners/base.py`: `AgentRunner[O]` with `name`, `options_model`, `requires`, the
     `options`/`shell`/`clock` it is given, `health()`/`models()`/`start()`/`send()`/`stop()`, and
     `install()`/`login()` whose defaults refuse (`PluginError`: "cannot be installed by udl", "cannot
