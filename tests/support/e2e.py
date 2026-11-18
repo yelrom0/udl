@@ -16,6 +16,8 @@ and downloads under it, the memory secret store, and no `UDL_*` variables inheri
 
 It prints the URL it serves on, and stops everything on SIGTERM (and Ctrl-C); it also stops
 itself after `SELF_STOP` seconds, so a test run that leaves it behind does not leave it forever.
+It serves on the port `--port` names, else on a free one the OS picks: never a port of udl's
+own (8765, `udl serve`'s default), where the developer's udl may be answering.
 """
 
 # System Imports
@@ -52,8 +54,6 @@ READY_TIMEOUT: Final[float] = 30
 # How long the server runs on its own before it stops itself, so a test that leaves it behind
 # does not leave it forever (Playwright's webServer stops it with SIGTERM, which it also takes).
 SELF_STOP: Final[float] = 600
-# The port Playwright's `webServer.url` waits on; it must match `web/playwright.config.ts`.
-PORT: Final[int] = 8765
 # A control call's answer.
 JSON = "application/json"
 
@@ -88,10 +88,11 @@ enabled = false
 """
 
 
-def write_config(root: Path, port: int = PORT) -> Path:
+def write_config(root: Path, port: int) -> Path:
     """The config `udl serve` reads: a SQLite database and downloads under `root`, the e2e
-    plugins as local ones, and the memory secret store. `[web] enabled = false`: the shell is
-    served from 18.3, and the harness's job is to have a udl for a browser to talk to."""
+    plugins as local ones, the memory secret store, and udl on `port`. `[web] enabled = false`:
+    the shell is served from 18.3, and the harness's job is to have a udl for a browser to talk
+    to."""
     path = root / "config.toml"
     path.write_text(
         CONFIG.format(
@@ -257,8 +258,9 @@ def environment(config: Path, home: Path) -> dict[str, str]:
     return env
 
 
-def port_from(argv: list[str] | None, default: int) -> int:
-    """The port the command line asks for (`--port N`), else `default`."""
+def port_from(argv: list[str] | None, default: int | None) -> int | None:
+    """The port the command line asks for (`--port N`), else `default` (`None` when the caller
+    has none, and `main()` then picks a free one)."""
     given = list(argv or ())
     for index, arg in enumerate(given):
         if arg == "--port" and index + 1 < len(given):
@@ -268,14 +270,24 @@ def port_from(argv: list[str] | None, default: int) -> int:
     return default
 
 
+def free_port() -> int:
+    """A port nothing is listening on: the OS picks it, and it is free again by the time this
+    returns, so the caller binds that one and no other."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
 def main(
     *,
-    port: int = PORT,
+    port: int | None = None,
     self_stop: float = SELF_STOP,
     make_site: Callable[[], AbstractContextManager[object]] | None = None,
     argv: list[str] | None = None,
 ) -> int:
     port = port_from(argv, port)
+    if port is None:
+        port = free_port()
     control = Control()
     stopping = threading.Event()
 
@@ -292,8 +304,8 @@ def main(
         serving(control) as controls,
         (make_site or FixtureSite.serve)(),
     ):
-        # (Playwright's webServer waits for a URL, so the port is fixed: it must match the one
-        # in web/playwright.config.ts. A port already in use is said, not fought over.)
+        # (A port somebody else holds is said, not fought over: Playwright passes the free one
+        # it picked in web/playwright.config.ts, so a taken one was taken since.)
         with socket.socket() as sock:
             if sock.connect_ex(("127.0.0.1", port)) == 0:
                 print(f"e2e: {port} is taken", file=sys.stderr, flush=True)  # noqa: T201

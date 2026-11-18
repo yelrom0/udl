@@ -26,9 +26,9 @@ import pytest
 
 # Local Imports
 from support.e2e import (
-    PORT,
     Control,
     environment,
+    free_port,
     main,
     port_from,
     serving,
@@ -36,6 +36,7 @@ from support.e2e import (
     wait_until,
     write_config,
 )
+from udl.config import APISettings
 
 E2E_PLUGINS = Path(__file__).resolve().parents[2] / "support" / "e2e_plugins"
 # (The module under test runs `udl` from the checkout; tests start it as a module.)
@@ -75,10 +76,10 @@ def refuses(port: int, path: str, body: object, status: int) -> None:
 
 
 def test_the_config_is_what_the_server_reads(tmp_path: Path) -> None:
-    path = write_config(tmp_path)
+    path = write_config(tmp_path, port=9123)
 
     text = path.read_text()
-    assert f"port = {PORT}" in text
+    assert "port = 9123" in text
     # (Its own SQLite database and downloads, under the temp dir: never the user's.)
     assert f'url = "sqlite+aiosqlite:///{tmp_path / "udl.db"}"' in text
     assert f'download_dir = "{tmp_path / "downloads"}"' in text
@@ -237,14 +238,35 @@ def test_main_says_when_its_port_is_taken() -> None:
 
 
 def test_the_port_can_come_from_the_command_line() -> None:
-    assert port_from(["--port", "9123"], PORT) == 9123
-    assert port_from(["--port=9123"], PORT) == 9123
-    assert port_from([], PORT) == PORT
+    assert port_from(["--port", "9123"], None) == 9123
+    assert port_from(["--port=9123"], None) == 9123
+    # (Nothing given: the caller's default is kept — `None` for `main()`, which picks a free one.)
+    assert port_from([], None) is None
+    assert port_from([], 9124) == 9124
+
+
+def test_a_free_port_is_free_and_is_not_udls_own() -> None:
+    port = free_port()
+
+    # (8765 is `udl serve`'s default, where the developer's own udl answers: a harness that
+    # took it would test that udl, with the user's own data.)
+    assert port != APISettings().port
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", port))
+
+
+def test_the_default_port_is_a_free_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    # (Told no `--port`, the harness asks `free_port()`: a port it fixed itself could be one
+    # somebody else holds. A taken port is how this test sees the one it used.)
+    with taken_port() as port:
+        monkeypatch.setattr("support.e2e.free_port", lambda: port)
+        assert main(make_site=nothing) == 1
 
 
 def test_main_stops_on_sigterm() -> None:
+    port = free_port()
     started = subprocess.Popen(  # noqa: S603 - the module under test
-        [sys.executable, "-m", "support.e2e", "--port", str(free_port())],
+        [sys.executable, "-m", "support.e2e", "--port", str(port)],
         cwd=ROOT,
         env=environment_for_the_test(),
         stdout=subprocess.PIPE,
@@ -253,9 +275,10 @@ def test_main_stops_on_sigterm() -> None:
     )
     try:
         assert started.stdout is not None
-        # (The "udl serve on" line is printed before it waits, so it is what says it is up.)
+        # (The "udl serve on" line is printed before it waits, so it is what says it is up —
+        # and on the port it was given.)
         line = started.stdout.readline()
-        assert line.startswith("e2e: udl serve on "), line
+        assert line.startswith(f"e2e: udl serve on http://127.0.0.1:{port}/docs"), line
         started.send_signal(signal.SIGTERM)
         assert started.wait(timeout=30) == 0
         started.stdout.close()
@@ -263,12 +286,6 @@ def test_main_stops_on_sigterm() -> None:
         if started.poll() is None:  # pragma: no cover - the server must have stopped
             started.kill()
             started.wait(timeout=10)
-
-
-def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
 
 
 @contextmanager
