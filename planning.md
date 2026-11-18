@@ -94,7 +94,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [ ] 24.1 Phase 18 (18.1–18.10, ticked in their own tracker below), pulled forward and built as written, with the amendments in 24.1's card
   - [~] 24.2 `UISpec` on operations and `ui_field()` on request, settings and account fields
   - [~] 24.3 `GET /ui/generated.json`: every plugin's operations, settings, accounts and event types, with their schemas
-  - [ ] 24.4 `<SchemaForm>`: a form from any request model's JSON Schema
+  - [~] 24.4 `<SchemaForm>`: a form from any request model's JSON Schema
   - [ ] 24.5 `<ResultView>`: a table, a detail list or a tree from any response
   - [ ] 24.6 The generated plugin page (`/ui/p/<plugin>`): Operations, Settings, Accounts, Events; nav for every plugin
   - [ ] 24.7 UI plugins guide the generated UI: `generated` in the manifest, and the `operationViews`, `resultViews` and `fieldWidgets` points

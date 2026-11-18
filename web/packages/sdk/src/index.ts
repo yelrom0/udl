@@ -12,6 +12,16 @@
  */
 
 export type { Contributions, NavItem, UIManifest, Widget } from "./manifest";
+export type { FieldOption, FieldSpec, FieldWidget } from "./schema";
+export {
+	fieldsOf,
+	fieldWidgets,
+	isJsonObject,
+	resolveRefs,
+	valueAt,
+	withoutValue,
+	withValue,
+} from "./schema";
 
 /** The SDK's version: what a manifest's `sdk` range (`^MAJOR.MINOR`) is checked against. */
 export const version = "1.0.0";

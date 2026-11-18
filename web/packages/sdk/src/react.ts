@@ -14,6 +14,9 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import type { Mount, UIContext } from "./index";
 
+export type { FieldWidgetProps, FormValue, SchemaFormProps } from "./SchemaForm";
+export { SchemaForm } from "./SchemaForm";
+
 /** A component a plugin mounts: its props, and the shell's context (as `ctx`). */
 export type Component<P> = (props: P & { ctx: UIContext }) => ReactNode;
 

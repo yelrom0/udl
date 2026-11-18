@@ -12,6 +12,7 @@
 	"dependencies": {
 		"@tanstack/react-router": "1.170.46",
 		"@udl/api": "workspace:*",
+		"@udl/ui-sdk": "workspace:*",
 		"react": "19.3.1",
 		"react-dom": "19.3.1",
 		"zustand": "5.1.0"
