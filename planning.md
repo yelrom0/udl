@@ -4365,7 +4365,7 @@ timeout: 5m
 - Tests first: `tests/interface/web/test_sessions.py`: the phase's second bullet, and the Origin check
   with and without an API key.
 - Done when: the API is as safe from other web pages with a session as it is without one.
-- **Built (deepseek-a, 2026-11-19, PR #N):** sessions, and the two rules that make a cookie safe.
+- **Built (deepseek-a, 2026-11-19, PR #17):** sessions, and the two rules that make a cookie safe.
   - `src/udl/interfaces/web/sessions.py`:
     - `SessionStore` (a token to its expiry, in memory, tokens from `secrets.token_urlsafe(32)`;
       `is_live` drops an expired one, `live` counts what is left) and `session_store(settings)`,
