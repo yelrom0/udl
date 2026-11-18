@@ -96,7 +96,9 @@ async def test_a_reference_is_resolved_when_it_is_read(op_on_path: Path) -> None
 
     await store.set(STORE_REF, SecretStr(REFERENCE))
 
-    assert (await store.get(STORE_REF)).get_secret_value() == VALUE
+    read = await store.get(STORE_REF)
+    assert read is not None
+    assert read.get_secret_value() == VALUE
     kept = await store.wrapped.get(STORE_REF)
     assert kept is not None
     assert kept.get_secret_value() == REFERENCE  # (only the text is written)
@@ -118,7 +120,9 @@ async def test_a_plain_secret_is_kept_and_read_as_it_is(op_on_path: Path) -> Non
 
     await store.set(STORE_REF, SecretStr(VALUE))
 
-    assert (await store.get(STORE_REF)).get_secret_value() == VALUE
+    read = await store.get(STORE_REF)
+    assert read is not None
+    assert read.get_secret_value() == VALUE
     kept = await store.wrapped.get(STORE_REF)
     assert kept is not None
     assert kept.get_secret_value() == VALUE
@@ -160,8 +164,8 @@ async def test_a_secret_header_that_is_a_reference_works_and_keeps_only_it(
         await service.run_action(RunActionRequest(name="hook"))
 
         assert seen == [VALUE]
-        kept = saved.options["secret_headers"]["Authorization"]
-        assert isinstance(kept, dict)
-        stored = await service.secrets.wrapped.get(SecretRef(str(kept["secret"])))
+        stored = await service.secrets.wrapped.get(
+            SecretRef.of("actions", saved.id, "secret_headers", "Authorization")
+        )
         assert stored is not None
         assert stored.get_secret_value() == REFERENCE
