@@ -1,7 +1,7 @@
 """
--------------
+---------------
 - test_e2e.py -
--------------
+---------------
 
 tests/support/e2e.py: the config it writes for `udl serve`, the control API beside it (a test
 delivers a mail, posts a Slack message or scripts the AI through it), and the process helpers.
@@ -231,6 +231,11 @@ def test_a_request_that_is_not_json_is_refused() -> None:
         assert refused.code == 400
 
 
+def test_main_says_when_its_port_is_taken() -> None:
+    with taken_port() as port:
+        assert main(port=port, make_site=nothing) == 1
+
+
 def test_the_port_can_come_from_the_command_line() -> None:
     assert port_from(["--port", "9123"], PORT) == 9123
     assert port_from(["--port=9123"], PORT) == 9123
@@ -268,6 +273,7 @@ def free_port() -> int:
 
 @contextmanager
 def taken_port() -> Generator[int]:
+    """A port that is bound and listening, so a server told to use it finds it taken."""
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         sock.listen()
