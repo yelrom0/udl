@@ -3,12 +3,38 @@
 	"version": "1.0.0",
 	"private": true,
 	"type": "module",
-	"description": "What a udl UI plugin is written against: the manifest's types (from udl's model), defineUIPlugin, and the mount contract.",
+	"description": "What a udl UI plugin is written against: the manifest's types (from udl's model), defineUIPlugin, the mount contract, and react().",
+	"exports": {
+		".": "./src/index.ts",
+		"./react": "./src/react.ts"
+	},
 	"scripts": {
 		"manifest": "json2ts src/manifest.schema.json --output src/manifest.ts",
-		"check-generated": "node scripts/check-generated.mjs"
+		"check-generated": "node scripts/check-generated.mjs",
+		"build": "vite build",
+		"test": "tsc --noEmit && vitest run --coverage"
+	},
+	"peerDependencies": {
+		"react": ">=19",
+		"react-dom": ">=19"
+	},
+	"peerDependenciesMeta": {
+		"react": {
+			"optional": true
+		},
+		"react-dom": {
+			"optional": true
+		}
 	},
 	"devDependencies": {
-		"json-schema-to-typescript": "15.0.4"
+		"@types/react": "19.3.0",
+		"@types/react-dom": "19.3.0",
+		"@vitest/coverage-v8": "5.1.0",
+		"jsdom": "31.0.1",
+		"json-schema-to-typescript": "15.0.4",
+		"react": "19.3.1",
+		"react-dom": "19.3.1",
+		"vite": "8.3.8",
+		"vitest": "5.1.0"
 	}
 }

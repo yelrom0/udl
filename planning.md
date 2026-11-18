@@ -317,7 +317,7 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
   - [ ] 18.5 The shell: layout, TanStack Router (file routes, auth guard, a splat route for plugin pages), Zustand stores, light / dark / system theme
   - [ ] 18.6 Live data: shared SSE connections feeding Zustand stores, reconnecting with backoff
   - [~] 18.7 `UIManifest` (Pydantic → JSON Schema → TypeScript), `ui` on every plugin kind, the `udl.ui` kind, local UI plugin dirs, `GET /ui/plugins.json`, UI availability in `list_plugins`
-  - [ ] 18.8 `@udl/ui-sdk`: `defineUIPlugin`, the mount contract, a React adapter, the plugin context, SDK version checks
+  - [~] 18.8 `@udl/ui-sdk`: `defineUIPlugin`, the mount contract, a React adapter, the plugin context, SDK version checks
   - [ ] 18.9 The plugin host: `<PluginSlot>` (lazy import, Shadow DOM isolation, error boundary) and the contribution points
   - [ ] 18.10 Proof: an example UI plugin built with shadcn/ui runs isolated inside the daisyUI shell (e2e); a template for new UI plugins
 
@@ -4473,6 +4473,7 @@ timeout: 5m
     `update`, and unmounts on `unmount`.
 - Tests first: Vitest: the mount contract with `react()` and with a plain-DOM mount.
 - Done when: the template (18.10) builds against the SDK.
+- **Built (deepseek-b, 2026-11-19, PR #TBD):** stacked on 18.7 (`feat/18.7-ui-manifests`, **Merge after #21**). `web/packages/sdk/src/index.ts` (`version` 1.0.0, `defineUIPlugin(spec)` which is the spec itself, `Mount<P>`/`Mounted<P>`, `UIContext` with `api`/`call`/`events`/`theme`/`stores`/`navigate`/`toast`/`confirm`/`plugin`, `JsonValue`/`JsonObject`, and a props type for each of the seven points), `src/react.ts` (`react(Component)`, React external and a peer dependency of that entry only; `flushSync` so the target is drawn when mount and update return, as a plain-DOM mount's is), the manifest's types re-exported from 18.7's generated `manifest.ts`, and Vite's library mode (`index` + `react`, ES modules). Tests: 9 Vitest (the spec kept as given and every point, the version against `package.json`, and the mount contract with `react()` — draw, update, unmount — and with a plain-DOM `Mount<WidgetProps>`), 100 % coverage. `UIContext.api` is `unknown` until 18.2's typed client is in the shell; the rest is structural. Done-when (18.10's template) is not testable yet.
 
 **18.9 The plugin host** · needs 18.8, 18.6
 - Build: `web/packages/shell/src/plugins/`.
