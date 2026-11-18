@@ -4221,7 +4221,7 @@ timeout: 5m
   OpenAPI schema. `uv build` must put the built files in the wheel; check it here.
 - Tests first: `tests/interface/web/test_serving.py`: the phase's first bullet.
 - Done when: `udl serve` shows the built shell at `/ui/`.
-- **Built (deepseek-a, 2026-11-18, PR #N):** the UI at `/ui`.
+- **Built (deepseek-a, 2026-11-18, PR #14):** the UI at `/ui`.
   - `src/udl/interfaces/web/app.py`: `add_web_routes(app, settings, dist=DIST)` (`DIST` is the
     package's `dist/`), which `create_app()` calls when `settings.web.enabled`. The routes are
     Starlette's, so no API key is asked for and none of them is in the schema:
