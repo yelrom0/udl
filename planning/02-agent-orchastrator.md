@@ -464,7 +464,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
 - Build: `udl/plugins/runners/command.py`: any CLI as a runner. Options: `argv` (a template with `{model}`, `{session}`, `{cwd}`; the prompt on stdin), `resume_argv`, `output: text | jsonl`. `argv[0]` must be listed in `[orch] allowed_commands` (file-only), as 17.3's provider commands are. Output lines are `TextDelta`s; exit 0 is `TurnEnded(done)`.
 - Tests first: the contract over a tiny script.
 - Done when: `echo`-like and failing commands both end a turn correctly.
-- **Built (deepseek-a, 2026-11-19, PR #N):** the `command` runner.
+- **Built (deepseek-a, 2026-11-19, PR #25):** the `command` runner.
   - `udl/plugins/runners/command.py`: `CommandRunner` (name `command`, published under `udl.runners`
     in pyproject, so `udl plugins list` shows it). `CommandRunnerOptions`: `argv` (the template),
     `resume_argv` (a later turn's, when it differs), `output: text | jsonl`, `models`.
