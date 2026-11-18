@@ -13,6 +13,10 @@ from typing import ClassVar
 # Package Imports
 from keyring.backend import KeyringBackend
 from keyring.errors import KeyringLocked, PasswordDeleteError
+from pydantic import SecretStr
+
+# Local Imports
+from udl.plugins.secrets.resolvers import ResolverHealth, SecretResolver
 
 
 class MemoryKeyring(KeyringBackend):
@@ -46,3 +50,20 @@ class LockedKeyring(MemoryKeyring):
 
     def delete_password(self, service: str, username: str) -> None:
         raise KeyringLocked("the keyring is locked")
+
+
+class FakeResolver(SecretResolver):
+    """A resolver that knows every reference of its scheme: `fake://<anything>` resolves to
+    `resolved:<anything>`, so a test of the store that resolves needs no `op`."""
+
+    scheme = "fake"
+
+    def allows(self, reference: str) -> bool:
+        """Whether it may read `reference`: any but the ones called "outside"."""
+        return not reference.startswith("outside/")
+
+    async def resolve(self, reference: str) -> SecretStr:
+        return SecretStr(f"resolved:{reference}")
+
+    async def check(self) -> ResolverHealth:
+        return ResolverHealth(ok=True, vaults=["any"])

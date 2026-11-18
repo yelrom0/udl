@@ -71,6 +71,9 @@ memory = "udl.plugins.secrets.memory:MemorySecretStore"
 [project.entry-points."udl.runners"]
 command = "udl.plugins.runners.command:CommandRunner"
 
+[project.entry-points."udl.secret_resolvers"]
+op = "udl.plugins.secrets.onepassword:OnePasswordResolver"
+
 [project.entry-points."udl.actions"]
 emit = "udl.plugins.actions.emit:EmitAction"
 notify = "udl.plugins.actions.notify:NotifyAction"

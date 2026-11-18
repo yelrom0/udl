@@ -20,16 +20,21 @@ import pytest
 from pydantic import SecretStr
 
 # Local Imports
-from support.secrets import MemoryKeyring
+from support.clock import FakeClock
+from support.secrets import FakeResolver, MemoryKeyring
 from udl.config import SecretsSettings
 from udl.plugins.registry import SECRETS, PluginRegistry
 from udl.plugins.secrets.base import SecretRef, SecretStore
+from udl.plugins.secrets.memory import MemorySecretStore
+from udl.plugins.secrets.resolvers import ResolvingStore
 
 SECRET = "s3cret-Value_42"  # noqa: S105 - (a test's)
 
-# The settings each store is tried with.
+# The settings each store is tried with ("resolving": the memory store, wrapped to resolve
+# references — what udl uses when a resolver is enabled).
 STORES: dict[str, Callable[[Path], SecretsSettings]] = {
     "memory": lambda _: SecretsSettings(store="memory"),
+    "resolving": lambda _: SecretsSettings(store="memory"),
     "file": lambda tmp_path: SecretsSettings(store="file", file=tmp_path / "udl" / "secrets.json"),
     "keyring": lambda _: SecretsSettings(store="keyring", keyring_service="udl-test"),
 }
@@ -46,15 +51,24 @@ def backend() -> Iterator[MemoryKeyring]:
 
 
 @pytest.fixture(params=sorted(STORES))
-def settings(
-    request: pytest.FixtureRequest, tmp_path: Path, backend: MemoryKeyring
-) -> SecretsSettings:
-    return STORES[request.param](tmp_path)
+def kind(request: pytest.FixtureRequest) -> str:
+    """The store each test runs with (a name in STORES)."""
+    return str(request.param)
 
 
 @pytest.fixture
-def store(settings: SecretsSettings) -> SecretStore:
-    """A store of each kind, found the way udl finds it (by entry point)."""
+def settings(kind: str, tmp_path: Path, backend: MemoryKeyring) -> SecretsSettings:
+    return STORES[kind](tmp_path)
+
+
+@pytest.fixture
+def store(kind: str, settings: SecretsSettings) -> SecretStore:
+    """A store of each kind, found the way udl finds it (by entry point), and the resolving one
+    udl uses when a resolver is enabled (over the memory store)."""
+    if kind == "resolving":
+        return ResolvingStore(
+            MemorySecretStore(settings), [FakeResolver(settings)], clock=FakeClock()
+        )
     return PluginRegistry.discover().get(SECRETS, settings.store)(settings)
 
 
