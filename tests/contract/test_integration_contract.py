@@ -66,6 +66,9 @@ class Case:
     connected: Callable[[ConnectMethod], Awaitable[tuple[Credentials, BaseModel]]]
     # Make `count` things happen in the account called `name`.
     happen: Callable[[str, int], Awaitable[None]]
+    # Wait until the watcher has read what was already there, for one that starts by taking a
+    # baseline (what is there when it starts is not news, so a test makes things happen after).
+    settle: Callable[[MemoryState], Awaitable[None]] | None = None
 
 
 def fake_case() -> Case:
@@ -113,7 +116,10 @@ def github_case() -> Case:
             made += 1
             fake.open_pull(number=made, head=f"feat/thing-{made}")
 
-    return Case(integration, clock, connected, happen)
+    async def settle(state: MemoryState) -> None:
+        await until(lambda: bool(state.saved), clock)
+
+    return Case(integration, clock, connected, happen, settle)
 
 
 CASES: dict[str, Callable[[], Case]] = {"fake": fake_case, "github": github_case}
@@ -126,6 +132,12 @@ def case(request: pytest.FixtureRequest) -> Case:
 
 def integration_of(case: Case) -> type[Integration[Any, Any]]:
     return type(case.integration)
+
+
+async def settled(case: Case, state: MemoryState) -> None:
+    """Let the watcher take its baseline, where it starts by reading what is already there."""
+    if case.settle is not None:
+        await case.settle(state)
 
 
 async def handle_of(case: Case, name: str = "work") -> StubHandle[Any]:
@@ -222,6 +234,7 @@ async def test_its_watcher_publishes_only_its_own_types(case: Case) -> None:
     state = MemoryState(integration_of(case).state_model)
     watching = asyncio.create_task(case.integration.watch(handle, sink, state))
 
+    await settled(case, state)
     await case.happen("work", 3)
     await until(lambda: len(sink.emitted) >= 3, case.clock)
     await cancelled(watching)
@@ -254,6 +267,7 @@ async def test_its_watcher_goes_on_from_its_saved_state_without_publishing_anyth
     state = MemoryState(plugin.state_model)
     first = RecordingSink(plugin)
     watching = asyncio.create_task(case.integration.watch(handle, first, state))
+    await settled(case, state)
     await case.happen("work", 2)
     await until(lambda: len(first.emitted) >= 2, case.clock)
     await cancelled(watching)

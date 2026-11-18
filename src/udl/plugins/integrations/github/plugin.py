@@ -27,7 +27,7 @@ from datetime import timedelta
 from typing import Annotated, Any, Final
 
 # Package Imports
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, SecretStr
 
 # Local Imports
 from udl.automations.events import EventType
@@ -101,7 +101,9 @@ class GitHubSettings(IntegrationSettings):
 class GitHubOptions(AccountOptions):
     """A github account's options."""
 
-    repos: list[str] = Field(default_factory=list[str])
+    repos: list[Annotated[str, Field(pattern=r"^[^/\s]+/[^/\s]+$")]] = Field(
+        default_factory=list[Annotated[str, Field(pattern=r"^[^/\s]+/[^/\s]+$")]]
+    )
     """The repositories it works in (owner/name, e.g. acme/widgets): its operations and its
     watcher only ever touch these."""
     api_url: Annotated[str, FileOnly()] = DEFAULT_API_URL
@@ -129,18 +131,18 @@ class PullCursor(BaseModel):
     """Where it was: open, closed or merged."""
     updated_at: AwareDatetime | None = None
     """When GitHub last said it changed (None: it did not say)."""
-    checks: str
+    checks: str = ""
     """A digest of its checks, so they are published when they change."""
-    comments: str
-    """A digest of its comments, so a new one is published."""
-    checks_done: bool = False
-    """Whether its checks all have a verdict (so a watcher stops asking GitHub for them: a pull
-    whose checks never started is asked about while it is open)."""
-
-    @property
-    def wants_checks(self) -> bool:
-        """Whether its checks are still worth asking about: it is open, and they are not done."""
-        return self.state == "open" and not self.checks_done
+    comments: str = ""
+    """A digest of its conversation's comments, so a new one is published."""
+    review: str = ""
+    """A digest of the comments on its diff, so a new one is published."""
+    checks_etag: str | None = None
+    """The ETag of its head's checks, so asking about them again costs no rate limit."""
+    comments_etag: str | None = None
+    """The ETag of its conversation's comments (see checks_etag)."""
+    review_etag: str | None = None
+    """The ETag of the comments on its diff (see checks_etag)."""
 
 
 class GitHubState(BaseModel):
@@ -465,40 +467,79 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
         self, client: GitHubClient, events: EventSink, state: GitHubState, repo: str
     ) -> GitHubState:
         """One look at `repo`: a 304 ends it at once, a pull GitHub did not say changed is left
-        alone, and the checks of a pull still running are asked about again (they finish without
-        the pull itself changing)."""
+        alone, and each open pull's checks and comments are asked about again — they change
+        without the pull itself changing (a check finishing, a comment, a rerun), and a 304 for
+        one that did not costs no rate limit. The first look at a repository is its baseline:
+        what is already there is not news."""
         changed = await client.pulls_if_changed(repo, etag=state.etags.get(repo))
         if changed.etag is not None:
             state.etags[repo] = changed.etag
+        first = not any(key.startswith(f"{repo}#") for key in state.pulls)
         for pull in changed.pulls or []:
             key = f"{repo}#{pull.number}"
             before = state.pulls.get(key)
             if before is not None and before.updated_at == pull.updated_at:
                 continue
-            checks = await client.list_check_runs(repo, pull.head.sha)
-            comments = await client.list_comments(repo, pull.number)
-            await self._tell(events, repo, pull, before, checks=checks, comments=comments)
-            state.pulls[key] = PullCursor(
-                head_sha=pull.head.sha,
-                state=_state_of(pull),
-                updated_at=pull.updated_at,
-                checks=_digest_of(checks),
-                comments=_digest_of(comments),
-                checks_done=_all_done(checks),
-            )
+            state.pulls[key] = _cursor_for(before, pull)
+            if first:
+                state.pulls[key] = await self._seen(client, repo, pull, state.pulls[key])
+                continue
+            await self._tell(events, repo, pull, before)
         for key, before in list(state.pulls.items()):
             name, _, number = key.rpartition("#")
-            if name != repo or not before.wants_checks:
+            if name != repo or before.state != "open":
                 continue
-            checks = await client.list_check_runs(repo, before.head_sha)
-            if _concluded(checks) is None:
-                continue
-            pull = await client.get_pull(repo, int(number))
-            await self._tell(events, repo, pull, before, checks=checks)
-            state.pulls[key] = before.model_copy(
-                update={"checks": _digest_of(checks), "checks_done": True}
+            checks, checks_etag = await client.checks_if_changed(
+                repo, before.head_sha, etag=before.checks_etag
             )
+            comments, comments_etag = await client.comments_if_changed(
+                repo, int(number), etag=before.comments_etag
+            )
+            review, review_etag = await client.review_comments_if_changed(
+                repo, int(number), etag=before.review_etag
+            )
+            if checks is None and comments is None and review is None:
+                continue  # (three 304s: nothing changed, and they cost no rate limit)
+            pull = await client.get_pull(repo, int(number))
+            if pull.head.sha != before.head_sha:
+                continue  # (its head moved: the next look at the repository says what happened)
+            await self._tell(
+                events, repo, pull, before, checks=checks, comments=comments, review=review
+            )
+            update: dict[str, Any] = {
+                "state": _state_of(pull),
+                "updated_at": pull.updated_at,
+                "checks_etag": checks_etag,
+                "comments_etag": comments_etag,
+                "review_etag": review_etag,
+            }
+            if checks is not None:
+                update["checks"] = _digest_of(checks)
+            if comments is not None:
+                update["comments"] = _digest_of(comments)
+            if review is not None:
+                update["review"] = _digest_of(review)
+            state.pulls[key] = before.model_copy(update=update)
         return state
+
+    async def _seen(
+        self, client: GitHubClient, repo: str, pull: GhPull, cursor: PullCursor
+    ) -> PullCursor:
+        """`cursor` with the checks and comments `pull` has now, and nothing published (a
+        repository's first look is its baseline)."""
+        checks, checks_etag = await client.checks_if_changed(repo, pull.head.sha)
+        comments, comments_etag = await client.comments_if_changed(repo, pull.number)
+        review, review_etag = await client.review_comments_if_changed(repo, pull.number)
+        return cursor.model_copy(
+            update={
+                "checks": _digest_of(checks or []),
+                "checks_etag": checks_etag,
+                "comments": _digest_of(comments or []),
+                "comments_etag": comments_etag,
+                "review": _digest_of(review or []),
+                "review_etag": review_etag,
+            }
+        )
 
     async def _tell(
         self,
@@ -509,61 +550,67 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
         *,
         checks: Sequence[GhCheckRun] | None = None,
         comments: Sequence[GhComment] | None = None,
+        review: Sequence[GhReviewComment] | None = None,
     ) -> None:
         """Publish what is new about `pull` since `before` (everything, the first time): its
         checks and comments only where they were read (None: not this time)."""
-        what: dict[str, Any] = {
-            "repo": repo,
-            "number": pull.number,
-            "title": pull.title,
-            "head_sha": pull.head.sha,
-            "html_url": pull.html_url,
-        }
         ref = f"{repo}#{pull.number}"
         if before is None:
             await events.emit(
                 "github.pr.opened",
-                PullOpened(**what, author=pull.user.login),
+                _event(PullOpened, repo, pull, author=pull.user.login),
                 dedupe_key=f"{ref}:opened",
             )
         elif before.head_sha != pull.head.sha:
             await events.emit(
                 "github.pr.updated",
-                PullUpdated(**what, previous_sha=before.head_sha),
+                _event(PullUpdated, repo, pull, previous_sha=before.head_sha),
                 dedupe_key=f"{ref}:{pull.head.sha}",
             )
         now = _state_of(pull)
         if now != "open" and (before is None or before.state != now):
-            merged = now == "merged"
-            kind: type[PullEvent] = PullMerged if merged else PullClosed
-            await events.emit(
-                f"github.pr.{'merged' if merged else 'closed'}",
-                kind(**what),
-                dedupe_key=f"{ref}:{now}",
-            )
-        finished = _concluded(checks or ())
-        if (
-            checks is not None
-            and finished is not None
-            and (before is None or before.checks != _digest_of(checks))
-        ):
+            if now == "merged":
+                await events.emit(
+                    "github.pr.merged",
+                    _event(PullMerged, repo, pull, merged_by=_merged_by(pull)),
+                    dedupe_key=f"{ref}:{now}",
+                )
+            else:
+                await events.emit(
+                    "github.pr.closed", _event(PullClosed, repo, pull), dedupe_key=f"{ref}:{now}"
+                )
+        finished = _concluded(checks) if checks is not None else None
+        if finished is not None and (before is None or before.checks != _digest_of(checks or [])):
             conclusion, failed = finished
             await events.emit(
                 "github.pr.checks_finished",
-                ChecksFinished(**what, conclusion=conclusion, failed=failed),
-                dedupe_key=f"{ref}:checks:{_digest_of(checks)}",
+                _event(
+                    ChecksFinished,
+                    repo,
+                    pull,
+                    conclusion=conclusion,
+                    failed=[str(name) for name in failed],
+                ),
+                dedupe_key=f"{ref}:checks:{_digest_of(checks or [])}",
             )
-        if comments is not None and (before is None or before.comments != _digest_of(comments)):
-            for note in comments:
+        for kind, notes, digest in (
+            ("comment", comments, before.comments if before is not None else ""),
+            ("review", review, before.review if before is not None else ""),
+        ):
+            if notes is None or (before is not None and digest == _digest_of(notes)):
+                continue
+            for note in notes:
                 await events.emit(
                     "github.pr.commented",
-                    PullCommented(
-                        **what,
+                    _event(
+                        PullCommented,
+                        repo,
+                        pull,
                         author=note.user.login,
                         body=note.body,
                         is_bot=_is_bot(note.user.login),
                     ),
-                    dedupe_key=f"{ref}:comment:{note.id}",
+                    dedupe_key=f"{ref}:{kind}:{note.id}",
                 )
 
     # -- the operations ------------------------------------------------------------------------
@@ -581,15 +628,14 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
         recently updated first."""
         client = await self._client(account)
         repo = _wanted(account.options, request.repo)
-        pulls = await client.list_pulls(
-            repo, state=request.state, head=_head_ref(repo, request.head)
+        pulls, after = await client.pulls_page(
+            repo,
+            state=request.state,
+            head=_head_ref(repo, request.head),
+            page=_page(request.page),
+            per_page=request.limit,
         )
-        start = int(request.page or 0)
-        end = start + request.limit
-        return ItemsPage(
-            items=[PullInfo.of(repo, pull) for pull in pulls[start:end]],
-            next_page=str(end) if end < len(pulls) else None,
-        )
+        return ItemsPage(items=[PullInfo.of(repo, pull) for pull in pulls], next_page=after)
 
     @integration_operation(
         "get_pull",
@@ -630,16 +676,21 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
         client = await self._client(account)
         repo = _wanted(account.options, request.repo)
         head = _head_ref(repo, request.head) or request.head
-        base = request.base
-        if base is None:
-            owner, _, name = repo.partition("/")
-            base = (await client.get_repo(owner, name)).default_branch
         opened = await client.list_pulls(repo, state="open", head=head)
         if opened:
             found = await client.update_pull(
-                repo, opened[0].number, title=request.title, body=request.body
+                repo,
+                opened[0].number,
+                title=request.title,
+                body=request.body,
+                base=request.base,
+                draft=True if request.draft and not opened[0].draft else None,
             )
         else:
+            base = request.base
+            if base is None:
+                owner, _, name = repo.partition("/")
+                base = (await client.get_repo(owner, name)).default_branch
             found = await client.open_pull(
                 repo,
                 head=head,
@@ -677,7 +728,7 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
         repo = _wanted(account.options, request.repo)
         pull = await client.get_pull(repo, request.number)
         checks = await client.list_check_runs(repo, pull.head.sha)
-        failed = [run for run in checks if run.conclusion == "failure"]
+        failed = [run for run in checks if _failed(run)]
         runs = sorted({found for run in failed if (found := _run_of(run)) is not None})
         if not runs:
             raise NotAllowed(
@@ -734,14 +785,62 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
 
 
 def _wanted(options: GitHubOptions, repo: str) -> str:
-    """`repo`, which the account must name in its options."""
+    """`repo`, as the account names it, which it must (GitHub's own names are not
+    case-sensitive, and neither is this)."""
     name = repo_name(repo)
-    if name not in options.repos:
-        raise NotAllowed(
-            f"{name} is not one of this github account's repositories",
-            hint=f"Its repositories: {', '.join(options.repos) or 'none'}.",
+    for wanted in options.repos:
+        if wanted.casefold() == name.casefold():
+            return wanted
+    raise NotAllowed(
+        f"{name} is not one of this github account's repositories",
+        hint=f"Its repositories: {', '.join(options.repos) or 'none'}.",
+    )
+
+
+def _page(page: str | None) -> int:
+    """The page a list asks for: the first, or a last answer's next_page (a number)."""
+    if page is None:
+        return 1
+    if not page.isdigit() or int(page) < 1:
+        raise ConfigError(
+            f"{page!r} is not a page",
+            hint="Leave it out for the first page, or give the next_page a last answer had.",
         )
-    return name
+    return int(page)
+
+
+def _cursor_for(before: PullCursor | None, pull: GhPull) -> PullCursor:
+    """What the watcher now knows of `pull`: the pull itself, and `before`'s checks and comments
+    (a new head's are dropped: they are another commit's)."""
+    if before is None:
+        return PullCursor(head_sha=pull.head.sha, state=_state_of(pull), updated_at=pull.updated_at)
+    update: dict[str, Any] = {"state": _state_of(pull), "updated_at": pull.updated_at}
+    if before.head_sha != pull.head.sha:
+        update |= {"head_sha": pull.head.sha, "checks": "", "checks_etag": None}
+    return before.model_copy(update=update)
+
+
+def _merged_by(pull: GhPull) -> str:
+    """Who merged a pull, as GitHub said ("" when it did not say)."""
+    return pull.merged_by.login if pull.merged_by is not None else ""
+
+
+def _failed(run: GhCheckRun) -> bool:
+    """Whether a check run failed: it concluded, and not by passing (a timeout and a cancelled
+    run are failures too, and a rerun runs them again)."""
+    return run.conclusion is not None and run.conclusion not in ("success", "neutral", "skipped")
+
+
+def _event[T: PullEvent](kind: type[T], repo: str, pull: GhPull, **extra: JsonValue) -> T:
+    """`kind`'s event about `pull` of `repo`: the fields every pull event carries, and `extra`."""
+    fields: dict[str, JsonValue] = {
+        "repo": repo,
+        "number": pull.number,
+        "title": pull.title,
+        "head_sha": pull.head.sha,
+        "html_url": pull.html_url,
+    }
+    return kind.model_validate(fields | extra)
 
 
 def _head_ref(repo: str, head: str | None) -> str | None:
@@ -770,16 +869,11 @@ def _is_bot(login: str) -> bool:
     return login.endswith("[bot]")
 
 
-def _all_done(checks: Sequence[GhCheckRun]) -> bool:
-    """Whether every one of a pull's checks has finished (and it has some)."""
-    return bool(checks) and all(run.status == "completed" for run in checks)
-
-
 def _concluded(checks: Sequence[GhCheckRun]) -> tuple[str, list[str]] | None:
     """What the checks concluded, once every one of them has (None while one is running)."""
     if not checks or any(run.status != "completed" for run in checks):
         return None
-    failed = [run.name for run in checks if run.conclusion not in ("success", "neutral", "skipped")]
+    failed = [run.name for run in checks if _failed(run)]
     return ("failure" if failed else "success"), failed
 
 
@@ -794,5 +888,6 @@ def _digest_of(items: Sequence[BaseModel]) -> str:
     return _digest([item.model_dump(mode="json") for item in items])
 
 
-def _digest(values: Sequence[Any]) -> str:
+def _digest(values: Sequence[JsonValue]) -> str:
+    """A short digest of `values`, so a change is one comparison."""
     return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()[:16]

@@ -37,6 +37,7 @@ from udl.plugins.integrations.github.plugin import (
     ListPullsRequest,
     MergePullRequest,
     OpenPullRequest,
+    PullCursor,
     RerunRequest,
 )
 
@@ -161,12 +162,17 @@ async def test_the_pulls_are_listed_a_page_at_a_time(github: GitHubIntegration) 
     page = await github.list_pulls(handle(), ListPullsRequest(repo=REPO, limit=1))
 
     assert [pull.number for pull in page.items] == [7]
-    assert page.next_page == "1"
+    assert page.next_page == "2"
 
-    rest = await github.list_pulls(handle(), ListPullsRequest(repo=REPO, page="1", limit=1))
+    rest = await github.list_pulls(handle(), ListPullsRequest(repo=REPO, page="2", limit=1))
 
     assert [pull.number for pull in rest.items] == [8]
     assert rest.next_page is None
+
+
+async def test_a_page_that_is_not_a_number_is_refused(github: GitHubIntegration) -> None:
+    with pytest.raises(ConfigError, match="is not a page"):
+        await github.list_pulls(handle(), ListPullsRequest(repo=REPO, page="the next one"))
 
 
 async def test_a_pull_is_read_with_its_checks_and_comments(
@@ -212,6 +218,27 @@ async def test_a_pull_is_opened_into_the_default_branch(
 
     assert (found.number, found.title, found.base) == (9, "A new one", "main")
     assert fake.pull_of(REPO, 9).head.ref == "feat/new"
+
+
+async def test_a_repository_is_named_as_the_account_names_it(
+    github: GitHubIntegration, fake: FakeGitHub
+) -> None:
+    """GitHub's own names are not case-sensitive, so neither is the account's."""
+    found = await github.get_pull(handle(), GetPullRequest(repo="ACME/Widgets", number=7))
+
+    assert found.number == 7
+
+
+async def test_a_pull_already_open_for_that_head_is_moved_to_a_base(
+    github: GitHubIntegration, fake: FakeGitHub
+) -> None:
+    found = await github.open_pull(
+        handle(),
+        OpenPullRequest(repo=REPO, head="feat/widgets", title="A better title", base="develop"),
+    )
+
+    assert (found.number, found.base) == (7, "develop")
+    assert len(fake.pulls[REPO]) == 2
 
 
 async def test_a_pull_already_open_for_that_head_is_updated(
@@ -310,6 +337,30 @@ def watching(
     return asyncio.create_task(github.watch(account, sink, state))
 
 
+async def test_the_first_look_is_a_baseline(
+    github: GitHubIntegration, fake: FakeGitHub, clock: FakeClock
+) -> None:
+    """What is already there when a repository is watched first is not news (a new automation
+    would otherwise be told of every pull there ever was)."""
+    fake.set_checks("abc1234", check_run_body("pytest", "failure"))
+    fake.comment_as("An old comment")
+    sink = RecordingSink(GitHubIntegration)
+    state = MemoryState(GitHubIntegration.state_model)
+    task = watching(github, handle(), sink, state)
+    try:
+        await until(lambda: bool(state.saved), clock)
+        await clock.advance(timedelta(seconds=180))
+    finally:
+        task.cancel()
+        await asyncio.wait([task])
+
+    assert sink.emitted == []
+    saved = state.saved[-1]
+    assert isinstance(saved, GitHubState)
+    assert set(saved.pulls) == {"acme/widgets#7", "acme/widgets#8"}
+    assert saved.pulls["acme/widgets#7"].checks != ""
+
+
 async def test_the_watcher_publishes_what_happens_to_a_pull(
     github: GitHubIntegration, fake: FakeGitHub, clock: FakeClock
 ) -> None:
@@ -317,12 +368,13 @@ async def test_the_watcher_publishes_what_happens_to_a_pull(
     state = MemoryState(GitHubIntegration.state_model)
     task = watching(github, handle(), sink, state)
     try:
-        await until(lambda: len(sink.emitted) >= 2, clock)  # (the fake's two pulls)
+        await until(lambda: bool(state.saved), clock)  # (the baseline: nothing published)
 
         fake.push("def5678", number=7)
-        fake.set_checks("def5678", check_run_body("pytest", None))
         await until(lambda: any(e.event_type == "github.pr.updated" for e in sink.emitted), clock)
 
+        fake.set_checks("def5678", check_run_body("pytest", None))
+        await until(lambda: bool(fake.checks), clock)
         fake.finish_check("def5678", "failure")
         await until(
             lambda: any(e.event_type == "github.pr.checks_finished" for e in sink.emitted), clock
@@ -331,6 +383,12 @@ async def test_the_watcher_publishes_what_happens_to_a_pull(
         fake.comment_as("Please fix the test")
         await until(lambda: any(e.event_type == "github.pr.commented" for e in sink.emitted), clock)
 
+        fake.review_comment("This line is wrong")
+        await until(
+            lambda: len([e for e in sink.emitted if e.event_type == "github.pr.commented"]) == 2,
+            clock,
+        )
+
         fake.merge(number=7)
         await until(lambda: any(e.event_type == "github.pr.merged" for e in sink.emitted), clock)
     finally:
@@ -338,38 +396,115 @@ async def test_the_watcher_publishes_what_happens_to_a_pull(
         await asyncio.wait([task])
 
     kinds = [emitted.event_type for emitted in sink.emitted]
-    assert kinds.count("github.pr.opened") == 2
     assert kinds.count("github.pr.updated") == 1
     assert kinds.count("github.pr.checks_finished") == 1
-    assert kinds.count("github.pr.commented") == 1
+    assert kinds.count("github.pr.commented") == 2  # (one on the conversation, one on the diff)
     assert kinds.count("github.pr.merged") == 1
     checks = next(e for e in sink.emitted if e.event_type == "github.pr.checks_finished")
     assert checks.data["conclusion"] == "failure"
     assert checks.data["failed"] == ["pytest"]
+    assert checks.data["head_sha"] == "def5678"
     comment = next(e for e in sink.emitted if e.event_type == "github.pr.commented")
     assert (comment.data["author"], comment.data["is_bot"]) == ("human", False)
+    merged = next(e for e in sink.emitted if e.event_type == "github.pr.merged")
+    assert merged.data["merged_by"] == LOGIN
     assert len({emitted.dedupe_key for emitted in sink.emitted}) == len(sink.emitted)
 
 
-async def test_a_repository_is_read_again_only_when_it_changed(
+async def test_a_rerun_s_verdict_is_published(
     github: GitHubIntegration, fake: FakeGitHub, clock: FakeClock
 ) -> None:
+    """A rerun runs the failed jobs again: the pull itself does not change, and its checks do."""
     sink = RecordingSink(GitHubIntegration)
     state = MemoryState(GitHubIntegration.state_model)
     task = watching(github, handle(), sink, state)
     try:
-        await until(lambda: len(sink.emitted) >= 2, clock)
-        looks = len(fake.calls)
+        await until(lambda: bool(state.saved), clock)
+        fake.set_checks("abc1234", failing_run("pytest", 555))
+        await until(
+            lambda: any(e.event_type == "github.pr.checks_finished" for e in sink.emitted), clock
+        )
 
+        await github.rerun_checks(handle(), RerunRequest(repo=REPO, number=7))
+        fake.set_checks("abc1234", check_run_body("pytest", None))
         await clock.advance(timedelta(seconds=180))
-
-        # (Three more looks: the pulls are a 304, and each open pull's checks are asked about
-        # again — they never started — so nothing is published.)
-        assert len(fake.calls) == looks + 3 * 3
-        assert len(sink.emitted) == 2
+        fake.finish_check("abc1234", "success")
+        await until(
+            lambda: (
+                len([e for e in sink.emitted if e.event_type == "github.pr.checks_finished"]) == 2
+            ),
+            clock,
+        )
     finally:
         task.cancel()
         await asyncio.wait([task])
+
+    verdicts = [
+        (e.data["conclusion"], e.data["failed"])
+        for e in sink.emitted
+        if e.event_type == "github.pr.checks_finished"
+    ]
+    assert verdicts == [("failure", ["pytest"]), ("success", [])]
+    assert len(fake.reruns) == 1
+
+
+async def test_a_pull_nothing_happened_to_costs_no_rate_limit(
+    github: GitHubIntegration, fake: FakeGitHub, clock: FakeClock
+) -> None:
+    """Every ask about a pull that did not change is a 304, and a 304 costs no rate limit: a
+    watcher may ask every minute and leave the hour's 5000 calls to the merges and comments."""
+    state = MemoryState(GitHubIntegration.state_model)
+    task = watching(github, handle(), RecordingSink(GitHubIntegration), state)
+    try:
+        await until(lambda: bool(state.saved), clock)
+        fake.conditionals.clear()
+
+        await clock.advance(timedelta(seconds=180))
+    finally:
+        task.cancel()
+        await asyncio.wait([task])
+
+    assert fake.conditionals
+    assert set(fake.conditionals) == {304}
+
+
+async def test_a_pull_whose_head_moved_is_left_to_the_repository(
+    github: GitHubIntegration, fake: FakeGitHub, clock: FakeClock
+) -> None:
+    """Its checks were read, then its head moved: what they say is another commit's, and the
+    repository's own look says what the push did."""
+    pull = fake.pull_of(REPO, 7)
+    fake.pulls[REPO][0] = pull.model_copy(
+        update={"head": pull.head.model_copy(update={"sha": "def5678"})}
+    )
+    fake.set_checks("abc1234", check_run_body("pytest", "failure"))
+    state = MemoryState(GitHubIntegration.state_model)
+    state.saved.append(
+        GitHubState(
+            pulls={
+                "acme/widgets#7": PullCursor(
+                    head_sha="abc1234", state="open", updated_at=pull.updated_at
+                ),
+                "acme/widgets#8": PullCursor(
+                    head_sha="999",
+                    state="open",
+                    updated_at=fake.pull_of(REPO, 8).updated_at,
+                ),
+            }
+        )
+    )
+    sink = RecordingSink(GitHubIntegration)
+    task = watching(github, handle(), sink, state)
+    try:
+        await until(lambda: bool(state.saved) and len(state.saved) > 1, clock)
+    finally:
+        task.cancel()
+        await asyncio.wait([task])
+
+    assert [e.event_type for e in sink.emitted] == []
+    saved = state.saved[-1]
+    assert isinstance(saved, GitHubState)
+    assert saved.pulls["acme/widgets#7"].head_sha == "abc1234"
 
 
 async def test_the_watcher_goes_on_from_where_it_was(
@@ -378,7 +513,7 @@ async def test_the_watcher_goes_on_from_where_it_was(
     state = MemoryState(GitHubIntegration.state_model)
     first = RecordingSink(GitHubIntegration)
     task = watching(github, handle(), first, state)
-    await until(lambda: len(first.emitted) >= 2, clock)
+    await until(lambda: bool(state.saved), clock)
     task.cancel()
     await asyncio.wait([task])
 
@@ -410,6 +545,7 @@ async def test_the_watcher_stops_when_the_credentials_are_refused(
 async def test_its_state_is_the_etags_and_the_pulls_it_saw(
     github: GitHubIntegration, fake: FakeGitHub, clock: FakeClock
 ) -> None:
+    fake.set_checks("abc1234", check_run_body("pytest", "failure"))
     state = MemoryState(GitHubIntegration.state_model)
     task = watching(github, handle(), RecordingSink(GitHubIntegration), state)
     await until(lambda: bool(state.saved), clock)
@@ -420,4 +556,8 @@ async def test_its_state_is_the_etags_and_the_pulls_it_saw(
     assert isinstance(saved, GitHubState)
     assert set(saved.etags) == {REPO}
     assert set(saved.pulls) == {"acme/widgets#7", "acme/widgets#8"}
-    assert saved.pulls["acme/widgets#7"].head_sha == "abc1234"
+    cursor = saved.pulls["acme/widgets#7"]
+    assert (cursor.head_sha, cursor.state) == ("abc1234", "open")
+    assert cursor.checks_etag is not None
+    assert cursor.comments_etag is not None
+    assert cursor.checks != ""

@@ -110,6 +110,8 @@ class GhPull(GhModel):
     """Its page on github.com."""
     user: GhUser
     """Who opened it."""
+    merged_by: GhUser | None = None
+    """Who merged it (None: nobody has, or GitHub did not say)."""
     body: str | None = None
     """What it says (None: nothing)."""
     updated_at: AwareDatetime | None = None

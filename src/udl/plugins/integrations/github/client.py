@@ -233,6 +233,28 @@ class GitHubClient:
             query["base"] = base
         return await self.paginate(f"/repos/{repo_name(repo)}/pulls", GhPull, query=query)
 
+    async def pulls_page(
+        self,
+        repo: str,
+        *,
+        state: PullStateFilter = "open",
+        head: str | None = None,
+        base: str | None = None,
+        page: int = 1,
+        per_page: int = PAGE_SIZE,
+    ) -> tuple[list[GhPull], str | None]:
+        """One page of a repository's pull requests (GET /repos/{repo}/pulls), and the page after
+        it (None: it was the last)."""
+        query = {"state": state, "per_page": str(per_page), "page": str(page)}
+        if head is not None:
+            query["head"] = head
+        if base is not None:
+            query["base"] = base
+        url = f"{self.base_url}/repos/{repo_name(repo)}/pulls"
+        answer, response = await self._ask("GET", url, params=query)
+        after = self._next(response, url)
+        return self._each(GhPull, answer, url), (after[1].get("page") if after else None)
+
     async def get_pull(self, repo: str, number: int) -> GhPull:
         """One pull request, by number (GET /repos/{repo}/pulls/{number})."""
         return await self._get(f"/repos/{repo_name(repo)}/pulls/{number}", GhPull)
@@ -281,13 +303,21 @@ class GitHubClient:
         *,
         title: str | None = None,
         body: str | None = None,
+        base: str | None = None,
+        draft: bool | None = None,
         state: PullStateChange | None = None,
     ) -> GhPull:
-        """Change a pull request's title, body or state (PATCH /repos/{repo}/pulls/{number});
-        what is None is left as it is."""
+        """Change a pull request's title, body, base branch, draft state or state (PATCH
+        /repos/{repo}/pulls/{number}); what is None is left as it is."""
         sent: dict[str, object] = {
             name: value
-            for name, value in (("title", title), ("body", body), ("state", state))
+            for name, value in (
+                ("title", title),
+                ("body", body),
+                ("base", base),
+                ("draft", draft),
+                ("state", state),
+            )
             if value is not None
         }
         return await self._send("PATCH", f"/repos/{repo_name(repo)}/pulls/{number}", sent, GhPull)
@@ -331,6 +361,53 @@ class GitHubClient:
         if total > len(runs):
             log.warning("%s: %d check runs, %d read", path, total, len(runs))
         return runs
+
+    async def checks_if_changed(
+        self, repo: str, sha: str, *, etag: str | None = None
+    ) -> tuple[list[GhCheckRun] | None, str | None]:
+        """The check runs of a commit, read again only when GitHub says they changed: with
+        `etag` (the last answer's), a 304 says they did not, and `checks` is None then. A
+        conditional answer that changed nothing costs no rate limit, so a watcher may ask every
+        minute. Returns them with the ETag to give next time."""
+        path = f"/repos/{repo_name(repo)}/commits/{sha}/check-runs"
+        asked = {"If-None-Match": etag} if etag is not None else None
+        _, response = await self._ask(
+            "GET", f"{self.base_url}{path}", params={"per_page": str(PAGE_SIZE)}, headers=asked
+        )
+        if response.status_code == 304:
+            return None, etag
+        runs = await self.list_check_runs(repo, sha)  # (all its pages)
+        return runs, response.headers.get("ETag")
+
+    async def comments_if_changed(
+        self, repo: str, number: int, *, etag: str | None = None
+    ) -> tuple[list[GhComment] | None, str | None]:
+        """The comments on a pull request's conversation, read again only when GitHub says they
+        changed (see checks_if_changed)."""
+        path = f"/repos/{repo_name(repo)}/issues/{number}/comments"
+        return await self._list_if_changed(path, GhComment, etag=etag)
+
+    async def review_comments_if_changed(
+        self, repo: str, number: int, *, etag: str | None = None
+    ) -> tuple[list[GhReviewComment] | None, str | None]:
+        """The comments on a pull request's diff, read again only when GitHub says they changed
+        (see checks_if_changed)."""
+        path = f"/repos/{repo_name(repo)}/pulls/{number}/comments"
+        return await self._list_if_changed(path, GhReviewComment, etag=etag)
+
+    async def _list_if_changed[T: BaseModel](
+        self, path: str, model: type[T], *, etag: str | None
+    ) -> tuple[list[T] | None, str | None]:
+        """A list GitHub pages, read again only when GitHub says it changed: None (and the ETag
+        given) when it did not, else every item and the ETag to give next time."""
+        asked = {"If-None-Match": etag} if etag is not None else None
+        url = f"{self.base_url}{path}"
+        _, response = await self._ask(
+            "GET", url, params={"per_page": str(PAGE_SIZE)}, headers=asked
+        )
+        if response.status_code == 304:
+            return None, etag
+        return await self.paginate(path, model), response.headers.get("ETag")
 
     async def list_comments(self, repo: str, number: int) -> list[GhComment]:
         """The comments on a pull request's conversation (GET /repos/{repo}/issues/{number}/
