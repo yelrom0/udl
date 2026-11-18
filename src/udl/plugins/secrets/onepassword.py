@@ -13,8 +13,10 @@ when the value is saved, so a reference that widens what udl reads never reaches
 """
 
 # System Imports
+import asyncio
 import json
 import logging
+import os
 from typing import TYPE_CHECKING, Final, cast
 
 # Package Imports
@@ -70,7 +72,9 @@ class OnePasswordResolver(SecretResolver):
                 hint="Add its vault to [secrets.onepassword] vaults in the config.",
             )
         token = await self._token()
-        found = await _op("read", "--no-newline", f"op://{reference}", token=token)
+        found = await _op(
+            "read", "--no-newline", f"op://{reference}", token=token, within=self.table.timeout
+        )
         if found.returncode != 0:
             reason = found.stderr.strip().splitlines()[-1] if found.stderr.strip() else ""
             raise SecretStoreError(
@@ -85,8 +89,10 @@ class OnePasswordResolver(SecretResolver):
         token = await self._token()
         if token is None:
             return ResolverHealth(ok=False, problems=["there is no service account token"])
-        who = await _op("whoami", "--format", "json", token=token)
-        vaults = await _op("vault", "list", "--format", "json", token=token)
+        who = await _op("whoami", "--format", "json", token=token, within=self.table.timeout)
+        vaults = await _op(
+            "vault", "list", "--format", "json", token=token, within=self.table.timeout
+        )
         problems = [
             f"{what} exited with {result.returncode}"
             for what, result in (("op whoami", who), ("op vault list", vaults))
@@ -114,23 +120,28 @@ class OnePasswordResolver(SecretResolver):
         return await store.get(TOKEN_REF)
 
 
-async def _op(*args: str, token: SecretStr | None) -> ProcessResult:
+async def _op(*args: str, token: SecretStr | None, within: Duration) -> ProcessResult:
     """`op` with `args`, its token in the child's environment only, run through udl.process
-    (argv, no shell). Raises SecretStoreError when it is missing or does not answer in time."""
+    (argv, no shell). Raises SecretStoreError when it does not answer within `within`, and
+    ToolUnavailable when it is not installed."""
     from udl.process import CancelToken, run_process
 
-    env = {"PATH": "/usr/local/bin:/usr/bin:/bin"}
+    env = {"PATH": os.environ.get("PATH", os.defpath)}
     if token is not None:
         env[TOKEN_ENV] = token.get_secret_value()
     try:
-        return await run_process(
-            ["op", *args],
-            cancel=CancelToken(),
-            env=env,
-            max_output=64 * 1024,
-        )
+        async with asyncio.timeout(within.total_seconds()):
+            return await run_process(
+                ["op", *args],
+                cancel=CancelToken(),
+                env=env,
+                max_output=64 * 1024,
+            )
     except TimeoutError as e:  # (a program that does not answer)
-        raise SecretStoreError("op did not answer in time") from e
+        raise SecretStoreError(
+            "op did not answer in time",
+            hint=f"It gets {within}. Raise [secrets.onepassword] timeout, or check 1Password.",
+        ) from e
 
 
 def _json(text: str) -> list[JsonValue]:
