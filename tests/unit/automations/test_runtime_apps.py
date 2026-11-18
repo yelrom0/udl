@@ -1,7 +1,7 @@
 """
 ------------------------
 - test_runtime_apps.py -
--------------------------
+------------------------
 
 The apps' services in the runtime: an app of the udl.apps kind is started once per lease, is
 started again after its service raises (with the watchers' backoff), and is stopped when the
@@ -25,6 +25,7 @@ from support.clock import FakeClock
 from support.interfaces import Harness
 from udl.automations.apps import AppState, AppStatus
 from udl.automations.runtime import AutomationRuntime, runtime_status
+from udl.clock import pause
 from udl.config import AutomationsSettings
 from udl.core.models import SetPluginSettingsRequest
 from udl.core.service import UDLService
@@ -191,18 +192,23 @@ class AlwaysFailing(FakeApp):
         raise RuntimeError("it always fails")
 
 
-class FailingOnce(FakeApp):
-    """A fake app that fails at once until it has been started `healthy` times."""
+class HealthyThenFailing(FakeApp):
+    """A fake app whose service fails at once, then runs for HEALTHY_AFTER before failing."""
 
-    name = "flaky"
+    name = "relapsing"
     runs = 0
-    healthy = 0
+    at: ClassVar[list[Any]] = []
+    """When each run started."""
+    failed: ClassVar[list[Any]] = []
+    """When each run raised."""
 
     async def serve(self, ctx: Any) -> None:
         type(self).runs += 1
-        if type(self).runs <= type(self).healthy:
-            raise RuntimeError("it fails")
-        await super().serve(ctx)
+        type(self).at.append(ctx.clock.now())
+        if type(self).runs > 1:  # (the first run fails at once)
+            await pause(ctx.clock, HEALTHY_AFTER + timedelta(seconds=1), ctx.stop)
+        type(self).failed.append(ctx.clock.now())
+        raise RuntimeError("it fails")
 
 
 class Broken(FakeApp):
@@ -299,19 +305,24 @@ async def test_a_failing_app_is_never_kept_waiting_longer_than_the_cap(
 async def test_an_app_that_ran_well_starts_again_at_once_after_it_fails(
     tmp_path: Path, clock: FakeClock
 ) -> None:
-    FailingOnce.runs = 0
-    FailingOnce.healthy = 1
-    harness = harness_of(tmp_path, clock, FailingOnce)
+    HealthyThenFailing.runs = 0
+    HealthyThenFailing.at = []
+    HealthyThenFailing.failed = []
+    harness = harness_of(tmp_path, clock, HealthyThenFailing)
 
     async with harness.service() as service, AutomationRuntime(service, holder="here:1:a"):
         await clock.advance(timedelta(0))
-        # (It fails once, waits FIRST_BACKOFF, then runs for HEALTHY_AFTER: the next failure
-        # starts a new streak, at FIRST_BACKOFF again.)
-        await clock.advance(HEALTHY_AFTER + timedelta(seconds=5))
-        app = app_of(service, FailingOnce.name)
+        # (It fails at once, waits 1 s, then runs for HEALTHY_AFTER and fails: that failure starts
+        # a new streak, so the next start is 1 s away, not the 2 s the first streak had grown to.)
+        for _ in range(2):
+            await clock.advance(HEALTHY_AFTER + timedelta(seconds=5))
 
-        assert FailingOnce.runs >= 2
-        assert app.started >= 1
+    waits = [
+        (start - failed).total_seconds()
+        for failed, start in zip(HealthyThenFailing.failed, HealthyThenFailing.at[1:], strict=False)
+    ]
+
+    assert waits[:3] == [1, 1, 1]  # (every failure, healthy or not, waits FIRST_BACKOFF again)
 
 
 async def test_a_changed_setting_is_picked_up_by_the_next_start(
