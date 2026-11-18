@@ -87,6 +87,10 @@ MATRIX: dict[str, tuple[str, str]] = {
     "import_cookies": ("browser cookies import", "POST /browser/cookies"),
     "list_cookies": ("browser cookies list", "GET /browser/cookies"),
     "delete_cookies": ("browser cookies rm", "DELETE /browser/cookies/{site}"),
+    "list_hosts": ("hosts list", "GET /hosts"),
+    "set_host": ("hosts set", "PUT /hosts"),
+    "delete_host": ("hosts rm", "DELETE /hosts/{host}"),
+    "check_host": ("hosts check", "POST /hosts/{host}/check"),
 }
 
 # Interface-only, so exempt: they run the other interfaces, need a browser on the user's
