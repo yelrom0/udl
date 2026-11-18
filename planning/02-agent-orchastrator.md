@@ -430,7 +430,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - Flags were checked against Claude Code 2.1.306 here; confirm them against `claude --help` on the build machine and record any change in the phase's decisions.
 - Tests first: the contract over `fake_harness.py` speaking stream-json; `tests/unit/plugins/runners/test_claude_code.py`: the argv for a first and a later turn, the deny list in the settings file, the token only in the MCP config file.
 - Done when: an opt-in smoke test has `claude` answer one prompt in a temp directory through the runner.
-- **Built (deepseek-a, 2026-11-19, PR #N):** the runner, and the smoke test run against the CLI here.
+- **Built (deepseek-a, 2026-11-19, PR #27):** the runner, and the smoke test run against the CLI here.
   - `udl/plugins/runners/claude_code.py`: `ClaudeCode` (name `claude-code`, `requires` `claude`),
     published under `udl.runners`. `ClaudeCodeOptions`: `cli` (the program and arguments before the
     turn's own, so a test points it at `fake_harness.py`), `models` (`opus`, `sonnet`, `haiku`),
