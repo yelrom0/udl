@@ -176,6 +176,12 @@ def test_the_defaults_ignore_the_environment_and_the_config_file(
     assert settings.config_file is None
 
 
+def test_the_orch_table_lists_the_commands_a_command_runner_may_start() -> None:
+    write_config('[orch]\nallowed_commands = ["my-agent", "other"]\n')
+
+    assert Settings.load().orch.allowed_commands == ["my-agent", "other"]
+
+
 def test_nested_env_vars_merge_into_config_file_tables(monkeypatch: pytest.MonkeyPatch) -> None:
     write_config('[api]\nhost = "192.168.1.10"\n')
     monkeypatch.setenv("UDL_API__PORT", "9000")
@@ -356,6 +362,7 @@ def test_the_new_tables_have_defaults(isolated_user_dirs: Path) -> None:
     assert settings.automations.dispatch_interval == timedelta(seconds=2)
     assert settings.automations.lease_ttl == timedelta(seconds=30)
     assert (settings.ai.detect_ollama, settings.ai.allowed_commands) == (True, [])
+    assert settings.orch.allowed_commands == []
     assert settings.web.public_url is None
 
     config = isolated_user_dirs / ".config" / "udl"
