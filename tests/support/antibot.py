@@ -442,7 +442,9 @@ class FakePerson:
     (through Playwright, as a person's click), leaves it, or closes the window. `attended`
     lists the URLs of the tabs it was given. A person looks for the check for `patience` (as
     long as the window tests give the window, so a slow machine fails for udl, not for the
-    person), and never longer, so a check that never shows fails a test rather than hangs it."""
+    person), and never longer, so a check that never shows fails a test rather than hangs it.
+    It says (at debug, on `support.antibot`) when it pressed a check's button, and why it left
+    one it didn't press, so a window test's report shows what the person did."""
 
     def __init__(
         self, manner: Manner = Manner.PASSES, *, patience: timedelta = timedelta(seconds=120)
@@ -464,10 +466,13 @@ class FakePerson:
             patience = self.patience.total_seconds() * 1000
             await button.wait_for(timeout=patience)
             await asyncio.sleep(0.1)  # (as a person looks before clicking)
+            # (The check's own page, read before the press: after it, the tab is on its way to
+            # wherever the press sends it; and before the button shows, it may not be the check.)
+            pressed_on = tab.url
             await button.click(timeout=patience)
         except PlaywrightError as e:  # (a tab that was passed, or closed, meanwhile; or patience)
             # (Said, not raised: a window test's report then shows why a check was left.)
             first = (str(e).splitlines() or [type(e).__name__])[0]
             log.debug("The person left %s without pressing the check's button: %s", tab.url, first)
             return
-        log.debug("The person pressed the check's button on %s", tab.url)
+        log.debug("The person pressed the check's button on %s", pressed_on)

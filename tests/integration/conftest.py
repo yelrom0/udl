@@ -25,6 +25,7 @@ _REPORTED = ("udl.fetch", "udl.automations", "support.antibot")
 
 @pytest.fixture(autouse=True)
 def reported_logs(caplog: pytest.LogCaptureFixture) -> None:
-    """Keep the fetcher's and the automations' debug lines for a failing test's report."""
+    """Keep the fetcher's, the automations' and the fake site's and person's debug lines for a
+    failing test's report."""
     for name in _REPORTED:
         caplog.set_level(logging.DEBUG, logger=name)

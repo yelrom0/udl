@@ -301,7 +301,7 @@ async def test_a_person_gets_past_the_check(antibot: AntiBotSite, browser: Brows
 
 
 async def test_a_person_keeps_looking_at_a_check_that_shows_late(
-    antibot: AntiBotSite, browser: BrowserContext
+    antibot: AntiBotSite, browser: BrowserContext, caplog: pytest.LogCaptureFixture
 ) -> None:
     # On a loaded CI runner a check page can take a while to show its button: a person keeps
     # looking for as long as their patience lasts.
@@ -310,11 +310,14 @@ async def test_a_person_keeps_looking_at_a_check_that_shows_late(
 
     attending = asyncio.create_task(person.attend(page))
     await asyncio.sleep(1)  # (the check shows after the person started looking)
-    await page.goto(antibot.url("/checked/late"))
+    url = antibot.url("/checked/late")
+    await page.goto(url)
     await asyncio.wait_for(attending, timeout=10)
     await settled(page, "Checked late")
 
     assert "The page behind the check: late." in await page.content()
+    # (The press is said on the check's page, not on the blank tab the person started on.)
+    assert f"The person pressed the check's button on {url}" in caplog.text
 
 
 async def test_a_person_whose_patience_runs_out_leaves_the_check(
