@@ -15,8 +15,7 @@ are records whose examples round-trip; and its service runs until it is told to 
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import timedelta
-from typing import Any, cast
+from datetime import datetime, timedelta
 
 # Package Imports
 import pytest
@@ -27,6 +26,7 @@ from support.apps import FakeApp, FakeAppSettings, Tick
 from support.clock import FakeClock
 from udl.automations.events import EventTypes
 from udl.core.operations import Operation, OperationRegistry, resolved_view
+from udl.db.models import JsonObject
 from udl.db.records import Record, record_kind
 from udl.errors import PluginError
 from udl.plugins.apps.base import AnApp, AppContext, AppEvents, AppPlugin, AppRecords, AppSettings
@@ -43,12 +43,15 @@ class _Events(AppEvents):
     async def emit(
         self,
         event_type: str,
-        data: BaseModel | dict[str, Any],
+        data: BaseModel | JsonObject,
         *,
         dedupe_key: str,
-        occurred_at: Any = None,
+        occurred_at: datetime | None = None,
     ) -> bool:
-        self.published.append((event_type, data if isinstance(data, BaseModel) else Tick(**data)))
+        # (The one event this app's tests publish, from a dict of what it says.)
+        self.published.append(
+            (event_type, data if isinstance(data, BaseModel) else Tick.model_validate(data))
+        )
         return True
 
 
@@ -230,7 +233,8 @@ async def test_an_app_s_service_runs_until_it_is_told_to_stop(case: Case) -> Non
     ctx.stop.set()
     await asyncio.wait_for(task, 1)
 
-    assert cast(Any, case.app).stopped
+    assert isinstance(case.app, FakeApp)
+    assert case.app.stopped
     assert case.events.published
     assert case.records.kept
 

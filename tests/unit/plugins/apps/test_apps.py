@@ -13,7 +13,6 @@ import asyncio
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, cast
 
 # Package Imports
 import pytest
@@ -27,7 +26,7 @@ from support.interfaces import Harness
 from udl.automations.bus import NewEvent
 from udl.automations.events import EventRecord
 from udl.config import Settings
-from udl.core.operations import OperationHints, UISpec, resolved_view
+from udl.core.operations import Operation, OperationHints, UISpec, resolved_view
 from udl.core.service import UDLService
 from udl.db.records import RecordQuery
 from udl.errors import PluginError
@@ -68,7 +67,7 @@ class Bare(AppPlugin[AppSettings]):
         return Answered(said=request.key)
 
     @classmethod
-    def operations(cls) -> list[Any]:
+    def operations(cls) -> list[Operation]:
         return [cls.operation("speak", title="Speak", hints=OperationHints(read_only=True))]
 
 
@@ -78,7 +77,7 @@ class Stated(Bare):
     name = "stated"
 
     @classmethod
-    def operations(cls) -> list[Any]:
+    def operations(cls) -> list[Operation]:
         return [
             cls.operation(
                 "speak",
@@ -168,8 +167,9 @@ async def test_an_operation_runs_on_the_app_the_service_has(tmp_path: Path) -> N
     harness = harness_of(tmp_path, Bare)
 
     async with harness.service() as service:
-        answered = cast(Answered, await service.call("bare_speak", {"key": "x"}))
+        answered = await service.call("bare_speak", {"key": "x"})
 
+    assert isinstance(answered, Answered)
     assert answered.said == "x"
 
 
@@ -183,7 +183,8 @@ def test_an_operation_whose_models_are_only_for_type_checkers_is_refused() -> No
 
         async def speak(self, request: BaseModel) -> Answered:
             """Say the key back."""
-            return Answered(said=cast(Asked, request).key)
+            assert isinstance(request, Asked)  # (the annotation above is a string at run time)
+            return Answered(said=request.key)
 
         # (A model imported under TYPE_CHECKING is only a string at run time.)
         speak.__annotations__ = {"request": "Asked", "return": "Answered"}  # noqa: RUF012

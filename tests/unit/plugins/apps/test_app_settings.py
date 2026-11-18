@@ -11,7 +11,7 @@ own table in the file
 # System Imports
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Annotated, cast
+from typing import Annotated
 
 # Package Imports
 import pytest
@@ -71,8 +71,9 @@ async def service(tmp_path: Path) -> AsyncIterator[UDLService]:
 
 
 async def test_an_app_s_settings_come_from_its_own_table(service: UDLService) -> None:
-    app = cast(FakeAppSettings, await service.plugin_settings(FakeApp.name))
+    app = await service.plugin_settings(FakeApp.name)
 
+    assert isinstance(app, FakeAppSettings)
     assert app.every.total_seconds() == 2
 
 
@@ -86,8 +87,9 @@ async def test_an_app_s_settings_leave_another_table_alone(
         secrets=service.secrets,
     )
 
-    app = cast(FakeAppSettings, await found.plugin_settings(FakeApp.name))
+    app = await found.plugin_settings(FakeApp.name)
 
+    assert isinstance(app, FakeAppSettings)
     assert app.every.total_seconds() == 1
 
 
@@ -98,7 +100,8 @@ async def test_what_was_set_through_udl_is_over_the_file(service: UDLService) ->
 
     assert changed.values["every"] == "3s"
     assert changed.sources["every"] is SettingSource.STORED
-    app = cast(FakeAppSettings, await service.plugin_settings(FakeApp.name))
+    app = await service.plugin_settings(FakeApp.name)
+    assert isinstance(app, FakeAppSettings)
     assert app.every.total_seconds() == 3
 
 
