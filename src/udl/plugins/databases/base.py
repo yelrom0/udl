@@ -23,6 +23,7 @@ from udl.config import DBConnectionConfig
 from udl.db.models import DownloadQuery, DownloadRecord, Outcome, Site, SiteQuery, Strategy
 from udl.db.records import Lease, Record, RecordQuery
 from udl.plugins.requirements import Requirement
+from udl.plugins.ui.base import UIBundle
 
 
 class DatabasePlugin(ABC):
@@ -35,6 +36,7 @@ class DatabasePlugin(ABC):
     name: ClassVar[str]  # what config uses to pick the plugin, e.g. "sqlite"
     # What it needs installed, e.g. its driver (`udl plugins list` says what is missing).
     requires: ClassVar[tuple[Requirement, ...]] = ()
+    ui: ClassVar[UIBundle | None] = None  # its UI plugin, if it has one (18.7)
 
     def __init__(self, connection: DBConnectionConfig) -> None:
         self.connection = connection

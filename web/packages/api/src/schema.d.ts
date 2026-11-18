@@ -3894,6 +3894,12 @@ export interface components {
             problem?: string | null;
             /** @description builtin (udl's own), installed (another package's) or local (a file in a plugin dir). */
             source: components["schemas"]["PluginSource"];
+            /**
+             * Ui
+             * @description Whether it brings a UI plugin (a bundle the web shell loads, 18.7).
+             * @default false
+             */
+            ui: boolean;
         };
         /**
          * PreviewScheduleRequest

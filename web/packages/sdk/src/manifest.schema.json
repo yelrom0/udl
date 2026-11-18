@@ -1,0 +1,199 @@
+{
+	"$defs": {
+		"Contributions": {
+			"additionalProperties": false,
+			"description": "What a bundle adds to the shell, by point (each a closed set: see POINTS).",
+			"properties": {
+				"nav": {
+					"description": "Pages in the navigation.",
+					"items": {
+						"$ref": "#/$defs/NavItem"
+					},
+					"title": "Nav",
+					"type": "array"
+				},
+				"routes": {
+					"description": "The paths it has a page for (`inbox`, `message/$id`).",
+					"items": {
+						"type": "string"
+					},
+					"title": "Routes",
+					"type": "array"
+				},
+				"settings": {
+					"description": "The plugins it has a settings panel for.",
+					"items": {
+						"type": "string"
+					},
+					"title": "Settings",
+					"type": "array"
+				},
+				"accountSetup": {
+					"description": "The integrations it has account setup for.",
+					"items": {
+						"type": "string"
+					},
+					"title": "Accountsetup",
+					"type": "array"
+				},
+				"eventViews": {
+					"description": "The event types it renders (a `*` at the end is a prefix).",
+					"items": {
+						"type": "string"
+					},
+					"title": "Eventviews",
+					"type": "array"
+				},
+				"filterEditors": {
+					"description": "The integrations it has a source-filter editor for.",
+					"items": {
+						"type": "string"
+					},
+					"title": "Filtereditors",
+					"type": "array"
+				},
+				"actionEditors": {
+					"description": "The action kinds it has an editor for.",
+					"items": {
+						"type": "string"
+					},
+					"title": "Actioneditors",
+					"type": "array"
+				},
+				"widgets": {
+					"description": "What it puts in the shell's slots.",
+					"items": {
+						"$ref": "#/$defs/Widget"
+					},
+					"title": "Widgets",
+					"type": "array"
+				},
+				"themes": {
+					"description": "The daisyUI themes it adds.",
+					"items": {
+						"type": "string"
+					},
+					"title": "Themes",
+					"type": "array"
+				}
+			},
+			"title": "Contributions",
+			"type": "object"
+		},
+		"NavItem": {
+			"additionalProperties": false,
+			"description": "A page in the shell's navigation.",
+			"properties": {
+				"title": {
+					"description": "What it says.",
+					"title": "Title",
+					"type": "string"
+				},
+				"route": {
+					"description": "The route it goes to (one of the manifest's `routes`).",
+					"title": "Route",
+					"type": "string"
+				},
+				"icon": {
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"default": null,
+					"description": "The icon's name (the shell maps it to lucide's).",
+					"title": "Icon"
+				}
+			},
+			"required": [
+				"title",
+				"route"
+			],
+			"title": "NavItem",
+			"type": "object"
+		},
+		"Widget": {
+			"additionalProperties": false,
+			"description": "Something the shell puts in one of its slots.",
+			"properties": {
+				"slot": {
+					"description": "Where: a slot the shell has (dashboard...).",
+					"title": "Slot",
+					"type": "string"
+				},
+				"id": {
+					"description": "Which of the plugin's widgets it is (what its entry's `widgets` is keyed by).",
+					"title": "Id",
+					"type": "string"
+				}
+			},
+			"required": [
+				"slot",
+				"id"
+			],
+			"title": "Widget",
+			"type": "object"
+		}
+	},
+	"additionalProperties": false,
+	"description": "A UI plugin's manifest.json: what it is, and what it adds to the shell.",
+	"properties": {
+		"name": {
+			"description": "The plugin it belongs to (or a UI-only plugin's own name).",
+			"minLength": 1,
+			"pattern": "^[a-z0-9][a-z0-9._-]*$",
+			"title": "Name",
+			"type": "string"
+		},
+		"version": {
+			"description": "Its version (its own: what the shell shows when something fails).",
+			"minLength": 1,
+			"title": "Version",
+			"type": "string"
+		},
+		"sdk": {
+			"description": "The @udl/ui-sdk range it was built for: `^MAJOR.MINOR`, which must be the shell's.",
+			"title": "Sdk",
+			"type": "string"
+		},
+		"entry": {
+			"description": "Its ES module, a file of the bundle.",
+			"minLength": 1,
+			"title": "Entry",
+			"type": "string"
+		},
+		"styles": {
+			"description": "The stylesheets adopted into its shadow root (files of the bundle).",
+			"items": {
+				"type": "string"
+			},
+			"title": "Styles",
+			"type": "array"
+		},
+		"isolation": {
+			"default": "shadow",
+			"description": "`shadow` (its own root, the default) or `none` (light DOM, the shell's CSS).",
+			"enum": [
+				"shadow",
+				"none"
+			],
+			"title": "Isolation",
+			"type": "string"
+		},
+		"contributes": {
+			"$ref": "#/$defs/Contributions",
+			"description": "What it adds to the shell."
+		}
+	},
+	"required": [
+		"name",
+		"version",
+		"sdk",
+		"entry"
+	],
+	"title": "UIManifest",
+	"type": "object"
+}

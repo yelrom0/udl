@@ -159,7 +159,8 @@ export const fixtures = {
 				"kind": "text",
 				"name": "text",
 				"origin": "text",
-				"source": "builtin"
+				"source": "builtin",
+				"ui": false
 			}
 		],
 		"problems": [

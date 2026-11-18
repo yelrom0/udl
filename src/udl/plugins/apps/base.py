@@ -48,6 +48,7 @@ from udl.db.records import Record, RecordQuery
 from udl.errors import PluginError
 from udl.plugins.requirements import Requirement
 from udl.plugins.secrets.base import SecretStore
+from udl.plugins.ui.base import UIBundle
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -360,9 +361,9 @@ class AppPlugin[S: AppSettings](ABC):
     # What it needs installed (`udl plugins list` says what is missing).
     requires: ClassVar[tuple[Requirement, ...]] = ()
     settings_model: ClassVar[type[AppSettings]] = AppSettings
-    # The UI it brings of its own (a udl.ui plugin's manifest, 18.7), or None to get the
-    # generated page (24.3-24.6) as every other plugin does.
-    ui: ClassVar[object | None] = None
+    # The UI it brings of its own (a bundle, 18.7), or None to get the generated page
+    # (24.3-24.6) as every other plugin does.
+    ui: ClassVar[UIBundle | None] = None
 
     def __init__(self, settings: S, *, clock: Clock) -> None:
         self.settings = settings

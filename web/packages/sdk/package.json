@@ -1,0 +1,14 @@
+{
+	"name": "@udl/ui-sdk",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"description": "What a udl UI plugin is written against: the manifest's types (from udl's model), defineUIPlugin, and the mount contract.",
+	"scripts": {
+		"manifest": "json2ts src/manifest.schema.json --output src/manifest.ts",
+		"check-generated": "node scripts/check-generated.mjs"
+	},
+	"devDependencies": {
+		"json-schema-to-typescript": "15.0.4"
+	}
+}

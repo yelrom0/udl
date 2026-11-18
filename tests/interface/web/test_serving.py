@@ -54,7 +54,7 @@ def plugins(tmp_path: Path) -> Path:
     bundle = folder / "gmail"
     bundle.mkdir(parents=True)
     (bundle / "manifest.json").write_text(
-        '{"name": "gmail", "version": "0.1.0", "entry": "index.js"}'
+        '{"name": "gmail", "version": "0.1.0", "sdk": "^1.0", "entry": "index.js"}'
     )
     (bundle / "index.js").write_text("export default {}\n")
     (bundle / "index.css").write_text(".gmail { color: red }\n")

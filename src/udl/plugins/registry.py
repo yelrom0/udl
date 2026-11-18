@@ -38,6 +38,7 @@ from udl.plugins.integrations.base import Integration
 from udl.plugins.runners.base import AgentRunner, AnAgentRunner
 from udl.plugins.secrets.base import SecretStore
 from udl.plugins.sites.base import SitePlugin
+from udl.plugins.ui.base import UIPlugin
 
 log = logging.getLogger(__name__)
 
@@ -90,6 +91,7 @@ ACTIONS: Final = PluginKind[ActionPlugin[Any]]("udl.actions", ActionPlugin)
 INTEGRATIONS: Final = PluginKind[Integration[Any, Any]]("udl.integrations", Integration)
 APPS: Final = PluginKind[AnApp]("udl.apps", AppPlugin)
 RUNNERS: Final = PluginKind[AnAgentRunner]("udl.runners", AgentRunner)
+UI: Final = PluginKind("udl.ui", UIPlugin)
 
 # Every kind of plugin udl uses.
 PLUGIN_KINDS: Final[tuple[PluginKind[Any], ...]] = (
@@ -101,6 +103,7 @@ PLUGIN_KINDS: Final[tuple[PluginKind[Any], ...]] = (
     INTEGRATIONS,
     APPS,
     RUNNERS,
+    UI,
 )
 
 

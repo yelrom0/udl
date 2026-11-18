@@ -54,6 +54,7 @@ from udl.integrations.oauth import OAuthClient, OAuthProvider, Tokens
 from udl.plugins.requirements import Requirement
 from udl.plugins.secrets.base import SecretRef
 from udl.plugins.settings import FileOnly
+from udl.plugins.ui.base import UIBundle
 
 __all__ = [
     "APISpec",
@@ -365,6 +366,7 @@ class Integration[S: IntegrationSettings, A: AccountOptions](ABC):
     summary: ClassVar[str] = ""  # what it is, in a line
     # What it needs installed (`udl plugins list` says what is missing).
     requires: ClassVar[tuple[Requirement, ...]] = ()
+    ui: ClassVar[UIBundle | None] = None  # its UI plugin, if it has one (18.7)
     settings_model: ClassVar[type[IntegrationSettings]] = IntegrationSettings
     account_model: ClassVar[type[AccountOptions]] = AccountOptions
     connect: ClassVar[tuple[ConnectMethod, ...]]  # how its accounts connect, the usual first

@@ -9,7 +9,7 @@
 	"scripts": {
 		"dev": "pnpm --filter @udl/shell dev",
 		"build": "pnpm --filter @udl/shell build",
-		"check": "biome ci . && pnpm --filter @udl/api run check-generated && pnpm -r exec tsc --noEmit && pnpm -r test",
+		"check": "biome ci . && pnpm --filter @udl/api run check-generated && pnpm --filter @udl/ui-sdk run check-generated && pnpm -r exec tsc --noEmit && pnpm -r test",
 		"e2e": "playwright test"
 	},
 	"devDependencies": {

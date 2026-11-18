@@ -36,6 +36,7 @@ from udl.clock import Clock
 from udl.errors import PluginError
 from udl.hosts.shell import HostShell, Interaction
 from udl.plugins.requirements import Requirement
+from udl.plugins.ui.base import UIBundle
 
 __all__ = [
     "AgentEvent",
@@ -227,6 +228,7 @@ class AgentRunner[O: RunnerOptions](ABC):
     """Its options' model (its own extends RunnerOptions)."""
     requires: ClassVar[tuple[Requirement, ...]] = ()
     """What it needs installed (a program, a module), for `udl plugins list`."""
+    ui: ClassVar[UIBundle | None] = None  # its UI plugin, if it has one (18.7)
 
     def __init__(self, options: O, *, shell: HostShell, clock: Clock) -> None:
         self._options = options
