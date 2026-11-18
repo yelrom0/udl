@@ -312,7 +312,7 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
 - [ ] **Phase 18: Web UI foundations & UI plugins**: pulled forward and built now as **24.1** (see "Next to build")
   - [~] 18.1 `web/` pnpm workspace and tooling: Vite + SWC, TypeScript strict, Biome, Vitest (+ coverage gate), Playwright, Tailwind CSS + daisyUI; `make web`, `make e2e`, and `make check` runs the web checks
   - [ ] 18.2 Typed API client generated from udl's OpenAPI schema (`openapi-typescript` + `openapi-fetch`); `make check` fails when it is stale
-  - [ ] 18.3 FastAPI serves the UI at `/ui` (from the package, SPA fallback, CSP, cache headers), and a page saying how to build it when it isn't built
+  - [~] 18.3 FastAPI serves the UI at `/ui` (from the package, SPA fallback, CSP, cache headers), and a page saying how to build it when it isn't built
   - [ ] 18.4 Web sessions: sign in with the API key → a session cookie; a CSRF header and an Origin check on writes
   - [ ] 18.5 The shell: layout, TanStack Router (file routes, auth guard, a splat route for plugin pages), Zustand stores, light / dark / system theme
   - [ ] 18.6 Live data: shared SSE connections feeding Zustand stores, reconnecting with backoff
@@ -4221,6 +4221,36 @@ timeout: 5m
   OpenAPI schema. `uv build` must put the built files in the wheel; check it here.
 - Tests first: `tests/interface/web/test_serving.py`: the phase's first bullet.
 - Done when: `udl serve` shows the built shell at `/ui/`.
+- **Built (deepseek-a, 2026-11-18, PR #N):** the UI at `/ui`.
+  - `src/udl/interfaces/web/app.py`: `add_web_routes(app, settings, dist=DIST)` (`DIST` is the
+    package's `dist/`), which `create_app()` calls when `settings.web.enabled`. The routes are
+    Starlette's, so no API key is asked for and none of them is in the schema:
+    - `/` answers 307 to `/ui/` for a request that takes HTML, and 404 otherwise (a script asking
+      for JSON gets no page);
+    - `/ui/assets/{path}` from `dist/assets`, `max-age=31536000, immutable`;
+    - `/ui/plugins/{name}/{path}` from `<ui_plugin_dirs>/<name>` (a folder with a `manifest.json`),
+      `no-cache` and an `ETag`, with 304 for a client whose `If-None-Match` is current; a `..` in
+      the path, or a symlink out of the bundle, is a 404;
+    - `/ui/{path}` answers a file of the build when there is one, else `index.html`, `no-cache`;
+      without a build, a page saying to run `make web`.
+  - Every answer carries the CSP (`default-src 'self'; connect-src 'self'; frame-ancestors
+    'none'`), `Referrer-Policy: same-origin` and `X-Content-Type-Options: nosniff`.
+  - Tests: `tests/interface/web/test_serving.py` (15 tests: the shell and a client route, an asset's
+    year and a missing asset's 404, a plugin's bundle with its ETag and its 304, an unknown plugin
+    and a missing file, a symlink and a `..` refused, `/` for a page and for a script, no build, no
+    API key, `[web] enabled = false`, the schema, and the wheel).
+  - `make e2e`: the harness's config now has `[web] enabled = true`, and `web/e2e/shell.spec.ts`'s
+    `/ui/` check is no longer `test.fixme` (both themes pass). CI's e2e job runs the serving tests
+    after `make e2e`, so the wheel check runs rather than skips.
+  - Checked by hand: `udl serve` on 8899 (a temp config) answered `/ui/` 200 with the headers, `/`
+    307, and the asset 200 `text/javascript`; `uv build` put `dist/` in the wheel.
+  - Decisions:
+    - **A missing asset is a 404, not `index.html`:** a browser would parse the page as a module,
+      and say something confusing instead of "this build is stale".
+    - **A plugin's bundle gets a 304** (`no-cache` alone makes a browser download it on every load).
+    - **Plugin bundles are found by folder name and `manifest.json` for now:** 18.7's discovery (a
+      plugin's `ui` class attribute, the `udl.ui` entry points, the manifest's own `name`) replaces
+      `plugin_dir`, the one place it is looked up.
 
 **18.4 Web sessions** · needs 18.3
 - Build: `udl/interfaces/web/sessions.py`.
