@@ -34,10 +34,12 @@ from udl.errors import PluginError
 from udl.plugins.apps.base import (
     AnApp,
     AppContext,
+    AppEvent,
     AppEvents,
     AppPlugin,
     AppRecords,
     AppSettings,
+    _ended,  # pyright: ignore[reportPrivateUsage]  (its own branch, reached only here)
 )
 from udl.plugins.registry import APPS
 
@@ -366,7 +368,7 @@ async def test_a_subscription_survives_a_wait_that_gave_up(service: UDLService) 
 
 
 async def test_waiting_for_an_event_that_never_comes_times_out(service: UDLService) -> None:
-    # (wait_for returns None when the app is told to stop; a subscription that ends is None too.)
+    # (An app that is told to stop while it waits is not waiting any more: None, not an error.)
     events = events_of(service)
     stop = asyncio.Event()
 
@@ -375,6 +377,15 @@ async def test_waiting_for_an_event_that_never_comes_times_out(service: UDLServi
 
     stop.set()
     assert await asyncio.wait_for(events.wait_for("fakeapp.*", stop=stop), 1) is None
+
+
+async def test_a_wait_whose_subscription_ended_is_none() -> None:
+    # (The bus's notices only end when the listener is cancelled: nothing is coming, and an app
+    # that waits is told so rather than being cancelled.)
+    ended: asyncio.Future[AppEvent] = asyncio.get_running_loop().create_future()
+    ended.set_exception(StopAsyncIteration())
+
+    assert await _ended(ended) is None
 
 
 async def test_an_event_an_app_waits_for_is_told_of_once(service: UDLService) -> None:
