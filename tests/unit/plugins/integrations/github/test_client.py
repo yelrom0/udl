@@ -24,7 +24,7 @@ from pydantic import SecretStr
 
 # Local Imports
 from support.clock import FakeClock
-from support.github import BASE, TOKEN, Body, FakeGitHub, check_run_body
+from support.github import BASE, TOKEN, Body, FakeGitHub, check_run_body, pull_body
 from support.github import repo_body as gh_repo_body
 from udl.errors import (
     ConfigError,
@@ -198,6 +198,50 @@ async def test_a_pull_is_merged_by_method(client: GitHubClient, gh: FakeGitHub) 
 async def test_a_merge_of_another_commit_is_refused(client: GitHubClient) -> None:
     with pytest.raises(NotAllowed, match="Head branch was modified"):
         await client.merge_pull(REPO, 7, sha="other")
+
+
+async def test_the_pulls_are_asked_for_again_only_when_they_changed(
+    client: GitHubClient, gh: FakeGitHub
+) -> None:
+    first = await client.pulls_if_changed(REPO)
+
+    assert first.pulls is not None
+    assert [pull.number for pull in first.pulls] == [7, 8]
+    assert first.etag is not None
+    assert gh.calls == [
+        "GET /repos/acme/widgets/pulls?state=all&sort=updated&direction=desc&per_page=100"
+    ]
+
+    again = await client.pulls_if_changed(REPO, etag=first.etag)
+
+    assert again.pulls is None  # (a 304: nothing changed)
+    assert again.etag == first.etag
+
+    gh.open_pull(number=9)
+    changed = await client.pulls_if_changed(REPO, etag=first.etag)
+
+    assert changed.pulls is not None
+    assert [pull.number for pull in changed.pulls] == [7, 8, 9]
+    assert changed.etag != first.etag
+
+
+async def test_a_pulls_answer_without_an_etag_is_read_every_time() -> None:
+    def answer(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[pull_body(REPO, 7).model_dump(mode="json")],
+            headers={"Content-Type": "application/json"},
+        )
+
+    client = GitHubClient(
+        base_url=BASE, token=SecretStr(TOKEN), http=api_of(answer), clock=FakeClock()
+    )
+
+    found = await client.pulls_if_changed(REPO)
+
+    assert found.pulls is not None
+    assert [pull.number for pull in found.pulls] == [7]
+    assert found.etag is None
 
 
 async def test_the_check_runs_of_a_commit_are_listed(client: GitHubClient, gh: FakeGitHub) -> None:

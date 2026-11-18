@@ -66,6 +66,7 @@ from udl.plugins.integrations.github.models import (
 )
 
 __all__ = [
+    "ChangedPulls",
     "GhRateLimit",
     "GitHubClient",
     "MergeMethod",
@@ -154,6 +155,15 @@ def repo_name(repo: str) -> str:
     return repo
 
 
+class ChangedPulls(BaseModel):
+    """A repository's pull requests, when GitHub says they changed."""
+
+    pulls: list[GhPull] | None
+    """The pulls, most recently updated first (None: GitHub answered 304, nothing changed)."""
+    etag: str | None
+    """What to give as the ETag next time (None: GitHub sent none, so every look reads)."""
+
+
 class GitHubClient:
     """A client of the GitHub REST API for one token (None: unauthenticated, which sees only
     public repositories). Made per integration, or per account's client; it holds no state but
@@ -226,6 +236,25 @@ class GitHubClient:
     async def get_pull(self, repo: str, number: int) -> GhPull:
         """One pull request, by number (GET /repos/{repo}/pulls/{number})."""
         return await self._get(f"/repos/{repo_name(repo)}/pulls/{number}", GhPull)
+
+    async def pulls_if_changed(
+        self, repo: str, *, state: PullStateFilter = "all", etag: str | None = None
+    ) -> ChangedPulls:
+        """The pull requests of `repo` (owner/name) that GitHub says changed since the last look,
+        most recently updated first: the first page of them, and the ETag to give next time.
+
+        With `etag` (the last answer's), GitHub answers 304 while nothing changed, so a watcher
+        asks once per repository and reads nothing: `pulls` is None then. The first page holds
+        the most recently updated pulls, so a pull that was just merged or closed is in it."""
+        query = {"state": state, "sort": "updated", "direction": "desc", "per_page": str(PAGE_SIZE)}
+        asked = {"If-None-Match": etag} if etag is not None else None
+        url = f"{self.base_url}/repos/{repo_name(repo)}/pulls"
+        answer, response = await self._ask("GET", url, params=query, headers=asked)
+        if response.status_code == 304:
+            return ChangedPulls(pulls=None, etag=etag)
+        return ChangedPulls(
+            pulls=self._each(GhPull, answer, url), etag=response.headers.get("ETag")
+        )
 
     async def open_pull(
         self,
@@ -405,6 +434,7 @@ class GitHubClient:
         *,
         params: Mapping[str, str] | None = None,
         json: Mapping[str, object] | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> tuple[JsonValue, httpx.Response]:
         """A request's answer (as plain JSON) and the response it came in.
 
@@ -414,13 +444,14 @@ class GitHubClient:
         is not retryable (a 401, a 404, a 403 that is not the rate limit) is raised at once.
         """
         query = dict(params) if params is not None else None
-        headers = {
+        sent = {
             "Accept": ACCEPT,
             "X-GitHub-Api-Version": API_VERSION,
             "User-Agent": user_agent(),
         }
+        sent.update(headers or {})
         if self._token is not None:
-            headers["Authorization"] = f"Bearer {self._token.get_secret_value()}"
+            sent["Authorization"] = f"Bearer {self._token.get_secret_value()}"
         retryable = method in ("GET", "HEAD")
         failed: UDLError | None = None
         status = 0
@@ -430,7 +461,7 @@ class GitHubClient:
                 # and this loop adds a wait between its tries.)
                 async with self._http(tool=TOOL) as client:
                     response = await client.request(
-                        method, url, params=query, headers=headers, json=json
+                        method, url, params=query, headers=sent, json=json
                     )
             except UDLError as e:
                 if not is_retryable(e):
