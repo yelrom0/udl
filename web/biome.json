@@ -18,7 +18,8 @@
 			"!packages/api/src/operations.ts",
 			"!packages/api/src/fixtures.ts",
 			"!packages/sdk/src/manifest.schema.json",
-			"!packages/sdk/src/manifest.ts"
+			"!packages/sdk/src/manifest.ts",
+			"!packages/shell/src/routeTree.gen.ts"
 		]
 	},
 	"formatter": {

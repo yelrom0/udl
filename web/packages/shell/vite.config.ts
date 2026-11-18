@@ -1,6 +1,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
+import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react-swc";
 import { defineConfig } from "vite";
 
@@ -10,7 +11,8 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 export default defineConfig({
 	base: "/ui/",
-	plugins: [react(), tailwindcss()],
+	// (The file routes' tree is generated from `src/routes/`, before the page is built.)
+	plugins: [tanstackRouter({ target: "react", autoCodeSplitting: false }), react(), tailwindcss()],
 	build: {
 		outDir: resolve(repo, "src/udl/interfaces/web/dist"),
 		emptyOutDir: true,

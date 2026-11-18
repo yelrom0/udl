@@ -6,22 +6,27 @@
 	"scripts": {
 		"dev": "vite",
 		"build": "vite build",
-		"test": "tsc --noEmit && vitest run --coverage"
+		"generate": "tsr generate",
+		"test": "tsr generate && tsc --noEmit && vitest run --coverage"
 	},
 	"dependencies": {
+		"@tanstack/react-router": "1.170.46",
+		"@udl/api": "workspace:*",
 		"react": "19.3.1",
 		"react-dom": "19.3.1",
 		"zustand": "5.1.0"
 	},
 	"devDependencies": {
+		"@tailwindcss/vite": "4.3.5",
+		"@tanstack/router-cli": "1.168.0",
+		"@tanstack/router-plugin": "1.169.0",
+		"@testing-library/dom": "10.4.2",
+		"@testing-library/react": "16.3.3",
 		"@types/react": "19.3.0",
 		"@types/react-dom": "19.3.0",
 		"@vitejs/plugin-react-swc": "4.3.3",
-		"vite": "8.3.8",
-		"@testing-library/react": "16.3.3",
-		"@testing-library/dom": "10.4.2",
+		"daisyui": "5.8.1",
 		"tailwindcss": "4.3.5",
-		"@tailwindcss/vite": "4.3.5",
-		"daisyui": "5.8.1"
+		"vite": "8.3.8"
 	}
 }

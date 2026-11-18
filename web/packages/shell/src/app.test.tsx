@@ -1,21 +1,264 @@
-import { render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { App } from "./app";
+import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NAV } from "./routes/__root";
+import { routeTree } from "./routeTree.gen";
+import { setConnection } from "./stores/live";
+import { setPlugins } from "./stores/plugins";
+import { session } from "./stores/session";
 import { startFakingMatchMedia, stopFakingMatchMedia } from "./test-setup";
+
+/** An answer as `fetch` gives one: a status and a JSON body. */
+function answer(status: number, body: unknown): Response {
+	return new Response(JSON.stringify(body), {
+		status,
+		headers: { "Content-Type": "application/json" },
+	});
+}
+
+const EMPTY = { sites: [], downloads: [] };
+
+/** The path a request asks for (the typed client sends a `Request`, a plain `fetch` a URL). */
+function pathOf(input: RequestInfo | URL): string {
+	const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+	return new URL(url, "http://localhost").pathname;
+}
+
+/** udl's answers: signed in (everything answers), or signed out (everything is a 401). */
+function udl({ signedIn = true }: { signedIn?: boolean } = {}): void {
+	vi.stubGlobal(
+		"fetch",
+		vi.fn((input: RequestInfo | URL) => {
+			if (input === "/session") {
+				return Promise.resolve(new Response(null, { status: 204 }));
+			}
+			if (!signedIn) {
+				return Promise.resolve(
+					answer(401, { code: "unauthorized", message: "This udl server needs its API key" }),
+				);
+			}
+			const path = pathOf(input);
+			return Promise.resolve(answer(200, path === "/downloads" ? { downloads: [] } : EMPTY));
+		}),
+	);
+}
+
+/** The page at `path` (`/ui` is its base, as udl serves it). */
+function draw(path: string) {
+	const router = createRouter({
+		routeTree,
+		basepath: "/ui",
+		history: createMemoryHistory({ initialEntries: [path] }),
+	});
+	render(<RouterProvider router={router} />);
+	return router;
+}
 
 beforeEach(() => {
 	startFakingMatchMedia();
+	session.setState({ state: "unknown" });
+	localStorage.clear();
 });
 
 afterEach(() => {
 	stopFakingMatchMedia();
+	vi.unstubAllGlobals();
+	vi.restoreAllMocks();
 	delete document.documentElement.dataset.theme;
 });
 
 describe("the shell", () => {
-	it("says udl", () => {
-		render(<App />);
+	it("reaches every page of the nav", async () => {
+		udl();
+		for (const item of NAV) {
+			draw(item.to === "/" ? "/ui/" : `/ui${item.to}`);
+			const heading =
+				item.to === "/"
+					? await screen.findByRole("heading", { level: 1, name: "Dashboard" })
+					: await screen.findByRole("heading", { level: 1, name: item.label });
+			expect(heading).toBeTruthy();
+		}
+	});
 
-		expect(screen.getByRole("heading", { level: 1, name: "udl" })).toBeTruthy();
+	it("shows the nav, the theme and signing out", async () => {
+		udl();
+		draw("/ui/downloads");
+
+		await screen.findByRole("heading", { name: "Downloads" });
+		for (const item of NAV) {
+			expect(screen.getAllByRole("link", { name: item.label }).length).toBeGreaterThan(0);
+		}
+		expect(screen.getByRole("combobox", { name: "Theme" })).toBeTruthy();
+		expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
+	});
+
+	it("goes to the login page when udl asks for its key", async () => {
+		udl({ signedIn: false });
+		draw("/ui/downloads");
+
+		expect(await screen.findByRole("heading", { level: 1, name: "udl" })).toBeTruthy();
+		expect(screen.getByText("This server needs its API key.")).toBeTruthy();
+		expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
+	});
+
+	it("signs in with the key, and lands on the dashboard", async () => {
+		udl({ signedIn: false });
+		draw("/ui/login");
+		const key = await screen.findByLabelText("API key");
+
+		fireEvent.change(key, { target: { value: "s3cret" } });
+		fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+		await waitFor(() => {
+			expect(session.getState().state).toBe("signed-in");
+		});
+	});
+
+	it("signs out from the navbar", async () => {
+		udl();
+		draw("/ui/downloads");
+		await screen.findByRole("heading", { name: "Downloads" });
+
+		fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+
+		await waitFor(() => {
+			expect(session.getState().state).toBe("signed-out");
+		});
+		expect(await screen.findByRole("heading", { level: 1, name: "udl" })).toBeTruthy();
+	});
+
+	it("says a plugin page it has no plugin for", async () => {
+		udl();
+		draw("/ui/p/gmail/inbox");
+
+		expect(await screen.findByRole("heading", { level: 1, name: "gmail" })).toBeTruthy();
+		expect(screen.getByText(/No UI plugin named "gmail" is loaded/)).toBeTruthy();
+	});
+
+	it("switches the theme, and keeps the choice", async () => {
+		udl();
+		draw("/ui/downloads");
+		await screen.findByRole("heading", { name: "Downloads" });
+
+		fireEvent.change(screen.getByRole("combobox", { name: "Theme" }), {
+			target: { value: "dark" },
+		});
+
+		await waitFor(() => {
+			expect(document.documentElement.dataset.theme).toBe("dark");
+		});
+		expect(localStorage.getItem("udl.theme")).toBe('"dark"');
+	});
+
+	it("shows the downloads udl worked on last", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn((input: RequestInfo | URL) => {
+				const path = pathOf(input);
+				if (path === "/downloads") {
+					return Promise.resolve(
+						answer(200, {
+							downloads: [
+								{
+									id: "3f0f9c1e-0000-0000-0000-000000000001",
+									url: "https://example.com/a.zip",
+									site_key: "example.com",
+									status: "done",
+									started_at: new Date().toISOString(),
+								},
+							],
+						}),
+					);
+				}
+				return Promise.resolve(answer(200, EMPTY));
+			}),
+		);
+		draw("/ui/");
+
+		expect(await screen.findByText("https://example.com/a.zip")).toBeTruthy();
+		expect(screen.getByText("done")).toBeTruthy();
+		expect(screen.getByText("just now")).toBeTruthy();
+	});
+
+	it("says so when udl cannot be reached", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn((input: RequestInfo | URL) => {
+				const path = pathOf(input);
+				if (path === "/sites") {
+					return Promise.resolve(answer(500, { code: "udl_error", message: "udl is unwell" }));
+				}
+				return Promise.resolve(answer(200, { downloads: [] }));
+			}),
+		);
+		draw("/ui/");
+
+		expect(await screen.findByRole("alert")).toHaveProperty("textContent", "udl is unwell");
+	});
+
+	it("says a plugin page it knows, with the plugin's name", async () => {
+		udl();
+		setPlugins([{ name: "gmail", version: "0.1.0", entry: "index.js" }]);
+		draw("/ui/p/gmail/inbox");
+
+		expect(await screen.findByRole("heading", { level: 1, name: "gmail 0.1.0" })).toBeTruthy();
+		expect(screen.getByText(/The page "inbox" this plugin brings/)).toBeTruthy();
+	});
+
+	it("says the connection is live when it is", async () => {
+		udl();
+		setConnection("live");
+		draw("/ui/downloads");
+
+		expect(await screen.findByText("live")).toBeTruthy();
+	});
+
+	it("says what udl said about a key it refused", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn((input: RequestInfo | URL) => {
+				if (input === "/session") {
+					return Promise.resolve(
+						answer(401, { code: "unauthorized", message: "This udl server needs its API key" }),
+					);
+				}
+				return Promise.resolve(answer(401, { code: "unauthorized", message: "no" }));
+			}),
+		);
+		draw("/ui/login");
+		fireEvent.change(await screen.findByLabelText("API key"), { target: { value: "wrong" } });
+		fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+		expect(await screen.findByRole("alert")).toHaveProperty(
+			"textContent",
+			"This udl server needs its API key",
+		);
+	});
+
+	it("says a sign-in that failed for another reason", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn((input: RequestInfo | URL) => {
+				if (input === "/session") {
+					return Promise.reject(new TypeError("the network is down"));
+				}
+				return Promise.resolve(answer(401, { code: "unauthorized", message: "no" }));
+			}),
+		);
+		draw("/ui/login");
+		fireEvent.change(await screen.findByLabelText("API key"), { target: { value: "x" } });
+		fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+		expect(await screen.findByRole("alert")).toHaveProperty(
+			"textContent",
+			"TypeError: the network is down",
+		);
+	});
+
+	it("says the dashboard has nothing yet", async () => {
+		udl();
+		draw("/ui/");
+
+		expect(await screen.findByText("udl has downloaded nothing yet.")).toBeTruthy();
 	});
 });

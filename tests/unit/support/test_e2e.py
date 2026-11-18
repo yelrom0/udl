@@ -89,6 +89,8 @@ def test_the_config_is_what_the_server_reads(tmp_path: Path) -> None:
     # ~/.config/udl/ui-plugins.)
     assert '[secrets]\nstore = "memory"' in text
     assert "[web]\nenabled = true" in text
+    # (A key, so a browser test signs in as a user does; 18.4's session is what the UI uses.)
+    assert 'api_key = "e2e-key"' in text
     assert f'ui_plugin_dirs = ["{tmp_path / "ui-plugins"}"]' in text
 
 

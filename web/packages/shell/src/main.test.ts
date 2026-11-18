@@ -11,7 +11,7 @@ vi.mock("react-dom/client", () => ({
 	}),
 }));
 
-vi.mock("./app", () => ({ App: () => null }));
+vi.mock("./router", () => ({ router: { routeTree: null } }));
 
 beforeEach(() => {
 	startFakingMatchMedia();
@@ -31,7 +31,7 @@ async function start(): Promise<void> {
 }
 
 describe("starting the shell", () => {
-	it("draws the App into #root, with the theme on <html>", async () => {
+	it("draws the router into #root, with the theme on <html>", async () => {
 		const root = document.createElement("div");
 		root.id = "root";
 		document.body.append(root);

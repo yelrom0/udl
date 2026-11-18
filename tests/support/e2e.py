@@ -54,6 +54,8 @@ READY_TIMEOUT: Final[float] = 30
 # How long the server runs on its own before it stops itself, so a test that leaves it behind
 # does not leave it forever (Playwright's webServer stops it with SIGTERM, which it also takes).
 SELF_STOP: Final[float] = 600
+# The API key the e2e server asks for, and the browser tests sign in with.
+API_KEY: Final = "e2e-key"
 # A control call's answer.
 JSON = "application/json"
 
@@ -78,6 +80,7 @@ store = "memory"
 [api]
 host = "127.0.0.1"
 port = {port}
+api_key = "{key}"
 
 [web]
 enabled = true
@@ -91,7 +94,9 @@ enabled = false
 def write_config(root: Path, port: int) -> Path:
     """The config `udl serve` reads: a SQLite database and downloads under `root`, the e2e
     plugins as local ones, the memory secret store, and udl on `port`. The web UI is served (a
-    browser is what most of the e2e tests are), from the build `make e2e` makes first."""
+    browser is what most of the e2e tests are), from the build `make e2e` makes first. The API
+    has `API_KEY`, so the tests sign in as a user does (18.4's session) rather than run against
+    an open server."""
     path = root / "config.toml"
     path.write_text(
         CONFIG.format(
@@ -100,6 +105,7 @@ def write_config(root: Path, port: int) -> Path:
             plugins=E2E_PLUGINS,
             ui=root / "ui-plugins",
             port=port,
+            key=API_KEY,
         )
     )
     return path
