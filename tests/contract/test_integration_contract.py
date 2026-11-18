@@ -25,6 +25,9 @@ from pydantic import BaseModel, SecretStr
 
 # Local Imports
 from support.clock import FakeClock
+from support.github import BASE as GITHUB_BASE
+from support.github import TOKEN as GITHUB_TOKEN
+from support.github import FakeGitHub
 from support.integrations import (
     FakeAccountOptions,
     FakeSettings,
@@ -44,6 +47,12 @@ from udl.plugins.integrations.base import (
     ConnectMethod,
     Credentials,
     Integration,
+)
+from udl.plugins.integrations.github.plugin import (
+    GitHubIntegration,
+    GitHubOptions,
+    GitHubSettings,
+    GitHubToken,
 )
 
 
@@ -85,7 +94,29 @@ def fake_case() -> Case:
     return Case(integration, clock, connected, happen)
 
 
-CASES: dict[str, Callable[[], Case]] = {"fake": fake_case}
+def github_case() -> Case:
+    fake = FakeGitHub()
+    clock = FakeClock()
+    integration = GitHubIntegration(GitHubSettings(), http=fake.http(), clock=clock)
+
+    async def connected(method: ConnectMethod) -> tuple[Credentials, BaseModel]:
+        assert method is ConnectMethod.TOKENS
+        return GitHubToken(token=SecretStr(GITHUB_TOKEN)), GitHubOptions(
+            repos=["acme/widgets"], api_url=GITHUB_BASE
+        )
+
+    made = 8  # (the fake's own pulls are 7 and 8)
+
+    async def happen(name: str, count: int) -> None:
+        nonlocal made
+        for _ in range(count):
+            made += 1
+            fake.open_pull(number=made, head=f"feat/thing-{made}")
+
+    return Case(integration, clock, connected, happen)
+
+
+CASES: dict[str, Callable[[], Case]] = {"fake": fake_case, "github": github_case}
 
 
 @pytest.fixture(params=sorted(CASES))

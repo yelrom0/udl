@@ -240,7 +240,12 @@ class FakeGitHub:
         """Push `sha` to a pull's head (a new commit on it)."""
         pull = self.pull_of(repo, number)
         self.pulls[repo] = [
-            pull.model_copy(update={"head": pull.head.model_copy(update={"sha": sha})})
+            pull.model_copy(
+                update={
+                    "head": pull.head.model_copy(update={"sha": sha}),
+                    "updated_at": datetime.now(UTC),
+                }
+            )
             if item.number == number
             else item
             for item in self.pulls.get(repo, [])
@@ -293,7 +298,14 @@ class FakeGitHub:
         """Merge a pull, as GitHub would."""
         pull = self.pull_of(repo, number)
         self.pulls[repo] = [
-            pull.model_copy(update={"merged": True, "state": PullState.CLOSED, "mergeable": None})
+            pull.model_copy(
+                update={
+                    "merged": True,
+                    "state": PullState.CLOSED,
+                    "mergeable": None,
+                    "updated_at": datetime.now(UTC),
+                }
+            )
             if item.number == number
             else item
             for item in self.pulls.get(repo, [])
@@ -598,12 +610,23 @@ class FakeGitHub:
         return f"{request.path_params['owner']}/{request.path_params['repo']}"
 
     def _comment(self, text: str, *, login: str, repo: str, number: int) -> GhComment:
-        """Put a comment on a pull's conversation."""
+        """Put a comment on a pull's conversation (which says, as GitHub does, that it was
+        updated: what a watcher's ETag and its pulls' updated_at tell it)."""
         found = comment_body(
             9000 + len(self.comments.get(_key(repo, number), [])), text, login=login
         )
         self.comments.setdefault(_key(repo, number), []).append(found)
+        self._touch(repo, number)
         return found
+
+    def _touch(self, repo: str, number: int) -> None:
+        """Say a pull was updated (as GitHub does when something happens to it)."""
+        self.pulls[repo] = [
+            item.model_copy(update={"updated_at": datetime.now(UTC)})
+            if item.number == number
+            else item
+            for item in self.pulls.get(repo, [])
+        ]
 
 
 def _json(model: GhPull | GhComment | GhReviewComment | GhCheckRun | GhRepo | GhUser) -> JsonObject:

@@ -53,6 +53,7 @@ from udl.http import HttpClientFactory
 from udl.integrations.oauth import OAuthClient, OAuthProvider, Tokens
 from udl.plugins.requirements import Requirement
 from udl.plugins.secrets.base import SecretRef
+from udl.plugins.settings import FileOnly
 
 __all__ = [
     "APISpec",
@@ -67,6 +68,7 @@ __all__ = [
     "Credentials",
     "Duration",
     "EventSink",
+    "FileOnly",
     "Integration",
     "IntegrationOperation",
     "IntegrationSettings",

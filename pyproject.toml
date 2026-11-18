@@ -44,6 +44,9 @@ mongodb = [
 udl = "udl.interfaces.cli.app:main"
 
 # Built-in plugins are registered the same way third-party plugins are.
+[project.entry-points."udl.integrations"]
+github = "udl.plugins.integrations.github.plugin:GitHubIntegration"
+
 [project.entry-points."udl.databases"]
 memory = "udl.plugins.databases.memory:MemoryDatabase"
 mongodb = "udl.plugins.databases.mongodb:MongoDBPlugin"
