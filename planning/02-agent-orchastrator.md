@@ -345,6 +345,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
 
 **24.9 planning.md amended** · needs 24.8
 - Build: requirement **5d** becomes "A plugin without a UI plugin gets a generated UI from its operations, settings and accounts"; the "Without a UI plugin" bullet under UI plugins is rewritten to match; 20.7–20.10 note that each UI plugin now only builds what the generated page can't (the mailbox, the watch wizard) and guides the rest.
+- **Built (deepseek-b, 2026-11-19, PR #TBD):** docs only. Requirement **5d** now reads "A plugin without a UI plugin gets a generated UI from its operations, settings and accounts" (refs 24.3–24.6, 8.1–8.3, 18.7); the "Without a UI plugin" bullet under *UI plugins (18.7–18.10)* says what the generated page is — `/ui/p/<plugin>`, its Operations/Settings/Accounts/Events, a request as `<SchemaForm>` and a response as `<ResultView>`, the same operations as its CLI/API/MCP adapters — and a new bullet beside it says a UI plugin *guides* the generated page (the manifest's `generated`, `operationViews`, `resultViews`, `fieldWidgets`) instead of replacing it; and Phases 20.7–20.10 gain a note that each builds only what the generated page cannot (the mailbox, the watch wizard, the sign-in wizard, the diff) and leaves the rest generated. No code changed, so the gates are `make check`'s docs and link checks only.
 
 **Phase 24 is done when:** `make web && udl serve`, then `/ui/p/<any plugin>` lets a person do everything that plugin's CLI commands can.
 
