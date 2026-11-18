@@ -5,7 +5,15 @@
 	},
 	"files": {
 		"ignoreUnknown": false,
-		"includes": ["**", "!**/node_modules", "!**/dist", "!**/coverage", "!pnpm-lock.yaml"]
+		"includes": [
+			"**",
+			"!**/node_modules",
+			"!**/dist",
+			"!**/coverage",
+			"!**/test-results",
+			"!**/playwright-report",
+			"!pnpm-lock.yaml"
+		]
 	},
 	"formatter": {
 		"indentStyle": "tab",
