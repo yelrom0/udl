@@ -12,9 +12,9 @@ runtime stops or loses the lease; what each is doing is what get_status says
 import asyncio
 import inspect
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import ClassVar
 
 # Package Imports
 import pytest
@@ -25,13 +25,13 @@ from support.clock import FakeClock
 from support.interfaces import Harness
 from udl.automations.apps import AppState, AppStatus
 from udl.automations.runtime import AutomationRuntime, runtime_status
-from udl.clock import pause
+from udl.clock import Clock, pause
 from udl.config import AutomationsSettings
 from udl.core.models import SetPluginSettingsRequest
 from udl.core.service import UDLService
 from udl.errors import ConfigError
 from udl.integrations.watchers import HEALTHY_AFTER, MAX_BACKOFF
-from udl.plugins.apps.base import AnApp
+from udl.plugins.apps.base import AnApp, AppContext
 from udl.plugins.registry import APPS
 
 
@@ -58,9 +58,11 @@ def harness(tmp_path: Path, clock: FakeClock) -> Harness:
     return harness_of(tmp_path, clock)
 
 
-def app_of(service: UDLService, name: str = FakeApp.name) -> Any:
+def app_of(service: UDLService, name: str = FakeApp.name) -> FakeApp:
     """The app called `name` the supervisor made (the tests read what its service did)."""
-    return service.apps._apps[name]  # pyright: ignore[reportPrivateUsage]
+    found = service.apps._apps[name]  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(found, FakeApp)
+    return found
 
 
 def states(service: UDLService) -> dict[str, AppStatus]:
@@ -174,7 +176,7 @@ class Crashing(FakeApp):
     name = "crashing"
     runs = 0
 
-    async def serve(self, ctx: Any) -> None:
+    async def serve(self, ctx: AppContext) -> None:
         type(self).runs += 1
         if type(self).runs == 1:
             raise RuntimeError("the first run fails")
@@ -185,9 +187,9 @@ class AlwaysFailing(FakeApp):
     """A fake app whose service raises at once, every time it is started."""
 
     name = "failing"
-    at: ClassVar[list[Any]] = []
+    at: ClassVar[list[datetime]] = []
 
-    async def serve(self, ctx: Any) -> None:
+    async def serve(self, ctx: AppContext) -> None:
         type(self).at.append(ctx.clock.now())
         raise RuntimeError("it always fails")
 
@@ -197,12 +199,12 @@ class HealthyThenFailing(FakeApp):
 
     name = "relapsing"
     runs = 0
-    at: ClassVar[list[Any]] = []
+    at: ClassVar[list[datetime]] = []
     """When each run started."""
-    failed: ClassVar[list[Any]] = []
+    failed: ClassVar[list[datetime]] = []
     """When each run raised."""
 
-    async def serve(self, ctx: Any) -> None:
+    async def serve(self, ctx: AppContext) -> None:
         type(self).runs += 1
         type(self).at.append(ctx.clock.now())
         if type(self).runs > 1:  # (the first run fails at once)
@@ -216,7 +218,7 @@ class Broken(FakeApp):
 
     name = "broken"
 
-    def __init__(self, settings: FakeAppSettings, *, clock: Any) -> None:
+    def __init__(self, settings: FakeAppSettings, *, clock: Clock) -> None:
         raise ConfigError("this app has no settings today")
 
 
@@ -256,7 +258,7 @@ async def test_an_app_that_cannot_be_made_is_reported_not_fatal(
         assert found[FakeApp.name].state is AppState.RUNNING
 
 
-def _ticks(app: Any, count: int) -> bool:
+def _ticks(app: FakeApp, count: int) -> bool:
     return len(app.done) >= count
 
 
