@@ -1536,6 +1536,38 @@ export interface components {
             any: components["schemas"]["Filter-Output"][];
         };
         /**
+         * AppState
+         * @description Where an app's service is.
+         * @enum {string}
+         */
+        AppState: "running" | "backoff" | "stopped" | "failed";
+        /**
+         * AppStatus
+         * @description An app, and what its service is doing.
+         */
+        AppStatus: {
+            /**
+             * Failures
+             * @description How many times it has failed in a row (since it last ran HEALTHY_AFTER).
+             * @default 0
+             */
+            failures: number;
+            /** @description What its service last failed with. */
+            last_error?: components["schemas"]["ErrorInfo"] | null;
+            /**
+             * Name
+             * @description The app's name (e.g. orch).
+             */
+            name: string;
+            /**
+             * Started At
+             * @description When the run that is running (or last ran) started.
+             */
+            started_at?: string | null;
+            /** @description Where its service is. */
+            state: components["schemas"]["AppState"];
+        };
+        /**
          * AtSpec
          * @description A time, once.
          */
@@ -3781,6 +3813,11 @@ export interface components {
          */
         RuntimeStatus: {
             /**
+             * Apps
+             * @description How each app's service is (stopped, all, while nothing runs the automations).
+             */
+            apps?: components["schemas"]["AppStatus"][];
+            /**
              * @description running (here), elsewhere (in the udl holding the lease), stopped (nobody runs them: start
              *     `udl serve`) or disabled ([automations] enabled = false).
              */
@@ -4244,6 +4281,12 @@ export interface components {
         Settings: {
             ai?: components["schemas"]["AISettings"];
             api?: components["schemas"]["APISettings"];
+            /** Apps */
+            apps?: {
+                [key: string]: {
+                    [key: string]: components["schemas"]["JsonValue"];
+                };
+            };
             automations?: components["schemas"]["AutomationsSettings"];
             browser?: components["schemas"]["BrowserSettings"];
             /** Cookies From Browser */

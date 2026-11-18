@@ -508,6 +508,69 @@
         "title": "AnyOf",
         "type": "object"
       },
+      "AppState": {
+        "description": "Where an app's service is.",
+        "enum": [
+          "running",
+          "backoff",
+          "stopped",
+          "failed"
+        ],
+        "title": "AppState",
+        "type": "string"
+      },
+      "AppStatus": {
+        "additionalProperties": false,
+        "description": "An app, and what its service is doing.",
+        "properties": {
+          "failures": {
+            "default": 0,
+            "description": "How many times it has failed in a row (since it last ran HEALTHY_AFTER).",
+            "minimum": 0.0,
+            "title": "Failures",
+            "type": "integer"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ErrorInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What its service last failed with."
+          },
+          "name": {
+            "description": "The app's name (e.g. orch).",
+            "title": "Name",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the run that is running (or last ran) started.",
+            "title": "Started At"
+          },
+          "state": {
+            "$ref": "#/components/schemas/AppState",
+            "description": "Where its service is."
+          }
+        },
+        "required": [
+          "name",
+          "state"
+        ],
+        "title": "AppStatus",
+        "type": "object"
+      },
       "AtSpec": {
         "additionalProperties": false,
         "description": "A time, once.",
@@ -4950,6 +5013,14 @@
         "additionalProperties": false,
         "description": "Who runs the automations, and what waits.",
         "properties": {
+          "apps": {
+            "description": "How each app's service is (stopped, all, while nothing runs the automations).",
+            "items": {
+              "$ref": "#/components/schemas/AppStatus"
+            },
+            "title": "Apps",
+            "type": "array"
+          },
           "automations": {
             "$ref": "#/components/schemas/AutomationState",
             "description": "running (here), elsewhere (in the udl holding the lease), stopped (nobody runs them: start\n`udl serve`) or disabled ([automations] enabled = false)."
@@ -5763,6 +5834,16 @@
           },
           "api": {
             "$ref": "#/components/schemas/APISettings"
+          },
+          "apps": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
+              "type": "object"
+            },
+            "title": "Apps",
+            "type": "object"
           },
           "automations": {
             "$ref": "#/components/schemas/AutomationsSettings"
