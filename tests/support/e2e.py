@@ -3,13 +3,19 @@
 - e2e.py -
 -----------
 
-The server Playwright's tests run against (`web/playwright.config.ts`): the fixture site, the
-fake Google and Slack servers, a fake OpenAI-compatible AI and a real `udl serve`, started from a
-config in a temp dir.
+The server Playwright's tests run against (`web/playwright.config.ts`): the fixture site, a
+real `udl serve`, and a small control API a test can post to.
 
-It prints the URL it serves on, so Playwright (which reads the server's output) can wait for it,
-and stops everything on SIGTERM (and Ctrl-C). A small control API on a free port beside it lets a
-test deliver a mail, post a Slack message or script the AI's answer.
+The fakes the card asks for (Google, Slack, an OpenAI-compatible AI) are **not** here yet: they
+arrive with the tasks that need them (14's and 15's integration tasks, 18.5's sign-in), as local
+plugins in `tests/support/e2e_plugins/`. The control API is ready for them — a mail, a Slack
+message or the AI's answers can be queued now, and the fakes will read the queues.
+
+The server is isolated from the developer's own udl: a config in a temp dir, a SQLite database
+and downloads under it, the memory secret store, and no `UDL_*` variables inherited.
+
+It prints the URL it serves on, and stops everything on SIGTERM (and Ctrl-C); it also stops
+itself after `SELF_STOP` seconds, so a test run that leaves it behind does not leave it forever.
 """
 
 # System Imports
@@ -24,20 +30,21 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Generator, Iterable
+from collections.abc import Generator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import FrameType
-from typing import Any, Final, cast
+from typing import Final
 
 # Package Imports
+from pydantic import TypeAdapter, ValidationError
+
+# Local Imports
 from support.fixture_site import FixtureSite
 
 # The repo root (web/e2e runs from it, with PYTHONPATH=tests).
 ROOT: Final[Path] = Path(__file__).resolve().parents[2]
-# The UI plugins' bundles, as `make web` leaves them (`src/udl/plugins/<plugin>/ui/`).
-PLUGINS: Final[Path] = ROOT / "src" / "udl" / "plugins"
 # Local plugins loaded by the e2e config (the fakes, as plugins).
 E2E_PLUGINS: Final[Path] = Path(__file__).resolve().parent / "e2e_plugins"
 # How long a test server gets to answer before it is called broken (a loaded machine is slow).
@@ -45,47 +52,59 @@ READY_TIMEOUT: Final[float] = 30
 # How long the server runs on its own before it stops itself, so a test that leaves it behind
 # does not leave it forever (Playwright's webServer stops it with SIGTERM, which it also takes).
 SELF_STOP: Final[float] = 600
-# How a control call's answer is sent back.
+# The port Playwright's `webServer.url` waits on; it must match `web/playwright.config.ts`.
+PORT: Final[int] = 8765
+# A control call's answer.
 JSON = "application/json"
 
+# A control call's body: an object (a mail, a Slack message) or a list of strings (the AI's).
+_MAIL: Final = TypeAdapter(dict[str, object])
+_AI: Final = TypeAdapter(list[str])
 
 CONFIG: Final[str] = """\
 download_dir = "{downloads}"
 plugin_dirs = ["{plugins}"]
 probe_order = ["http"]
 
+[[db.connections]]
+name = "local"
+plugin = "sqlite"
+url = "sqlite+aiosqlite:///{database}"
+primary = true
+
+[secrets]
+store = "memory"
+
 [api]
 host = "127.0.0.1"
 port = {port}
 
 [web]
-enabled = {web}
-ui_plugin_dirs = {ui}
+enabled = false
 
 [automations]
 enabled = false
 """
 
 
-def write_config(root: Path, port: int) -> Path:
+def write_config(root: Path, port: int = PORT) -> Path:
     """The config `udl serve` reads: a SQLite database and downloads under `root`, the e2e
-    plugins as local ones, and the UI plugins' dirs (which may not be built yet)."""
-    built = sorted(str(path) for path in PLUGINS.glob("*/ui") if (path / "manifest.json").is_file())
+    plugins as local ones, and the memory secret store. `[web] enabled = false`: the shell is
+    served from 18.3, and the harness's job is to have a udl for a browser to talk to."""
     path = root / "config.toml"
     path.write_text(
         CONFIG.format(
             downloads=root / "downloads",
+            database=root / "udl.db",
             plugins=E2E_PLUGINS,
             port=port,
-            web="true" if built else "false",
-            ui=json.dumps([str(PLUGINS), *built]),
         )
     )
     return path
 
 
 # ---------------------------------------------------------------------------------------------
-# The control API: a test tells it what to deliver, or scripts the AI
+# The control API: a test tells it what a fake should answer with next
 # ---------------------------------------------------------------------------------------------
 
 
@@ -98,16 +117,13 @@ class Control:
         self.messages: list[dict[str, object]] = []
         self.ai: list[str] = []
 
-    def add(self, path: str, body: object) -> None:
-        """Queue what a control call gave: a mail or a Slack message (an object)."""
-        item = mapping(body)
-        if item is None:
-            raise ValueError(f"{path} needs an object")
+    def deliver(self, mail: dict[str, object]) -> None:
         with self.lock:
-            if path == "/mail":
-                self.mails.append(item)
-            else:
-                self.messages.append(item)
+            self.mails.append(json.loads(json.dumps(mail)))
+
+    def post(self, message: dict[str, object]) -> None:
+        with self.lock:
+            self.messages.append(json.loads(json.dumps(message)))
 
     def script(self, *answers: str) -> None:
         with self.lock:
@@ -119,63 +135,56 @@ class Control:
             return self.ai.pop(0) if self.ai else "I am a fake AI."
 
 
-def mapping(body: object) -> dict[str, object] | None:
-    """The body of a control call, as a JSON object (None when it is not one)."""
-    if not isinstance(body, dict):
-        return None
-    pairs = cast("Iterable[tuple[object, object]]", body.items())
-    return {str(key): value for key, value in pairs}
+def handler_for(control: Control) -> type[BaseHTTPRequestHandler]:
+    """A handler class that answers to `control`: a class of its own, so no instance state is
+    kept on the class the server was built with."""
 
+    class Handler(BaseHTTPRequestHandler):
+        """POST /mail, /slack and /ai: each adds what a fake should answer with next."""
 
-class ControlHandler(BaseHTTPRequestHandler):
-    """POST /mail, /slack and /ai: each adds what a fake should answer with next."""
-
-    control: Control
-
-    def do_POST(self) -> None:
-        length = int(self.headers.get("Content-Length") or 0)
-        try:
-            body: object = json.loads(self.rfile.read(length) or b"null")
-        except json.JSONDecodeError:
-            self.fail(400, "the body is not JSON")
-            return
-        path = self.path.rstrip("/")
-        if path in ("/mail", "/slack"):
-            item = mapping(body)
-            if item is None:
-                self.fail(400, "a mail or message is an object")
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                body: object = json.loads(self.rfile.read(length) or b"null")
+            except json.JSONDecodeError:
+                self.fail(400, "the body is not JSON")
                 return
-            self.control.add(path, item)
-        elif path == "/ai":
-            if not isinstance(body, list):
-                self.fail(400, "the AI's answers are a list of strings")
+            path = self.path.rstrip("/")
+            try:
+                if path == "/mail":
+                    control.deliver(dict(_MAIL.validate_python(body)))
+                elif path == "/slack":
+                    control.post(dict(_MAIL.validate_python(body)))
+                elif path == "/ai":
+                    control.script(*_AI.validate_python(body))
+                else:
+                    self.fail(404, "no such control")
+                    return
+            except ValidationError as e:
+                self.fail(400, "; ".join(error["msg"] for error in e.errors()))
                 return
-            items = cast("Iterable[object]", body)
-            self.control.script(*(item for item in items if isinstance(item, str)))
-        else:
-            self.fail(404, "no such control")
-            return
-        self.send_response(204)
-        self.end_headers()
+            self.send_response(204)
+            self.end_headers()
 
-    def fail(self, status: int, message: str) -> None:
-        """Answer a call that was not understood with `status` and `message` as JSON."""
-        body = json.dumps({"error": message}).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", JSON)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        def fail(self, status: int, message: str) -> None:
+            """Answer a call that was not understood with `status` and `message` as JSON."""
+            body = json.dumps({"error": message}).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", JSON)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - the base class's name
-        pass  # (the server is quiet)
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - the base's name
+            pass  # (the server is quiet)
+
+    return Handler
 
 
 @contextmanager
 def serving(control: Control) -> Generator[int]:
     """The control API, answering on a free port while the block runs."""
-    server = ThreadingHTTPServer(("127.0.0.1", 0), ControlHandler)
-    server.RequestHandlerClass.control = control  # type: ignore[attr-defined]
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(control))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -187,11 +196,11 @@ def serving(control: Control) -> Generator[int]:
 
 
 # ---------------------------------------------------------------------------------------------
-# udl serve, and the servers it talks to
+# udl serve
 # ---------------------------------------------------------------------------------------------
 
 
-def stop(process: subprocess.Popen[Any]) -> None:
+def stop(process: subprocess.Popen[bytes]) -> None:
     """Ask a server to stop (SIGTERM, as Playwright's webServer does), and wait for it."""
     if process.poll() is not None:
         return
@@ -203,7 +212,7 @@ def stop(process: subprocess.Popen[Any]) -> None:
         process.wait(timeout=5)
 
 
-def answering(url: str, process: subprocess.Popen[Any]) -> bool:
+def answering(url: str, process: subprocess.Popen[bytes]) -> bool:
     """Whether udl answers `url` yet (and has not died trying)."""
     if process.poll() is not None:
         raise RuntimeError(f"udl serve stopped with {process.returncode}")
@@ -214,17 +223,27 @@ def answering(url: str, process: subprocess.Popen[Any]) -> bool:
         return False
 
 
-def wait_until(url: str, process: subprocess.Popen[Any]) -> None:
+def wait_until(
+    url: str, process: subprocess.Popen[bytes], *, timeout: float = READY_TIMEOUT
+) -> None:
     """Wait until udl answers `url`, or fail saying it did not in time."""
-    deadline = time.monotonic() + READY_TIMEOUT
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if answering(url, process):
             return
         time.sleep(0.2)
-    raise TimeoutError(f"udl serve did not answer {url} in {READY_TIMEOUT:g}s")
+    raise TimeoutError(f"udl serve did not answer {url} in {timeout:g}s")
 
 
-def main() -> int:
+def environment(config: Path) -> dict[str, str]:
+    """The environment `udl serve` runs in: the config, its own checkout first on the path,
+    and nothing of the caller's `UDL_*` (which would override the config)."""
+    env = {name: value for name, value in os.environ.items() if not name.startswith("UDL_")}
+    env.update({"UDL_CONFIG": str(config), "PYTHONPATH": str(ROOT), "PYTHONDONTWRITEBYTECODE": "1"})
+    return env
+
+
+def main(*, port: int = PORT, self_stop: float = SELF_STOP) -> int:
     control = Control()
     stopping = threading.Event()
 
@@ -241,40 +260,31 @@ def main() -> int:
         serving(control) as controls,
         FixtureSite.serve() as site,
     ):
-        # (Playwright's webServer waits for a URL, so the server listens on the port the config
-        # gives, 8765 by default. It is checked to be free first: a test that starts one of its
-        # own would rather be told than fail oddly.)
-        port = 8765
+        # (Playwright's webServer waits for a URL, so the port is fixed: it must match the one
+        # in web/playwright.config.ts. A port already in use is said, not fought over.)
         with socket.socket() as sock:
             if sock.connect_ex(("127.0.0.1", port)) == 0:
                 print(f"e2e: {port} is taken", file=sys.stderr, flush=True)  # noqa: T201
                 return 1
         config = write_config(Path(work), port)
-        env = {
-            **os.environ,
-            "UDL_CONFIG": str(config),
-            "PYTHONPATH": str(ROOT),
-            "PYTHONDONTWRITEBYTECODE": "1",
-        }
         udl = subprocess.Popen(
             [sys.executable, "-m", "udl", "serve"],
             cwd=ROOT,
-            env=env,
+            env=environment(config),
             stdout=subprocess.DEVNULL,
         )
         # (udl answers /docs whether or not the UI is built, so it is what says it is up; the
         # shell's own /ui/ comes with 18.3, and until then a test asks for it and gets a 404.)
         url = f"http://127.0.0.1:{port}/docs"
-        # (Playwright waits for this line: it is the server's way of saying it is up. Both
-        # lines are printed before waiting: a server that is up must say so even if its /docs
-        # never answers, or the test would only time out.)
+        # (Both lines are printed before waiting: a server that is up must say so even if its
+        # /docs never answers, or the test would only time out.)
         print(f"e2e: udl serve on {url}", file=sys.stdout, flush=True)  # noqa: T201
         print(  # noqa: T201 - where the fakes are, for a person reading the log
             f"e2e: fixture site on {site.url('/')}, controls on :{controls}", flush=True
         )
         try:
             wait_until(url, udl)
-            stopping.wait(SELF_STOP)  # (Playwright's webServer kills after a few minutes)
+            stopping.wait(self_stop)  # (Playwright's webServer kills after a few minutes)
         except TimeoutError as e:
             print(f"e2e: {e}", file=sys.stderr, flush=True)  # noqa: T201
             return 1

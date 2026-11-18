@@ -1,11 +1,18 @@
 import { expect, test } from "@playwright/test";
 
+// The card's own check: `/ui/` loads in both themes. It is served from 18.3, so until then it
+// is `test.fixme` — a check that passes however `/ui/` answers would be worse than none.
 test("the shell loads", async ({ page }) => {
-	await page.goto("http://127.0.0.1:8765/docs");
+	test.fixme(true, "the built shell is served from 18.3");
 
-	// (The build is served from 18.3; until then /ui/ is udl's "build it" page or a 404, so
-	// what is checked here is that the server answered, and said so in HTML.)
-	const answer = await page.request.get("http://127.0.0.1:8765/ui/");
-	expect(answer.ok() || answer.status() === 404).toBe(true);
-	await expect(page.locator("body")).toBeVisible();
+	await page.goto("/ui/");
+	await expect(page.getByRole("heading", { name: "udl", level: 1 })).toBeVisible();
+	await expect(page.locator("html")).toHaveAttribute("data-theme", /light|dark/);
+});
+
+// What the harness is for today: a real `udl serve`, answering a browser.
+test("the server answers the API", async ({ page }) => {
+	const answer = await page.request.get("/docs");
+
+	expect(answer.ok()).toBe(true);
 });

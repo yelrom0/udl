@@ -1,6 +1,16 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { App } from "./app";
+import { startFakingMatchMedia, stopFakingMatchMedia } from "./test-setup";
+
+beforeEach(() => {
+	startFakingMatchMedia();
+});
+
+afterEach(() => {
+	stopFakingMatchMedia();
+	delete document.documentElement.dataset.theme;
+});
 
 describe("the shell", () => {
 	it("says udl", () => {

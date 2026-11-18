@@ -4137,31 +4137,42 @@ timeout: 5m
 - Tests first: `web/e2e/shell.spec.ts`: `/ui/` loads in both themes.
 - Done when: `make check` runs the web checks, `make e2e` runs that test, and `btrfs filesystem du` shows
   `web/node_modules` reflinked.
-- **Built (ernie-a, 2026-11-18, PR #TBD):** the workspace and the harness. `web/package.json` (`packageManager:
+- **Built (ernie-a, 2026-11-18, PR #8):** the workspace and the harness. `web/package.json` (`packageManager:
   pnpm@12.15.0`, scripts `dev`/`build`/`check`/`e2e`), `pnpm-workspace.yaml` (packages, `clone-or-copy`),
   `.node-version` (26), `tsconfig.base.json` (strict, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`,
   `verbatimModuleSyntax`), `biome.json` (2.3.11, tabs, 100 columns, Tailwind directives in CSS), a Vitest config
   per package with 90 % thresholds, `packages/shell` (React 19 + Vite 8 + `@vitejs/plugin-react-swc`, Tailwind 4
   and daisyUI 5, a theme store in Zustand and a page that says "udl"), `playwright.config.ts` (light and dark
-  projects; a `webServer` that runs the harness), `tests/support/e2e.py` (the fixture site, `udl serve` on 8765,
-  the control API), `tests/support/e2e_plugins/` (a README: the fakes land with the tasks that need them), and
-  `make check` running `check-py` + `check-web`, plus `web`, `e2e` and `check-web` targets; CI gained an `e2e`
-  job (pnpm + Node from `web/.node-version`).
+  projects; a `webServer` that runs the harness), `tests/support/e2e.py` (the fixture site, an isolated
+  `udl serve`, the control API), `tests/support/e2e_plugins/` (a README: the fakes land with the tasks that need
+  them), and `make check` running `check-py` + `check-web`, plus `web`, `e2e` and `check-web` targets; CI gained
+  an `e2e` job (pnpm + Node from `web/.node-version`).
 - **Decisions:**
   - The `webServer` runs `.venv/bin/python -u -m support.e2e` with an **absolute** path: the venv compares its
     `sys.prefix` against it, and a relative one makes the interpreter refuse to import `support`.
   - The harness listens on **8765** (not a free port) so Playwright's `webServer.url` can be a fixed
-    `http://127.0.0.1:8765/docs`, and checks the port is free first: a `url` read from the server's stdout is
-    not supported (`webServer.url` takes a URL, and both a regex and a string were rejected).
-  - `@swc/core`'s postinstall is skipped by pnpm 12 (`ERR_PNPM_IGNORED_BUILDS`): the native binding comes from
-    the platform package, and Vite loads it without the script. Nothing was allowed to build.
+    `http://127.0.0.1:8765/docs`, and checks the port is free first: `webServer.url` takes a URL only (a regex
+    and a string were both rejected), so a port read off the server's stdout is not possible.
+  - The harness is isolated from the developer's udl: a config in a temp dir with `[[db.connections]]` (SQLite
+    under it), `[secrets] store = "memory"`, and `environment()` drops every `UDL_*` of the caller's but
+    `UDL_CONFIG`.
+  - `@swc/core`'s postinstall is the one build script allowed (`allowBuilds` in `pnpm-workspace.yaml`): pnpm 12
+    refuses the install otherwise, and CI's `--frozen-lockfile` would fail. The script only checks that the
+    native binding (the platform package) loads; Vite loads it fine.
   - `packages/*/coverage` is written by Vitest and ignored, like `test-results` and `playwright-report`.
   - Playwright 1.63.0 (npm) matches the Python 1.63.0 in `uv.lock`, so both use Chromium 1243.
-  - Tests: `web/packages/shell/src/stores/theme.test.ts` (the store: system/light/dark, persisted, following
-    the system, the media-query listener), `app.test.tsx`, `main.test.ts` (100 % of the package), and
-    `tests/unit/support/test_e2e.py` (the config it writes, the control API's calls and refusals, the self-stop).
-  - `web/e2e/shell.spec.ts` loads `/ui/` through the server: `/ui/` itself is served from 18.3, so it checks the
-    server answered and rendered HTML.
+  - Tests: `web/packages/shell/src/stores/theme.test.ts` (the store: system/light/dark, persisted, read back on
+    the next visit, an invalid or unreadable saved value, following the system, the media-query listener),
+    `app.test.tsx`, `main.test.ts` (100 % of the package: statements, branches, functions and lines), and
+    `tests/unit/support/test_e2e.py` (the config, the environment, the control API's calls and refusals, a
+    server that died, one that never answers, `stop()`, and the port-taken refusal).
+  - **Deviation from the card:** the fake Google, Slack and OpenAI servers are **not** started yet — they land
+    with the integration tasks that need them (14, 15, 18.5), as local plugins in
+    `tests/support/e2e_plugins/`; the control API is ready for them. `ui_plugin_dirs` points at
+    `src/udl/plugins` (where a built-in UI plugin's bundle will be, 18.7) rather than `web/examples/`, and
+    `[web] enabled = false` until 18.3 serves the shell.
+  - `web/e2e/shell.spec.ts`: the card's `/ui/` check is `test.fixme`'d (18.3 serves it), and a second test
+    proves the harness itself — a real `udl serve` answers `/docs`.
 
 **18.2 The typed API client** · needs 18.1, 8.3
 - Build:

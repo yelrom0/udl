@@ -32,6 +32,8 @@ jobs:
 
       # Node 26 and pnpm (web/package.json's packageManager), for the web checks in `make check`.
       - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
 
       - uses: actions/setup-node@v6
         with:
@@ -39,9 +41,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
 
-      - name: Install the frontend
-        run: pnpm -C web install --frozen-lockfile
-
+      # (`make check` runs `check-web`, which does the `--frozen-lockfile` install itself.)
       - name: Install Chromium for Playwright
         run: uv run playwright install --with-deps chromium
 
@@ -62,6 +62,8 @@ jobs:
         run: uv sync --locked --all-extras
 
       - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
 
       - uses: actions/setup-node@v6
         with:
@@ -69,14 +71,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
 
-      - name: Install the frontend
-        run: pnpm -C web install --frozen-lockfile
-
-      # The shell's build, then the browser: `make e2e` builds first, and Playwright's Chromium
-      # is the same version as the Python Playwright's (1.63), so one download serves both.
-      - name: Build the shell
-        run: make web
-
+      # (The frontend and the shell are built by `make e2e`'s own `web` target: one install and
+      # one build, not two. Playwright's Chromium is the Python Playwright's version, 1.63, so
+      # the one download serves both.)
       - name: Install Chromium for Playwright
         run: uv run playwright install --with-deps chromium
 
