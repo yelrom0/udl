@@ -302,7 +302,7 @@ async def test_a_failing_app_is_never_kept_waiting_longer_than_the_cap(
     assert gaps[-1] == MAX_BACKOFF.total_seconds()
 
 
-async def test_an_app_that_ran_well_starts_again_at_once_after_it_fails(
+async def test_an_app_that_ran_well_waits_the_first_backoff_again_after_it_fails(
     tmp_path: Path, clock: FakeClock
 ) -> None:
     HealthyThenFailing.runs = 0
@@ -322,7 +322,8 @@ async def test_an_app_that_ran_well_starts_again_at_once_after_it_fails(
         for failed, start in zip(HealthyThenFailing.failed, HealthyThenFailing.at[1:], strict=False)
     ]
 
-    assert waits[:3] == [1, 1, 1]  # (every failure, healthy or not, waits FIRST_BACKOFF again)
+    assert waits[:3] == [1, 1, 1]  # (the first failure waits FIRST_BACKOFF; the ones after a
+    # healthy run start the streak over, so they wait FIRST_BACKOFF again, not double the last)
 
 
 async def test_a_changed_setting_is_picked_up_by_the_next_start(
