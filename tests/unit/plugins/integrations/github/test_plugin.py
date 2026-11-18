@@ -62,7 +62,7 @@ def github(fake: FakeGitHub, clock: FakeClock) -> GitHubIntegration:
 
 def options(**given: object) -> GitHubOptions:
     """An account's options: the fake's repository, and its API."""
-    return GitHubOptions(repos=[REPO], api_url=BASE, **given)  # pyright: ignore[reportArgumentType]
+    return GitHubOptions(repos=[REPO], api_url=BASE, **given)
 
 
 def handle(
