@@ -430,6 +430,46 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - Flags were checked against Claude Code 2.1.306 here; confirm them against `claude --help` on the build machine and record any change in the phase's decisions.
 - Tests first: the contract over `fake_harness.py` speaking stream-json; `tests/unit/plugins/runners/test_claude_code.py`: the argv for a first and a later turn, the deny list in the settings file, the token only in the MCP config file.
 - Done when: an opt-in smoke test has `claude` answer one prompt in a temp directory through the runner.
+- **Built (deepseek-a, 2026-11-19, PR #N):** the runner, and the smoke test run against the CLI here.
+  - `udl/plugins/runners/claude_code.py`: `ClaudeCode` (name `claude-code`, `requires` `claude`),
+    published under `udl.runners`. `ClaudeCodeOptions`: `cli` (the program and arguments before the
+    turn's own, so a test points it at `fake_harness.py`), `models` (`opus`, `sonnet`, `haiku`),
+    `permission_mode` (`acceptEdits`).
+  - A turn is one process: `claude -p --output-format stream-json --verbose --model … --permission-mode
+    … --session-id <uuid>` (first) or `--resume <uuid>` (later), `--settings .udl/settings.json`
+    (`{"permissions": {"deny": [...]}}`), `--append-system-prompt-file .udl/system-prompt.md` when the
+    spec has instructions, `--mcp-config .udl/mcp.json --strict-mcp-config` when it has an endpoint. The
+    prompt goes on stdin; the spec's `env` and `secret_env` go to the process.
+  - The files are written through the host's shell (`sh -c 'umask 077; mkdir -p …; cat > …'`, the
+    content on stdin), so a session on thevault is written there, never from the hub's disk; the
+    worktree's `info/exclude` lists `/.udl/`. The MCP token is in that file and nowhere else (not an
+    argv, not a log).
+  - Its stream's lines become events: an assistant message's text (`TextDelta`) and tool_use
+    (`ToolStarted`, summarised by its command/path/query), a user message's tool_result
+    (`ToolFinished`, ok unless `is_error`), the result (`Usage`, then `TurnEnded`: done, error, or
+    limited). A line udl does not know — a `rate_limit_event`, something new — is skipped, never fatal;
+    a line it cannot parse is logged at debug. A limit is a result whose subtype or text says so, and
+    `RunnerLimited.until` is the ISO time its text gives (None when it gives none or an unreadable one).
+  - `health()`: `--version` and `auth status` (`loggedIn`, `email` shown and never logged,
+    `subscriptionType`); udl never opens Claude Code's own credential files.
+  - `stop()` cancels the turn's pull task, which ends the process (the shell closes it when its
+    generator ends) and the turn ends as `TurnEnded(stopped)`.
+  - Tests: the runner contract over `fake_harness.py` as well as `fake` and `command`; 33 unit tests
+    (the argv of a first and a later turn, a bare spec, the two files and the exclude, the token,
+    every stream shape, a real 2.1.306 result line with nested usage, limits with and without a
+    readable reset time, health's answers, a stopped turn, a turn nobody reads to the end, a process
+    that cannot start); `udl/plugins/runners` at 100 %. `tests/smoke/test_claude_code.py` (opt-in,
+    `-m network`): a real `claude` answers one prompt in a temp directory — run here, it passes.
+  - Flags were confirmed against Claude Code 2.1.306 on this machine (`--session-id`, `--resume`,
+    `--append-system-prompt-file`, `--mcp-config`, `--strict-mcp-config`, `--settings`,
+    `--permission-mode`): no change from the card.
+  - Decisions:
+    - **The turn's output is pulled by a task of its own**, so `stop()` can cancel it: closing an
+      async generator that is being read raises, and cancelling the pull runs the shell's `finally`,
+      which terminates the process. A failure the pull raises (the process could not start) is
+      carried to the reader and becomes `TurnEnded(error)`.
+    - **The stream is read with `stream()` here** (unlike the `command` runner): the CLI's result line
+      says how the turn ended, so the exit code is not needed.
 
 **25.9 `opencode`** · needs 25.7
 - Build: `udl/plugins/runners/opencode.py`.
