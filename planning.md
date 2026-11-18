@@ -4250,6 +4250,8 @@ timeout: 5m
       them would make `--check` and `biome ci` disagree; `tsc` and the tests still check them.
     - `openapi.json` is 400 KB and its diff is noisy on purpose: a route change is what a reviewer of
       the API's shape wants to see.
+  - **Rebased on 26.1 (19 Nov):** `udl.apps` adds `AppStatus`, `AppState` and the runtime's `apps`, so
+    `make openapi` regenerated `openapi.json` and `schema.d.ts` (the client's types changed with them).
 
 **18.3 Serving the UI** · needs 18.1
 - Build: `udl/interfaces/web/app.py`, added by `create_app()` when `[web] enabled`. It serves:
