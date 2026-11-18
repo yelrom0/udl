@@ -22,3 +22,18 @@ dist/
 .coverage.*
 coverage.xml
 htmlcov/
+
+# Web: dependencies, build output and Playwright's reports (web/node_modules is reflinked from
+# the pnpm store, so it must never be committed)
+web/node_modules/
+web/**/node_modules/
+web/packages/*/dist/
+web/playwright-report/
+web/test-results/
+web/playwright/.cache/
+src/udl/interfaces/web/dist/
+src/udl/plugins/integrations/*/ui/*.js
+src/udl/plugins/integrations/*/ui/*.map
+
+# Test coverage and TypeScript build output
+web/packages/*/coverage/

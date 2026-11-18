@@ -1,0 +1,75 @@
+/**
+ * What jsdom does not have: `matchMedia`, as a real (if small) implementation of the DOM's
+ * interface. It keeps the listeners it is given and fires real `change` events when the
+ * system's theme is said to change, so the theme store is tested against the same contract a
+ * browser gives it — no casts, and no mocks.
+ */
+
+import { vi } from "vitest";
+
+const QUERY = "(prefers-color-scheme: dark)";
+
+export class FakeMediaQueryList extends EventTarget implements MediaQueryList {
+	#dark: boolean;
+
+	constructor(dark: boolean) {
+		super();
+		this.#dark = dark;
+	}
+
+	get matches(): boolean {
+		return this.#dark;
+	}
+
+	get media(): string {
+		return QUERY;
+	}
+
+	get onchange(): ((this: MediaQueryList, event: MediaQueryListEvent) => unknown) | null {
+		return null;
+	}
+
+	set onchange(_handler: ((this: MediaQueryList, event: MediaQueryListEvent) => unknown) | null) {
+		// (No `onchange` is set: listeners are added with addEventListener, as in a browser.)
+	}
+
+	set dark(dark: boolean) {
+		if (this.#dark === dark) {
+			return;
+		}
+		this.#dark = dark;
+		this.dispatchEvent(new Event("change"));
+	}
+
+	/** The DOM's deprecated listener methods, which a browser still has. */
+	addListener(_listener: (event: MediaQueryListEvent) => void): void {}
+	removeListener(_listener: (event: MediaQueryListEvent) => void): void {}
+}
+
+let system: FakeMediaQueryList | undefined;
+
+/** The one media query list `matchMedia` hands out, with what the system is now. */
+function systemQuery(): FakeMediaQueryList {
+	system ??= new FakeMediaQueryList(false);
+	return system;
+}
+
+export function startFakingMatchMedia(): void {
+	const query = systemQuery();
+	vi.stubGlobal("matchMedia", (given: string) => {
+		if (given !== QUERY) {
+			throw new Error(`the test only knows ${QUERY}, not ${given}`);
+		}
+		return query;
+	});
+}
+
+/** Say the system changed (dark or light), as a browser does. */
+export function systemIs(dark: boolean): void {
+	systemQuery().dark = dark;
+}
+
+export function stopFakingMatchMedia(): void {
+	vi.unstubAllGlobals();
+	system = undefined;
+}

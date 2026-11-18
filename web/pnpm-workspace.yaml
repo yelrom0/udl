@@ -1,0 +1,14 @@
+packages:
+  - packages/*
+  - plugins/*
+  - examples/*
+
+# Reflinks, not hardlinks: a file edited in one project must not change the store (as uv's
+# link-mode = "clone"). Check with `btrfs filesystem du -s "$(pnpm store path)" web/node_modules`.
+packageImportMethod: clone-or-copy
+# The one dependency that may run a build script. @swc/core's postinstall only checks that its
+# native binding (the platform package @swc/core-linux-x64-gnu) loads — vite loads it without
+# the check — but pnpm 12 refuses the install (ERR_PNPM_IGNORED_BUILDS) unless it is allowed,
+# and CI's `pnpm install --frozen-lockfile` would fail with it.
+allowBuilds:
+  '@swc/core': true

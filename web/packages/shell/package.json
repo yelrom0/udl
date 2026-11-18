@@ -1,0 +1,27 @@
+{
+	"name": "@udl/shell",
+	"private": true,
+	"version": "0.0.0",
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "vite build",
+		"test": "tsc --noEmit && vitest run --coverage"
+	},
+	"dependencies": {
+		"react": "19.3.1",
+		"react-dom": "19.3.1",
+		"zustand": "5.1.0"
+	},
+	"devDependencies": {
+		"@types/react": "19.3.0",
+		"@types/react-dom": "19.3.0",
+		"@vitejs/plugin-react-swc": "4.3.3",
+		"vite": "8.3.8",
+		"@testing-library/react": "16.3.3",
+		"@testing-library/dom": "10.4.2",
+		"tailwindcss": "4.3.5",
+		"@tailwindcss/vite": "4.3.5",
+		"daisyui": "5.8.1"
+	}
+}
