@@ -336,7 +336,7 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
   - [ ] 19.2 Downloads: start downloads, live progress, history, cancel
   - [ ] 19.3 Sites and strategies
   - [ ] 19.4 Tag chains: the wizard on the web (suggest → pick → test → save), import / export
-  - [ ] 19.5 Databases (health, sync with a dry run), plugins (status, problems, UIs, settings), config (read-only)
+  - [ ] 19.5 Databases (health, sync with a dry run), plugins (status, problems, their generated page, settings), config (read-only)
   - [ ] 19.6 Fetches: a batch of URLs, live progress, reading a page, the checks waiting for you (solve), cookies per site
   - [ ] 19.7 End to end against the fixture sites
 
@@ -351,10 +351,10 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
   - [ ] 20.8 `slack` UI plugin: account setup (manifest + tokens), channels and threads, send, event view
   - [ ] 20.9 `pages` UI plugin: add a watch from a URL (the wizard on the web), each watch's recent changes, event views (a diff for `pages.page.changed`)
   - [ ] 20.10 `web` UI plugin: add a sign-in (site, credentials and TOTP secret, or signing in by hand), its session's status, sign in now / sign out
-  - [ ] 20.7–20.10 build only what the generated page cannot (Phase 24: the mailbox, the watch wizard, the
-        sign-in wizard, the diff), and guide the rest: each operation's page, response and field the plugin
-        does not reshape stays the generated one, and the plugin's settings and accounts use the generated
-        forms unless its manifest says otherwise (24.7)
+        Each of 20.7–20.10 builds only what the generated page cannot (Phase 24: the mailbox, the watch
+        wizard, the sign-in wizard, the diff) and guides the rest: an operation's page, a response or a
+        field the plugin does not reshape stays the generated one, and its settings and accounts use the
+        generated forms unless its manifest says otherwise (24.7).
   - [ ] 20.11 End to end: a subscription made in the UI fires on a fake email, and its run shows up live
 
 - [ ] **Phase 21: Hardening & docs**
@@ -4791,8 +4791,9 @@ shared live connection; `theme` (mode, name, tokens, `onChange`); `stores` (read
   udl already knows — its operations and their request and response schemas, its settings, its accounts and
   its event types — at `/ui/p/<plugin>`, with its Operations, Settings, Accounts and Events. A request is
   drawn as a form (`<SchemaForm>`) and a response as a table, a description list or JSON (`<ResultView>`),
-  so a plugin that adds an operation gets a page for it without writing any TypeScript. The generated page
-  is what the plugin's CLI commands, API routes and MCP tools are: the same operations, and nothing else.
+  so a plugin that adds an operation gets a page for it without writing any TypeScript. It is built from
+  the same operations the plugin's CLI commands, API routes and MCP tools are: an operation udl can call is
+  a page a person can use, and nothing in it is written per plugin.
   Its events still show in the event log (as JSON), and can be subscribed to, because events and
   subscriptions are udl's own pages.
 - **A UI plugin guides the generated page** rather than replacing it: its manifest's `generated` and its
@@ -4919,8 +4920,8 @@ each control sends), and a Playwright flow in `web/e2e/` in both themes.
 - **Fetches (19.6):** a batch of URLs and its live progress; a page as rendered Markdown or its source;
   the checks waiting for you, with Solve; cookies by site (import, delete; never their values).
 - **Databases, Plugins, Config (19.5):** connections and their health, sync with a dry run; every plugin's
-  kind, availability, what's missing, problems, whether it has a UI and its settings panel; the config,
-  read-only, secrets hidden.
+  kind, availability, what's missing, problems, whether it has a UI plugin or only the generated page
+  (Phase 24), a link to `/ui/p/<plugin>` and its settings panel; the config, read-only, secrets hidden.
 
 ---
 
@@ -5070,7 +5071,8 @@ Playwright flow in both themes.
 - Done when: it passes unmarked, `make e2e` passes, and Phase 20's decisions are written.
 
 **Phase 20 is done when:** everything in Phases 9–17 can be set up and watched from `/ui`, and a plugin
-without a UI plugin is still usable through the CLI, the API and MCP.
+without a UI plugin has a generated page for it — `/ui/p/<plugin>`, its operations, settings, accounts and
+events (Phase 24) — as well as its CLI commands, API routes and MCP tools.
 
 ### Pages
 - **Events (20.1):** live (from the `live` store) and history (filters in the URL); detail through the
