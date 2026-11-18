@@ -26,6 +26,7 @@ from fastapi import FastAPI, Request
 from starlette.responses import (
     FileResponse,
     HTMLResponse,
+    JSONResponse,
     PlainTextResponse,
     RedirectResponse,
     Response,
@@ -57,7 +58,7 @@ NO_BUILD: Final = """\
 		<meta charset="utf-8" />
 		<title>udl</title>
 	</head>
-	<body style="font-family: system-ui, sans-serif; margin: 3rem">
+	<body>
 		<h1>udl</h1>
 		<p>The web UI is not built.</p>
 		<p>Run <code>make web</code>, then load this page again.</p>
@@ -75,7 +76,8 @@ def add_web_routes(app: FastAPI, settings: Settings, dist: Path | None = None) -
         # (A browser's page is sent on; a script asking for JSON gets no page.)
         if "text/html" in request.headers.get("accept", ""):
             return RedirectResponse("/ui/", 307, headers=HEADERS)
-        return PlainTextResponse("not found", 404, headers=HEADERS)
+        # (The API's own 404, so a client of udl's sees what it saw before the UI was here.)
+        return JSONResponse({"detail": "Not Found"}, 404, headers=HEADERS)
 
     async def asset(request: Request) -> Response:
         return _file(built / "assets", request.path_params["path"], cache=_IMMUTABLE)
@@ -94,15 +96,15 @@ def add_web_routes(app: FastAPI, settings: Settings, dist: Path | None = None) -
     async def shell(request: Request) -> Response:
         # (A file of the build that is not hashed — a favicon, the manifest — is answered; so is
         # any other path, with index.html, for the router's own routes.)
+        if_none_match = request.headers.get("if-none-match")
         relative = request.path_params["path"]
         if relative:
-            answer = _file(built, relative, cache=_NO_CACHE)
-            if answer.status_code == 200:
+            answer = _file(built, relative, cache=_NO_CACHE, if_none_match=if_none_match)
+            if answer.status_code in {200, 304}:
                 return answer
-        index = built / "index.html"
-        if not index.is_file():
+        if not (built / "index.html").is_file():
             return HTMLResponse(NO_BUILD, headers={**HEADERS, "Cache-Control": _NO_CACHE})
-        return FileResponse(index, headers={**HEADERS, "Cache-Control": _NO_CACHE})
+        return _file(built, "index.html", cache=_NO_CACHE, if_none_match=if_none_match)
 
     for route in (
         Route("/", root, methods=["GET"]),
@@ -149,5 +151,5 @@ def _inside(root: Path, relative: str) -> Path | None:
     try:
         path = (root / relative).resolve()
         return path if path.is_relative_to(root.resolve()) else None
-    except OSError:  # (a name too long, or a loop of symlinks)
+    except OSError, RuntimeError, ValueError:  # (a name too long, a loop, a null byte)
         return None
