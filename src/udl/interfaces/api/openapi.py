@@ -65,7 +65,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         current = path.read_text() if path.is_file() else None
         if current != text:
             sys.stderr.write(
-                f"{path} is out of date: run `python -m udl.interfaces.api.openapi {path}`\n"
+                f"{path} is out of date: run `make openapi` (or "
+                f"`python -m udl.interfaces.api.openapi {path}`)\n"
             )
             return 1
         return 0

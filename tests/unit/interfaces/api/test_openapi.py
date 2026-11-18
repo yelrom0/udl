@@ -83,7 +83,8 @@ def test_check_fails_when_the_file_is_out_of_date(
 
     error = capsys.readouterr().err
     assert str(path) in error
-    # (It says how to fix it.)
+    # (It says how to fix it: the file, and the types made from it.)
+    assert "make openapi" in error
     assert f"python -m udl.interfaces.api.openapi {path}" in error
 
 
