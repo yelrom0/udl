@@ -1,7 +1,7 @@
 """
------------
+------------
 - e2e.py -
------------
+------------
 
 The server Playwright's tests run against (`web/playwright.config.ts`): the fixture site, a
 real `udl serve`, and a small control API a test can post to.
