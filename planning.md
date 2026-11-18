@@ -4205,7 +4205,7 @@ timeout: 5m
     difference;
   - `web/packages/api/src/*.test.ts`: the headers, the errors, and `FakeUdl`'s typing.
 - Done when: `make check` fails if `openapi.json` or `schema.d.ts` is out of date.
-- **Built (deepseek-a, 2026-11-19, PR #12):** the schema, the client and the fake.
+- **Built (deepseek-a, 2026-11-18, PR #12):** the schema, the client and the fake.
   - `src/udl/interfaces/api/openapi.py`: `schema()`, `render()` (two-space JSON, keys sorted, a last
     newline) and `main([--check] PATH)`; `--help` and a missing path are said and answered with 0 and 2,
     an out-of-date or missing file with 1 (it says the command that fixes it).
@@ -4227,18 +4227,20 @@ timeout: 5m
   - Tests: `tests/unit/interfaces/api/test_openapi.py` (determinism, sorted keys, a config file and a
     `UDL_PLUGIN_DIRS`/`UDL_CONFIG` that add a plugin — and change nothing; `--check` on a stale, a
     missing and a current file; the committed `openapi.json` being current) and
-    `web/packages/api/src/{client,testing}.test.ts` (18 tests: the headers of a read and of a write,
-    through `call` and through the typed client; a 204; `UdlError` with its `ErrorInfo` and status, and
-    a status that is not udl's; path parameters filled and encoded, and a missing one refused;
-    `FakeUdl`'s fixtures, handlers, recorded calls and unknown routes). Coverage: 100 % lines, 97.8 %
-    branches.
+    `web/packages/api/src/{client,testing}.test.ts` (20 tests: the headers of a read and of a write,
+    through `call` and through the typed client, and the cookie both send; a 204; `UdlError` with its
+    `ErrorInfo` and status, and a status that is not udl's; path parameters filled and encoded, and a
+    missing one refused; the URL of an empty base and of one with a prefix; `FakeUdl`'s fixtures,
+    handlers, recorded calls and unknown routes). Coverage: 100 % lines, 97.8 % branches.
   - Decisions:
     - **`call(id, body, params)` and not only `call(name, body)`:** 36 of the 69 operations have a path
       parameter, and `openapi-fetch` alone cannot send those without a `fetch` that knows the route;
       `call` fills and encodes them, and `client` stays there for what a body and path parameters do
       not describe (a stream, a query list). It sends with plain `fetch` (not `openapi-fetch`'s
       middleware), so `call` and `client` share the base URL, the cookie and the CSRF rule but not the
-      request plumbing.
+      request plumbing. The URL is joined as openapi-fetch joins it (`baseUrl` without its trailing
+      slashes, then the route), so a base of `""` (a page the API serves itself) and one behind a
+      reverse proxy's prefix (`http://host/udl`) both work, and both paths are tested.
     - **`fixtures.ts` is generated, not hand-written:** 16 list records would be 300 lines of
       hand-typed JSON that the schema already knows, and they would drift; the generator fills required
       fields and the ones with a `default` (which `openapi-typescript` makes required), one item per
