@@ -14,7 +14,10 @@ import pytest
 
 # The loggers whose debug lines a failing integration test reports: the fetcher's (its windows,
 # its queue, its checks) and the automations' runtime. Their tests are the ones that have
-# failed only on a loaded CI runner, and their logs say which wait ran out.
+# failed only on a loaded CI runner, and their logs say which wait ran out. (A logger's own level
+# is what filters here: pytest's report handler, which writes "Captured log call", takes every
+# level because [tool.pytest] sets no `log_level`, the same as the caplog handler the tests in
+# test_captured_logs.py read. Setting a `log_level` there would cut the report back to it.)
 _REPORTED = ("udl.fetch", "udl.automations")
 
 

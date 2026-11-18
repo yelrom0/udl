@@ -14,6 +14,7 @@ browser can show one.
 """
 
 # System Imports
+import logging
 import os
 import secrets
 import socket
@@ -65,6 +66,8 @@ if TYPE_CHECKING:
 
     from udl.fetch.browser import BrowserLane, ProfileCookies
     from udl.fetch.window import Person, WindowAsker
+
+log = logging.getLogger(__name__)
 
 _EXTRA_HINT = (
     "Install udl's browser extra (`uv sync --extra browser`), then Chromium "
@@ -489,6 +492,9 @@ class FetchKit:
         ToolUnavailable when no window can open."""
         waiting = await self._waiting_items(sites)
         if not waiting:
+            log.debug(
+                "No check waits%s, so no window opens", f" on {', '.join(sites)}" if sites else ""
+            )
             return SolveReport(passed=[], waiting=[])
         if (problem := self.asker.unavailable()) is not None:
             raise ToolUnavailable(
@@ -509,6 +515,11 @@ class FetchKit:
 
         done = await self.asker.ask(shown, passed)
         still = await self._waiting_items(sites)
+        log.debug(
+            "The solve passed %s; %s still waits",
+            ", ".join(done) or "no site",
+            ", ".join(still) or "nothing",
+        )
         return SolveReport(passed=done, waiting=list(still))
 
     async def close(self) -> None:
