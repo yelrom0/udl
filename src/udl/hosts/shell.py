@@ -1,7 +1,7 @@
 """
-------------
-- hosts.py -
-------------
+-----------
+- shell.py -
+-----------
 
 Hosts: the machines agents run on, and the HostShell every action on one goes through.
 
@@ -645,10 +645,15 @@ class _Interaction:
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self._process.wait(), timeout=END.total_seconds())
         await _stopped(self._process)
-        for task in (self._task, self._timer):
-            task.cancel()
+        # (Let the reader reach the end of the output rather than cancelling it: a cancelled read
+        # leaves the program's pipe open, and asyncio warns about the transport at the next
+        # collection. It ends as soon as the program does.)
+        self._timer.cancel()
+        with contextlib.suppress(asyncio.CancelledError, TimeoutError):
+            await asyncio.wait_for(asyncio.shield(self._task), END.total_seconds())
+        self._task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            await asyncio.gather(self._task, self._timer, return_exceptions=True)
+            await self._task
 
     async def wait(self) -> int:
         """Wait for it to end, and give its exit code."""
