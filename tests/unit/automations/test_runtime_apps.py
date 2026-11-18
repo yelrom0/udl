@@ -14,7 +14,7 @@ import inspect
 from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 # Package Imports
 import pytest
@@ -29,6 +29,7 @@ from udl.config import AutomationsSettings
 from udl.core.models import SetPluginSettingsRequest
 from udl.core.service import UDLService
 from udl.errors import ConfigError
+from udl.integrations.watchers import HEALTHY_AFTER, MAX_BACKOFF
 from udl.plugins.apps.base import AnApp
 from udl.plugins.registry import APPS
 
@@ -179,6 +180,31 @@ class Crashing(FakeApp):
         await super().serve(ctx)
 
 
+class AlwaysFailing(FakeApp):
+    """A fake app whose service raises at once, every time it is started."""
+
+    name = "failing"
+    at: ClassVar[list[Any]] = []
+
+    async def serve(self, ctx: Any) -> None:
+        type(self).at.append(ctx.clock.now())
+        raise RuntimeError("it always fails")
+
+
+class FailingOnce(FakeApp):
+    """A fake app that fails at once until it has been started `healthy` times."""
+
+    name = "flaky"
+    runs = 0
+    healthy = 0
+
+    async def serve(self, ctx: Any) -> None:
+        type(self).runs += 1
+        if type(self).runs <= type(self).healthy:
+            raise RuntimeError("it fails")
+        await super().serve(ctx)
+
+
 class Broken(FakeApp):
     """A fake app that cannot be made at all."""
 
@@ -226,6 +252,66 @@ async def test_an_app_that_cannot_be_made_is_reported_not_fatal(
 
 def _ticks(app: Any, count: int) -> bool:
     return len(app.done) >= count
+
+
+# ---------------------------------------------------------------------------------------------
+# The backoff
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_failing_app_is_started_again_more_and_more_slowly(
+    tmp_path: Path, clock: FakeClock
+) -> None:
+    AlwaysFailing.at = []
+    harness = harness_of(tmp_path, clock, AlwaysFailing)
+
+    async with harness.service() as service, AutomationRuntime(service, holder="here:1:a"):
+        await clock.advance(timedelta(0))
+        await until(lambda: len(AlwaysFailing.at) >= 4, clock)
+
+    gaps = [
+        (later - earlier).total_seconds()
+        for earlier, later in zip(AlwaysFailing.at, AlwaysFailing.at[1:], strict=False)
+    ]
+
+    assert gaps[:3] == [1, 2, 4]  # (the watchers' backoff, doubled each time)
+
+
+async def test_a_failing_app_is_never_kept_waiting_longer_than_the_cap(
+    tmp_path: Path, clock: FakeClock
+) -> None:
+    AlwaysFailing.at = []
+    harness = harness_of(tmp_path, clock, AlwaysFailing)
+
+    async with harness.service() as service, AutomationRuntime(service, holder="here:1:a"):
+        await clock.advance(timedelta(0))
+        await until(lambda: len(AlwaysFailing.at) >= 8, clock)
+
+    gaps = [
+        (later - earlier).total_seconds()
+        for earlier, later in zip(AlwaysFailing.at, AlwaysFailing.at[1:], strict=False)
+    ]
+
+    assert max(gaps) == MAX_BACKOFF.total_seconds()
+    assert gaps[-1] == MAX_BACKOFF.total_seconds()
+
+
+async def test_an_app_that_ran_well_starts_again_at_once_after_it_fails(
+    tmp_path: Path, clock: FakeClock
+) -> None:
+    FailingOnce.runs = 0
+    FailingOnce.healthy = 1
+    harness = harness_of(tmp_path, clock, FailingOnce)
+
+    async with harness.service() as service, AutomationRuntime(service, holder="here:1:a"):
+        await clock.advance(timedelta(0))
+        # (It fails once, waits FIRST_BACKOFF, then runs for HEALTHY_AFTER: the next failure
+        # starts a new streak, at FIRST_BACKOFF again.)
+        await clock.advance(HEALTHY_AFTER + timedelta(seconds=5))
+        app = app_of(service, FailingOnce.name)
+
+        assert FailingOnce.runs >= 2
+        assert app.started >= 1
 
 
 async def test_a_changed_setting_is_picked_up_by_the_next_start(
