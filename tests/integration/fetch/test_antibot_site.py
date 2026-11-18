@@ -11,6 +11,7 @@ plain client (httpx) and to a browser (Chromium), and FakePerson gets past its c
 import asyncio
 from collections.abc import AsyncIterator
 from datetime import timedelta
+from urllib.parse import urlsplit
 
 # Package Imports
 import httpx
@@ -327,6 +328,36 @@ async def test_a_person_whose_patience_runs_out_leaves_the_check(
     await page.goto(antibot.url("/checked/late"))
 
     assert await page.title() == CHALLENGE_TITLE
+
+
+async def test_a_person_says_what_they_did_at_the_check(
+    antibot: AntiBotSite, browser: BrowserContext, caplog: pytest.LogCaptureFixture
+) -> None:
+    # (A window test that failed on CI with one site passed and one left could not say whether
+    # the person ever pressed the second one's button: now the report says.)
+    page = await browser.new_page()
+    url = antibot.url("/checked/said")
+    await page.goto(url)
+
+    await FakePerson().attend(page)
+    await settled(page, "Checked said")
+
+    assert f"The person pressed the check's button on {url}" in caplog.text
+    host = urlsplit(url).hostname
+    assert f"{host} gave a clearance" in caplog.text
+    assert f"{host}/checked/said: the check (no clearance sent)" in caplog.text
+    assert f"{host}/checked/said: the page behind the check" in caplog.text
+
+
+async def test_a_person_who_gives_up_says_why(
+    antibot: AntiBotSite, browser: BrowserContext, caplog: pytest.LogCaptureFixture
+) -> None:
+    page = await browser.new_page()
+
+    await asyncio.wait_for(FakePerson(patience=timedelta(seconds=0.5)).attend(page), timeout=5)
+
+    assert "The person left about:blank without pressing the check's button:" in caplog.text
+    assert "Timeout" in caplog.text
 
 
 def test_a_person_is_as_patient_as_the_tests_window() -> None:

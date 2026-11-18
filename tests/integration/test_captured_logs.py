@@ -15,7 +15,9 @@ import logging
 import pytest
 
 
-@pytest.mark.parametrize("name", ["udl.fetch.window", "udl.fetch.queue", "udl.automations.runtime"])
+@pytest.mark.parametrize(
+    "name", ["udl.fetch.window", "udl.fetch.queue", "udl.automations.runtime", "support.antibot"]
+)
 def test_the_fetchers_and_automations_debug_lines_are_kept(
     caplog: pytest.LogCaptureFixture, name: str
 ) -> None:
