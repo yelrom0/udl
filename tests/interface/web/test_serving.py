@@ -101,6 +101,40 @@ async def test_a_client_route_answers_the_shell(served: Harness) -> None:
     assert_ui_headers(answer)
 
 
+async def test_the_shell_is_not_sent_again_when_it_has_not_changed(served: Harness) -> None:
+    # (index.html and the router's routes are not hashed, so the browser asks again on each
+    # load: an unchanged page is a 304, and its body is not sent again.)
+    async with client_for(served) as client:
+        first = await client.get("/ui/")
+        etag = first.headers["ETag"]
+        again = await client.get("/ui/", headers={"If-None-Match": etag})
+        route = await client.get("/ui/downloads/abc", headers={"If-None-Match": etag})
+
+    assert etag
+    assert again.status_code == 304
+    assert again.content == b""
+    assert again.headers["Cache-Control"] == "no-cache"
+    assert_ui_headers(again)
+    assert route.status_code == 304
+
+
+async def test_an_unhashed_file_of_the_build_is_not_sent_again_when_it_has_not_changed(
+    tmp_path: Path, served: Harness
+) -> None:
+    (tmp_path / "dist" / "favicon.svg").write_text("<svg/>")
+
+    async with client_for(served) as client:
+        first = await client.get("/ui/favicon.svg")
+        again = await client.get(
+            "/ui/favicon.svg", headers={"If-None-Match": first.headers["ETag"]}
+        )
+
+    assert first.status_code == 200
+    assert first.text == "<svg/>"
+    assert first.headers["Cache-Control"] == "no-cache"
+    assert again.status_code == 304
+
+
 async def test_an_asset_is_cached_forever(served: Harness) -> None:
     async with client_for(served) as client:
         answer = await client.get("/ui/assets/main-abc123.js")
@@ -156,12 +190,43 @@ async def test_a_ui_plugin_that_is_not_there_is_a_404(served: Harness) -> None:
     async with client_for(served) as client:
         plugin = await client.get("/ui/plugins/slack/index.js")
         file = await client.get("/ui/plugins/gmail/gone.js")
-        # (A folder without a manifest.json is not a UI plugin.)
-        not_a_plugin = await client.get("/ui/plugins/gmail/../../../etc/passwd")
 
-    for answer in (plugin, file, not_a_plugin):
+    for answer in (plugin, file):
         assert answer.status_code == 404
-        assert "passwd" not in answer.text
+
+
+async def test_a_folder_without_a_manifest_is_not_a_ui_plugin(
+    tmp_path: Path, served: Harness
+) -> None:
+    # (A bundle is found by its manifest.json: a folder of files in ui_plugin_dirs is not one.)
+    folder = tmp_path / "ui-plugins" / "notaplugin"
+    folder.mkdir(parents=True)
+    (folder / "index.js").write_text("export default {}\n")
+
+    async with client_for(served) as client:
+        answer = await client.get("/ui/plugins/notaplugin/index.js")
+
+    assert answer.status_code == 404
+
+
+async def test_a_plugin_name_cannot_lead_outside(served: Harness) -> None:
+    # (A name is one folder's: not `..`, and not a hidden folder.)
+    async with client_for(served) as client:
+        dots = await client.get("/ui/plugins/%2E%2E/index.js")
+        hidden = await client.get("/ui/plugins/%2Ehidden/index.js")
+
+    for answer in (dots, hidden):
+        assert answer.status_code == 404
+
+
+async def test_a_name_that_cannot_be_a_file_is_a_404(served: Harness) -> None:
+    # (A path the filesystem refuses — too long, or with a null byte — is answered, not raised.)
+    async with client_for(served) as client:
+        long = await client.get(f"/ui/plugins/gmail/{'a' * 5000}.js")
+        null = await client.get("/ui/plugins/gmail/a%00b.js")
+
+    for answer in (long, null):
+        assert answer.status_code == 404
 
 
 async def test_a_plugin_path_cannot_lead_outside_its_bundle(
@@ -190,11 +255,15 @@ async def test_a_browser_is_sent_to_the_shell(served: Harness) -> None:
 
 
 async def test_a_script_is_not_sent_to_the_shell(served: Harness) -> None:
-    # (Only a browser's page is; a script that gets a page instead of JSON would be confusing.)
+    # (Only a browser's page is; a script that gets a page instead of JSON would be confusing,
+    # and the API's own 404 is JSON.)
     async with client_for(served) as client:
         answer = await client.get("/", headers={"Accept": "application/json"})
 
     assert answer.status_code == 404
+    assert answer.headers["Content-Type"].startswith("application/json")
+    assert answer.json() == {"detail": "Not Found"}
+    assert_ui_headers(answer)
 
 
 async def test_without_a_build_the_shell_says_to_build_it(
@@ -213,6 +282,8 @@ async def test_without_a_build_the_shell_says_to_build_it(
         assert "make web" in answer.text
         assert answer.headers["Cache-Control"] == "no-cache"
         assert_ui_headers(answer)
+    # (An inline style would be refused by the CSP, and logged as a violation on every load.)
+    assert "style=" not in shell.text
     assert asset.status_code == 404
 
 
@@ -247,8 +318,9 @@ def test_the_ui_is_not_in_the_schema(served: Harness) -> None:
     # operations, and they have no API key.)
     paths = create_app(served.settings, make_service=served.service).openapi()["paths"]
 
-    for name in ("/", "/ui/", "/ui/assets/{path:path}", "/ui/{path:path}"):
-        assert name not in paths
+    # (FastAPI names a converter's path with the converter's own name, never `{path:path}`, so
+    # the check is about what a client could call: nothing at /, and nothing under /ui.)
+    assert [name for name in paths if name == "/" or name.startswith("/ui")] == []
 
 
 @pytest.mark.skipif(not (DIST / "index.html").is_file(), reason="the UI is not built (make web)")
