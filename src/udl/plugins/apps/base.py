@@ -76,6 +76,14 @@ __all__ = [
 ]
 
 
+async def _ended(waiter: asyncio.Future[AppEvent]) -> AppEvent | None:
+    """`waiter`'s answer, or None when the subscription ended (nothing is coming)."""
+    try:
+        return await waiter
+    except StopAsyncIteration:
+        return None
+
+
 def _operation_method(what: object) -> TypeIs[Callable[..., Awaitable[BaseModel]]]:
     """Whether `what` is an app's operation method: an async `(self, request) -> response`."""
     return callable(what) and inspect.iscoroutinefunction(what)
@@ -211,7 +219,7 @@ class AppEvents:
                     with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
                         await waiter  # (it ends where it waits, and is not left pending)
                     return None
-                return await waiter
+                return await _ended(waiter)
             finally:
                 stopper.cancel()
                 waiter.cancel()
@@ -290,7 +298,9 @@ class AppSubscription:
         try:
             found = await asyncio.shield(self._pulled)
         except asyncio.CancelledError:
-            if self._pulled.done():  # (the pull itself ended: nothing is left to wait for)
+            # (A pull that was cancelled is over; one that finished holds a notice for the next
+            # call, so it is kept.)
+            if self._pulled.cancelled():
                 self._pulled = None
             raise
         self._pulled = None

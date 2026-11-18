@@ -365,6 +365,18 @@ async def test_a_subscription_survives_a_wait_that_gave_up(service: UDLService) 
         assert found.data["count"] == 1
 
 
+async def test_waiting_for_an_event_that_never_comes_times_out(service: UDLService) -> None:
+    # (wait_for returns None when the app is told to stop; a subscription that ends is None too.)
+    events = events_of(service)
+    stop = asyncio.Event()
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(events.wait_for("fakeapp.*", stop=stop), 0.05)
+
+    stop.set()
+    assert await asyncio.wait_for(events.wait_for("fakeapp.*", stop=stop), 1) is None
+
+
 async def test_an_event_an_app_waits_for_is_told_of_once(service: UDLService) -> None:
     # (The bus tells of an event again when it is dispatched: that is not it happening.)
     events = events_of(service)
