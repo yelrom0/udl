@@ -59,7 +59,7 @@ def test_udl_mcp_serves_the_tools_on_stdio_on_its_service(
     assert result.exit_code == 0, result.output
     assert result.stdout == ""  # (stdout is the protocol's)
     [(tools, config)] = served
-    assert tools == list(operations())
+    assert tools == [name for name, op in operations().items() if op.hints.mcp]
     assert config.settings.max_per_site == 5
 
 

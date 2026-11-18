@@ -91,6 +91,8 @@ MATRIX: dict[str, tuple[str, str]] = {
     "set_host": ("hosts set", "PUT /hosts"),
     "delete_host": ("hosts rm", "DELETE /hosts/{host}"),
     "check_host": ("hosts check", "POST /hosts/{host}/check"),
+    "get_secrets_status": ("secrets status", "GET /secrets"),
+    "set_onepassword_token": ("secrets onepassword login", "PUT /secrets/onepassword"),
 }
 
 # Interface-only, so exempt: they run the other interfaces, need a browser on the user's

@@ -221,6 +221,8 @@ def test_the_operations_are_the_feature_matrix_s() -> None:
         "set_host",
         "delete_host",
         "check_host",
+        "get_secrets_status",
+        "set_onepassword_token",
     }
 
 

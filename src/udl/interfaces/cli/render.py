@@ -96,6 +96,7 @@ from udl.integrations.watchers import WatcherState, WatcherStatus
 from udl.plugins.downloaders.base import MediaCandidate, MediaKind
 from udl.plugins.integrations.base import AccountHealth, AccountStatus
 from udl.plugins.registry import ACTIONS, DATABASES, DOWNLOADERS, INTEGRATIONS, SECRETS, SITES
+from udl.plugins.secrets.models import SecretsStatus
 
 _STATUS: Final[dict[JobStatus, tuple[str, str]]] = {
     JobStatus.QUEUED: ("…", "dim"),
@@ -1270,3 +1271,25 @@ def host_check(console: Console, report: HostCheck) -> None:
         for tool in report.tools:
             table.add_row(escape(tool.name), _yes(tool.found), escape(tool.version or "-"))
         console.print(table)
+
+
+def secrets_status(console: Console, found: SecretsStatus) -> None:
+    """Where udl keeps its secrets, and what reads the ones it does not keep: each resolver,
+    whether udl uses it, what it can read and what is wrong (never a value)."""
+    rows = [("Store", escape(found.store))]
+    if found.unavailable is not None:
+        rows.append(("Unavailable", escape(found.unavailable)))
+    _lines(console, rows)
+    if not found.resolvers:
+        console.print("No resolver: every secret is kept in the store.")
+        return
+    table = Table("Resolver", "Enabled", "Works", "Vaults", _folded("Problems"))
+    for resolver in found.resolvers:
+        table.add_row(
+            escape(resolver.name),
+            _yes(resolver.enabled),
+            _yes(resolver.ok),
+            escape("\n".join(resolver.vaults) or "-"),
+            escape("\n".join(resolver.problems)),
+        )
+    console.print(table)

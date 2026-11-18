@@ -204,6 +204,7 @@ from udl.plugins.registry import (
     INTEGRATIONS,
     PLUGIN_KINDS,
     RUNNERS,
+    SECRET_RESOLVERS,
     SECRETS,
     SITES,
     UI,
@@ -212,7 +213,14 @@ from udl.plugins.registry import (
 )
 from udl.plugins.requirements import unmet
 from udl.plugins.secrets.base import SecretStore
-from udl.plugins.secrets.resolvers import open_secret_store
+from udl.plugins.secrets.models import (
+    GetSecretsStatusRequest,
+    ResolverStatus,
+    SecretsStatus,
+    SetToken,
+)
+from udl.plugins.secrets.onepassword import TOKEN_REF
+from udl.plugins.secrets.resolvers import SecretResolver, open_resolvers, open_secret_store
 from udl.plugins.sites.base import SitePlugin
 
 if TYPE_CHECKING:
@@ -1019,6 +1027,8 @@ class UDLService:
             store = self.registry.get(SECRETS, info.name)
             missing = unmet(store.requires)
             problem = None if missing else store(self.settings.secrets).unavailable()
+        elif info.kind == SECRET_RESOLVERS.group:
+            missing = unmet(self.registry.get(SECRET_RESOLVERS, info.name).requires)
         elif info.kind == ACTIONS.group:
             missing = unmet(self.registry.get(ACTIONS, info.name).requires)
         elif info.kind == INTEGRATIONS.group:
@@ -1599,6 +1609,45 @@ class UDLService:
         gh, claude, opencode), so a bad host is found before an agent is sent to it."""
         return await self.hosts.check(request.host)
 
+    # -- secrets -------------------------------------------------------------------------------
+
+    @operation(
+        "get_secrets_status",
+        title="Show the secrets status",
+        hints=OperationHints(read_only=True, open_world=True),
+        cli=CLISpec(path=("secrets", "status")),
+        api=APISpec(method="GET", path="/secrets"),
+    )
+    async def get_secrets_status(self, request: GetSecretsStatusRequest) -> SecretsStatus:
+        """Show where udl keeps its secrets (the store, and whether it can be used here) and what
+        reads the ones it does not keep: each resolver, whether udl uses it, what it can read and
+        what is wrong with it. Never a value."""
+        return await self._secrets_status()
+
+    @operation(
+        "set_onepassword_token",
+        title="Sign in to 1Password",
+        hints=OperationHints(admin=True, idempotent=True, mcp=False),
+        cli=CLISpec(path=("secrets", "onepassword", "login")),
+        api=APISpec(method="PUT", path="/secrets/onepassword"),
+    )
+    async def set_onepassword_token(self, request: SetToken) -> SecretsStatus:
+        """Keep 1Password's service account token in udl's own store (never in a log line), so
+        `op` can read the secrets udl does not keep, and say whether it works now."""
+        await self.secrets.set(TOKEN_REF, request.token)
+        log.info("Kept the 1Password service account token")
+        return await self._secrets_status()
+
+    async def _secrets_status(self) -> SecretsStatus:
+        """The store, and each resolver with what checking it found (never a value)."""
+        store = self.secrets
+        found = open_resolvers(self.registry, self.settings.secrets, store=store)
+        return SecretsStatus(
+            store=store.name,
+            unavailable=store.unavailable(),
+            resolvers=[await _resolver_status(resolver) for resolver in found],
+        )
+
     # -- reading pages -------------------------------------------------------------------------
 
     @operation(
@@ -1847,4 +1896,26 @@ def _without_secrets(settings: Settings) -> Settings:
             "integrations": {name: _hidden(table) for name, table in settings.integrations.items()},
             "apps": {name: _hidden(table) for name, table in settings.apps.items()},
         }
+    )
+
+
+async def _resolver_status(resolver: SecretResolver) -> ResolverStatus:
+    """A resolver, with what checking it found: its health says whether it works, what is wrong
+    and what it can read (never what is in it). A check that fails is a problem, not an error."""
+    try:
+        health = await resolver.check()
+    except Exception as e:  # (a broken tool is a status, not a failure to show the status)
+        log.warning("The %s secret resolver failed its check", resolver.scheme, exc_info=True)
+        return ResolverStatus(
+            name=resolver.scheme,
+            enabled=resolver.enabled,
+            ok=False,
+            problems=[e.message if isinstance(e, UDLError) else str(e)],
+        )
+    return ResolverStatus(
+        name=resolver.scheme,
+        enabled=resolver.enabled,
+        ok=health.ok,
+        problems=health.problems,
+        vaults=health.vaults,
     )

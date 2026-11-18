@@ -33,6 +33,7 @@ from udl.interfaces.cli.commands import (
     fetch,
     hosts,
     probe,
+    secrets,
     servers,
     sites,
     system,
@@ -192,8 +193,13 @@ app.add_typer(fetch.app, name="fetch")
 add_commands(
     app,
     operations().values(),
-    renderers={**automations.RENDERERS, **fetch.RENDERERS, **hosts.RENDERERS},
-    helps={**automations.HELPS, **hosts.HELPS},
+    renderers={
+        **automations.RENDERERS,
+        **fetch.RENDERERS,
+        **hosts.RENDERERS,
+        **secrets.RENDERERS,
+    },
+    helps={**automations.HELPS, **hosts.HELPS, **secrets.HELPS},
     groups={
         ("accounts",): accounts.app,
         ("fetch",): fetch.app,
