@@ -1,7 +1,7 @@
 """
 -----------
 - apps.py -
-------------
+-----------
 
 The apps' services, run by the runtime that holds the automations' lease (udl.automations.runtime):
 each app of the udl.apps kind is started once per lease, stopped when the lease goes, and started

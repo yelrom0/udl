@@ -1,7 +1,7 @@
 """
 ----------------
 - test_apps.py -
----------------
+----------------
 
 An app's operations through the interfaces udl makes for every plugin's: a CLI command
 (`udl <app> <op>`), an API route (`POST /plugins/<app>/<op>`) and an MCP tool (`<app>_<op>`),

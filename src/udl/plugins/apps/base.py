@@ -1,7 +1,7 @@
 """
 -----------
 - base.py -
-------------
+-----------
 
 AppPlugin: the interface every app implements (the udl.apps kind), and what one is given to run
 with (an AppContext).

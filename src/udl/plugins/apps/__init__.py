@@ -1,7 +1,7 @@
 """
------------------
+---------------
 - apps (kind) -
------------------
+---------------
 
 udl.apps: a plugin that brings operations, record kinds, event types, a runtime service and a
 UI, without accounts (udl's orchestrator, orch, is one). The kind's interface is

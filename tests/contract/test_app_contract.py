@@ -1,7 +1,7 @@
 """
 ------------------------
 - test_app_contract.py -
-----------------------
+------------------------
 
 The behaviour every app plugin (udl.apps) must have, run over each of them (each a Case: the
 plugin class, an app made from it, and what its service publishes and keeps): it is named,

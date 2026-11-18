@@ -1,7 +1,7 @@
 """
 -----------
 - apps.py -
----------
+-----------
 
 FakeApp: an app plugin (the udl.apps kind) whose service ticks on the clock, adds two operations
 (one of them saying how it is shown), publishes an event type, and keeps a record of its own, so

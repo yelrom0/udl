@@ -1,7 +1,7 @@
 """
 ----------------
 - test_apps.py -
-------------------
+----------------
 
 An app plugin's own rules (udl.plugins.apps.base): it is named, its settings are its own model's,
 its operations come from its methods (each on the app the service has), and its service is given
