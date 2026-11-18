@@ -22,7 +22,7 @@ from udl.core.models import PluginSettingsInfo, SetPluginSettingsRequest
 from udl.db.manager import DBManager
 from udl.db.records import PluginSettings, RecordQuery
 from udl.errors import ConfigError, DoesNotExist, NotAllowed
-from udl.plugins.registry import PluginInfo, PluginRegistry
+from udl.plugins.registry import APPS, PluginInfo, PluginRegistry
 from udl.plugins.secrets.base import SecretStore
 from udl.plugins.settings import (
     SettingSource,
@@ -53,8 +53,8 @@ class PluginSettingsManager:
     async def settings_of(self, name: str) -> BaseModel:
         """The settings the plugin called `name` runs with (secrets readable). Raises
         DoesNotExist, or ConfigError when they are not valid."""
-        _, model = self._configurable(name)
-        return await self._layered(name, model, await self._stored(name))
+        info, model = self._configurable(name)
+        return await self._layered(info, model, await self._stored(name))
 
     async def show(self, name: str) -> PluginSettingsInfo:
         """The plugin's settings, secrets hidden, and where each comes from."""
@@ -75,7 +75,7 @@ class PluginSettingsManager:
         if file_only:
             raise NotAllowed(
                 f"{', '.join(file_only)} of the {name} plugin is set in the config file only",
-                hint=f"Set it in [integrations.{name}] in the config: it widens what udl "
+                hint=f"Set it in [{self._table(info)}] in the config: it widens what udl "
                 "reaches, so no API client or AI may change it.",
             )
         stored = await self._stored(name)
@@ -95,12 +95,12 @@ class PluginSettingsManager:
             else:
                 values[field] = value
         store = self._secrets()
-        candidate: dict[str, Any] = {**self._settings.integrations.get(name, {}), **values}
+        candidate: dict[str, Any] = {**self._file_values(info), **values}
         for field in secrets - set(new_secrets):
             if (kept := await store.get(secret_ref(name, field))) is not None:
                 candidate[field] = kept
         candidate |= {field: value for field, value in new_secrets.items() if value is not None}
-        checked = _validated(name, model, candidate)  # (raises ConfigError)
+        checked = _validated(name, model, candidate, self._table(info))  # (raises ConfigError)
 
         for field in stored.secrets if stored else []:
             if field in request.reset:
@@ -147,21 +147,33 @@ class PluginSettingsManager:
         return found[0] if found else None
 
     async def _layered(
-        self, name: str, model: type[BaseModel], stored: PluginSettings | None
+        self, info: PluginInfo, model: type[BaseModel], stored: PluginSettings | None
     ) -> BaseModel:
-        values: dict[str, Any] = {**self._settings.integrations.get(name, {})}
+        name = info.name
+        values: dict[str, Any] = {**self._file_values(info)}
         if stored is not None:
             values |= stored.values
             for field in stored.secrets:
                 if (secret := await self._secrets().get(secret_ref(name, field))) is not None:
                     values[field] = secret
-        return _validated(name, model, values)
+        return _validated(name, model, values, self._table(info))
+
+    def _file_values(self, info: PluginInfo) -> dict[str, JsonValue]:
+        """What the config file sets of the plugin called `info.name`'s settings: its
+        `[apps.<name>]` table for an app, `[integrations.<name>]` for anything else."""
+        if info.kind == APPS.group:
+            return self._settings.apps.get(info.name, {})
+        return self._settings.integrations.get(info.name, {})
+
+    def _table(self, info: PluginInfo) -> str:
+        """The table a plugin's settings are set in (in a message)."""
+        return f"apps.{info.name}" if info.kind == APPS.group else f"integrations.{info.name}"
 
     async def _info(
         self, info: PluginInfo, model: type[BaseModel], stored: PluginSettings | None
     ) -> PluginSettingsInfo:
-        layered = await self._layered(info.name, model, stored)
-        in_file = self._settings.integrations.get(info.name, {})
+        layered = await self._layered(info, model, stored)
+        in_file = self._file_values(info)
         set_here = {*stored.values, *stored.secrets} if stored is not None else set[str]()
         fields = model.model_fields
         return PluginSettingsInfo(
@@ -182,7 +194,7 @@ class PluginSettingsManager:
         )
 
 
-def _validated(name: str, model: type[BaseModel], values: dict[str, Any]) -> BaseModel:
+def _validated(name: str, model: type[BaseModel], values: dict[str, Any], table: str) -> BaseModel:
     """`values` as the plugin's settings. Raises ConfigError, saying what is wrong."""
     try:
         return model.model_validate(values)
@@ -193,6 +205,6 @@ def _validated(name: str, model: type[BaseModel], values: dict[str, Any]) -> Bas
         )
         raise ConfigError(
             f"The {name} plugin's settings are not valid: {problems}",
-            hint=f"Check [integrations.{name}] in the config, and what was set through udl "
+            hint=f"Check [{table}] in the config, and what was set through udl "
             f"(`udl plugins settings {name}`).",
         ) from e

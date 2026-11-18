@@ -435,6 +435,8 @@ class Settings(BaseSettings):
     # Per-plugin settings, e.g. [integrations.gmail]: the file's layer of a plugin's settings,
     # under what is set through udl (set_plugin_settings). Each plugin validates its own.
     integrations: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
+    # The same for an app's settings, e.g. [apps.orch]: an app is a plugin of udl.apps.
+    apps: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
     _config_file: Path | None = PrivateAttr(default=None)
 
     @property
