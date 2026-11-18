@@ -26,9 +26,10 @@ from support.interfaces import Harness
 from udl.automations.apps import AppState, AppStatus
 from udl.automations.runtime import AutomationRuntime, runtime_status
 from udl.config import AutomationsSettings
+from udl.core.models import SetPluginSettingsRequest
 from udl.core.service import UDLService
 from udl.errors import ConfigError
-from udl.plugins.apps.base import AppPlugin
+from udl.plugins.apps.base import AnApp
 from udl.plugins.registry import APPS
 
 
@@ -37,7 +38,7 @@ def clock() -> FakeClock:
     return FakeClock()
 
 
-def harness_of(tmp_path: Path, clock: FakeClock, *apps: type[AppPlugin[Any]]) -> Harness:
+def harness_of(tmp_path: Path, clock: FakeClock, *apps: type[AnApp]) -> Harness:
     """A harness whose apps are `apps` (and the fake one), registered before any service is
     made (a service reads the plugins it has when it is made)."""
     found = Harness(
@@ -117,6 +118,29 @@ async def test_an_app_s_service_is_stopped_when_the_lease_goes(
             await until(lambda: states(second)[FakeApp.name].state is AppState.RUNNING, clock)
 
         assert one_app.stopped
+
+
+async def test_an_app_s_service_starts_again_with_the_next_lease(
+    harness: Harness, clock: FakeClock
+) -> None:
+    async with (
+        harness.service() as first,
+        harness.service() as second,
+        AutomationRuntime(first, holder="first:1:a") as one,
+    ):
+        await clock.advance(timedelta(0))
+        await until(lambda: _ticks(app_of(first), 1), clock)
+
+        await one.stop()
+        await until(lambda: states(first)[FakeApp.name].state is AppState.STOPPED, clock)
+        async with AutomationRuntime(second, holder="second:2:b"):
+            await clock.advance(timedelta(seconds=10))
+            await until(lambda: states(second)[FakeApp.name].state is AppState.RUNNING, clock)
+
+            # (The next lease's app is a new one: it ticks from the start again.)
+            assert app_of(second).started == 1
+            await until(lambda: _ticks(app_of(second), 1), clock)
+            assert states(second)[FakeApp.name].failures == 0
 
 
 async def test_an_app_s_service_is_not_started_without_the_lease(
@@ -202,3 +226,19 @@ async def test_an_app_that_cannot_be_made_is_reported_not_fatal(
 
 def _ticks(app: Any, count: int) -> bool:
     return len(app.done) >= count
+
+
+async def test_a_changed_setting_is_picked_up_by_the_next_start(
+    harness: Harness, clock: FakeClock
+) -> None:
+    async with harness.service() as service:
+        async with AutomationRuntime(service, holder="here:1:a"):
+            await clock.advance(timedelta(0))
+            await until(lambda: _ticks(app_of(service), 1), clock)
+
+            await service.set_plugin_settings(
+                SetPluginSettingsRequest(name=FakeApp.name, values={"loud": True}, reset=[])
+            )
+            await service.apps.get(FakeApp.name)  # (the settings are read again)
+
+        assert app_of(service).settings.loud

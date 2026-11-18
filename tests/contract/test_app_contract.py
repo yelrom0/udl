@@ -29,7 +29,7 @@ from udl.automations.events import EventTypes
 from udl.core.operations import Operation, OperationRegistry, resolved_view
 from udl.db.records import Record, record_kind
 from udl.errors import PluginError
-from udl.plugins.apps.base import AppContext, AppEvents, AppPlugin, AppRecords, AppSettings
+from udl.plugins.apps.base import AnApp, AppContext, AppEvents, AppPlugin, AppRecords, AppSettings
 from udl.plugins.registry import APPS, PluginRegistry
 
 
@@ -68,8 +68,8 @@ class _Records(AppRecords):
 class Case:
     """An app plugin, an app of it, and what a test needs to run its service."""
 
-    plugin: type[AppPlugin[Any]]
-    app: AppPlugin[Any]
+    plugin: type[AnApp]
+    app: AnApp
     clock: FakeClock
     events: _Events
     records: _Records

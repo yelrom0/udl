@@ -32,6 +32,7 @@ from udl.core.service import UDLService
 from udl.db.records import RecordQuery
 from udl.errors import PluginError
 from udl.plugins.apps.base import (
+    AnApp,
     AppContext,
     AppEvents,
     AppPlugin,
@@ -86,7 +87,7 @@ class Stated(Bare):
         ]
 
 
-def harness_of(tmp_path: Path, *apps: type[AppPlugin[Any]]) -> Harness:
+def harness_of(tmp_path: Path, *apps: type[AnApp]) -> Harness:
     """A harness with `apps` (and the fake one) registered as apps."""
     found = Harness(tmp_path)
     for app in (FakeApp, *apps):
@@ -129,8 +130,36 @@ def test_an_operation_s_ui_spec_is_kept() -> None:
 
 
 def test_an_operation_of_a_method_that_is_not_there_is_refused() -> None:
-    with pytest.raises(PluginError, match="nope"):
+    with pytest.raises(PluginError, match="not one of"):
         Bare.operation("nope", title="Nope")
+
+
+def test_an_operation_of_a_method_that_is_not_async_is_refused() -> None:
+    class Sync(AppPlugin[AppSettings]):
+        """An app with a method that is not async."""
+
+        name = "sync"
+
+        def speak(self, request: Asked) -> Answered:
+            """Say it (but not awaitable)."""
+            return Answered(said=request.key)
+
+    with pytest.raises(PluginError, match="async"):
+        Sync.operation("speak", title="Speak")
+
+
+def test_an_operation_of_a_method_that_takes_the_wrong_thing_is_refused() -> None:
+    class Odd(AppPlugin[AppSettings]):
+        """An app whose operation method takes something else."""
+
+        name = "odd"
+
+        async def speak(self) -> Answered:
+            """Say nothing."""
+            return Answered(said="")
+
+    with pytest.raises(PluginError, match="self, request"):
+        Odd.operation("speak", title="Speak")
 
 
 async def test_an_operation_runs_on_the_app_the_service_has(tmp_path: Path) -> None:
@@ -178,7 +207,7 @@ def test_an_app_s_default_service_does_nothing() -> None:
     asyncio.run(app.serve(_context(app)))
 
 
-def _context(app: AppPlugin[Any]) -> AppContext:
+def _context(app: AnApp) -> AppContext:
     return AppContext(
         app=app,
         service=None,  # pyright: ignore[reportArgumentType]
@@ -200,6 +229,13 @@ def _context(app: AppPlugin[Any]) -> AppContext:
 async def service(tmp_path: Path) -> AsyncIterator[UDLService]:
     async with service_of(tmp_path, FakeClock()) as found:
         yield found
+
+
+async def test_an_app_may_not_publish_another_plugin_s_event(service: UDLService) -> None:
+    events = AppEvents(service.bus, FakeApp.name)
+
+    with pytest.raises(PluginError, match="another plugin's"):
+        await events.emit("gmail.message.received", {}, dedupe_key="1")
 
 
 async def test_an_app_s_events_are_stored_with_its_name(service: UDLService) -> None:
@@ -229,6 +265,7 @@ async def test_what_an_app_waits_for_is_the_next_event_that_matches(service: UDL
     )
     found = await asyncio.wait_for(waiter, 1)
 
+    assert found is not None
     assert found.type == "fakeapp.tick"
     assert found.data["count"] == 2
 
@@ -240,8 +277,24 @@ async def test_waiting_stops_when_the_app_is_told_to(service: UDLService) -> Non
     await _listening()
     stop.set()
 
-    with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(waiter, 1)
+    assert await asyncio.wait_for(waiter, 1) is None
+
+
+async def test_an_event_an_app_waits_for_is_told_of_once(service: UDLService) -> None:
+    # (The bus tells of an event again when it is dispatched: that is not it happening.)
+    events = AppEvents(service.bus, FakeApp.name)
+    waiter = asyncio.ensure_future(events.wait_for("fakeapp.*", stop=asyncio.Event()))
+    await _listening()
+    await service.bus.publish(
+        NewEvent(
+            type="fakeapp.tick", data=Tick(at=FakeClock().now(), count=1).model_dump(mode="json")
+        )
+    )
+
+    first = await asyncio.wait_for(waiter, 1)
+
+    assert first is not None
+    assert first.type == "fakeapp.tick"
 
 
 async def _listening() -> None:
