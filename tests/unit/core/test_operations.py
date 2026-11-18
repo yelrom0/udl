@@ -133,6 +133,12 @@ def test_every_operation_says_whether_it_is_admin() -> None:
         "import_cookies": True,
         "list_cookies": False,
         "delete_cookies": True,
+        # The hosts': what adds, changes or removes a machine agents run on is admin; reading
+        # them, and checking one, is not.
+        "list_hosts": False,
+        "set_host": True,
+        "delete_host": True,
+        "check_host": False,
     }
 
 

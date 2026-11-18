@@ -101,7 +101,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [ ] 25.3 `openrouter` AI provider: models with prices, the key's credit, cost per reply
   - [~] 25.4 Fake GitHub server in `tests/support/`; typed GitHub client
   - [ ] 25.5 `github` integration: accounts, PR / checks / comments operations, the PR watcher and its events
-  - [ ] 25.6 `Host` records and `HostShell`: run a process here or on another machine over SSH
+  - [~] 25.6 `Host` records and `HostShell`: run a process here or on another machine over SSH
   - [ ] 25.7 `udl.runners` plugin kind: `AgentRunner` + contract suite + `FakeRunner`
   - [ ] 25.8 `claude-code` runner: the `claude` CLI on any host, on that host's own login (so subscription models)
   - [ ] 25.9 `opencode` runner: OpenCode 2's server API on any host (OpenRouter and any other provider it has)
