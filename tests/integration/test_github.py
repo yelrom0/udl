@@ -33,10 +33,11 @@ def fake() -> FakeGitHub:
 
 
 @pytest.fixture
-def harness(tmp_path: Path) -> Harness:
-    """A harness with the github integration (on the fake, as its accounts say)."""
+def harness(tmp_path: Path, fake: FakeGitHub) -> Harness:
+    """A harness with the github integration, whose HTTP clients reach the fake."""
     found = Harness(tmp_path)
     found.registry.register(INTEGRATIONS, GitHubIntegration)
+    found.http = fake.http()
     return found
 
 
@@ -68,7 +69,7 @@ def test_an_account_is_connected_and_listed(harness: Harness) -> None:
     found = cli("accounts", "list", "--json")
 
     assert found.exit_code == 0, found.output
-    [account] = json.loads(found.stdout)
+    [account] = json.loads(found.stdout)["accounts"]
     assert account["account"] == "github:main"
     assert account["status"] == "connected"
     assert account["identity"]["display"] == "udl-bot (acme/widgets)"
@@ -81,7 +82,7 @@ def test_the_pulls_are_listed_from_the_cli(harness: Harness) -> None:
     found = cli("github", "list-pulls", "--repo", REPO, "--json")
 
     assert found.exit_code == 0, found.output
-    assert [pull["number"] for pull in json.loads(found.stdout)["items"]] == [7, 8]
+    assert [found["item"]["number"] for found in json.loads(found.stdout)["items"]] == [7, 8]
 
 
 def test_a_pull_is_read_from_the_cli(harness: Harness, fake: FakeGitHub) -> None:
