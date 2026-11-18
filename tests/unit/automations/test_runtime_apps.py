@@ -1,5 +1,5 @@
 """
--------------------------
+------------------------
 - test_runtime_apps.py -
 -------------------------
 
@@ -267,7 +267,7 @@ async def test_a_failing_app_is_started_again_more_and_more_slowly(
 
     async with harness.service() as service, AutomationRuntime(service, holder="here:1:a"):
         await clock.advance(timedelta(0))
-        await until(lambda: len(AlwaysFailing.at) >= 4, clock)
+        await until(lambda: len(AlwaysFailing.at) >= 4, clock, step=timedelta(seconds=30))
 
     gaps = [
         (later - earlier).total_seconds()
@@ -285,7 +285,7 @@ async def test_a_failing_app_is_never_kept_waiting_longer_than_the_cap(
 
     async with harness.service() as service, AutomationRuntime(service, holder="here:1:a"):
         await clock.advance(timedelta(0))
-        await until(lambda: len(AlwaysFailing.at) >= 8, clock)
+        await until(lambda: len(AlwaysFailing.at) >= 12, clock, step=timedelta(minutes=2))
 
     gaps = [
         (later - earlier).total_seconds()

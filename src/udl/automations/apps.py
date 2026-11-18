@@ -1,5 +1,5 @@
 """
-------------
+-----------
 - apps.py -
 ------------
 
@@ -17,7 +17,6 @@ integration is, and the same app is what its operations run on (get()).
 # System Imports
 import asyncio
 import logging
-from datetime import timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Final
 
@@ -27,6 +26,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, NonNegativeInt
 # Local Imports
 from udl.clock import pause
 from udl.errors import ConfigError, ErrorCode, ErrorInfo, UDLError
+from udl.integrations.watchers import FIRST_BACKOFF, HEALTHY_AFTER, MAX_BACKOFF
 from udl.plugins.apps.base import AnApp, AppContext, AppEvents, AppRecords
 from udl.plugins.registry import APPS
 
@@ -35,10 +35,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-FIRST_BACKOFF: Final = timedelta(seconds=1)
-MAX_BACKOFF: Final = timedelta(minutes=5)
-HEALTHY_AFTER: Final = timedelta(minutes=10)
-"""How long an app's service runs without failing for its next failure to start a new streak."""
 STOP_GRACE: Final = 2.0
 """Seconds an app's service gets to stop where it waits, before it is cancelled. Less than the
 runtime's own grace, so the supervisor always gets to tell them and wait."""
@@ -176,6 +172,7 @@ class AppSupervisor:
                     started_at=started,
                 )
                 await pause(self._service.clock, backoff, stop)
+                backoff = min(backoff * 2, MAX_BACKOFF)
                 continue
             # (It ended by itself: the app is done, and is reported as stopped.)
             self._states[name] = AppStatus(name=name, state=AppState.STOPPED)
