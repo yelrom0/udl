@@ -342,6 +342,29 @@ async def test_a_subscription_lives_across_waits(service: UDLService) -> None:
     assert [found.data["count"] for found in (first, second, third)] == [0, 1, 2]
 
 
+async def test_a_subscription_survives_a_wait_that_gave_up(service: UDLService) -> None:
+    # (An app that stops waiting for one event — wait_for timing out — keeps its subscription.)
+    events = events_of(service)
+
+    async with events.subscribe("fakeapp.*") as subscription:
+        await _listening()
+
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(subscription.__anext__(), 0.05)
+
+        await service.bus.publish(
+            NewEvent(
+                type="fakeapp.tick",
+                data=Tick(at=FakeClock().now(), count=1).model_dump(mode="json"),
+                dedupe_key="tick-1",
+            )
+        )
+
+        found = await asyncio.wait_for(subscription.__anext__(), 1)
+
+        assert found.data["count"] == 1
+
+
 async def test_an_event_an_app_waits_for_is_told_of_once(service: UDLService) -> None:
     # (The bus tells of an event again when it is dispatched: that is not it happening.)
     events = events_of(service)

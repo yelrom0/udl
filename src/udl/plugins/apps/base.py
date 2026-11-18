@@ -278,15 +278,23 @@ class AppSubscription:
                 return AppEvent(type=event.type, data=event.data, occurred_at=event.occurred_at)
 
     async def _next_notice(self) -> BusNotice:
-        """The next notice of the bus (one pull is kept going, so nothing is missed)."""
+        """The next notice of the bus (one pull is kept going, so nothing is missed).
+
+        The pull is shielded: an app that stops waiting for one event — `wait_for(sub.__anext__(),
+        t)` giving up, say — must not take the subscription down with it, so the next call goes
+        on from the same listener."""
         if self._notices is None:
             raise RuntimeError("a subscription is only used inside its async with")
         if self._pulled is None:
             self._pulled = asyncio.ensure_future(self._notices.__anext__())
         try:
-            return await self._pulled
-        finally:
-            self._pulled = None
+            found = await asyncio.shield(self._pulled)
+        except asyncio.CancelledError:
+            if self._pulled.done():  # (the pull itself ended: nothing is left to wait for)
+                self._pulled = None
+            raise
+        self._pulled = None
+        return found
 
     def _pull(self) -> None:
         """Start the next pull (so the listener is registered without waiting for a caller)."""
