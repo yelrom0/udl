@@ -60,7 +60,7 @@ From the conversation itself (the direction these phases follow): udl is the bac
 | **H-C10** | **Conversations become plans through proposals a person accepts,** each citing the span of the source it came from | Text from outside never changes the plan by itself, and every change traces back to who said it |
 | **H-C11** | **Search is full-text in each database plugin** (SQLite FTS5, PostgreSQL `tsvector`, MongoDB text indexes); semantic search is optional, through an AI provider's embeddings, brute-force per workspace | Works on every database udl supports, with no new service to run |
 | **H-C12** | **Datasets are two record kinds** (`Dataset`, `DataItem` with JSON data, an optional JSON Schema), not a table per dataset | Records stay "one generic table per kind" (Phase 8) |
-| **H-C13** | **Public pages never run anything for the visitor.** A page reads only its views, computed by the hub as the page's publisher and cut down to the fields each view names. AI-written HTML pages run in a sandboxed iframe with no network, fed their data by `postMessage` | An anonymous visitor reaches cached, projected data and nothing else |
+| **H-C13** | **Pages never run anything in a viewer's browser.** A public page reads only its views, computed by the hub as the page's publisher and cut down to the fields each view names. An AI-written HTML page's script runs only on the hub, in a headless browser with the network off; viewers get the rendered result as static HTML | An anonymous visitor reaches cached, projected data and nothing else; and script that holds data can always send it out (by navigating its own frame, say), so it never runs where something could leave |
 | **H-C14** | **The `codex` runner drives `codex exec --json`,** one process a turn, as `claude-code` drives `claude -p`, and never reads Codex's credential file | The same rule as O-C3 |
 
 ## Concepts
@@ -122,7 +122,7 @@ Today's udl is one person's: one set of databases, one secret store, one owner. 
 **31.1 Node roles and the hub database** · needs Phase 30
 - Build: a `udl/hub/` package (`__init__.py`, `config.py`, `records.py`, `manager.py`).
   - `[hub]` settings: `enabled = false`; `db`, a list shaped like `[[db.connections]]` for the hub database (default `sqlite:///~/.local/share/udl/hub.db`); `public_url: HttpUrl | None` (what devices, OAuth and passkeys use; **file-only**); `workspace_db`, a URL template with `{workspace}` (default `sqlite:///~/.local/share/udl/workspaces/{workspace}.db`; PostgreSQL `postgresql://udl@db/udl?udl_schema=ws_{workspace}`; MongoDB `mongodb://db/udl_{workspace}`).
-  - PostgreSQL: the `postgres` plugin learns the `udl_schema` URL parameter: it creates the schema if missing and sets `search_path` on every connection. A record contract run in two schemas of one database sees no records of the other.
+  - PostgreSQL: the `postgres` plugin learns the `udl_schema` URL parameter: it creates the schema if missing and sets `search_path` on every connection. A record contract run in two schemas of one database sees no records of the other. The template's `{workspace}` becomes, in a schema name, the workspace's name with `-` turned into `_` (names have no `_` of their own, so two names never meet), and the schema name only ever reaches SQL as a quoted identifier (`psycopg.sql.Identifier`), never as interpolated text. A test makes a workspace named `acme-corp`.
   - `RecordScope.HUB`: hub-level kinds. `DBManager` refuses to store a `HUB` kind in a workspace's databases, and a workspace kind in the hub's.
   - `NodeRole`: `standalone` (no hub) or `hub`. Links to hubs (Phase 34) are separate: any node can have them.
 - Tests first: `tests/unit/hub/test_config.py`; the record contract over the `HUB` kinds in every database plugin; `tests/integration/plugins/databases/test_postgres_schema.py`.
@@ -130,7 +130,7 @@ Today's udl is one person's: one set of databases, one secret store, one owner. 
 
 **31.2 Workspaces** · needs 31.1
 - Build: `udl/hub/records.py`, `udl/hub/services.py`.
-  - `Workspace(Record)`, scope `HUB`: `name` (unique; `^[a-z0-9][a-z0-9-]{1,38}$`, since it lands in database names and URLs), `title`, `status: active | suspended | deleting`, `db: list[DBConnectionConfig] | None` (explicit connections, else from the template), `created_by`.
+  - `Workspace(Record)`, scope `HUB`: `name` (unique; `^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$`: 1 to 40 lowercase letters, digits and inner hyphens, since it lands in database names, schema names and URLs; the phase's tests use `a` and `b`), `title`, `status: active | suspended | deleting`, `db: list[DBConnectionConfig] | None` (explicit connections, else from the template), `created_by`.
   - `WorkspaceServices`: `get(name) -> UDLService`, built on first use from the hub's `Settings` with `db` replaced by the workspace's connections and the secret store wrapped (31.3), and cached; `close(name)`, `close_all()`.
   - `udl serve` on a hub starts each active workspace's `AutomationRuntime` under that workspace's own lease, and stops a suspended one's. `[hub] max_active_runtimes` (default 50): past it, a workspace with no subscriptions, schedules or apps has its runtime started only when one appears.
 - Tests first: `tests/unit/hub/test_services.py`: two workspaces in one process each fire their own schedule on a `FakeClock`; suspending one stops only its runtime; a service is built once.
@@ -175,7 +175,7 @@ Today's udl is one person's: one set of databases, one secret store, one owner. 
   | `create_workspace` (`name`, `title`) | `udl workspaces create` | admin |
   | `suspend_workspace`, `resume_workspace` | `udl workspaces suspend / resume` | admin |
   | `delete_workspace` (`confirm` = its name) | `udl workspaces rm` | admin, destructive: `status = deleting`, its runtime stopped, its database or schema dropped, its secrets' namespace emptied |
-  | `export_workspace` | `udl workspaces export <name> <file>` | admin: every record kind copied (as `db sync` does) into a new SQLite file with a manifest; secrets are listed by reference, never copied |
+  | `export_workspace` | `udl workspaces export <name> <file>` | admin: every record kind copied (as `db sync` does, and the audit log whole, once Phase 33 has one) into a new SQLite file with a manifest; secrets are listed by reference, never copied |
   | `import_workspace` (`file`, `name`) | `udl workspaces import` | admin: into a new workspace |
 
 - Tests first: an interface test and a `MATRIX` row per operation; export then import round-trips every kind's `example()`.
@@ -209,21 +209,24 @@ Today's udl is one person's: one set of databases, one secret store, one owner. 
 - Done when: `User.example()` and the others round-trip in every database plugin.
 
 **32.2 Passwords and TOTP** · needs 32.1
-- Build: `udl/people/auth/passwords.py` (`argon2-cffi`'s `PasswordHasher` with its defaults, rehashing on sign-in when the parameters change), `udl/auth/totp.py` (RFC 6238: SHA-1, 6 digits, 30 s, one step either side, a step already used refused; **13.8 imports it from here** for web accounts' TOTP), recovery codes (ten, hashed, each used once).
+- Build: one package, `udl/auth/`, holds the credential code (passwords here, TOTP here, passkeys in 32.3), since web accounts (13.8) use it as well as people; the records that use it are in `udl/people/`.
+  - `udl/auth/passwords.py`: `argon2-cffi`'s `PasswordHasher` with its defaults, rehashing on sign-in when the parameters change.
+  - `udl/auth/totp.py`: RFC 6238 (SHA-1, 6 digits, 30 s, one step either side, a step already used refused). **13.8 imports it from here** for web accounts' TOTP.
+  - Recovery codes: ten, hashed, each used once.
   - `PasswordCredential` (`user`, `hash`) and `TotpCredential` (`user`, `secret: SecretRef` in the hub's secret store, `confirmed`). A TOTP secret is confirmed by a first good code.
   - Lockout: `[hub.auth] max_failures = 10`, `lockout = "15m"`, counted per user and per client address.
 - Dependency: `argon2-cffi`.
-- Tests first: `tests/unit/people/test_passwords.py`, `tests/unit/auth/test_totp.py` (RFC 6238's test vectors): the phase's first bullet.
+- Tests first: `tests/unit/auth/test_passwords.py`, `tests/unit/auth/test_totp.py` (RFC 6238's test vectors), `tests/unit/people/test_lockout.py`: the phase's first bullet.
 - Done when: no code path stores or logs a password, a TOTP secret or a recovery code.
 
 **32.3 Passkeys** · needs 32.1
-- Build: `udl/people/auth/passkeys.py` on `webauthn` (py_webauthn).
+- Build: `udl/auth/passkeys.py` on `webauthn` (py_webauthn); its record in `udl/people/records.py`.
   - `PasskeyCredential` (scope `HUB`): `user`, `credential_id`, `public_key` (COSE, base64), `sign_count`, `transports`, `name`, `last_used_at`.
   - The RP id is `public_url`'s host (`localhost` without one); the origin must be `public_url`'s. `user_verification = "required"`, no attestation.
   - Routes: `POST /auth/passkeys/register/options` and `…/register/verify` (signed in), `POST /auth/passkeys/sign-in/options` and `…/sign-in/verify`.
   - A user may have several passkeys; removing their last way to sign in is refused.
 - Dependency: `webauthn`.
-- Tests first: `tests/unit/people/test_passkeys.py` against `tests/support/webauthn.py`: the phase's second bullet.
+- Tests first: `tests/unit/auth/test_passkeys.py` against `tests/support/webauthn.py`: the phase's second bullet.
 - Done when: a Playwright test signs in with a passkey through Chromium's virtual authenticator (`WebAuthn.addVirtualAuthenticator` over CDP).
 
 **32.4 Web sessions for people** · needs 32.2, 32.3, 24.1 (18.4)
@@ -293,18 +296,20 @@ A company has to be able to trace anything back to a user or an agent (H-D10). F
 - Attribution: an agent's call names the agent and its owner; an automation's run names its subscription, action or schedule and the user who last saved it; a device's push names the device and its owner; a call through an OAuth client names the client.
 - Redaction (hypothesis over request models): no secret value ever reaches an entry.
 - The chain: changing, removing, inserting or reordering any entry is found by `verify`, which names the first bad one; two processes writing at once never fork the chain.
+- Append-only: `db sync` between two databases leaves both logs exactly as they were; storing an audit record over an existing one is refused; importing an export with a broken chain imports nothing.
 - Decisions: one that needs a signature doesn't take effect without one; passkey and SSH signatures verify; a signature over another statement is refused; an agent can't sign.
 
 ### Tasks
 
 **33.1 Audit entries and the writer** · needs 32.6
 - Build: a `udl/audit/` package (`models.py`, `log.py`).
-  - `AuditEntry(Record)`, kind `audit_entry`, on the primary connection only, never updated: `log` (the workspace, or `hub`), `seq: int` (unique per log), `at`, `actor` (the principal's kind and name), `on_behalf_of: list[str]` (the chain of principals it acted for, outermost last), `via` (`cli`, `api`, `mcp`, `web`, `automation`, `device`, `system`), `credential` (a token's prefix, a session's id, an OAuth client's id, a device's id), `origin` (client address, user agent, device), `action` (an operation's name, or one of udl's own: `auth.signed_in`, `auth.failed`, `auth.token_used`, `secret.resolved`, `device.linked`, `device.unlinked`, `export.made`), `target` (a kind and key, e.g. `task:udl/22.4`, and a URL when there is one), `outcome: ok | refused | failed` and the error's `code`, `request` (redacted, 33.2), `changed: list[str]` (the records it created or changed, as `udl:` URLs), `correlation` (the event, run or agent session that caused it), `prev_hash`, `hash`.
+  - **Audit records are append-only everywhere.** `AuditEntry` and `AuditCheckpoint` (33.3) are `scope = RUNTIME` (the primary connection only) and `sync = SyncRule.NEVER`, so `db sync` never copies, replaces or adds them. `DBManager` refuses to store an audit record whose id or `(log, seq)` already exists (`Conflict`), so nothing can overwrite one. Moving a log is whole or nothing: `export_workspace`, `import_workspace` (31.7) and backups (39.5) copy each log entire, and an import verifies the chain (33.5) before it accepts a single entry.
+  - `AuditEntry(Record)`, kind `audit_entry`: `log` (the workspace, or `hub`), `seq: int` (unique per log), `at`, `actor` (the principal's kind and name), `on_behalf_of: list[str]` (the chain of principals it acted for, outermost last), `via` (`cli`, `api`, `mcp`, `web`, `automation`, `device`, `system`), `credential` (a token's prefix, a session's id, an OAuth client's id, a device's id), `origin` (client address, user agent, device), `action` (an operation's name, or one of udl's own: `auth.signed_in`, `auth.failed`, `auth.token_used`, `secret.resolved`, `device.linked`, `device.unlinked`, `export.made`), `target` (a kind and key, e.g. `task:udl/22.4`, and a URL when there is one), `outcome: ok | refused | failed` and the error's `code`, `request` (redacted, 33.2), `changed: list[str]` (the records it created or changed, as `udl:` URLs), `correlation` (the event, run or agent session that caused it), `prev_hash`, `hash`.
   - `AuditLog.append(entry)`: reads the head, fills `seq = head + 1`, `prev_hash` and `hash`, and inserts; a clash on `seq`'s uniqueness means another writer won, so it rereads and tries again. It works the same in every database plugin.
   - `UDLService.call` wraps every operation: the entry is written after the call, with its outcome. If it can't be written, it is tried again; if it still can't, the call's result stands, but the workspace refuses every further call that isn't read-only until its log can be written again, and says why (an unrecorded change must not be followed by more).
   - `OperationHints.sensitive: bool = False`, for reads that must be recorded: `orch_get_session` (a transcript), `export_*`, `list_audit`, and reading another user's sessions or tokens.
   - `[audit]`: `reads = false`, `max_field = 4096`, `retention_days = 365`.
-- Tests first: `tests/unit/audit/test_log.py`; `tests/interface/test_audit_coverage.py`: the phase's first and second bullets.
+- Tests first: `tests/unit/audit/test_log.py` (and the append-only bullet, over every database plugin); `tests/interface/test_audit_coverage.py`: the phase's first and second bullets.
 - Done when: no change to a record happens without its entry, by the generated test.
 
 **33.2 Redaction** · needs 33.1
@@ -322,8 +327,8 @@ A company has to be able to trace anything back to a user or an agent (H-D10). F
 
 **33.4 Signed decisions** · needs 33.3, 32.3, 32.7
 - Build: `udl/audit/decisions.py`, `udl/audit/sshsig.py`.
-  - `DecisionKind`: `answer`, `merge`, `done`, `accept_proposal`, `grant`, `membership`, `publish`. Each project says which need a signature: `Project.sign: dict[DecisionKind, Literal["none", "optional", "required"]]` (default `none`); a workspace setting does the same for workspace-level kinds.
-  - A decision's operations (`orch_answer`, `orch_merge`, `orch_move_task` to `done`, `kb_accept_proposal`, `set_device_grant`, `set_membership`, `pages_publish`) take an optional `signature: DecisionSignature`. Without one where it is `required`, they raise `SignatureRequired` (HTTP 428) carrying a **statement**: `{kind, log, target, choice, request_digest, nonce, expires_at}` and its hash. The caller signs the hash and calls again with the same request and the signature; a nonce works once, for five minutes.
+  - `DecisionKind`: `answer`, `merge`, `done`, `accept_proposal`, `grant`, `membership`, `publish`, `memory`. Each project says which need a signature: `Project.sign: dict[DecisionKind, Literal["none", "optional", "required"]]` (default `none`); a workspace setting does the same for workspace-level kinds.
+  - A decision's operations (`orch_answer`, `orch_merge`, `orch_move_task` to `done`, `kb_accept_proposal`, `set_device_grant`, `set_membership`, `pages_publish`, and a person's `kb_remember` or `kb_forget` in a shared scope) take an optional `signature: DecisionSignature`. Without one where it is `required`, they raise `SignatureRequired` (HTTP 428) carrying a **statement**: `{kind, log, target, choice, request_digest, nonce, expires_at}` and its hash. The caller signs the hash and calls again with the same request and the signature; a nonce works once, for five minutes.
   - **Passkey:** a WebAuthn assertion whose challenge is the statement's hash, verified with the user's passkey; `authenticatorData`, `clientDataJSON`, `signature` and the credential id are kept on the entry.
   - **SSH:** `SshSigningKey` (scope `HUB`: `user`, the OpenSSH public key, `fingerprint`, `title`, `revoked_at`), registered by signing a challenge. A signature is SSHSIG (`ssh-keygen -Y sign -n udl-decision`), verified in Python (`sshsig.py` parses the format and checks the namespace and hash with `cryptography`: `ssh-ed25519`, `ecdsa-sha2-nistp256`, `rsa-sha2-512`; never SHA-1). The CLI, on `SignatureRequired`, runs `ssh-keygen -Y sign -n udl-decision -f <public key>` with the statement on stdin (which uses the SSH agent, the 1Password agent included); `[sign] ssh_key` names the key.
   - **Agents never sign.** A decision that needs a signature can only be made by a person; a manager agent's answer (27.8) to such a question waits as a draft until a person countersigns it.
@@ -519,6 +524,7 @@ A teammate works on a Mac with Codex; anyone should be able to try udl on their 
 - Memory sync (hypothesis over sequences of edits on both sides): every interleaving merges or raises a question, and never loses an edit; `MEMORY.md` stays a correct index.
 - Datasets: items validate against the dataset's schema when it has one; putting the same key twice updates the item, never duplicates it.
 - Proposals: nothing proposed takes effect until a person with the permission accepts it, and each accepted record links back to its source's span.
+- Memories: no agent can write a memory that reaches another agent; that takes a person (36.5).
 
 ### Tasks
 
@@ -552,14 +558,19 @@ A teammate works on a Mac with Codex; anyone should be able to try udl on their 
 
 **36.5 Memories** · needs 36.2
 - Build: `Memory` (`name`, a slug unique in its scope; `description`; `type: user | feedback | project | reference`; `body`; `scope: workspace | project:<p> | user:<h> | agent:<a>`; `pinned`, given to every agent in scope; `links`, the `[[name]]`s in the body) and `MemoryRevision` (append-only). Operations for agents and people: `kb_recall` (`query`, `scope`: the pinned memories in scope, then the best search hits), `kb_remember` (create or update by name), `kb_forget`. `orch_my_task` (27.3) adds the memories that apply (pinned in the project's, the agent's and its owner's scopes, and the five best hits for the task's title and spec), in a fenced block.
-- Tests first: `tests/unit/kb/test_memories.py`.
-- Done when: an agent's first `orch_my_task` carries its project's pinned memories.
+  - **Who may write what.** A memory reaches other agents, so an agent that read hostile text must not be able to plant one:
+    - An agent writes directly only unpinned memories in its own `agent:<name>` scope, which reach only it. Anything else it asks of `kb_remember` or `kb_forget` (a `workspace`, `project` or `user` scope, or `pinned`) becomes a `memory` proposal (36.7) and changes nothing until a person accepts it.
+    - A person writes memories in their own `user:` scope, and in `project` scope with `write` on the project; `workspace` scope, and pinning in any shared scope, need the workspace's `admin` or the project's maintainer. Each is decision kind `memory` (33.4).
+    - Memories reach an agent inside the fenced block with their scope and author named ("`setup-notes`, project udl, by user:daniel"), so they are never mistaken for the task's instructions.
+- Tests first: `tests/unit/kb/test_memories.py`: an agent's `kb_remember` in a shared scope, or pinned, makes a proposal and leaves every memory as it was; a pinned memory reaches other agents only after a person accepts it; a member without the permission can't pin.
+- Done when: an agent's first `orch_my_task` carries its project's pinned memories, and no agent can change what another agent is given.
 
 **36.6 Two-way memory sync** · needs 36.5, 34.9, 27.5
 - Build: `udl/kb/sync.py`, its core pure.
   - `MemorySource`: `name`; `format: claude-memory | agents-md | markdown-dir`; `location` (`device:<id>:<path>`, or `repo:<repo>:<path>`); `scope` (what the memories it brings in are scoped to); `direction: both | in | out` (default `both`, H-D7); `interval`.
   - Formats: **`claude-memory`**: a folder of `<name>.md` files with frontmatter (`name`, `description`, `metadata.type`) and a `MEMORY.md` index, one line a memory, rewritten by udl; **`agents-md`**: one file (`AGENTS.md`, `CLAUDE.md`) whose udl part sits between `<!-- udl:memories:start -->` and `<!-- udl:memories:end -->`, a `### <name>` heading a memory; nothing outside the markers is ever touched; **`markdown-dir`**: files with frontmatter and no index.
   - The merge, per memory, between the last synced version (`MemorySyncState`: its hash and body), the file and udl: unchanged on both sides, nothing; changed on one side, copied to the other; changed on both, a line-based three-way merge (diff3 on `difflib`), applied when clean; otherwise **a conflict**: neither side is overwritten, and a question (28.1) goes to the memory's owner with both versions (options: keep the file's, keep udl's, or write a merged one). A file deleted where udl's copy is unchanged deletes the memory; otherwise it is a conflict. A new memory on either side is made on the other.
+  - Who a synced change is written as (36.5's rules apply): a change from a file on a device is written as the device's owner, one from a repo as the person who merged it, and only within the source's `scope`. Making a source that brings memories into a `project` or `workspace` scope (`direction` `in` or `both`) needs the same permission as writing there directly.
   - Files on a device are read and written through the client (`node_memory_read` / `node_memory_write`, under the link's `paths`). Files in a repo change **only through a PR** that udl opens on a `udl-memories/<source>` branch (never pushing to a base branch, O-C8), and what merges into the base comes back on the GitHub watcher's `github.pr.merged`.
   - The first source is Claude Code's memory folder for udl on jeff-wiggle (`~/.claude/projects/<project>/memory/`), so the index loaded at the start of every session stays the same file.
 - Tests first: `tests/unit/kb/test_sync.py`: the phase's second bullet; each format's reader and writer round-trip; `tests/integration/kb/test_memory_sources.py` over a fake device and `FakeGitHub`.
@@ -600,7 +611,7 @@ A teammate works on a Mac with Codex; anyone should be able to try udl on their 
 
 ### Tests first
 - A public page reads only its views, cut to the fields they name; the visitor's request runs no operation.
-- An HTML page's script can't reach the API, any other origin or the page around it: `fetch`, XHR, WebSockets, form posts, top-level navigation and messages to anything but its data channel all fail (Playwright), kept as regression tests.
+- An HTML page's script never runs in a viewer's browser, and while the hub renders it, it sends nothing anywhere: `fetch`, XHR, a WebSocket, an image, a form post and navigating its own frame or the top window to another host all fail (a listening test server sees no request at all). The HTML a viewer gets has no script and no handler, and loads nothing. Kept as regression tests.
 - A Markdown page shows hostile markdown or HTML in its data as text.
 
 ### Tasks
@@ -621,10 +632,15 @@ A teammate works on a Mac with Codex; anyone should be able to try udl on their 
 - Tests first: `tests/unit/pages/test_markdown.py`: the phase's third bullet; each component.
 - Done when: every component renders the same in both themes.
 
-**37.4 HTML pages in a sandbox** · needs 37.2
-- Build: an HTML page is shown in an `<iframe sandbox="allow-scripts">` (never `allow-same-origin`, `allow-forms`, `allow-popups` or `allow-top-navigation`), from `[hub] pages_origin` when set (a separate origin, e.g. `pages.<domain>`) or as `srcdoc` (an opaque origin) otherwise. Its CSP: `default-src 'none'; script-src 'unsafe-inline' <allow-listed CDN URLs, pinned>; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; frame-ancestors <the hub's origin>`. The host page posts `{type: "udl:data", views: {…}}`, and a shim injected first gives the page `window.udl.data` and `window.udl.onData()`.
-- Tests first: `web/e2e/pages-sandbox.spec.ts`: the phase's second bullet.
-- Done when: a page written to steal data and call the API does neither.
+**37.4 HTML pages, rendered on the hub** · needs 37.2
+- Build: `udl/pages/html.py`. **An HTML page's script never runs in a viewer's browser.** Script that holds data can always send it out (by navigating its own frame, following a link, loading an image), and no iframe sandbox or CSP stops all of those, so it runs only where nothing can leave:
+  - **The render:** the hub opens the page in a headless Chromium (udl's browser engine, a fresh throwaway context per render) with the network off: the context is `offline`, and every request other than the page's own document is aborted (`context.route("**/*", …abort)`). The page's views' data is put in `window.udl.data` before its script runs, and a short allow-list of chart libraries (pinned versions, shipped in udl's package and served by the route itself, e.g. Vega-Lite) is available. A render gets 10 s and 256 MiB.
+  - **The result:** udl then takes the DOM: each canvas becomes an `<img>` of its pixels; every `<script>`, event-handler attribute, `javascript:` URL, `<iframe>`, `<form>`, `<object>`, `<embed>`, `<base>` and `<meta http-equiv>` is removed; and the rest is sanitised with `nh3` (SVG and inline styles allowed; links kept only for `https:`, with `rel="noopener noreferrer"`).
+  - **What a viewer gets:** that static HTML, under a CSP of `default-src 'none'; img-src data:; style-src 'unsafe-inline'`, so it runs nothing and loads nothing. A page is rendered again when one of its views' results changes (at most once per `max_age`). `pages_preview` uses the same renderer, so a draft written to steal data can't do it to the person previewing it either.
+  - Interactivity (tooltips, filters) is given up on purpose. A page that needs it is a UI plugin (Phase 24): reviewed code, not data.
+  - The render is udl's own browser with nothing from the page reaching the network or the disk, so it isn't `local` in 31.4's sense. `[pages] html = false` lets a hub's admin turn HTML pages off.
+- Tests first: `tests/integration/pages/test_html_render.py` and `web/e2e/pages-static.spec.ts`: the phase's second bullet.
+- Done when: a page written to steal data and to call the API does neither, while the hub renders it or in any viewer's browser.
 
 **37.5 Serving pages** · needs 37.3, 37.4
 - Build: public pages at `/pages/<workspace>/<slug>` (no sign-in; `Cache-Control: public, max-age=60`; a rate limit per address; `X-Robots-Tag: noindex` unless `indexable`); private and workspace pages inside the UI. View results are cached for their `max_age` and refreshed in the background.
@@ -642,12 +658,12 @@ A teammate works on a Mac with Codex; anyone should be able to try udl on their 
 - Done when: the wiki template shows a guide an agent wrote and a person accepted.
 
 **37.8 Export** · needs 37.5
-- Build: `pages_export` (`slug`): a static folder (`index.html`, `data.json` with the views' results as of now, the page's assets) for hosting anywhere (GitHub Pages, Cloudflare Pages). `udl pages export <slug> <dir>`.
+- Build: `pages_export` (`slug`): a static folder (`index.html`, the page as rendered now; `data.json`, its views' results; its assets) for hosting anywhere (GitHub Pages, Cloudflare Pages). `udl pages export <slug> <dir>`.
 - Tests first: the exported folder renders the same page offline.
 - Done when: an export opens from disk with no hub running.
 
 **37.9 The pages editor** · needs 37.5
-- Build: in the `kb` UI plugin: the pages list (with each one's visibility), an editor (markdown or HTML, a live preview in the sandbox, a view picker) and the publish dialog (with 33.4's signing where the workspace asks for it).
+- Build: in the `kb` UI plugin: the pages list (with each one's visibility), an editor (markdown or HTML, a preview rendered as 37.4 renders it, a view picker) and the publish dialog (with 33.4's signing where the workspace asks for it).
 - Tests first: Vitest; Playwright: an agent makes a public roadmap over MCP, a person publishes it, and a browser with no session loads it.
 - Done when: that Playwright test passes in both themes.
 
@@ -730,7 +746,7 @@ How long things take, where people and agents are stuck, and how each model does
 - Done when: an invite arrives by mail on the fake server.
 
 **39.7 Security review of Phases 31–39** · needs 39.1–39.6
-- Check, each with a test where one is missing: no workspace reaches another's records, search hits, pages, links or `udl:` URLs; tokens and sessions (scopes, expiry, revocation); the OAuth server (open redirects, code reuse, a PKCE downgrade, refresh reuse, the `resource` binding); device links (a replayed `Hello`, a grant that widens, a path that escapes the ceiling, a hub asking for what its link doesn't allow); the audit (redaction, the chain, signatures); pages (escaping the sandbox, view projection); memory sync (names that make paths); proposals (a source's text can't get anything accepted). Findings are fixed test-first and listed here.
+- Check, each with a test where one is missing: no workspace reaches another's records, search hits, pages, links or `udl:` URLs; tokens and sessions (scopes, expiry, revocation); the OAuth server (open redirects, code reuse, a PKCE downgrade, refresh reuse, the `resource` binding); device links (a replayed `Hello`, a grant that widens, a path that escapes the ceiling, a hub asking for what its link doesn't allow); the audit (redaction, the chain, signatures); pages (anything leaving the hub's render, script or handlers surviving into what a viewer gets, view projection); memory sync (names that make paths); proposals (a source's text can't get anything accepted). Findings are fixed test-first and listed here.
 
 **39.8 Docs** · needs 39.7
 - Build: `docs/hub.md` (one machine, compose and Helm; workspaces; people; Claude and ChatGPT connectors), `docs/clients.md` (enrolling, links, grants and the ceiling), `docs/audit.md`, `docs/knowledge.md` (datasets, docs, memories, sources), `docs/pages.md`; the README.

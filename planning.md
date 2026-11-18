@@ -213,7 +213,7 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
   - [ ] 36.2 Full-text search in every database plugin; `kb_search`
   - [ ] 36.3 Semantic search through an AI provider's embeddings (optional)
   - [ ] 36.4 Docs (a wiki) with revisions
-  - [ ] 36.5 Memories for every agent, scoped and pinned; in `orch_my_task`
+  - [ ] 36.5 Memories for every agent, scoped and pinned, in `orch_my_task`; only a person writes the ones other agents get
   - [ ] 36.6 Two-way memory sync with Claude's memory folders and `AGENTS.md` / `CLAUDE.md`
   - [ ] 36.7 Sources and proposals: conversations become plan changes a person accepts, traced to where they were said
   - [ ] 36.8 Operations, events and the knowledge pages
@@ -223,7 +223,7 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
   - [ ] 37.1 Views: saved read-only queries, projected to named fields
   - [ ] 37.2 Pages: private, workspace or public; agents draft, people publish
   - [ ] 37.3 Markdown pages with components, rendered with no script
-  - [ ] 37.4 HTML pages in a sandbox with no network
+  - [ ] 37.4 HTML pages rendered on the hub with the network off; viewers get static HTML, no script
   - [ ] 37.5 Serving pages, public ones with no sign-in
   - [ ] 37.6 Templates: roadmap, upcoming, changelog, wiki, team, models
   - [ ] 37.7 Guides written by agents, accepted by people

@@ -263,9 +263,9 @@ udl fetch solve                                          # pass them, a tab per 
 - **At a check:** `--person ask` (the default, `[fetch] person`) opens one window on udl's profile with a
   tab per waiting site; `wait` waits for someone to run `udl fetch solve`; `fail` gives up. A clearance
   you earn is kept.
-- **Cookies, both ways:** `udl browser cookies import cookies.txt` (or a JSON export, a `Cookie:` header
-  with `--site`, or `--from-browser firefox`) brings cookies into udl's profile, with the User-Agent they
-  belong to; `udl browser cookies list` and `rm` show and delete them (never their values).
+- **Cookies, both ways:** `udl browser cookies import cookies.txt` (or a JSON export; or, with `--site`,
+  a `Cookie:` header or `--from-browser firefox`) brings cookies into udl's profile, with the User-Agent
+  they belong to; `udl browser cookies list` and `rm` show and delete them (never their values).
 
 ## Databases
 
@@ -365,7 +365,7 @@ udl schedules set poll --every 15m --jitter 30s --action check-feed
 udl schedules set once --at '2026-12-01T09:00' --action remind
 udl schedules preview '0 9 * * MON-FRI'           # the next times it would fire (or 'every 15m')
 udl schedules run nightly                         # fire it now, by hand
-udl schedules list | show <name> | rm <name>
+udl schedules list                                # and `show <name>`, `rm <name>`
 ```
 
 A schedule's times are worked out in its time zone, across daylight-saving changes. `--misfire skip`
@@ -476,13 +476,13 @@ name:
 | event types | `udl events types` | `GET /event-types` | `list_event_types` |
 | events | `udl events list` / `show` | `GET /events`, `GET /events/{id}` | `list_events`, `get_event` |
 | emit / replay an event | `udl events emit` / `replay` | `POST /events`, `POST /events/{id}/replay` | `emit_event`, `replay_event` |
-| subscriptions | `udl subs list` / `show` / `set` / `rm` | `/subscriptions`, `/subscriptions/{name}` | `list_subscriptions`, `get_subscription`, `set_subscription`, `delete_subscription` |
+| subscriptions | `udl subs list` / `show` / `set` / `rm` | `GET /subscriptions`, `GET` / `PUT` / `DELETE /subscriptions/{name}` | `list_subscriptions`, `get_subscription`, `set_subscription`, `delete_subscription` |
 | test a subscription | `udl subs test` | `POST /subscriptions/test` | `test_subscription` |
-| actions | `udl actions list` / `show` / `set` / `rm` | `/actions`, `/actions/{name}` | `list_actions`, `get_action`, `set_action`, `delete_action` |
+| actions | `udl actions list` / `show` / `set` / `rm` | `GET /actions`, `GET` / `PUT` / `DELETE /actions/{name}` | `list_actions`, `get_action`, `set_action`, `delete_action` |
 | run an action | `udl actions run` | `POST /actions/{name}/run` | `run_action` |
 | scripts | `udl actions scripts` | `GET /actions/scripts` | `list_scripts` |
 | runs | `udl runs list` / `show` / `cancel` | `GET /runs`, `GET` / `DELETE /runs/{id}` | `list_runs`, `get_run`, `cancel_run` |
-| schedules | `udl schedules list` / `show` / `set` / `rm` | `/schedules`, `/schedules/{name}` | `list_schedules`, `get_schedule`, `set_schedule`, `delete_schedule` |
+| schedules | `udl schedules list` / `show` / `set` / `rm` | `GET /schedules`, `GET` / `PUT` / `DELETE /schedules/{name}` | `list_schedules`, `get_schedule`, `set_schedule`, `delete_schedule` |
 | run / preview a schedule | `udl schedules run` / `preview` | `POST /schedules/{name}/run`, `POST /schedules/preview` | `run_schedule`, `preview_schedule` |
 | accounts | `udl accounts list` / `show` / `add` / `set` / `rm` | `GET` / `POST /accounts`, `GET` / `PATCH` / `DELETE /accounts/{account}` | `list_accounts`, `get_account`, `connect_account`, `set_account`, `disconnect_account` |
 | check an account | `udl accounts check` | `POST /accounts/{account}/check` | `check_account` |
@@ -511,8 +511,8 @@ automations, and teach udl a site itself (`suggest_chain`, `test_chain`, then `s
 
 `udl mcp` serves it over stdio. `udl serve` also serves it over streamable HTTP at `/mcp`,
 behind the same API key. By default, `download` waits up to 120 s and reports progress as MCP
-progress notifications. Operations that change automations, accounts or settings are marked `admin`
-and are never given to udl's unattended AI actions.
+progress notifications. Operations that change automations, accounts or settings are marked `admin`,
+and no action ever calls one: an `operation` action that names one is refused.
 
 ## Configuration
 
