@@ -4235,15 +4235,21 @@ timeout: 5m
       without a build, a page saying to run `make web`.
   - Every answer carries the CSP (`default-src 'self'; connect-src 'self'; frame-ancestors
     'none'`), `Referrer-Policy: same-origin` and `X-Content-Type-Options: nosniff`.
-  - Tests: `tests/interface/web/test_serving.py` (15 tests: the shell and a client route, an asset's
-    year and a missing asset's 404, a plugin's bundle with its ETag and its 304, an unknown plugin
-    and a missing file, a symlink and a `..` refused, `/` for a page and for a script, no build, no
-    API key, `[web] enabled = false`, the schema, and the wheel).
+  - Tests: `tests/interface/web/test_serving.py` (20 tests: the shell, a client route and an unhashed
+    file of the build, each with its ETag and its 304; an asset's year and a missing asset's 404; a
+    plugin's bundle with its ETag and its 304; an unknown plugin, a missing file, a folder without a
+    `manifest.json`, a name of `..` or a hidden folder, and a name the filesystem refuses (too long, a
+    null byte); a symlink and a `..` in a path refused; `/` for a page and for a script (the API's
+    JSON 404); no build, and its page having no inline style (the CSP would refuse one); no API key;
+    `[web] enabled = false`; the schema (no path at `/` or under `/ui`); and the wheel).
   - `make e2e`: the harness's config now has `[web] enabled = true`, and `web/e2e/shell.spec.ts`'s
     `/ui/` check is no longer `test.fixme` (both themes pass). CI's e2e job runs the serving tests
     after `make e2e`, so the wheel check runs rather than skips.
   - Checked by hand: `udl serve` on 8899 (a temp config) answered `/ui/` 200 with the headers, `/`
     307, and the asset 200 `text/javascript`; `uv build` put `dist/` in the wheel.
+  - **Review (19 Nov):** the shell got its ETag and 304 (it was fetched in full on each load), the
+    no-build page lost the inline style the CSP refuses, and a script asking for `/` gets the API's
+    JSON 404 rather than plain text, since `[web] enabled` is on by default.
   - Decisions:
     - **A missing asset is a 404, not `index.html`:** a browser would parse the page as a module,
       and say something confusing instead of "this build is stale".
