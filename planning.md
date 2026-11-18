@@ -315,7 +315,7 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
   - [~] 18.3 FastAPI serves the UI at `/ui` (from the package, SPA fallback, CSP, cache headers), and a page saying how to build it when it isn't built
   - [~] 18.4 Web sessions: sign in with the API key → a session cookie; a CSRF header and an Origin check on writes
   - [~] 18.5 The shell: layout, TanStack Router (file routes, auth guard, a splat route for plugin pages), Zustand stores, light / dark / system theme
-  - [ ] 18.6 Live data: shared SSE connections feeding Zustand stores, reconnecting with backoff
+  - [~] 18.6 Live data: shared SSE connections feeding Zustand stores, reconnecting with backoff
   - [~] 18.7 `UIManifest` (Pydantic → JSON Schema → TypeScript), `ui` on every plugin kind, the `udl.ui` kind, local UI plugin dirs, `GET /ui/plugins.json`, UI availability in `list_plugins`
   - [~] 18.8 `@udl/ui-sdk`: `defineUIPlugin`, the mount contract, a React adapter, the plugin context, SDK version checks
   - [ ] 18.9 The plugin host: `<PluginSlot>` (lazy import, Shadow DOM isolation, error boundary) and the contribution points
@@ -4476,6 +4476,39 @@ timeout: 5m
 - Tests first: Vitest with a fake `EventSource`: the backoff, the bounded buffer, and the invalidation on
   reconnect.
 - Done when: a run started from the CLI shows up live in the shell.
+- **Built (deepseek-a, 2026-11-19, PR #N):** live data, in the shell.
+  - `src/live/connection.ts`: `LiveConnection` follows one stream per path (`watch(path, names,
+    received)`), reconnects after 1 s doubling to 30 s with jitter (half to one and a half times the
+    wait), starts again at 1 s once a stream opens, and calls the page's `reload` on every open after
+    the first and on a `lagged` notice. `startLive()` follows udl's `/events/stream` (its `event`,
+    `run` and `lagged` events) into the `live` store, and returns `download(id)`, which follows
+    `/downloads/{id}/events` (the six job event names) into it, and `stop()`.
+  - The store keeps the last 500 events (was 200), the runs and jobs by id, and the connection's
+    state; `clear()` forgets them when the page signs out (the shell's effect stops the connection,
+    so nothing of one user's is left for the next).
+  - The shell's layout starts it while signed in, and reloads its loaders on `run`, `lagged` and a
+    reconnect (`router.invalidate()`); a plain event only goes to the store (the page's own
+    timeline), so a burst of events does not re-run every loader.
+  - The dashboard's `Live` panel lists the runs since the page opened and the last five events.
+  - Tests: 13 Vitest tests of the connection with a fake `EventSource` and hand-driven timers (the
+    backoff and its cap, the jitter, the reset after an open, the reload only on a reconnect, the
+    500-event buffer, a run and a job by id, `lagged`, and stopping), plus the dashboard's panel.
+  - e2e, in a real browser against a real `udl serve`: the page says it is live, and an event the
+    test posts (`POST /events`) appears in the page's list without a reload (the card's done-when,
+    with an event standing in for a CLI run: no action is configured in the e2e server).
+  - Decisions:
+    - **`Source`/`SourceFactory` are the page's own two types**, not the DOM's `EventSource`: a
+      test's fake is a small `EventTarget`, which the DOM's `EventSource` interface (its listeners
+      are `MessageEvent` ones) does not let one implement without casts.
+    - **`test-setup.ts` gives jsdom a quiet `EventSource`** (a plain global assignment, not
+      `vi.stubGlobal`: a test that unsets its stubs must not take it away), since jsdom has none and
+      a page test that does not care about the stream should not have to say so.
+    - **The e2e run signs in once** (`web/e2e/auth.setup.ts`, a Playwright setup project, its cookie
+      in `playwright/.auth/`, git-ignored and Biome-ignored): udl allows ten sign-ins a minute per
+      address, and a sign-in per test broke that limit. The two tests that need their own session
+      (signing out; a browser that never signed in) use an empty `storageState`.
+    - **`download(id)` is the connection's, but no page calls it yet**: the download page that
+      watches a job is Phase 19's. It is tested here, and 19.x's page gets it ready-made.
 
 **18.7 UI manifests and the `udl.ui` kind** · needs 18.3
 - Build: `udl/plugins/ui.py`.

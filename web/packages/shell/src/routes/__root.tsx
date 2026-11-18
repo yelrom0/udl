@@ -5,9 +5,17 @@
  * is not signed in goes to the login page.
  */
 
-import { createRootRoute, Link, Outlet, redirect, useNavigate } from "@tanstack/react-router";
+import {
+	createRootRoute,
+	Link,
+	Outlet,
+	redirect,
+	useNavigate,
+	useRouter,
+} from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { ThemeSwitcher } from "../components/ThemeSwitcher";
+import { startLive } from "../live/connection";
 import { useLive } from "../stores/live";
 import { check, session, signOut, useSession } from "../stores/session";
 import { applyTheme, useTheme } from "../stores/theme";
@@ -44,6 +52,7 @@ export const Route = createRootRoute({
 
 function Layout() {
 	const navigate = useNavigate();
+	const router = useRouter();
 	const state = useSession();
 	const theme = useTheme();
 	const connection = useLive((live) => live.connection);
@@ -58,6 +67,15 @@ function Layout() {
 			void navigate({ to: "/login" });
 		}
 	}, [state, navigate]);
+
+	// (Live data only while the page may read it: udl's streams are the API's, behind the session.)
+	useEffect(() => {
+		if (state !== "signed-in") {
+			return;
+		}
+		const live = startLive({ reload: () => void router.invalidate() });
+		return live.stop;
+	}, [state, router]);
 
 	// (The login page, or the page udl said to show before signing in: `beforeLoad` asked.)
 	if (state !== "signed-in") {

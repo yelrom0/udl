@@ -31,6 +31,8 @@ web/packages/*/dist/
 web/playwright-report/
 web/test-results/
 web/playwright/.cache/
+# (The e2e run's session cookie: it is the run's, not the repo's.)
+web/playwright/.auth/
 src/udl/interfaces/web/dist/
 src/udl/plugins/integrations/*/ui/*.js
 src/udl/plugins/integrations/*/ui/*.map
