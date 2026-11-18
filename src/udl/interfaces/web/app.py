@@ -4,12 +4,13 @@
 ----------
 
 The web UI at /ui: the shell's build (`src/udl/interfaces/web/dist/`, from `make web`), each UI
-plugin's bundle at /ui/plugins/<name>/ (listed, with what each adds, at /ui/plugins.json), and /
-sending a browser there.
+plugin's bundle at /ui/plugins/<name>/ (listed, with what each adds, at /ui/plugins.json), what the
+shell generates its pages from (/ui/generated.json), and / sending a browser there.
 
 The build is package data, so an installed udl serves the shell it was built with; without one
 (a checkout that has not run `make web`), /ui/ says to. The files need no API key, since they
-hold no data, and none of these routes are operations: the OpenAPI schema is the API's.
+hold no data; /ui/generated.json does (it says what the plugins do), so it is checked as the API
+is. None of these routes are operations: the OpenAPI schema is the API's.
 
 The headers on every /ui answer keep the page to udl's own scripts and connections
 (Content-Security-Policy), out of another site's frame, and out of another site's Referer; and
@@ -19,6 +20,7 @@ revalidated each load, by its ETag.
 """
 
 # System Imports
+import hashlib
 from pathlib import Path
 from typing import Final
 
@@ -36,6 +38,8 @@ from starlette.routing import Route
 
 # Local Imports
 from udl.config import Settings
+from udl.interfaces.security import API_KEY_HEADER, check_api_key
+from udl.interfaces.web.generated import generated
 from udl.plugins.registry import PluginRegistry
 from udl.plugins.ui.base import UIBundle
 from udl.plugins.ui.discovery import ui_bundles, ui_plugins
@@ -104,6 +108,29 @@ def add_web_routes(app: FastAPI, settings: Settings, dist: Path | None = None) -
         found = ui_plugins(settings, request.app.state.service.registry)
         return JSONResponse(found.model_dump(mode="json", by_alias=True), headers=HEADERS)
 
+    async def generated_json(request: Request) -> Response:
+        # (The same auth as the API's: it says what every plugin does, and with what.)
+        check_api_key(request.app.state.settings, request.headers.get(API_KEY_HEADER))
+        service = request.app.state.service
+        body = generated(service.operations, service.registry).model_dump_json(by_alias=True)
+        etag = f'"{hashlib.sha256(body.encode()).hexdigest()[:32]}"'
+        if_none_match = request.headers.get("if-none-match")
+        if if_none_match is not None and etag in {
+            part.strip() for part in if_none_match.split(",")
+        }:
+            return Response(
+                status_code=304, headers={**HEADERS, "Cache-Control": _NO_CACHE, "ETag": etag}
+            )
+        return Response(
+            body,
+            headers={
+                **HEADERS,
+                "Cache-Control": _NO_CACHE,
+                "ETag": etag,
+                "Content-Type": "application/json",
+            },
+        )
+
     async def shell(request: Request) -> Response:
         # (A file of the build that is not hashed — a favicon, the manifest — is answered; so is
         # any other path, with index.html, for the router's own routes.)
@@ -121,6 +148,7 @@ def add_web_routes(app: FastAPI, settings: Settings, dist: Path | None = None) -
         Route("/", root, methods=["GET"]),
         Route("/ui/assets/{path:path}", asset, methods=["GET"]),
         Route("/ui/plugins.json", plugins, methods=["GET"]),
+        Route("/ui/generated.json", generated_json, methods=["GET"]),
         Route("/ui/plugins/{name}/{path:path}", plugin_file, methods=["GET"]),
         Route("/ui/{path:path}", shell, methods=["GET"]),
     ):
