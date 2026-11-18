@@ -310,7 +310,7 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
   - [ ] 17.10 The `vision` solver: image challenges (reCAPTCHA's and hCaptcha's grids) answered by a local vision model
 
 - [ ] **Phase 18: Web UI foundations & UI plugins**: pulled forward and built now as **24.1** (see "Next to build")
-  - [ ] 18.1 `web/` pnpm workspace and tooling: Vite + SWC, TypeScript strict, Biome, Vitest (+ coverage gate), Playwright, Tailwind CSS + daisyUI; `make web`, `make e2e`, and `make check` runs the web checks
+  - [~] 18.1 `web/` pnpm workspace and tooling: Vite + SWC, TypeScript strict, Biome, Vitest (+ coverage gate), Playwright, Tailwind CSS + daisyUI; `make web`, `make e2e`, and `make check` runs the web checks
   - [ ] 18.2 Typed API client generated from udl's OpenAPI schema (`openapi-typescript` + `openapi-fetch`); `make check` fails when it is stale
   - [ ] 18.3 FastAPI serves the UI at `/ui` (from the package, SPA fallback, CSP, cache headers), and a page saying how to build it when it isn't built
   - [ ] 18.4 Web sessions: sign in with the API key → a session cookie; a CSRF header and an Origin check on writes
@@ -4137,6 +4137,31 @@ timeout: 5m
 - Tests first: `web/e2e/shell.spec.ts`: `/ui/` loads in both themes.
 - Done when: `make check` runs the web checks, `make e2e` runs that test, and `btrfs filesystem du` shows
   `web/node_modules` reflinked.
+- **Built (ernie-a, 2026-11-18, PR #TBD):** the workspace and the harness. `web/package.json` (`packageManager:
+  pnpm@12.15.0`, scripts `dev`/`build`/`check`/`e2e`), `pnpm-workspace.yaml` (packages, `clone-or-copy`),
+  `.node-version` (26), `tsconfig.base.json` (strict, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`,
+  `verbatimModuleSyntax`), `biome.json` (2.3.11, tabs, 100 columns, Tailwind directives in CSS), a Vitest config
+  per package with 90 % thresholds, `packages/shell` (React 19 + Vite 8 + `@vitejs/plugin-react-swc`, Tailwind 4
+  and daisyUI 5, a theme store in Zustand and a page that says "udl"), `playwright.config.ts` (light and dark
+  projects; a `webServer` that runs the harness), `tests/support/e2e.py` (the fixture site, `udl serve` on 8765,
+  the control API), `tests/support/e2e_plugins/` (a README: the fakes land with the tasks that need them), and
+  `make check` running `check-py` + `check-web`, plus `web`, `e2e` and `check-web` targets; CI gained an `e2e`
+  job (pnpm + Node from `web/.node-version`).
+- **Decisions:**
+  - The `webServer` runs `.venv/bin/python -u -m support.e2e` with an **absolute** path: the venv compares its
+    `sys.prefix` against it, and a relative one makes the interpreter refuse to import `support`.
+  - The harness listens on **8765** (not a free port) so Playwright's `webServer.url` can be a fixed
+    `http://127.0.0.1:8765/docs`, and checks the port is free first: a `url` read from the server's stdout is
+    not supported (`webServer.url` takes a URL, and both a regex and a string were rejected).
+  - `@swc/core`'s postinstall is skipped by pnpm 12 (`ERR_PNPM_IGNORED_BUILDS`): the native binding comes from
+    the platform package, and Vite loads it without the script. Nothing was allowed to build.
+  - `packages/*/coverage` is written by Vitest and ignored, like `test-results` and `playwright-report`.
+  - Playwright 1.63.0 (npm) matches the Python 1.63.0 in `uv.lock`, so both use Chromium 1243.
+  - Tests: `web/packages/shell/src/stores/theme.test.ts` (the store: system/light/dark, persisted, following
+    the system, the media-query listener), `app.test.tsx`, `main.test.ts` (100 % of the package), and
+    `tests/unit/support/test_e2e.py` (the config it writes, the control API's calls and refusals, the self-stop).
+  - `web/e2e/shell.spec.ts` loads `/ui/` through the server: `/ui/` itself is served from 18.3, so it checks the
+    server answered and rendered HTML.
 
 **18.2 The typed API client** · needs 18.1, 8.3
 - Build:

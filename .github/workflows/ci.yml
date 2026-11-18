@@ -30,8 +30,55 @@ jobs:
       - name: Install
         run: uv sync --locked --all-extras
 
+      # Node 26 and pnpm (web/package.json's packageManager), for the web checks in `make check`.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: web/.node-version
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install the frontend
+        run: pnpm -C web install --frozen-lockfile
+
       - name: Install Chromium for Playwright
         run: uv run playwright install --with-deps chromium
 
       - name: make check
         run: make check
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --locked --all-extras
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: web/.node-version
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install the frontend
+        run: pnpm -C web install --frozen-lockfile
+
+      # The shell's build, then the browser: `make e2e` builds first, and Playwright's Chromium
+      # is the same version as the Python Playwright's (1.63), so one download serves both.
+      - name: Build the shell
+        run: make web
+
+      - name: Install Chromium for Playwright
+        run: uv run playwright install --with-deps chromium
+
+      - name: make e2e
+        run: make e2e

@@ -1,0 +1,12 @@
+packages:
+  - packages/*
+  - plugins/*
+  - examples/*
+
+# Reflinks, not hardlinks: a file edited in one project must not change the store (as uv's
+# link-mode = "clone"). Check with `btrfs filesystem du -s "$(pnpm store path)" web/node_modules`.
+packageImportMethod: clone-or-copy
+# The SWC binary is a platform package, not a build script: allow @swc/core's own (it must
+# link the native binding vite's react-swc plugin loads).
+allowBuilds:
+  '@swc/core': true
