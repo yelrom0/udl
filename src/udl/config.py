@@ -334,6 +334,20 @@ class WebSettings(_Frozen):
     public_url: str | None = None
 
 
+class OnePasswordSettings(_Frozen):
+    """The [secrets.onepassword] table: whether udl reads secrets from 1Password, which vaults it
+    may read, and how long a resolved value is kept."""
+
+    # Whether udl resolves op:// references (needs a service account token, and op).
+    enabled: bool = False
+    # The vaults it may read: file-only, since it widens what udl reads.
+    vaults: list[str] = Field(default_factory=list[str])
+    # How long a resolved value is kept, so a page of secrets is one call to op.
+    cache_ttl: Duration = timedelta(minutes=5)
+    # How long op gets to answer.
+    timeout: Duration = timedelta(seconds=20)
+
+
 class SecretsSettings(_Frozen):
     """The [secrets] table: where udl keeps secrets (tokens, keys, passwords), which are never
     in a database, the config or a log."""
@@ -345,6 +359,8 @@ class SecretsSettings(_Frozen):
     file: ExpandedPath = Field(default_factory=lambda: data_dir() / "secrets.json")
     # The keyring store's service name: what the keyring lists udl's secrets under.
     keyring_service: Annotated[str, Field(min_length=1)] = APP_NAME
+    # What reads secrets udl does not keep (op://vault/item/field), when one is enabled.
+    onepassword: OnePasswordSettings = Field(default_factory=OnePasswordSettings)
 
 
 class PersonMode(StrEnum):

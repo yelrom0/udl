@@ -211,7 +211,8 @@ from udl.plugins.registry import (
     PluginRegistry,
 )
 from udl.plugins.requirements import unmet
-from udl.plugins.secrets.base import SecretStore, open_secret_store
+from udl.plugins.secrets.base import SecretStore
+from udl.plugins.secrets.resolvers import open_secret_store
 from udl.plugins.sites.base import SitePlugin
 
 if TYPE_CHECKING:
@@ -332,7 +333,9 @@ class UDLService:
         """The secret store ([secrets] store), made the first time it is needed (finding the
         keyring takes a moment). Raises PluginError or ConfigError when it cannot be used."""
         if self._secrets is None:
-            self._secrets = open_secret_store(self.settings.secrets, self.registry)
+            self._secrets = open_secret_store(
+                self.settings.secrets, self.registry, clock=self.clock
+            )
         return self._secrets
 
     async def __aenter__(self) -> Self:

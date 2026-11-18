@@ -37,6 +37,7 @@ from udl.plugins.downloaders.base import Downloader
 from udl.plugins.integrations.base import Integration
 from udl.plugins.runners.base import AgentRunner, AnAgentRunner
 from udl.plugins.secrets.base import SecretStore
+from udl.plugins.secrets.resolvers import SecretResolver
 from udl.plugins.sites.base import SitePlugin
 from udl.plugins.ui.base import UIPlugin
 
@@ -87,6 +88,7 @@ DATABASES: Final = PluginKind("udl.databases", DatabasePlugin)
 DOWNLOADERS: Final = PluginKind[Downloader[Any]]("udl.downloaders", Downloader)
 SITES: Final = PluginKind("udl.sites", SitePlugin)
 SECRETS: Final = PluginKind("udl.secrets", SecretStore)
+SECRET_RESOLVERS: Final = PluginKind("udl.secret_resolvers", SecretResolver)
 ACTIONS: Final = PluginKind[ActionPlugin[Any]]("udl.actions", ActionPlugin)
 INTEGRATIONS: Final = PluginKind[Integration[Any, Any]]("udl.integrations", Integration)
 APPS: Final = PluginKind[AnApp]("udl.apps", AppPlugin)
@@ -99,6 +101,7 @@ PLUGIN_KINDS: Final[tuple[PluginKind[Any], ...]] = (
     DOWNLOADERS,
     SITES,
     SECRETS,
+    SECRET_RESOLVERS,
     ACTIONS,
     INTEGRATIONS,
     APPS,
