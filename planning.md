@@ -4205,7 +4205,7 @@ timeout: 5m
     difference;
   - `web/packages/api/src/*.test.ts`: the headers, the errors, and `FakeUdl`'s typing.
 - Done when: `make check` fails if `openapi.json` or `schema.d.ts` is out of date.
-- **Built (deepseek-a, 2026-11-19, PR #N):** the schema, the client and the fake.
+- **Built (deepseek-a, 2026-11-19, PR #12):** the schema, the client and the fake.
   - `src/udl/interfaces/api/openapi.py`: `schema()`, `render()` (two-space JSON, keys sorted, a last
     newline) and `main([--check] PATH)`; `--help` and a missing path are said and answered with 0 and 2,
     an out-of-date or missing file with 1 (it says the command that fixes it).
