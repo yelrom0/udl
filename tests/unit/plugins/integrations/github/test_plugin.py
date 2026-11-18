@@ -406,6 +406,9 @@ async def test_the_watcher_publishes_what_happens_to_a_pull(
     assert checks.data["head_sha"] == "def5678"
     comment = next(e for e in sink.emitted if e.event_type == "github.pr.commented")
     assert (comment.data["author"], comment.data["is_bot"]) == ("human", False)
+    assert (comment.data["path"], comment.data["line"]) == (None, None)
+    review = [e for e in sink.emitted if e.event_type == "github.pr.commented"][-1]
+    assert (review.data["path"], review.data["line"]) == ("src/app.py", 42)
     merged = next(e for e in sink.emitted if e.event_type == "github.pr.merged")
     assert merged.data["merged_by"] == LOGIN
     assert len({emitted.dedupe_key for emitted in sink.emitted}) == len(sink.emitted)

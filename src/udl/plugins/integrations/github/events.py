@@ -69,7 +69,7 @@ class ChecksFinished(PullEvent):
 
 
 class PullCommented(PullEvent):
-    """Someone commented on a pull request."""
+    """Someone commented on a pull request (on its conversation, or on a line of its diff)."""
 
     author: str
     """Who commented."""
@@ -77,6 +77,10 @@ class PullCommented(PullEvent):
     """What they said."""
     is_bot: bool = False
     """Whether it was a bot (a login ending in [bot])."""
+    path: str | None = None
+    """The file the comment is on (None: it is on the conversation, not on a line of the diff)."""
+    line: int | None = None
+    """The line of that file (None: on the conversation, or the comment is on the whole file)."""
 
 
 class PullMerged(PullEvent):

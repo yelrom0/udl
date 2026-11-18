@@ -609,6 +609,8 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
                         author=note.user.login,
                         body=note.body,
                         is_bot=_is_bot(note.user.login),
+                        path=note.path if isinstance(note, GhReviewComment) else None,
+                        line=note.line if isinstance(note, GhReviewComment) else None,
                     ),
                     dedupe_key=f"{ref}:{kind}:{note.id}",
                 )
