@@ -587,7 +587,11 @@ class _Interaction:
             left = max(self._deadline - asyncio.get_event_loop().time(), 0)
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._woken.wait(), left)
-        self._woken.clear()  # (also when it drained text it already had: it would end the next)
+        # (Also when it drained text it already had, or the next read would not wait. But once
+        # the reader has ended, its wake-up is the end-of-output: clearing it would make the next
+        # read wait out the call's time for nothing more that will never come.)
+        if not self._task.done():
+            self._woken.clear()
         said, self._so_far = self._so_far, ""
         return said
 

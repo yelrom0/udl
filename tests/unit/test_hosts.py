@@ -9,10 +9,12 @@ secret_env must reach the program's environment without ever appearing in the co
 """
 
 # System Imports
+import asyncio
 import json
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import timedelta
 from pathlib import Path
 
@@ -453,6 +455,20 @@ async def test_a_read_that_follows_buffered_text_waits_again() -> None:
     # (It waits for the second line rather than giving "" straight away, because the wake-up was
     # already set by the first.)
     assert (await talked.read()).strip() == "two"
+    await talked.close()
+
+
+async def test_a_read_after_the_program_ended_returns_nothing_at_once() -> None:
+    """Once the program has ended there is nothing more to wait for, so a read gives "" straight
+    away rather than waiting out the call's time."""
+    talked = await local().interact([sys.executable, "-u", "-c", "print('bye')"])
+
+    assert await talked.wait() == 0  # (it has ended before anything is read)
+    await asyncio.sleep(0.2)  # (let the reader reach its end-of-output)
+    assert (await talked.read()).strip() == "bye"
+    started = time.monotonic()
+    assert await talked.read() == ""  # (nothing more: at once, not after the call's time)
+    assert time.monotonic() - started < 5
     await talked.close()
 
 
