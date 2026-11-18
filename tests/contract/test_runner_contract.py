@@ -216,6 +216,12 @@ async def test_secrets_given_as_environment_never_reach_an_argv(
     session = await case.make().start(spec)
     await _turn(case.make(), session, "hello")
 
+    # (It reached the harness — through the shell's secret environment or the fake's own — and it
+    # is in no argv: a runner that loses it, or puts it in an argument, fails either way.)
+    passed = [
+        env for env in (*case.shell.secret_envs, *case.store.secret_envs) if secret in env.values()
+    ]
+    assert passed
     assert all(secret not in " ".join(argv) for argv in case.shell.calls)
 
 

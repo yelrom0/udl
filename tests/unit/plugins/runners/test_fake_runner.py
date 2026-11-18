@@ -63,7 +63,7 @@ async def test_a_prompt_with_no_script_gets_the_options_answer(runner: FakeRunne
 
 
 async def test_a_scripted_turn_gives_its_events(runner: FakeRunner) -> None:
-    async def turn(_: FakeRunner) -> AsyncIterator[AgentEvent]:
+    async def turn(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
         yield ToolStarted(name="git", summary="git status")
         yield ToolFinished(name="git", ok=False)
 

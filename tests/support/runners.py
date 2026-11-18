@@ -73,7 +73,7 @@ class FakeRunnerOptions(RunnerOptions):
     """What a turn with no script says."""
 
 
-type Turn = Callable[["FakeRunner"], AsyncIterator[AgentEvent]]
+type Turn = Callable[["FakeRunner", SessionRef], AsyncIterator[AgentEvent]]
 """A scripted turn: the events it gives, one by one (it may await udl in between)."""
 
 
@@ -87,8 +87,14 @@ class Sessions:
     """The sessions that were stopped."""
     turns: int = 0
     """How many turns were sent."""
-    gate: asyncio.Event = field(default_factory=asyncio.Event)
-    """Set when a session is stopped: a scripted turn that waits is let go by it."""
+    gates: dict[str, asyncio.Event] = field(default_factory=dict[str, asyncio.Event])
+    """One per session, set when it is stopped: a turn that waits on it is let go."""
+    secret_envs: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
+    """The secret environment each session was started with (what reached the harness)."""
+
+    def gate(self, session: SessionRef) -> asyncio.Event:
+        """The gate a session's waiting turn holds on to (made on first use)."""
+        return self.gates.setdefault(session.id, asyncio.Event())
 
 
 class RecordingShell:
@@ -205,9 +211,9 @@ class FakeRunner(AgentRunner[FakeRunnerOptions]):
         """How many turns it was sent."""
         return self._store.turns
 
-    async def waiting(self) -> None:
-        """Wait until a session is stopped (a scripted turn uses it to be stopped mid-turn)."""
-        await self._store.gate.wait()
+    async def waiting(self, session: SessionRef) -> None:
+        """Wait until this session is stopped (a scripted turn uses it to be stopped mid-turn)."""
+        await self._store.gate(session).wait()
 
     async def health(self) -> RunnerHealth:
         return RunnerHealth(installed=True, signed_in=True, version="fake-1.0", detail="scripted")
@@ -223,11 +229,14 @@ class FakeRunner(AgentRunner[FakeRunnerOptions]):
             host=self.shell.host.name,
         )
         self._store.specs[session.id] = spec
+        self._store.secret_envs.append(
+            {name: secret.get_secret_value() for name, secret in spec.secret_env.items()}
+        )
         return session
 
     async def stop(self, session: SessionRef) -> None:
         self._store.stopped.add(session.id)
-        self._store.gate.set()  # (a turn that is waiting for it is let go)
+        self._store.gate(session).set()  # (a turn that is waiting for it is let go)
 
     async def send(self, session: SessionRef, prompt: str) -> AsyncIterator[AgentEvent]:
         spec = self._store.specs.get(session.id)
@@ -246,7 +255,7 @@ class FakeRunner(AgentRunner[FakeRunnerOptions]):
         if turn is None:
             yield TextDelta(text=self.options.answer)
         else:
-            async for event in turn(self):
+            async for event in turn(self, session):
                 yield event
         if session.id in self._store.stopped:
             yield TurnEnded(reason=TurnReason.STOPPED, text="The session was stopped.")
@@ -254,7 +263,7 @@ class FakeRunner(AgentRunner[FakeRunnerOptions]):
         yield TurnEnded(reason=TurnReason.DONE, text=self.options.answer)
 
 
-async def count_sites(runner: FakeRunner) -> AsyncIterator[AgentEvent]:
+async def count_sites(runner: FakeRunner, _: SessionRef) -> AsyncIterator[AgentEvent]:
     """A scripted turn that asks udl for its sites, as an agent's tool call would."""
     yield ToolStarted(name="udl.sites.list", summary="List the sites")
     sites = await runner.service.list_sites(SiteQuery())
@@ -262,8 +271,8 @@ async def count_sites(runner: FakeRunner) -> AsyncIterator[AgentEvent]:
     yield TextDelta(text=f"There are {len(sites.sites)} sites.")
 
 
-async def wait_for_stop(runner: FakeRunner) -> AsyncIterator[AgentEvent]:
+async def wait_for_stop(runner: FakeRunner, session: SessionRef) -> AsyncIterator[AgentEvent]:
     """A scripted turn that waits until the session is stopped (the contract's mid-turn stop)."""
     yield ToolStarted(name="udl.wait", summary="Waiting for udl to stop the turn")
-    await runner.waiting()
+    await runner.waiting(session)
     yield ToolFinished(name="udl.wait", ok=False)

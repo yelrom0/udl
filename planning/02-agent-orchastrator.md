@@ -384,8 +384,10 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
     operation it calls, so a test needs no database) and a `wait_for_stop` turn that waits until the
     session is stopped; its sessions live in a `Sessions` store, not in the runner, so a session
     outlives the runner object as a real harness's does (two runners given one store share it), and
-    a spec whose environment says `FAKE_HARNESS_LIMITED=1` is out of quota with a reset time.
-    `RecordingShell` is a real local shell that records every argv (a secret is in none).
+    a spec whose environment says `FAKE_HARNESS_LIMITED=1` is out of quota with a reset time. Each
+    session has its own stop gate (stopping one lets that one's waiting turn go, not another's).
+    `RecordingShell` is a real local shell that records every argv and every secret environment
+    (a secret reaches the harness through the last, and is in no argv).
     `tests/support/fake_harness.py` is a program the real runners' tests point their binary at
     (`--version`, `auth status`, a stream-json turn, `FAKE_HARNESS_FAILS`, `FAKE_HARNESS_LIMITED`
     with its `resets_at`, and `FAKE_HARNESS_SLOW` so a stop can end a turn).
@@ -393,7 +395,8 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
     health, models, start (the spec's cwd, the shell's host); a prompt's events ending in exactly
     one `TurnEnded`; a session resuming by id after the runner object is thrown away; `stop()`
     ending a turn that is running; a rate limit as a `RunnerLimited` with its `until`, followed by
-    `TurnEnded(LIMITED)`; secrets given as `secret_env` in no argv; a stopped session saying
+    `TurnEnded(LIMITED)`; secrets given as `secret_env` reaching the harness and in no argv; a
+    stopped session saying
     `STOPPED` rather than hanging (and stopping twice is fine); and the refusing `install`/`login`.
     22 tests (11 of them the contract's); `udl/plugins/runners` at 100 %.
   - Decisions:
