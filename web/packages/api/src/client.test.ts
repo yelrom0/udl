@@ -2,19 +2,24 @@ import { describe, expect, it } from "vitest";
 import { createUdlClient, fixtures, type PathParams, UdlError } from "./index";
 import { FakeUdl } from "./testing";
 
-/** A fake, and every request the client sent it (to say what it said). */
+/** A fake, and every request the client sent it: the URL it was given, its init (which the
+ * Request does not keep), and the Request itself (for its headers and body). */
 function recording(fake = new FakeUdl()) {
+	const urls: string[] = [];
+	const inits: (RequestInit | undefined)[] = [];
 	const sent: Request[] = [];
 	const fetch = (input: RequestInfo | URL, init?: RequestInit) => {
 		const request = new Request(input, init);
+		urls.push(String(input));
+		inits.push(init);
 		sent.push(request.clone());
 		return fake.fetch(request);
 	};
-	return { fake, sent, fetch };
+	return { fake, urls, inits, sent, fetch };
 }
 
 describe("createUdlClient", () => {
-	it("sends a read to its route, with the page's cookie and no CSRF header", async () => {
+	it("sends a read to its route, with no CSRF header and no body", async () => {
 		const { fake, sent, fetch } = recording();
 
 		const sites = await createUdlClient({ baseUrl: "http://udl.test", fetch }).call("list_sites");
@@ -24,10 +29,42 @@ describe("createUdlClient", () => {
 		const [request] = sent;
 		expect(request?.method).toBe("GET");
 		expect(request?.url).toBe("http://udl.test/sites");
-		expect(request?.credentials).toBe("same-origin");
 		expect(request?.headers.get("X-UDL-CSRF")).toBeNull();
 		expect(request?.headers.get("Content-Type")).toBeNull();
 		expect(fake.calls.map((call) => call.id)).toEqual(["list_sites"]);
+	});
+
+	it("sends the page's cookie with every request, through `call` and the typed client", async () => {
+		const { fake, inits, sent, fetch } = recording();
+		const api = createUdlClient({ baseUrl: "http://udl.test", fetch });
+
+		await api.call("list_sites");
+		await api.client.GET("/sites");
+
+		// (undici's Request defaults to "same-origin", so only `call`'s init says what was set;
+		// the typed client's Request carries it.)
+		expect(inits[0]?.credentials).toBe("same-origin");
+		expect(sent.map((request) => request.credentials)).toEqual(["same-origin", "same-origin"]);
+		expect(fake.calls.map((call) => call.id)).toEqual(["list_sites", "list_sites"]);
+	});
+
+	it("joins the base URL and the route as openapi-fetch does", async () => {
+		const urls: string[] = [];
+		const fetch = (input: RequestInfo | URL) => {
+			urls.push(String(input));
+			return Promise.resolve(
+				new Response(JSON.stringify({ sites: [] }), {
+					headers: { "Content-Type": "application/json" },
+				}),
+			);
+		};
+
+		await createUdlClient({ baseUrl: "", fetch }).call("list_sites");
+		await createUdlClient({ baseUrl: "http://host/udl/", fetch }).call("list_sites");
+		await createUdlClient({ baseUrl: "http://host/udl", fetch }).call("list_sites");
+
+		// (A page served by the API itself sends to "/sites"; behind a prefix, the prefix stays.)
+		expect(urls).toEqual(["/sites", "http://host/udl/sites", "http://host/udl/sites"]);
 	});
 
 	it("sends a write with the CSRF header and the body as JSON", async () => {

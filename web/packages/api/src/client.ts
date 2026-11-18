@@ -104,7 +104,9 @@ async function send<Id extends OperationId>(
 		headers: headersFor(method, body !== undefined),
 	};
 	if (body !== undefined) init.body = JSON.stringify(body);
-	const response = await doFetch(new URL(fill(path, params), baseUrl), init);
+	// (Joined as openapi-fetch joins it: a base that is a page's own origin is "", and one behind
+	// a reverse proxy's prefix keeps it.)
+	const response = await doFetch(`${baseUrl.replace(/\/+$/, "")}${fill(path, params)}`, init);
 	const data: unknown = parse(response.status === 204 ? "" : await response.text());
 	if (!response.ok) throw new UdlError(asErrorInfo(data), response.status);
 	// (The schema is what says a 2xx answer's body is this operation's `ResponseBody`: the one

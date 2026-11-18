@@ -36,21 +36,14 @@ function operationsOf(schema) {
 /** The list schema a `list_…` operation answers with, by operationId. */
 function listsOf(operations) {
 	const found = [];
-	for (const [id, , path] of operations) {
+	for (const [id, method, path] of operations) {
 		if (!id.startsWith("list_")) continue;
-		const item = document.paths?.[path]?.[operationsMethod(path, id)];
-		const ok = item?.responses?.["200"]?.content?.["application/json"]?.schema;
+		const ok =
+			document.paths?.[path]?.[method]?.responses?.["200"]?.content?.["application/json"]?.schema;
 		const name = ok?.$ref?.split("/").pop();
 		if (name?.endsWith("List") && schemas[name]) found.push([id, name]);
 	}
 	return found.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-}
-
-function operationsMethod(path, id) {
-	for (const [method, operation] of Object.entries(document.paths[path])) {
-		if (operation?.operationId === id) return method;
-	}
-	return undefined;
 }
 
 /** A sample of `schema`: its required fields, by type, with the first item of each array a list
