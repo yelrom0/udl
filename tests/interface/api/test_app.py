@@ -81,7 +81,8 @@ async def test_a_page_in_a_browser_cannot_start_downloads(
     client: httpx.AsyncClient, content_type: str | None
 ) -> None:
     # Any page can make a browser POST these to localhost without asking it first (no CORS
-    # preflight), but not JSON, which is all the API takes.
+    # preflight), but not JSON, which is all the API takes — and since 18.4 a write whose Origin
+    # is another site's is refused before its body is read.
     headers = {"Origin": "https://evil.example"}
     if content_type:
         headers["Content-Type"] = content_type
@@ -94,7 +95,7 @@ async def test_a_page_in_a_browser_cannot_start_downloads(
     )
     listed = DownloadList.model_validate((await client.get("/downloads")).json())
 
-    assert sent.status_code == 422
+    assert sent.status_code == 403
     assert listed.downloads == []
     # Nor may a page read what udl answers, or send JSON after asking.
     for answer in (sent, asked):

@@ -22,7 +22,7 @@ from support.interfaces import A, Harness
 from udl.config import APISettings, WebSettings
 from udl.interfaces.web.sessions import CSRF_HEADER, SESSION_COOKIE
 
-KEY = "s3cret"  # noqa: S105 - (a test's key, not a secret)
+KEY = "s3cret"
 
 
 def secured(tmp_path: Path, *, session_hours: int = 12) -> Harness:
@@ -36,6 +36,11 @@ def secured(tmp_path: Path, *, session_hours: int = 12) -> Harness:
 
 async def sign_in(client: httpx.AsyncClient, key: str = KEY) -> httpx.Response:
     return await client.post("/session", json={"api_key": key})
+
+
+def keep(client: httpx.AsyncClient, token: str) -> None:
+    """The browser keeps the session's cookie. (httpx's per-request `cookies=` is deprecated.)"""
+    client.cookies.set(SESSION_COOKIE, token)
 
 
 def session_cookie(answer: httpx.Response) -> str:
@@ -64,7 +69,9 @@ async def test_signing_in_with_the_key_sets_a_session_cookie(tmp_path: Path) -> 
 async def test_the_cookie_signs_in_the_api(tmp_path: Path) -> None:
     async with client_for(secured(tmp_path)) as client:
         token = session_cookie(await sign_in(client))
-        sites = await client.get("/sites", cookies={SESSION_COOKIE: token})
+        keep(client, token)
+        sites = await client.get("/sites")
+        client.cookies.clear()
         keyed = await client.get("/sites", headers={"X-API-Key": KEY})
 
     assert sites.status_code == 200
@@ -100,8 +107,9 @@ async def test_ten_tries_a_minute_and_the_eleventh_is_a_429(tmp_path: Path) -> N
 async def test_signing_out_ends_the_session(tmp_path: Path) -> None:
     async with client_for(secured(tmp_path)) as client:
         token = session_cookie(await sign_in(client))
-        signed_out = await client.delete("/session", cookies={SESSION_COOKIE: token})
-        sites = await client.get("/sites", cookies={SESSION_COOKIE: token})
+        keep(client, token)
+        signed_out = await client.delete("/session")
+        sites = await client.get("/sites")
 
     assert signed_out.status_code == 204
     # (The browser is told to drop it too.)
@@ -112,22 +120,21 @@ async def test_signing_out_ends_the_session(tmp_path: Path) -> None:
 async def test_a_write_with_a_session_needs_the_csrf_header(tmp_path: Path) -> None:
     async with client_for(secured(tmp_path)) as client:
         token = session_cookie(await sign_in(client))
-        refused = await client.post("/probe", json={"url": A}, cookies={SESSION_COOKIE: token})
-        allowed = await client.post(
-            "/probe",
-            json={"url": A},
-            cookies={SESSION_COOKIE: token},
-            headers={CSRF_HEADER: "1"},
-        )
+        keep(client, token)
+        refused = await client.post("/probe", json={"url": A})
+        allowed = await client.post("/probe", json={"url": A}, headers={CSRF_HEADER: "1"})
 
-    assert refused.status_code == 401
+    # (Forbidden, not Unauthorized: the session is good, the write is not one udl's page made.)
+    assert refused.status_code == 403
+    assert allowed.status_code != 403
     assert allowed.status_code != 401
 
 
 async def test_a_read_with_a_session_needs_no_csrf_header(tmp_path: Path) -> None:
     async with client_for(secured(tmp_path)) as client:
         token = session_cookie(await sign_in(client))
-        sites = await client.get("/sites", cookies={SESSION_COOKIE: token})
+        keep(client, token)
+        sites = await client.get("/sites")
 
     assert sites.status_code == 200
 
@@ -135,10 +142,10 @@ async def test_a_read_with_a_session_needs_no_csrf_header(tmp_path: Path) -> Non
 async def test_a_write_from_another_origin_is_refused_with_a_session(tmp_path: Path) -> None:
     async with client_for(secured(tmp_path)) as client:
         token = session_cookie(await sign_in(client))
+        keep(client, token)
         answer = await client.post(
             "/probe",
             json={"url": A},
-            cookies={SESSION_COOKIE: token},
             headers={CSRF_HEADER: "1", "Origin": "https://evil.example"},
         )
 
@@ -201,13 +208,11 @@ async def test_a_body_that_is_not_a_sign_in_is_a_400(tmp_path: Path) -> None:
 async def test_the_mcp_server_takes_the_key_and_not_the_cookie(tmp_path: Path) -> None:
     async with client_for(secured(tmp_path)) as client:
         token = session_cookie(await sign_in(client))
-        by_cookie = await client.post(
-            "/mcp", json={}, cookies={SESSION_COOKIE: token}, headers={"Accept": "application/json"}
-        )
+        keep(client, token)
+        by_cookie = await client.post("/mcp", json={}, headers={"Accept": "application/json"})
+        client.cookies.clear()
         by_key = await client.post(
-            "/mcp",
-            json={},
-            headers={"X-API-Key": KEY, "Accept": "application/json"},
+            "/mcp", json={}, headers={"X-API-Key": KEY, "Accept": "application/json"}
         )
 
     assert by_cookie.status_code == 401
@@ -217,12 +222,10 @@ async def test_the_mcp_server_takes_the_key_and_not_the_cookie(tmp_path: Path) -
 async def test_a_delete_with_a_session_needs_the_csrf_header(tmp_path: Path) -> None:
     async with client_for(secured(tmp_path)) as client:
         token = session_cookie(await sign_in(client))
-        refused = await client.delete("/sites/alpha.example", cookies={SESSION_COOKIE: token})
-        allowed = await client.delete(
-            "/sites/alpha.example",
-            cookies={SESSION_COOKIE: token},
-            headers={CSRF_HEADER: "1"},
-        )
+        keep(client, token)
+        refused = await client.delete("/sites/alpha.example")
+        allowed = await client.delete("/sites/alpha.example", headers={CSRF_HEADER: "1"})
 
-    assert refused.status_code == 401
+    assert refused.status_code == 403
+    assert allowed.status_code != 403
     assert allowed.status_code != 401

@@ -313,7 +313,7 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
   - [~] 18.1 `web/` pnpm workspace and tooling: Vite + SWC, TypeScript strict, Biome, Vitest (+ coverage gate), Playwright, Tailwind CSS + daisyUI; `make web`, `make e2e`, and `make check` runs the web checks
   - [~] 18.2 Typed API client generated from udl's OpenAPI schema (`openapi-typescript` + `openapi-fetch`); `make check` fails when it is stale
   - [~] 18.3 FastAPI serves the UI at `/ui` (from the package, SPA fallback, CSP, cache headers), and a page saying how to build it when it isn't built
-  - [ ] 18.4 Web sessions: sign in with the API key → a session cookie; a CSRF header and an Origin check on writes
+  - [~] 18.4 Web sessions: sign in with the API key → a session cookie; a CSRF header and an Origin check on writes
   - [ ] 18.5 The shell: layout, TanStack Router (file routes, auth guard, a splat route for plugin pages), Zustand stores, light / dark / system theme
   - [ ] 18.6 Live data: shared SSE connections feeding Zustand stores, reconnecting with backoff
   - [~] 18.7 `UIManifest` (Pydantic → JSON Schema → TypeScript), `ui` on every plugin kind, the `udl.ui` kind, local UI plugin dirs, `GET /ui/plugins.json`, UI availability in `list_plugins`
@@ -4365,6 +4365,40 @@ timeout: 5m
 - Tests first: `tests/interface/web/test_sessions.py`: the phase's second bullet, and the Origin check
   with and without an API key.
 - Done when: the API is as safe from other web pages with a session as it is without one.
+- **Built (deepseek-a, 2026-11-19, PR #N):** sessions, and the two rules that make a cookie safe.
+  - `src/udl/interfaces/web/sessions.py`:
+    - `SessionStore` (a token to its expiry, in memory, tokens from `secrets.token_urlsafe(32)`;
+      `is_live` drops an expired one, `live` counts what is left) and `session_store(settings)`,
+      whose TTL is `[web] session_hours`;
+    - `Attempts` (10 sign-ins a minute from one client, a wrong key being a guess at it);
+    - `SignInRequest(api_key)`, and `add_session_routes`: `POST /session` (204 and the cookie, or
+      401; 429 when the attempts are used up; 400 for a body that is not one) and `DELETE /session`
+      (204, the cookie dropped) — Starlette routes, so they are out of the schema and out of the
+      key's dependency, since signing in cannot need the key it is given;
+    - `authenticate(settings, request)`: the key's header, or a live session's cookie; a write
+      that comes with the cookie also needs `X-UDL-CSRF: 1`; a write whose `Origin` is not this
+      server's is refused whoever it is (`check_write_origin`, also on `/mcp`, which takes the key
+      alone).
+  - `create_app`: `app.state.sessions`, `require_api_key` calls `authenticate` (the header is
+    still declared with `Security`, so the schema documents it), the session routes are added when
+    `[web] enabled`, and `ErrorCode.RATE_LIMITED` answers 429.
+  - The cookie: `HttpOnly`, `SameSite=Strict`, `Path=/`, `Secure` when `[web] public_url` is
+    https, and `max_age` of the TTL.
+  - Tests: `tests/unit/interfaces/web/test_sessions.py` (7: the store's expiry and sign-out, the
+    tokens' randomness, the attempts' window) and `tests/interface/web/test_sessions.py` (16: the
+    cookie's attributes and what signs in, a wrong key, a new token each time, the eleventh try in
+    a minute, sign out, the CSRF header on a POST and a DELETE, another origin's write refused with
+    the cookie and with the key, this origin's allowed, a read from elsewhere allowed, no key
+    meaning no cookie and an open API, a body that is not a sign-in, and `/mcp` taking the key).
+  - `tests/interface/api/test_app.py`: a cross-origin `POST /downloads` is now a 403 (it was a 422
+    from the body's content type), since the origin is refused before the body is read.
+  - Decisions:
+    - **403, not 401, for the missing CSRF header:** the session is good; the write is not one
+      udl's own page made. A missing or dead session is the 401.
+    - **No cookie when no `api_key` is set:** the server is open, so there is nothing to sign in
+      to; `POST /session` answers 204 and the UI needs no login.
+    - **A write from another origin is refused before the key is looked at**, so a page elsewhere
+      learns nothing about whether a key is set.
 
 **18.5 The shell** · needs 18.2, 18.4
 - Build: `web/packages/shell`.
