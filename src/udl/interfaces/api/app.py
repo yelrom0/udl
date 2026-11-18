@@ -44,6 +44,7 @@ from udl.interfaces.adapters import add_routes
 from udl.interfaces.api.routes import accounts, chains, downloads, events, sites, system
 from udl.interfaces.mcp.server import create_server
 from udl.interfaces.security import API_KEY_HEADER, check_api_key
+from udl.interfaces.web.app import add_web_routes
 
 log = logging.getLogger(__name__)
 
@@ -124,6 +125,8 @@ def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService)
     # (Before /accounts/{account}; and a route of Starlette's, so no API key is asked for: the
     # authorization's one-time state is what it is checked by.)
     app.router.routes.insert(0, Route(CALLBACK_PATH, accounts.callback, methods=["GET"]))
+    if settings.web.enabled:
+        add_web_routes(app, settings)  # (the web UI at /ui, which needs no API key)
 
     @app.exception_handler(UDLError)
     async def udl_error(request: Request, error: UDLError) -> JSONResponse:
