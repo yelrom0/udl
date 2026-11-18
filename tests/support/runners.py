@@ -96,14 +96,12 @@ class RecordingShell:
 
     def __init__(self, shell: HostShell) -> None:
         self._shell = shell
+        self.host: Host = shell.host
+        """The host it acts on (the shell's own)."""
         self.calls: list[list[str]] = []
         """Every argv it was asked to run, in order."""
         self.secret_envs: list[dict[str, str]] = []
         """Every secret environment it was given, in order (a test's own: they stay there)."""
-
-    @property
-    def host(self) -> Host:
-        return self._shell.host
 
     async def run(
         self,
