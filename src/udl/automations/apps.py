@@ -98,7 +98,8 @@ class AppSupervisor:
 
     def changed(self, name: str) -> None:
         """Make the app called `name` again the next time it is asked for (its settings
-        changed)."""
+        changed): its operations get the new settings at once, while its running service keeps
+        the settings it started with until the next lease (as an integration's watcher does)."""
         self._apps.pop(name, None)
 
     async def serve(self, stop: asyncio.Event) -> None:
@@ -131,7 +132,7 @@ class AppSupervisor:
         raises (with backoff). A service that ends is an app that is done: it is not started
         again until the next lease."""
         try:
-            app = await self._make(name)
+            app = await self.get(name)  # (the one its operations run on, and settings and all)
         except Exception as e:  # noqa: BLE001 - a broken app is reported, not fatal
             log.warning("The %s app cannot start: %s", name, e)
             self._states[name] = AppStatus(name=name, state=AppState.FAILED, last_error=_error(e))
@@ -143,7 +144,7 @@ class AppSupervisor:
                 app=app,
                 service=self._service,
                 records=AppRecords(self._service.db),
-                events=AppEvents(self._service.bus, app.name),
+                events=AppEvents(self._service.bus, app.name, type(app).event_types()),
                 secrets=self._service.secrets,
                 clock=self._service.clock,
                 settings=app.settings,

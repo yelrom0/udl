@@ -29,10 +29,11 @@ import asyncio
 import contextlib
 import fnmatch
 import inspect
+import logging
 from abc import ABC
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, ForwardRef, TypeIs
 from uuid import UUID
 
 # Package Imports
@@ -49,12 +50,19 @@ from udl.plugins.requirements import Requirement
 from udl.plugins.secrets.base import SecretStore
 
 if TYPE_CHECKING:
-    from udl.automations.bus import EventBus
+    from collections.abc import AsyncGenerator
+
+    from udl.automations.bus import BusNotice, EventBus
     from udl.core.service import UDLService
     from udl.db.manager import DBManager
 
-# Any app: an app of any settings, as the supervisor and the context hold them.
+# Any app: an app of any settings, as the supervisor and the context hold them. (Not
+# AppPlugin[AppSettings]: S is invariant — an app is made with its own settings model and hands
+# them out again — so an AppPlugin[FakeAppSettings] is not an AppPlugin[AppSettings]. The
+# alias is what PluginKind[ActionPlugin[Any]] and Integration[Any, Any] do elsewhere.)
 type AnApp = AppPlugin[Any]
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "AnApp",
@@ -64,7 +72,13 @@ __all__ = [
     "AppPlugin",
     "AppRecords",
     "AppSettings",
+    "AppSubscription",
 ]
+
+
+def _operation_method(what: object) -> TypeIs[Callable[..., Awaitable[BaseModel]]]:
+    """Whether `what` is an app's operation method: an async `(self, request) -> response`."""
+    return callable(what) and inspect.iscoroutinefunction(what)
 
 
 class _Model(BaseModel):
@@ -95,7 +109,7 @@ class AppRecords:
     def __init__(self, db: DBManager) -> None:
         self._db = db
 
-    async def save(self, record: Record) -> Record:
+    async def save[R: Record](self, record: R) -> R:
         """Store `record` (by its id, so storing one again replaces it) and give it back, stamped
         with when it was made and last changed."""
         return await self._db.upsert_record(record)
@@ -116,11 +130,18 @@ class AppRecords:
 class AppEvents:
     """Where an app publishes its events, and how it waits for others': an event an app publishes
     is stored and dispatched as any other (so subscriptions and actions see it), and an app can
-    wait for the events whose type matches a glob (e.g. "orch.task.*") without polling."""
+    wait for the events whose type matches a glob (e.g. "orch.task.*") without polling.
 
-    def __init__(self, bus: EventBus, name: str) -> None:
+    An app only publishes the types it declared (its event_types()), and only events stored from
+    now on are waited for: an app that handles one event at a time holds a subscription (see
+    subscribe()) rather than calling wait_for() again, so nothing that happens while it works is
+    lost."""
+
+    def __init__(self, bus: EventBus, name: str, types: Sequence[EventType[Any]] = ()) -> None:
         self._bus = bus
         self._name = name
+        self._types = {event_type.name for event_type in types}
+        """The names of the app's own event types (what it may publish)."""
 
     async def emit(
         self,
@@ -130,17 +151,19 @@ class AppEvents:
         dedupe_key: str,
         occurred_at: datetime | None = None,
     ) -> bool:
-        """Publish an event of this app's own type, once: one whose dedupe key was seen before is
-        not published again. Returns whether it was new.
+        """Publish an event of one of this app's declared types, once: one whose dedupe key was
+        seen before is not published again. Returns whether it was new.
 
         The type is this app's: its own name (`tick`, for `fakeapp.tick`), or the whole name of
-        one of its types (`fakeapp.tick`). Raises PluginError for anything else — an app may not
-        publish another plugin's events — and ConfigError for data that does not fit the type."""
+        one of its types (`fakeapp.tick`). Raises PluginError for another plugin's type and for
+        one it never declared — an app may not invent events — and ConfigError for data that does
+        not fit the type."""
         from udl.automations.bus import NewEvent
 
+        named = self._own_type(event_type)
         stored = await self._bus.publish(
             NewEvent(
-                type=self._own_type(event_type),
+                type=named,
                 data=data if isinstance(data, dict) else data.model_dump(mode="json"),
                 source=self._name,
                 dedupe_key=dedupe_key,
@@ -150,52 +173,125 @@ class AppEvents:
         return stored is not None
 
     def _own_type(self, event_type: str) -> str:
-        """`event_type` as one of this app's own. Raises PluginError for anything else."""
-        if "." not in event_type:
-            return f"{self._name}.{event_type}"
-        if event_type.startswith(f"{self._name}."):
-            return event_type
-        raise PluginError(
-            f"{self._name} may not publish {event_type!r}: it is another plugin's event type",
-            hint=f"Name one of its own ({self._name}.<what>), or just <what>.",
-        )
+        """`event_type` as one of this app's own declared types. Raises PluginError for anything
+        else."""
+        named = event_type if "." in event_type else f"{self._name}.{event_type}"
+        if not named.startswith(f"{self._name}."):
+            raise PluginError(
+                f"{self._name} may not publish {event_type!r}: it is another plugin's event type",
+                hint=f"Name one of its own ({self._name}.<what>), or just <what>.",
+            )
+        if named not in self._types:
+            declared = ", ".join(sorted(self._types)) or "none"
+            raise PluginError(
+                f"{self._name} has no event type called {named!r}",
+                hint=f"The types it declared: {declared}.",
+            )
+        return named
+
+    def subscribe(self, pattern: str) -> AppSubscription:
+        """A subscription to the events whose type matches `pattern` (a glob), from now on: hold
+        it for as long as the app runs, and take what comes with `async for`."""
+        return AppSubscription(self._bus, pattern, self._name)
 
     async def wait_for(self, pattern: str, *, stop: asyncio.Event) -> AppEvent | None:
         """The next event whose type matches `pattern` (a glob, e.g. "orch.task.*") as it is
         stored, or None when `stop` is set first (the app is shutting down).
 
-        An event is waited for once: the bus tells of it again when it is dispatched or dropped,
-        which is not it happening. Events stored before the call are not seen (the bus tells of
-        what happens from now on)."""
-        waiter = asyncio.ensure_future(self._next(pattern))
-        stopper = asyncio.ensure_future(stop.wait())
-        try:
-            done, _ = await asyncio.wait({waiter, stopper}, return_when=asyncio.FIRST_COMPLETED)
-            if stopper in done:
+        One event, for an app that waits once: an app that handles events one after another
+        should hold a subscription instead (subscribe()), so that nothing that happens while it
+        works is lost."""
+        async with self.subscribe(pattern) as subscription:
+            waiter = asyncio.ensure_future(subscription.__anext__())
+            stopper = asyncio.ensure_future(stop.wait())
+            try:
+                done, _ = await asyncio.wait({waiter, stopper}, return_when=asyncio.FIRST_COMPLETED)
+                if stopper in done:
+                    waiter.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
+                        await waiter  # (it ends where it waits, and is not left pending)
+                    return None
+                return await waiter
+            finally:
+                stopper.cancel()
                 waiter.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await waiter  # (it ends where it waits, and is not left pending)
-                return None
-            return await waiter
-        finally:
-            stopper.cancel()
-            waiter.cancel()
 
-    async def _next(self, pattern: str) -> AppEvent:
+
+class AppSubscription:
+    """What an app holds to hear of the events whose type matches a glob, from now on: an async
+    iterator of AppEvents, one per event as it is stored.
+
+    Entering it starts listening at once, so an event stored after `async with` is never lost,
+    even if the app takes a while to ask for it."""
+
+    def __init__(self, bus: EventBus, pattern: str, name: str) -> None:
+        self._bus = bus
+        self._pattern = pattern
+        self._name = name
+        self._notices: AsyncGenerator[BusNotice] | None = None
+        self._pulled: asyncio.Future[BusNotice] | None = None
+
+    async def __aenter__(self) -> AppSubscription:
+        self._notices = self._bus.notices(self._pattern, runs=False)
+        self._pull()  # (start listening: the listener is registered on the first step)
+        await asyncio.sleep(0)
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        notices, self._notices = self._notices, None
+        pulled, self._pulled = self._pulled, None
+        if pulled is not None and not pulled.done():
+            pulled.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pulled
+        if notices is None:
+            return
+        await asyncio.sleep(0)  # (let a cancelled __anext__ unwind first)
+        with contextlib.suppress(RuntimeError):
+            await notices.aclose()
+
+    def __aiter__(self) -> AppSubscription:
+        return self
+
+    async def __anext__(self) -> AppEvent:
         from udl.automations.bus import NoticeKind
         from udl.automations.events import EventStatus
 
-        async for notice in self._bus.notices(pattern, runs=False):
+        if self._notices is None:
+            raise RuntimeError("a subscription is only used inside its async with")
+        while True:
+            notice = await self._next_notice()
+            if notice.kind is NoticeKind.LAGGED:
+                log.warning(
+                    "%s's subscription to %r fell behind: it missed some events",
+                    self._name,
+                    self._pattern,
+                )
+                continue
             event = notice.event
             if (
                 notice.kind is NoticeKind.EVENT
                 and event is not None
                 and event.status is EventStatus.PENDING
-                and fnmatch.fnmatchcase(event.type, pattern)
+                and fnmatch.fnmatchcase(event.type, self._pattern)
             ):
                 return AppEvent(type=event.type, data=event.data, occurred_at=event.occurred_at)
-        # (The bus's notices only end when the listener is cancelled: nothing is coming.)
-        raise asyncio.CancelledError
+
+    async def _next_notice(self) -> BusNotice:
+        """The next notice of the bus (one pull is kept going, so nothing is missed)."""
+        if self._notices is None:
+            raise RuntimeError("a subscription is only used inside its async with")
+        if self._pulled is None:
+            self._pulled = asyncio.ensure_future(self._notices.__anext__())
+        try:
+            return await self._pulled
+        finally:
+            self._pulled = None
+
+    def _pull(self) -> None:
+        """Start the next pull (so the listener is registered without waiting for a caller)."""
+        if self._notices is not None and self._pulled is None:
+            self._pulled = asyncio.ensure_future(self._notices.__anext__())
 
 
 class AppContext:
@@ -293,12 +389,12 @@ class AppPlugin[S: AppSettings](ABC):
             found: object = getattr(cls, name)
         except AttributeError:
             raise PluginError(f"{what} is not one of {cls.__qualname__}'s methods") from None
-        if not callable(found) or not inspect.iscoroutinefunction(found):
+        if not _operation_method(found):
             raise PluginError(
                 f"{what} is not an operation: an app's operations are its async methods, "
                 "(self, request) -> response"
             )
-        method = cast(Callable[..., Awaitable[BaseModel]], found)
+        method = found
 
         async def call(service: UDLService, request: BaseModel) -> BaseModel:
             app = await service.apps.get(cls.name)
@@ -313,10 +409,16 @@ class AppPlugin[S: AppSettings](ABC):
                 f"{what} is not an operation: it takes (self, request), not "
                 f"{', '.join(parameters) or 'nothing'}"
             )
-        call.__annotations__ = {
-            "request": annotations.get(parameters[1]),
-            "return": annotations.get("return"),
-        }
+        request = annotations.get(parameters[1])
+        response = annotations.get("return")
+        for label, annotation in (("request", request), ("response", response)):
+            if annotation is None or isinstance(annotation, (str, ForwardRef)):
+                raise PluginError(
+                    f"{what}'s {label} is {annotation!r}, not a model udl can read at run time: "
+                    "import it for real (a model only imported under TYPE_CHECKING is a string "
+                    "here, and no adapter can be made from it)"
+                )
+        call.__annotations__ = {"request": request, "return": response}
         call.__doc__ = inspect.getdoc(method)
         call.__qualname__ = f"{cls.__qualname__}.{name}"
         return Operation.of(call, name=name, title=title, hints=hints, cli=cli, api=api, ui=ui)
