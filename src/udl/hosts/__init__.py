@@ -19,7 +19,7 @@ from udl.hosts.models import (
     HostInfo,
     HostList,
     HostRequest,
-    HostsList,
+    ListHostsRequest,
     SetHostRequest,
     ToolStatus,
 )
@@ -57,8 +57,8 @@ __all__ = [
     "HostRequest",
     "HostShell",
     "HostTransport",
-    "HostsList",
     "Interaction",
+    "ListHostsRequest",
     "LocalShell",
     "SetHostRequest",
     "SshShell",

@@ -76,7 +76,7 @@ class HostInfo(_Model):
         )
 
 
-class HostsList(_Model):
+class ListHostsRequest(_Model):
     """List the hosts (local is always one)."""
 
 

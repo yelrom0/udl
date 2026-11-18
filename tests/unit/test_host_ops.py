@@ -23,7 +23,7 @@ from udl.core.jobs import InstanceLock
 from udl.core.service import UDLService
 from udl.errors import DoesNotExist, NotAllowed
 from udl.hosts import Host, HostTransport
-from udl.hosts.models import HostCheck, HostInfo, HostRequest, HostsList, SetHostRequest
+from udl.hosts.models import HostCheck, HostInfo, HostRequest, ListHostsRequest, SetHostRequest
 from udl.plugins.secrets.memory import MemorySecretStore
 
 
@@ -57,7 +57,7 @@ def ssh_host(name: str = "thevault") -> Host:
 
 
 async def test_the_local_host_is_always_there(service: UDLService) -> None:
-    listed = await service.list_hosts(HostsList())
+    listed = await service.list_hosts(ListHostsRequest())
 
     assert [host.name for host in listed.hosts] == ["local"]
     assert listed.hosts[0].transport is HostTransport.LOCAL
@@ -68,7 +68,7 @@ async def test_a_host_is_added_and_listed(service: UDLService) -> None:
 
     assert isinstance(added, HostInfo)
     assert added.name == "thevault"
-    listed = await service.list_hosts(HostsList())
+    listed = await service.list_hosts(ListHostsRequest())
     assert [host.name for host in listed.hosts] == ["local", "thevault"]
 
 
@@ -88,7 +88,7 @@ async def test_a_host_is_deleted(service: UDLService) -> None:
     deleted = await service.delete_host(HostRequest(host="thevault"))
 
     assert deleted.deleted is True
-    assert [host.name for host in (await service.list_hosts(HostsList())).hosts] == ["local"]
+    assert [host.name for host in (await service.list_hosts(ListHostsRequest())).hosts] == ["local"]
 
 
 async def test_deleting_a_host_that_is_not_there_says_so(service: UDLService) -> None:

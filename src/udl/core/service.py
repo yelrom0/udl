@@ -176,7 +176,7 @@ from udl.hosts.models import (
     HostInfo,
     HostList,
     HostRequest,
-    HostsList,
+    ListHostsRequest,
     SetHostRequest,
 )
 from udl.http import HttpClientFactory, api_client
@@ -1536,7 +1536,7 @@ class UDLService:
         cli=CLISpec(path=("hosts", "list")),
         api=APISpec(method="GET", path="/hosts"),
     )
-    async def list_hosts(self, request: HostsList) -> HostList:
+    async def list_hosts(self, request: ListHostsRequest) -> HostList:
         """List the hosts agents run on: this machine (local, always there) and any others
         (reached over SSH), with how each is reached and whether udl uses it."""
         return await self.hosts.shown_list()  # (makes local, the first time)
