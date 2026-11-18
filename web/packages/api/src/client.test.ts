@@ -1,21 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createUdlClient, fixtures, type PathParams, UdlError } from "./index";
 import { FakeUdl } from "./testing";
 
-/** A fake, and every request the client sent it: the URL it was given, its init (which the
- * Request does not keep), and the Request itself (for its headers and body). */
+/** A fake, and every request the client sent it: its init (which the Request does not keep), and
+ * the Request itself (for its URL, headers and body). */
 function recording(fake = new FakeUdl()) {
-	const urls: string[] = [];
 	const inits: (RequestInit | undefined)[] = [];
 	const sent: Request[] = [];
 	const fetch = (input: RequestInfo | URL, init?: RequestInit) => {
 		const request = new Request(input, init);
-		urls.push(String(input));
 		inits.push(init);
 		sent.push(request.clone());
 		return fake.fetch(request);
 	};
-	return { fake, urls, inits, sent, fetch };
+	return { fake, inits, sent, fetch };
 }
 
 describe("createUdlClient", () => {
@@ -34,18 +32,37 @@ describe("createUdlClient", () => {
 		expect(fake.calls.map((call) => call.id)).toEqual(["list_sites"]);
 	});
 
-	it("sends the page's cookie with every request, through `call` and the typed client", async () => {
-		const { fake, inits, sent, fetch } = recording();
-		const api = createUdlClient({ baseUrl: "http://udl.test", fetch });
+	it("sends the page's cookie with `call`'s request", async () => {
+		const { inits, fetch } = recording();
 
-		await api.call("list_sites");
-		await api.client.GET("/sites");
+		await createUdlClient({ baseUrl: "http://udl.test", fetch }).call("list_sites");
 
-		// (undici's Request defaults to "same-origin", so only `call`'s init says what was set;
-		// the typed client's Request carries it.)
 		expect(inits[0]?.credentials).toBe("same-origin");
-		expect(sent.map((request) => request.credentials)).toEqual(["same-origin", "same-origin"]);
-		expect(fake.calls.map((call) => call.id)).toEqual(["list_sites", "list_sites"]);
+	});
+
+	it("sends the page's cookie with the typed client's request too", async () => {
+		// (openapi-fetch builds its own Request, and undici's defaults `credentials` to
+		// "same-origin", so the Request itself cannot say what was set: the init it was built
+		// with does.)
+		const built: (RequestInit | undefined)[] = [];
+		class RecordingRequest extends Request {
+			constructor(input: RequestInfo | URL, init?: RequestInit) {
+				super(input, init);
+				built.push(init);
+			}
+		}
+		vi.stubGlobal("Request", RecordingRequest);
+		try {
+			const { fake, fetch } = recording();
+			await createUdlClient({ baseUrl: "http://udl.test", fetch }).client.GET("/sites");
+			expect(fake.calls.map((call) => call.id)).toEqual(["list_sites"]);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+
+		// (The first is openapi-fetch's; the others are made of the Request it built, and have no
+		// init of their own.)
+		expect(built[0]?.credentials).toBe("same-origin");
 	});
 
 	it("joins the base URL and the route as openapi-fetch does", async () => {

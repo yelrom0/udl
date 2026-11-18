@@ -4227,8 +4227,8 @@ timeout: 5m
   - Tests: `tests/unit/interfaces/api/test_openapi.py` (determinism, sorted keys, a config file and a
     `UDL_PLUGIN_DIRS`/`UDL_CONFIG` that add a plugin — and change nothing; `--check` on a stale, a
     missing and a current file; the committed `openapi.json` being current) and
-    `web/packages/api/src/{client,testing}.test.ts` (20 tests: the headers of a read and of a write,
-    through `call` and through the typed client, and the cookie both send; a 204; `UdlError` with its
+    `web/packages/api/src/{client,testing}.test.ts` (21 tests: the headers of a read and of a write,
+    through `call` and through the typed client, and the cookie each sends; a 204; `UdlError` with its
     `ErrorInfo` and status, and a status that is not udl's; path parameters filled and encoded, and a
     missing one refused; the URL of an empty base and of one with a prefix; `FakeUdl`'s fixtures,
     handlers, recorded calls and unknown routes). Coverage: 100 % lines, 97.8 % branches.
