@@ -31,7 +31,7 @@ from pydantic import BaseModel, ConfigDict
 # Local Imports
 from udl.errors import PluginError
 from udl.plugins.actions.base import ActionPlugin
-from udl.plugins.apps.base import AppPlugin
+from udl.plugins.apps.base import AnApp, AppPlugin
 from udl.plugins.databases.base import DatabasePlugin
 from udl.plugins.downloaders.base import Downloader
 from udl.plugins.integrations.base import Integration
@@ -87,7 +87,7 @@ SITES: Final = PluginKind("udl.sites", SitePlugin)
 SECRETS: Final = PluginKind("udl.secrets", SecretStore)
 ACTIONS: Final = PluginKind[ActionPlugin[Any]]("udl.actions", ActionPlugin)
 INTEGRATIONS: Final = PluginKind[Integration[Any, Any]]("udl.integrations", Integration)
-APPS: Final = PluginKind[AppPlugin[Any]]("udl.apps", AppPlugin)
+APPS: Final = PluginKind[AnApp]("udl.apps", AppPlugin)
 
 # Every kind of plugin udl uses.
 PLUGIN_KINDS: Final[tuple[PluginKind[Any], ...]] = (

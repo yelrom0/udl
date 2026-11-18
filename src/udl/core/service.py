@@ -1062,6 +1062,7 @@ class UDLService:
         """
         changed = await self._plugin_settings.change(request)
         self.integrations.changed(request.name)  # (made again, with its new settings)
+        self.apps.changed(request.name)  # (an app's service too, at its next start)
         return changed
 
     # -- events --------------------------------------------------------------------------------
