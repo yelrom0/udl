@@ -87,6 +87,12 @@ class OperationAction(ActionPlugin[OperationOptions]):
                 "an action never calls one",
                 hint="Call it yourself (through the CLI, the API or MCP).",
             )
+        if not op.hints.mcp:
+            raise NotAllowed(
+                f"{name} is not a tool for an AI agent (a merge, or a power command): "
+                "an action never calls one",
+                hint="Call it yourself (through the CLI, the API or MCP).",
+            )
         return op
 
     async def check(self, options: JsonObject, event_type: EventType[Any] | None) -> None:

@@ -22,6 +22,7 @@ import pytest
 
 # Local Imports
 from support.actions import with_chores
+from support.integrations import FakeVersion, VersionRequest
 from support.interfaces import Harness
 from udl.automations.events import EventTypes
 from udl.core.service import UDLService
@@ -29,9 +30,37 @@ from udl.db.models import JsonObject
 from udl.errors import ActionFailed, Cancelled, ConfigError, NotAllowed
 from udl.plugins.actions.base import ActionContext, RunLog
 from udl.plugins.actions.operation import OperationAction
+from udl.plugins.integrations.base import (
+    AccountOptions,
+    Integration,
+    IntegrationSettings,
+    OperationHints,
+    integration_operation,
+)
+from udl.plugins.registry import INTEGRATIONS
 from udl.process import CancelToken
 
 FINISHED = EventTypes.default().get("udl.download.finished")
+
+
+class _PowerOptions(AccountOptions):
+    """A power command's account options (none)."""
+
+
+class _Power(Integration[IntegrationSettings, _PowerOptions]):
+    """A plugin with an operation an agent never gets (no MCP tool), and no admin's either."""
+
+    name = "power"
+    title = "Power"
+    summary = "A power command (for tests)."
+    account_model = _PowerOptions
+
+    @integration_operation(
+        "wipe", title="Wipe it", hints=OperationHints(mcp=False), needs_account=False
+    )
+    async def wipe(self, request: VersionRequest) -> FakeVersion:
+        """Wipe it all (a person's own)."""
+        return FakeVersion(version="wiped")
 
 
 @pytest.fixture
@@ -129,6 +158,18 @@ async def test_an_admin_operation_is_never_called(plugin: OperationAction, opera
         await plugin.check({"operation": operation}, None)
     with pytest.raises(ActionFailed, match="admin"):
         await run(plugin, {"operation": operation})
+
+
+async def test_a_power_command_is_never_called(tmp_path: Path) -> None:
+    harness = with_chores(Harness(tmp_path))
+    harness.registry.register(INTEGRATIONS, _Power)
+    async with harness.service() as service:
+        plugin = OperationAction(service)
+
+        with pytest.raises(NotAllowed, match="not a tool for an AI agent"):
+            await plugin.check({"operation": "power_wipe"}, None)
+        with pytest.raises(ActionFailed, match="not a tool for an AI agent"):
+            await run(plugin, {"operation": "power_wipe"})
 
 
 async def test_an_unknown_operation_is_refused(plugin: OperationAction) -> None:
