@@ -159,6 +159,23 @@ def test_env_vars_override_the_config_file(monkeypatch: pytest.MonkeyPatch) -> N
     assert Settings.load().max_concurrent == 16
 
 
+def test_the_defaults_ignore_the_environment_and_the_config_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default = Settings().api.port
+    write_config(f"[api]\nport = {default + 1}\n")
+    monkeypatch.setenv("UDL_API__PORT", str(default + 2))  # (a nested table, too)
+    monkeypatch.setenv("UDL_MAX_CONCURRENT", "99")
+
+    settings = Settings.defaults()
+
+    # (The API's schema and the web client's types are made from these, so neither the
+    # developer's config file nor a UDL_* variable may change them.)
+    assert settings.api.port == default
+    assert settings.max_concurrent == 4
+    assert settings.config_file is None
+
+
 def test_nested_env_vars_merge_into_config_file_tables(monkeypatch: pytest.MonkeyPatch) -> None:
     write_config('[api]\nhost = "192.168.1.10"\n')
     monkeypatch.setenv("UDL_API__PORT", "9000")

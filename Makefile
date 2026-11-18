@@ -3,9 +3,9 @@
 # installed with `uv sync --all-extras` (e.g. playwright) are kept between runs.
 export UV_LOCKED := 1
 
-.PHONY: check check-py check-web fmt test smoke web e2e
+.PHONY: check check-py check-openapi check-web fmt test smoke web e2e openapi
 
-check: check-py check-web
+check: check-py check-openapi check-web
 
 check-py:
 	uv lock --check
@@ -14,8 +14,17 @@ check-py:
 	uv run pyright
 	uv run pytest --cov
 
-# The web checks (Biome, TypeScript, Vitest with 90 % coverage). The openapi check comes with
-# the typed client (18.2).
+# The API's schema, and the web client's types and fixtures, which are made from it: committed,
+# and regenerated with `make openapi` after any change to the API's routes.
+check-openapi:
+	uv run python -m udl.interfaces.api.openapi --check web/packages/api/openapi.json
+
+openapi:
+	uv run python -m udl.interfaces.api.openapi web/packages/api/openapi.json
+	pnpm -C web --filter @udl/api run generate
+
+# The web checks (Biome, TypeScript, Vitest with 90 % coverage, and the generated files, which
+# the API's schema is).
 check-web:
 	pnpm -C web install --frozen-lockfile
 	pnpm -C web check

@@ -117,11 +117,16 @@ class PluginRegistry:
 
     @classmethod
     def discover(
-        cls, plugin_dirs: Iterable[Path] = (), *, kinds: Iterable[PluginKind[Any]] = PLUGIN_KINDS
+        cls,
+        plugin_dirs: Iterable[Path] = (),
+        *,
+        kinds: Iterable[PluginKind[Any]] = PLUGIN_KINDS,
+        builtin_only: bool = False,
     ) -> Self:
-        """A registry with every installed plugin, then the plugins in `plugin_dirs`."""
+        """A registry with every installed plugin, then the plugins in `plugin_dirs` — udl's own
+        only with `builtin_only` (what the API's schema is made from, so it is udl's own)."""
         registry = cls(kinds)
-        registry.load_entry_points()
+        registry.load_entry_points(builtin_only=builtin_only)
         for directory in plugin_dirs:
             registry.load_dir(directory)
         return registry
@@ -193,11 +198,14 @@ class PluginRegistry:
             )
         plugins[name] = _Entry(cls, info)
 
-    def load_entry_points(self) -> None:
-        """Register the plugins every installed package publishes, udl's own first."""
+    def load_entry_points(self, *, builtin_only: bool = False) -> None:
+        """Register the plugins every installed package publishes, udl's own first — udl's own
+        only with `builtin_only`."""
         for kind in self._kinds:
             found = sorted(entry_points(group=kind.group), key=_builtin_first)
             for entry_point in found:
+                if builtin_only and not _is_builtin(entry_point):
+                    continue
                 self._load_entry_point(kind, entry_point)
 
     def load_dir(self, directory: Path) -> None:

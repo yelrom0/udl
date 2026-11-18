@@ -124,6 +124,17 @@ def test_each_kind_only_loads_its_own_entry_point_group(install: Install) -> Non
     assert registry.plugins(GADGETS) == []
 
 
+def test_builtin_only_leaves_other_packages_plugins_out(install: Install) -> None:
+    install({"udl_test.widgets": "gear = {module}:Gear"}, GEAR.format(spin="installed"))
+
+    registry = PluginRegistry.discover(kinds=[WIDGETS, DATABASES], builtin_only=True)
+
+    # (udl's own plugins are still there; another package's are not, so what is made from this
+    # registry — the API's schema — is udl's own, the same on every machine.)
+    assert registry.plugins(WIDGETS) == []
+    assert "sqlite" in {info.name for info in registry.plugins(DATABASES)}
+
+
 def test_a_plugin_file_in_a_plugin_dir_is_loaded(plugin_dir: Path) -> None:
     path = write_plugin(plugin_dir, "gears.py", GEAR.format(spin="local"))
     registry = PluginRegistry([WIDGETS])
