@@ -1,7 +1,7 @@
 """
 --------------
 - openapi.py -
--------------
+--------------
 
 The API's OpenAPI schema, as a file: `python -m udl.interfaces.api.openapi [--check] PATH`.
 

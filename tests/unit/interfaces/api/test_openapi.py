@@ -1,7 +1,7 @@
 """
 -------------------
 - test_openapi.py -
-------------------
+-------------------
 
 udl/interfaces/api/openapi.py: the API's schema as a file — the same on every machine — and
 `--check`, which `make check` runs so the committed one, and the web client's types, stay current.
