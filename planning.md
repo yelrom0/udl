@@ -311,7 +311,7 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
 
 - [ ] **Phase 18: Web UI foundations & UI plugins**: pulled forward and built now as **24.1** (see "Next to build")
   - [~] 18.1 `web/` pnpm workspace and tooling: Vite + SWC, TypeScript strict, Biome, Vitest (+ coverage gate), Playwright, Tailwind CSS + daisyUI; `make web`, `make e2e`, and `make check` runs the web checks
-  - [ ] 18.2 Typed API client generated from udl's OpenAPI schema (`openapi-typescript` + `openapi-fetch`); `make check` fails when it is stale
+  - [~] 18.2 Typed API client generated from udl's OpenAPI schema (`openapi-typescript` + `openapi-fetch`); `make check` fails when it is stale
   - [~] 18.3 FastAPI serves the UI at `/ui` (from the package, SPA fallback, CSP, cache headers), and a page saying how to build it when it isn't built
   - [ ] 18.4 Web sessions: sign in with the API key → a session cookie; a CSRF header and an Origin check on writes
   - [ ] 18.5 The shell: layout, TanStack Router (file routes, auth guard, a splat route for plugin pages), Zustand stores, light / dark / system theme
@@ -4205,6 +4205,49 @@ timeout: 5m
     difference;
   - `web/packages/api/src/*.test.ts`: the headers, the errors, and `FakeUdl`'s typing.
 - Done when: `make check` fails if `openapi.json` or `schema.d.ts` is out of date.
+- **Built (deepseek-a, 2026-11-19, PR #N):** the schema, the client and the fake.
+  - `src/udl/interfaces/api/openapi.py`: `schema()`, `render()` (two-space JSON, keys sorted, a last
+    newline) and `main([--check] PATH)`; `--help` and a missing path are said and answered with 0 and 2,
+    an out-of-date or missing file with 1 (it says the command that fixes it).
+  - `Settings.defaults()` (a context variable makes `settings_customise_sources` return the init source
+    alone, so no config file and no `UDL_*` variable is read) and
+    `PluginRegistry.discover(builtin_only=True)` (`load_entry_points(builtin_only=True)` skips other
+    packages' entry points; udl's own are found by distribution name, as before). The schema is made
+    with `create_app(Settings.defaults(), make_service=lambda s: UDLService(s, registry=registry))`,
+    so the routes are udl's own operations' (49 paths, 69 operations today).
+  - `web/packages/api`: `openapi.json` (committed, 400 KB), `scripts/generate.mjs` (writes
+    `src/schema.d.ts` from `openapi-typescript`, `src/operations.ts` — each operationId's method and
+    path — and `src/fixtures.ts`, a sample of each of the 16 `list_…` answers, made from the schema's
+    required fields and defaults; `--check` fails on any difference), `src/client.ts`
+    (`createUdlClient`, `call(id, body, params)`, the typed `client`, `UdlError`, `ErrorInfo`,
+    `RequestBody`/`PathParams`/`ResponseBody`), `src/testing.ts` (`FakeUdl`: `handle`, `calls`,
+    `fetch`, `api()`), `src/index.ts` and `./testing`.
+  - `make check` runs a new `check-openapi` (the Python `--check`) and `pnpm -C web check` now runs
+    `check-generated` first (the three generated files); `make openapi` regenerates both.
+  - Tests: `tests/unit/interfaces/api/test_openapi.py` (determinism, sorted keys, a config file and a
+    `UDL_PLUGIN_DIRS`/`UDL_CONFIG` that add a plugin — and change nothing; `--check` on a stale, a
+    missing and a current file; the committed `openapi.json` being current) and
+    `web/packages/api/src/{client,testing}.test.ts` (18 tests: the headers of a read and of a write,
+    through `call` and through the typed client; a 204; `UdlError` with its `ErrorInfo` and status, and
+    a status that is not udl's; path parameters filled and encoded, and a missing one refused;
+    `FakeUdl`'s fixtures, handlers, recorded calls and unknown routes). Coverage: 100 % lines, 97.8 %
+    branches.
+  - Decisions:
+    - **`call(id, body, params)` and not only `call(name, body)`:** 36 of the 69 operations have a path
+      parameter, and `openapi-fetch` alone cannot send those without a `fetch` that knows the route;
+      `call` fills and encodes them, and `client` stays there for what a body and path parameters do
+      not describe (a stream, a query list). It sends with plain `fetch` (not `openapi-fetch`'s
+      middleware), so `call` and `client` share the base URL, the cookie and the CSRF rule but not the
+      request plumbing.
+    - **`fixtures.ts` is generated, not hand-written:** 16 list records would be 300 lines of
+      hand-typed JSON that the schema already knows, and they would drift; the generator fills required
+      fields and the ones with a `default` (which `openapi-typescript` makes required), one item per
+      list.
+    - **The generated files are outside Biome** (`schema.d.ts`, `operations.ts`, `fixtures.ts`,
+      `openapi.json`): they are written by `openapi-typescript` and the Python writer, so formatting
+      them would make `--check` and `biome ci` disagree; `tsc` and the tests still check them.
+    - `openapi.json` is 400 KB and its diff is noisy on purpose: a route change is what a reviewer of
+      the API's shape wants to see.
 
 **18.3 Serving the UI** · needs 18.1
 - Build: `udl/interfaces/web/app.py`, added by `create_app()` when `[web] enabled`. It serves:
