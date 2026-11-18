@@ -15,7 +15,9 @@ It answers the way the harnesses do:
   `result` (the stream-json shape), one per line, with the prompt echoed back.
 
 `FAKE_HARNESS_FAILS=1` makes a turn exit 1 after its first line, and `FAKE_HARNESS_LIMITED=1` makes
-it print a usage-limit result, so a runner's error paths have something to parse.
+it print a usage-limit result whose `resets_at` says when the limit lifts (an epoch second, as the
+harnesses say it in a line of text), so a runner's error paths have something to parse.
+`FAKE_HARNESS_SLOW=1` makes a turn wait before it answers, so a runner's stop can end it.
 """
 
 # ruff: noqa: T201  (a program's output is the point: the runners' tests read it)
@@ -24,9 +26,14 @@ it print a usage-limit result, so a runner's error paths have something to parse
 import json
 import os
 import sys
+import time
 
 VERSION = "fake-harness 1.0.0"
 """What `--version` prints."""
+RESETS_AT = 1_800_000_000
+"""When the limit lifts (2027-01-15T08:00:00Z), as the harnesses print it."""
+SLOW = 30.0
+"""How long `FAKE_HARNESS_SLOW=1` waits (long enough that a test's stop comes first)."""
 
 
 def main(argv: list[str]) -> int:
@@ -57,8 +64,21 @@ def turn() -> int:
         print(json.dumps({"type": "result", "subtype": "error", "is_error": True}), flush=True)
         return 1
     if os.environ.get("FAKE_HARNESS_LIMITED") == "1":
-        print(json.dumps({"type": "result", "subtype": "error", "is_error": True, "limited": True}))
+        print(
+            json.dumps(
+                {
+                    "type": "result",
+                    "subtype": "error",
+                    "is_error": True,
+                    "limited": True,
+                    "resets_at": RESETS_AT,
+                    "result": f"Your limit resets at {RESETS_AT}|{RESETS_AT}.",
+                }
+            )
+        )
         return 0
+    if os.environ.get("FAKE_HARNESS_SLOW") == "1":
+        time.sleep(SLOW)
     print(
         json.dumps(
             {

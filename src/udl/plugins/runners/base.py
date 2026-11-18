@@ -12,15 +12,16 @@ once (start), a turn is sent (send) and its events are read as they come, and th
 stopped (stop). health, models, install and login are the harness's own machine and account,
 which 25.11 puts on the API and the CLI.
 
-A turn is a stream of AgentEvents, ending with one TurnEnded that says how it ended, and a runner
-that cannot finish says so in the stream (RunnerLimited, RunnerFailed) rather than raising into
-whatever is reading it.
+A turn is a stream of AgentEvents, ending with exactly one TurnEnded that says how it ended, and a
+runner that cannot finish says so in the stream rather than raising into whatever is reading it:
+a RunnerLimited or a RunnerFailed comes first, then the TurnEnded that ends the turn
+(TurnReason.LIMITED or TurnReason.ERROR), which is always the last event a turn gives. Nothing
+follows a TurnEnded.
 
 tests/contract/test_runner_contract.py is the behaviour every runner must have.
 """
 
 # System Imports
-import logging
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from decimal import Decimal
@@ -35,8 +36,6 @@ from udl.clock import Clock
 from udl.errors import PluginError
 from udl.hosts.shell import HostShell, Interaction
 from udl.plugins.requirements import Requirement
-
-log = logging.getLogger(__name__)
 
 __all__ = [
     "AgentEvent",
@@ -174,8 +173,8 @@ class TurnEnded(AgentEvent):
 
 
 class RunnerLimited(AgentEvent):
-    """The harness's account is out of quota: the turn ended, and nothing runs again until
-    `until` (when the harness says; None: it did not say)."""
+    """The harness's account is out of quota: nothing runs again until `until` (when the harness
+    says; None: it did not say). The turn's TurnEnded(reason=LIMITED) follows it, last."""
 
     kind: Literal["runner_limited"] = "runner_limited"
     until: AwareDatetime | None = None
@@ -185,8 +184,8 @@ class RunnerLimited(AgentEvent):
 
 
 class RunnerFailed(AgentEvent):
-    """The harness failed, so the turn ended: its message is what it said (or what udl could
-    see), never a secret."""
+    """The harness failed: its message is what it said (or what udl could see), never a secret.
+    The turn's TurnEnded(reason=ERROR) follows it, last."""
 
     kind: Literal["runner_failed"] = "runner_failed"
     message: str

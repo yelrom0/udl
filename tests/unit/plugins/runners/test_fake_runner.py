@@ -106,6 +106,19 @@ async def test_a_script_may_ask_udl_as_an_agent_would() -> None:
     assert events[2].text == "There are 0 sites."
 
 
+async def test_a_session_outlives_the_runner_that_started_it(runner: FakeRunner) -> None:
+    session = await runner.start(SessionSpec(cwd="/w"))
+    other = FakeRunner(
+        FakeRunnerOptions(), shell=runner.shell, clock=FakeClock(), store=runner.store
+    )
+
+    events = [event async for event in other.send(session, "again")]
+
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.DONE
+    assert other.sessions == {session.id: SessionSpec(cwd="/w")}
+
+
 async def test_a_session_it_never_started_ends_with_an_error(runner: FakeRunner) -> None:
     stranger = SessionRef(runner="fake", id="nope", cwd="/w", host="local")
 
@@ -120,7 +133,10 @@ async def test_it_says_its_sessions_and_how_many_turns_it_was_sent(runner: FakeR
 
     assert runner.sessions == {session.id: SessionSpec(cwd="/w", model="m")}
     assert runner.turns == 0
-    assert runner.health is not None
+    health = await runner.health()
+    assert health.installed
+    assert health.signed_in
+    assert health.detail == "scripted"
 
 
 async def test_a_script_that_asks_udl_without_one_says_so(runner: FakeRunner) -> None:
@@ -169,7 +185,10 @@ def test_the_harness_can_be_told_to_fail_or_to_be_limited() -> None:
     )
 
     assert failed.returncode == 1
-    assert json.loads(limited.stdout.splitlines()[-1])["limited"] is True
+    said = json.loads(limited.stdout.splitlines()[-1])
+    assert said["limited"] is True
+    assert said["resets_at"] == 1_800_000_000
+    assert "resets at 1800000000" in said["result"]
 
 
 def test_the_harness_says_whether_it_is_signed_in() -> None:
