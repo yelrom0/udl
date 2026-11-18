@@ -79,3 +79,8 @@ jobs:
 
       - name: make e2e
         run: make e2e
+
+      # The built UI is package data (18.3): `uv build` must put it in the wheel. `make e2e` has
+      # just built it, so this check runs rather than skips.
+      - name: The wheel holds the built UI
+        run: uv run pytest tests/interface/web/test_serving.py -q

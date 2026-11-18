@@ -84,10 +84,11 @@ def test_the_config_is_what_the_server_reads(tmp_path: Path) -> None:
     assert f'url = "sqlite+aiosqlite:///{tmp_path / "udl.db"}"' in text
     assert f'download_dir = "{tmp_path / "downloads"}"' in text
     assert f'plugin_dirs = ["{E2E_PLUGINS}"]' in text
-    # (Secrets are the memory store, so no keyring is opened; the UI is 18.3's, and its
-    # plugins are looked for under the temp dir, not the user's ~/.config/udl/ui-plugins.)
+    # (Secrets are the memory store, so no keyring is opened; the web UI is served — a browser is
+    # what most e2e tests are — and its plugins are looked for under the temp dir, not the user's
+    # ~/.config/udl/ui-plugins.)
     assert '[secrets]\nstore = "memory"' in text
-    assert "[web]\nenabled = false" in text
+    assert "[web]\nenabled = true" in text
     assert f'ui_plugin_dirs = ["{tmp_path / "ui-plugins"}"]' in text
 
 

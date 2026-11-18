@@ -80,7 +80,7 @@ host = "127.0.0.1"
 port = {port}
 
 [web]
-enabled = false
+enabled = true
 ui_plugin_dirs = ["{ui}"]
 
 [automations]
@@ -90,9 +90,8 @@ enabled = false
 
 def write_config(root: Path, port: int) -> Path:
     """The config `udl serve` reads: a SQLite database and downloads under `root`, the e2e
-    plugins as local ones, the memory secret store, and udl on `port`. `[web] enabled = false`:
-    the shell is served from 18.3, and the harness's job is to have a udl for a browser to talk
-    to."""
+    plugins as local ones, the memory secret store, and udl on `port`. The web UI is served (a
+    browser is what most of the e2e tests are), from the build `make e2e` makes first."""
     path = root / "config.toml"
     path.write_text(
         CONFIG.format(
