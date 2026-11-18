@@ -1,7 +1,7 @@
 """
------------
+------------
 - shell.py -
------------
+------------
 
 Hosts: the machines agents run on, and the HostShell every action on one goes through.
 
@@ -541,10 +541,11 @@ async def _forwarded_ssh(host: Host, port: int) -> AsyncGenerator[str]:
     finally:
         await _stopped(process)
         # (Drain its stderr: a pipe nobody reads is left open, and asyncio warns about the
-        # transport at the next collection.)
+        # transport at the next collection. Bounded, because a ProxyCommand or ProxyJump helper
+        # from ~/.ssh/config can outlive ssh and hold the pipe open.)
         if process.stderr is not None:
-            with contextlib.suppress(Exception):
-                await process.stderr.read()
+            with contextlib.suppress(Exception, TimeoutError):
+                await asyncio.wait_for(process.stderr.read(), END.total_seconds())
 
 
 async def _tunnel_up(process: asyncio.subprocess.Process, local: int) -> None:

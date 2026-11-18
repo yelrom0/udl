@@ -1,7 +1,7 @@
 """
------------
+---------------
 - __init__.py -
------------
+---------------
 
 Hosts: the machines agents run on, as one module. `udl.hosts` re-exports what the rest of udl
 imports (the `Host` record, the `HostShell` seam, the shells, and the operations' models), so a

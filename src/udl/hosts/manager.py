@@ -1,7 +1,7 @@
 """
--------------------
+--------------
 - manager.py -
--------------------
+--------------
 
 Hosts (UDLService.hosts): the machines agents run on, as the operations see them.
 
