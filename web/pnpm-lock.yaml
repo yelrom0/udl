@@ -213,7 +213,7 @@ importers:
         specifier: 5.1.0
         version: 5.1.0(vitest@5.1.0)
       fast-check:
-        specifier: ^4.10.2
+        specifier: 4.10.2
         version: 4.10.2
       jsdom:
         specifier: 31.0.1
