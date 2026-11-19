@@ -38,13 +38,19 @@ from udl.automations.runtime import AutomationRuntime
 from udl.config import Settings
 from udl.core.operations import Caller, current_caller
 from udl.core.service import ServiceFactory, UDLService
-from udl.errors import ErrorCode, ErrorInfo, UDLError, Unauthorized
+from udl.errors import ErrorCode, ErrorInfo, NotAllowed, UDLError, Unauthorized
 from udl.integrations.accounts import CALLBACK_PATH
 from udl.interfaces.adapters import add_routes
 from udl.interfaces.api.routes import accounts, chains, downloads, events, sites, system
 from udl.interfaces.mcp.server import create_server
 from udl.interfaces.security import API_KEY_HEADER, check_api_key
 from udl.interfaces.web.app import add_web_routes
+from udl.interfaces.web.sessions import (
+    add_session_routes,
+    authenticate,
+    check_write_origin,
+    session_store,
+)
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +71,7 @@ _STATUS: Final[dict[ErrorCode, int]] = {
     ErrorCode.AMBIGUOUS_ACCOUNT: 400,  # (which account?)
     ErrorCode.CHALLENGE_REQUIRED: 409,  # (an anti-bot check waits for the user)
     ErrorCode.PROVIDER_UNAVAILABLE: 503,  # (an AI provider does not answer)
+    ErrorCode.RATE_LIMITED: 429,  # (too many sign-in attempts)
 }
 
 _LOCAL_HOSTS: Final = frozenset({"localhost"})
@@ -86,7 +93,9 @@ _api_key = APIKeyHeader(
 
 
 async def require_api_key(request: Request, key: Annotated[str | None, Security(_api_key)]) -> None:
-    check_api_key(request.app.state.settings, key)
+    # (The key's header, or a live session's cookie: udl.interfaces.web.sessions. The header is
+    # asked for here as well as read there, so the schema documents it.)
+    authenticate(request.app.state.settings, request, given=key)
 
 
 def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService) -> FastAPI:
@@ -117,6 +126,7 @@ def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService)
     )
     app.state.settings = settings
     app.state.service = service
+    app.state.sessions = session_store(settings)
     # (The event stream before the generated routes: /events/stream is not /events/{id}.)
     for router in (downloads.router, sites.router, chains.router, system.router, events.router):
         app.include_router(router)
@@ -128,6 +138,7 @@ def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService)
     app.router.routes.insert(0, Route(CALLBACK_PATH, accounts.callback, methods=["GET"]))
     if settings.web.enabled:
         add_web_routes(app, settings)  # (the web UI at /ui, which needs no API key)
+        add_session_routes(app, settings)  # (signing in, which cannot need the key)
 
     @app.exception_handler(UDLError)
     async def udl_error(request: Request, error: UDLError) -> JSONResponse:
@@ -161,12 +172,21 @@ class KeyRequired:
         self.settings = settings
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        headers = Headers(scope=scope)
         try:
-            check_api_key(self.settings, Headers(scope=scope).get(API_KEY_HEADER))
+            # (The key alone: no page speaks MCP with a cookie. A write's origin is still
+            # checked, as everywhere.)
+            check_write_origin(self.settings, scope["method"], headers)
+            check_api_key(self.settings, headers.get(API_KEY_HEADER))
         except Unauthorized as e:
             refused = JSONResponse(
                 e.to_info().model_dump(mode="json"), 401, {"WWW-Authenticate": API_KEY_HEADER}
             )
+            await refused(scope, receive, send)
+            return
+        except NotAllowed as e:
+            # (A write from another origin: answered here, as the API's own handler would.)
+            refused = JSONResponse(e.to_info().model_dump(mode="json"), 403)
             await refused(scope, receive, send)
             return
         await self.app(scope, receive, send)
