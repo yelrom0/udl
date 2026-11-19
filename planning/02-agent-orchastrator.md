@@ -710,7 +710,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   runner's event union with its `kind` discriminator) and `orch/records.py` (`Agent` `orch_agent`, `AgentSession`
   `orch_agent_session` — runtime, never synced — and `SessionEvent` `orch_session_event` — runtime history, synced
   once it happened; `AgentRecords` with the forest's rules and `SessionRecords` with `current()` and
-  `transcript()`). `OrchSettings.session_days = 30`; `Orch.record_kinds()` brings all five. Tests:
+  `transcript()`). `OrchSettings.session_days = 30`; `Orch.record_kinds()` brings all eight (26.3's five and these three). Tests:
   `tests/unit/plugins/apps/orch/test_agents.py` (40: what an agent holds and refuses, every derived status
   including a limited session whose quota is back and a failed one waiting on a person, the manager that is not
   there / not a manager / whose chain reaches itself / itself, a manager's reports, the session's current one and
