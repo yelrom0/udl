@@ -143,6 +143,12 @@ class PullCursor(BaseModel):
     """The ETag of its conversation's comments (see checks_etag)."""
     review_etag: str | None = None
     """The ETag of the comments on its diff (see checks_etag)."""
+    checks_paged: bool = False
+    """Whether its checks took more than a page, so page one's ETag says nothing (read whole)."""
+    comments_paged: bool = False
+    """Whether its conversation took more than a page (see checks_paged)."""
+    review_paged: bool = False
+    """Whether its diff's comments took more than a page (see checks_paged)."""
 
 
 class GitHubState(BaseModel):
@@ -342,7 +348,8 @@ class OpenPullRequest(_Model):
     body: str | None = None
     """What it says."""
     draft: bool = False
-    """Whether to open it as a draft."""
+    """Whether to open it as a draft (a pull already open for that head cannot be made one:
+    GitHub's REST API has no such change)."""
 
 
 class CommentRequest(_Model):
@@ -471,10 +478,13 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
         without the pull itself changing (a check finishing, a comment, a rerun), and a 304 for
         one that did not costs no rate limit. The first look at a repository is its baseline:
         what is already there is not news."""
+        # (The first look is the one with no ETag yet. A repository that had no pulls then is
+        # not a baseline for the ones it gets after: `state.etags` says it was looked at, so the
+        # first pull opened there is news.)
+        first = repo not in state.etags
         changed = await client.pulls_if_changed(repo, etag=state.etags.get(repo))
         if changed.etag is not None:
             state.etags[repo] = changed.etag
-        first = not any(key.startswith(f"{repo}#") for key in state.pulls)
         for pull in changed.pulls or []:
             key = f"{repo}#{pull.number}"
             before = state.pulls.get(key)
@@ -489,14 +499,14 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
             name, _, number = key.rpartition("#")
             if name != repo or before.state != "open":
                 continue
-            checks, checks_etag = await client.checks_if_changed(
-                repo, before.head_sha, etag=before.checks_etag
+            checks, checks_etag, checks_paged = await client.checks_if_changed(
+                repo, before.head_sha, etag=before.checks_etag, paged=before.checks_paged
             )
-            comments, comments_etag = await client.comments_if_changed(
-                repo, int(number), etag=before.comments_etag
+            comments, comments_etag, comments_paged = await client.comments_if_changed(
+                repo, int(number), etag=before.comments_etag, paged=before.comments_paged
             )
-            review, review_etag = await client.review_comments_if_changed(
-                repo, int(number), etag=before.review_etag
+            review, review_etag, review_paged = await client.review_comments_if_changed(
+                repo, int(number), etag=before.review_etag, paged=before.review_paged
             )
             if checks is None and comments is None and review is None:
                 continue  # (three 304s: nothing changed, and they cost no rate limit)
@@ -512,6 +522,9 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
                 "checks_etag": checks_etag,
                 "comments_etag": comments_etag,
                 "review_etag": review_etag,
+                "checks_paged": checks_paged,
+                "comments_paged": comments_paged,
+                "review_paged": review_paged,
             }
             if checks is not None:
                 update["checks"] = _digest_of(checks)
@@ -527,17 +540,24 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
     ) -> PullCursor:
         """`cursor` with the checks and comments `pull` has now, and nothing published (a
         repository's first look is its baseline)."""
-        checks, checks_etag = await client.checks_if_changed(repo, pull.head.sha)
-        comments, comments_etag = await client.comments_if_changed(repo, pull.number)
-        review, review_etag = await client.review_comments_if_changed(repo, pull.number)
+        checks, checks_etag, checks_paged = await client.checks_if_changed(repo, pull.head.sha)
+        comments, comments_etag, comments_paged = await client.comments_if_changed(
+            repo, pull.number
+        )
+        review, review_etag, review_paged = await client.review_comments_if_changed(
+            repo, pull.number
+        )
         return cursor.model_copy(
             update={
                 "checks": _digest_of(checks or []),
                 "checks_etag": checks_etag,
+                "checks_paged": checks_paged,
                 "comments": _digest_of(comments or []),
                 "comments_etag": comments_etag,
+                "comments_paged": comments_paged,
                 "review": _digest_of(review or []),
                 "review_etag": review_etag,
+                "review_paged": review_paged,
             }
         )
 
@@ -680,13 +700,20 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
         head = _head_ref(repo, request.head) or request.head
         opened = await client.list_pulls(repo, state="open", head=head)
         if opened:
+            if request.draft and not opened[0].draft:
+                raise NotAllowed(
+                    f"{repo}#{opened[0].number} is open and is not a draft",
+                    hint=(
+                        "GitHub's REST API cannot turn a pull request into a draft; do it on "
+                        "github.com, or open a new one as a draft"
+                    ),
+                )
             found = await client.update_pull(
                 repo,
                 opened[0].number,
                 title=request.title,
                 body=request.body,
                 base=request.base,
-                draft=True if request.draft and not opened[0].draft else None,
             )
         else:
             base = request.base

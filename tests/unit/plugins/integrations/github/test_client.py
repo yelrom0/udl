@@ -249,19 +249,19 @@ async def test_a_commits_checks_are_asked_about_again_only_when_they_changed(
 ) -> None:
     gh.set_checks("abc1234", check_run_body("pytest", "failure"))
 
-    checks, etag = await client.checks_if_changed(REPO, "abc1234")
+    checks, etag, paged = await client.checks_if_changed(REPO, "abc1234")
 
     assert checks is not None
     assert [run.name for run in checks] == ["pytest"]
-    assert etag is not None
+    assert (etag is not None, paged) == (True, False)
 
-    again, same = await client.checks_if_changed(REPO, "abc1234", etag=etag)
+    again, same, paged = await client.checks_if_changed(REPO, "abc1234", etag=etag)
 
     assert again is None  # (a 304: nothing changed, and it costs no rate limit)
-    assert same == etag
+    assert (same, paged) == (etag, False)
 
     gh.finish_check("abc1234", "success")
-    changed, newer = await client.checks_if_changed(REPO, "abc1234", etag=etag)
+    changed, newer, paged = await client.checks_if_changed(REPO, "abc1234", etag=etag)
 
     assert changed is not None
     assert [run.conclusion for run in changed] == ["success"]
@@ -273,15 +273,15 @@ async def test_a_pulls_comments_are_asked_about_again_only_when_they_changed(
 ) -> None:
     gh.comment("Looks good")
 
-    comments, etag = await client.comments_if_changed(REPO, 7)
+    comments, etag, _ = await client.comments_if_changed(REPO, 7)
 
     assert comments is not None
     assert [note.body for note in comments] == ["Looks good"]
     assert etag is not None
-    assert await client.comments_if_changed(REPO, 7, etag=etag) == (None, etag)
+    assert await client.comments_if_changed(REPO, 7, etag=etag) == (None, etag, False)
 
     gh.comment("And another")
-    changed, newer = await client.comments_if_changed(REPO, 7, etag=etag)
+    changed, newer, _ = await client.comments_if_changed(REPO, 7, etag=etag)
 
     assert changed is not None
     assert [note.body for note in changed] == ["Looks good", "And another"]
@@ -293,15 +293,15 @@ async def test_the_comments_on_a_pulls_diff_are_asked_about_again_only_when_they
 ) -> None:
     gh.review_comment("This line is wrong")
 
-    notes, etag = await client.review_comments_if_changed(REPO, 7)
+    notes, etag, _ = await client.review_comments_if_changed(REPO, 7)
 
     assert notes is not None
     assert [note.body for note in notes] == ["This line is wrong"]
     assert etag is not None
-    assert await client.review_comments_if_changed(REPO, 7, etag=etag) == (None, etag)
+    assert await client.review_comments_if_changed(REPO, 7, etag=etag) == (None, etag, False)
 
     gh.review_comment("And this one")
-    changed, _ = await client.review_comments_if_changed(REPO, 7, etag=etag)
+    changed, _, _ = await client.review_comments_if_changed(REPO, 7, etag=etag)
 
     assert changed is not None
     assert [note.body for note in changed] == ["This line is wrong", "And this one"]
@@ -321,13 +321,48 @@ async def test_the_pulls_are_read_a_page_at_a_time(client: GitHubClient, gh: Fak
     assert last is None
 
 
-async def test_a_pull_s_base_and_draft_state_are_changed(
+async def test_a_pull_s_base_is_changed(client: GitHubClient, gh: FakeGitHub) -> None:
+    found = await client.update_pull(REPO, 7, base="develop")
+
+    assert found.base.ref == "develop"
+    assert gh.bodies[-1] == {"base": "develop"}
+
+
+async def test_a_long_list_is_read_whole_when_a_later_page_changed(
     client: GitHubClient, gh: FakeGitHub
 ) -> None:
-    found = await client.update_pull(REPO, 7, base="develop", draft=True)
+    """Each page has its own ETag: a comment that lands on the second page leaves the first as it
+    was, so a 304 from page one says nothing about it."""
+    gh.page_size = 2
+    for text in ("one", "two", "three"):
+        gh.comment(text)
+    found, etag, paged = await client.comments_if_changed(REPO, 7)
 
-    assert (found.base.ref, found.draft) == ("develop", True)
-    assert gh.bodies[-1] == {"base": "develop", "draft": True}
+    assert found is not None
+    assert ([note.body for note in found], paged) == (["one", "two", "three"], True)
+
+    gh.comment("four")
+    gh.calls.clear()
+    changed, _, paged = await client.comments_if_changed(REPO, 7, etag=etag, paged=paged)
+
+    assert changed is not None
+    assert [note.body for note in changed] == ["one", "two", "three", "four"]
+    assert paged is True
+    # (page one is asked for once: what it answered is the first page of the walk)
+    assert (
+        len([call for call in gh.calls if call.startswith("GET /repos/acme/widgets/issues/7")]) == 2
+    )
+
+
+async def test_a_list_of_one_page_is_a_304(client: GitHubClient, gh: FakeGitHub) -> None:
+    gh.comment("one")
+    found, etag, paged = await client.comments_if_changed(REPO, 7)
+
+    assert (found is None, paged) == (False, False)
+
+    unchanged, same, paged = await client.comments_if_changed(REPO, 7, etag=etag, paged=paged)
+
+    assert (unchanged, same, paged) == (None, etag, False)
 
 
 async def test_a_merge_says_who_merged_it(client: GitHubClient, gh: FakeGitHub) -> None:

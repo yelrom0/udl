@@ -471,6 +471,67 @@ async def test_a_pull_nothing_happened_to_costs_no_rate_limit(
     assert set(fake.conditionals) == {304}
 
 
+async def test_a_comment_on_a_later_page_is_published(
+    github: GitHubIntegration, fake: FakeGitHub, clock: FakeClock
+) -> None:
+    """A pull's comments are paged, and a new one lands on the last page: a 304 from page one says
+    nothing about it, so a list longer than a page is read whole."""
+    fake.page_size = 2
+    for text in ("one", "two", "three"):
+        fake.comment_as(text)
+    state = MemoryState(GitHubIntegration.state_model)
+    sink = RecordingSink(GitHubIntegration)
+    task = watching(github, handle(), sink, state)
+    try:
+        await until(lambda: bool(state.saved), clock)  # (the baseline)
+        fake.comment_as("four")
+
+        await until(lambda: any(e.event_type == "github.pr.commented" for e in sink.emitted), clock)
+    finally:
+        task.cancel()
+        await asyncio.wait([task])
+
+    said = [e.data["body"] for e in sink.emitted if e.event_type == "github.pr.commented"]
+    # (The digest says the list changed; each comment's dedupe key is what keeps the old ones
+    # from being published twice.)
+    assert "four" in said
+
+
+async def test_a_pull_opened_after_an_empty_first_look_is_published(
+    github: GitHubIntegration, fake: FakeGitHub, clock: FakeClock
+) -> None:
+    """A repository with no pulls at its first look is not a baseline for the ones it gets after:
+    the first of them is news."""
+    fake.pulls[REPO].clear()
+    state = MemoryState(GitHubIntegration.state_model)
+    sink = RecordingSink(GitHubIntegration)
+    task = watching(github, handle(), sink, state)
+    try:
+        await until(lambda: bool(state.saved), clock)
+        fake.open_pull(title="The first one")
+
+        await until(lambda: any(e.event_type == "github.pr.opened" for e in sink.emitted), clock)
+    finally:
+        task.cancel()
+        await asyncio.wait([task])
+
+    opened = [e for e in sink.emitted if e.event_type == "github.pr.opened"]
+    assert [e.data["title"] for e in opened] == ["The first one"]
+
+
+async def test_a_pull_that_is_open_cannot_be_made_a_draft(
+    github: GitHubIntegration, fake: FakeGitHub
+) -> None:
+    """GitHub's REST API changes a pull's title, body, base and state, not whether it is a draft
+    (that needs GraphQL), so a draft asked for an open pull is refused rather than ignored."""
+    with pytest.raises(NotAllowed, match="draft"):
+        await github.open_pull(
+            handle(), OpenPullRequest(repo=REPO, head="feat/widgets", title="A", draft=True)
+        )
+
+    assert not [call for call in fake.calls if call.startswith(("PATCH", "POST"))]
+
+
 async def test_a_pull_whose_head_moved_is_left_to_the_repository(
     github: GitHubIntegration, fake: FakeGitHub, clock: FakeClock
 ) -> None:

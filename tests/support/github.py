@@ -437,7 +437,13 @@ class FakeGitHub:
         pull = self.pull_of(repo, int(request.path_params["number"]))
         if request.method == "PATCH":
             body = await self._read(request)
-            changes = {name: value for name, value in body.items() if value is not None}
+            # (`draft` is not a REST field: GitHub ignores one, and so does the fake, so a
+            # client that sends it is not told it worked.)
+            changes = {
+                name: value
+                for name, value in body.items()
+                if value is not None and name in ("title", "body", "base", "state")
+            }
             base = changes.pop("base", None)
             update: dict[str, object] = dict(changes)
             if base is not None:  # (GitHub is given a branch's name, and answers with the ref)
