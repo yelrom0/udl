@@ -202,8 +202,10 @@ from udl.plugins.registry import (
     DATABASES,
     DOWNLOADERS,
     INTEGRATIONS,
+    PLUGIN_KINDS,
     SECRETS,
     SITES,
+    UI,
     PluginInfo,
     PluginRegistry,
 )
@@ -993,7 +995,10 @@ class UDLService:
 
     def _plugin(self, info: PluginInfo) -> PluginStatus:
         """A plugin, and whether it can run: what it needs is installed and, for a downloader,
-        its options are valid, or, for a site plugin, it starts."""
+        its options are valid, or, for a site plugin, it starts. Also whether it brings a UI."""
+        cls = self.registry.get(
+            next(kind for kind in PLUGIN_KINDS if kind.group == info.kind), info.name
+        )
         domains: list[str] = []
         problem: str | None = None
         if info.kind == DOWNLOADERS.group:
@@ -1016,6 +1021,8 @@ class UDLService:
             missing = unmet(self.registry.get(INTEGRATIONS, info.name).requires)
         elif info.kind == APPS.group:
             missing = unmet(self.registry.get(APPS, info.name).requires)
+        elif info.kind == UI.group:
+            missing = unmet(())
         else:  # a database
             missing = unmet(self.registry.get(DATABASES, info.name).requires)
         return PluginStatus.model_validate(
@@ -1025,6 +1032,7 @@ class UDLService:
                 "missing": missing,
                 "problem": problem,
                 "domains": domains,
+                "ui": getattr(cls, "ui", None) is not None,
             }
         )
 

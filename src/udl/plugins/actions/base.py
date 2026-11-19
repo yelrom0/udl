@@ -47,6 +47,7 @@ from udl.errors import ActionFailed, ConfigError
 from udl.plugins.downloaders.base import CancelToken
 from udl.plugins.requirements import Requirement
 from udl.plugins.secrets.base import SecretStore
+from udl.plugins.ui.base import UIBundle
 
 if TYPE_CHECKING:
     from udl.core.service import UDLService
@@ -141,6 +142,7 @@ class ActionPlugin[O: ActionOptions](ABC):
     options_model: ClassVar[type[ActionOptions]]
     # What it needs installed (`udl plugins list` says what is missing).
     requires: ClassVar[tuple[Requirement, ...]] = ()
+    ui: ClassVar[UIBundle | None] = None  # its UI plugin, if it has one (18.7)
     summary: ClassVar[str] = ""  # what it does, in a line
 
     def __init__(self, service: UDLService) -> None:

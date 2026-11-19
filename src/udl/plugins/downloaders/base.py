@@ -56,6 +56,7 @@ from udl.errors import (
     UnsupportedURL,
 )
 from udl.plugins.requirements import Requirement, unmet
+from udl.plugins.ui.base import UIBundle
 
 # (Moved to udl.process; downloaders import them from here.)
 from udl.process import CancelToken as CancelToken
@@ -452,6 +453,7 @@ class Downloader[O: DownloaderOptions = DownloaderOptions](ABC):
     name: ClassVar[str]
     options_model: ClassVar[type[DownloaderOptions]] = DownloaderOptions
     requires: ClassVar[tuple[Requirement, ...]] = ()
+    ui: ClassVar[UIBundle | None] = None  # its UI plugin, if it has one (18.7)
 
     def __init__(self, options: O | None = None) -> None:
         if options is None:

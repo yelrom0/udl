@@ -4,7 +4,8 @@
 ----------
 
 The web UI at /ui: the shell's build (`src/udl/interfaces/web/dist/`, from `make web`), each UI
-plugin's bundle at /ui/plugins/<name>/, and / sending a browser there.
+plugin's bundle at /ui/plugins/<name>/ (listed, with what each adds, at /ui/plugins.json), and /
+sending a browser there.
 
 The build is package data, so an installed udl serves the shell it was built with; without one
 (a checkout that has not run `make web`), /ui/ says to. The files need no API key, since they
@@ -35,6 +36,9 @@ from starlette.routing import Route
 
 # Local Imports
 from udl.config import Settings
+from udl.plugins.registry import PluginRegistry
+from udl.plugins.ui.base import UIBundle
+from udl.plugins.ui.discovery import ui_bundles, ui_plugins
 
 # The shell's build: where `make web` puts it (and where the package holds it once installed).
 DIST: Final = Path(__file__).parent / "dist"
@@ -83,15 +87,22 @@ def add_web_routes(app: FastAPI, settings: Settings, dist: Path | None = None) -
         return _file(built / "assets", request.path_params["path"], cache=_IMMUTABLE)
 
     async def plugin_file(request: Request) -> Response:
-        bundle = plugin_dir(settings, request.path_params["name"])
+        bundle = plugin_dir(
+            settings, request.app.state.service.registry, request.path_params["name"]
+        )
         if bundle is None:
             return PlainTextResponse("not found", 404, headers=HEADERS)
         return _file(
-            bundle,
+            bundle.dir,
             request.path_params["path"],
             cache=_NO_CACHE,
             if_none_match=request.headers.get("if-none-match"),
         )
+
+    async def plugins(request: Request) -> Response:
+        # (The shell asks for this once a load: what it can put in its pages, and what it cannot.)
+        found = ui_plugins(settings, request.app.state.service.registry)
+        return JSONResponse(found.model_dump(mode="json", by_alias=True), headers=HEADERS)
 
     async def shell(request: Request) -> Response:
         # (A file of the build that is not hashed — a favicon, the manifest — is answered; so is
@@ -109,23 +120,19 @@ def add_web_routes(app: FastAPI, settings: Settings, dist: Path | None = None) -
     for route in (
         Route("/", root, methods=["GET"]),
         Route("/ui/assets/{path:path}", asset, methods=["GET"]),
+        Route("/ui/plugins.json", plugins, methods=["GET"]),
         Route("/ui/plugins/{name}/{path:path}", plugin_file, methods=["GET"]),
         Route("/ui/{path:path}", shell, methods=["GET"]),
     ):
         app.router.routes.append(route)
 
 
-def plugin_dir(settings: Settings, name: str) -> Path | None:
-    """A UI plugin's bundle by name: `<ui_plugin_dirs>/<name>`, when it holds a manifest.json.
-    (18.7 makes the manifest's `name` the name, and adds the plugins' own `ui` and the `udl.ui`
-    entry points to what is found.)"""
+def plugin_dir(settings: Settings, plugins: PluginRegistry, name: str) -> UIBundle | None:
+    """A UI plugin's bundle by name (its manifest's `name`, which need not be its folder's):
+    the one /ui/plugins.json lists, whether a plugin brought it or a folder holds it."""
     if not name or name.startswith(".") or "/" in name or "\\" in name:
         return None
-    for folder in settings.web.ui_plugin_dirs:
-        bundle = folder / name
-        if (bundle / "manifest.json").is_file():
-            return bundle
-    return None
+    return ui_bundles(settings, plugins).get(name)
 
 
 def _file(root: Path, relative: str, *, cache: str, if_none_match: str | None = None) -> Response:

@@ -4757,6 +4757,12 @@
           "source": {
             "$ref": "#/components/schemas/PluginSource",
             "description": "builtin (udl's own), installed (another package's) or local (a file in a plugin dir)."
+          },
+          "ui": {
+            "default": false,
+            "description": "Whether it brings a UI plugin (a bundle the web shell loads, 18.7).",
+            "title": "Ui",
+            "type": "boolean"
           }
         },
         "required": [

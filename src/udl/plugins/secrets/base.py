@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, RootModel, SecretStr, StringConstrai
 from udl.config import SecretsSettings
 from udl.errors import ConfigError, SecretStoreError
 from udl.plugins.requirements import Requirement, unmet
+from udl.plugins.ui.base import UIBundle
 
 if TYPE_CHECKING:
     from udl.plugins.registry import PluginRegistry
@@ -63,6 +64,7 @@ class SecretStore(ABC):
     name: ClassVar[str]  # what [secrets] store names it by, e.g. "keyring"
     # What it needs installed (`udl plugins list` says what is missing).
     requires: ClassVar[tuple[Requirement, ...]] = ()
+    ui: ClassVar[UIBundle | None] = None  # its UI plugin, if it has one (18.7)
 
     def __init__(self, settings: SecretsSettings) -> None:
         self.settings = settings

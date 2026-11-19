@@ -16,7 +16,9 @@
 			"!packages/api/openapi.json",
 			"!packages/api/src/schema.d.ts",
 			"!packages/api/src/operations.ts",
-			"!packages/api/src/fixtures.ts"
+			"!packages/api/src/fixtures.ts",
+			"!packages/sdk/src/manifest.schema.json",
+			"!packages/sdk/src/manifest.ts"
 		]
 	},
 	"formatter": {

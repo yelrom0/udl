@@ -443,6 +443,8 @@ class PluginStatus(_Frozen):
     """What to install for it to run."""
     problem: str | None = None
     """Why it cannot run, when it is not something to install."""
+    ui: bool = False
+    """Whether it brings a UI plugin (a bundle the web shell loads, 18.7)."""
     domains: list[str] = Field(default_factory=list[str])
     """(Site plugins) The sites it handles, and their subdomains."""
 
