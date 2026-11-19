@@ -24,6 +24,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PositiveInt,
     StringConstraints,
 )
 
@@ -74,6 +75,9 @@ __all__ = [
     "Role",
     "Spec",
     "State",
+    "SuggestRequest",
+    "Suggestion",
+    "Suggestions",
     "Task",
     "TaskKind",
     "TaskQueue",
@@ -500,6 +504,45 @@ class TaskQueue(_Model):
     """Whose queue it is: an agent's name, or `human:<name>`."""
     tasks: list[QueueEntry] = Field(default_factory=list[QueueEntry])
     """Its tasks, in the order they will be worked (empty: it has nothing to do)."""
+
+
+class SuggestRequest(_Model):
+    """What is suggested next: a project's tasks, for one agent or for whoever is idle (27.4)."""
+
+    project: Name | None = None
+    """The project (None: the only one, as every task operation allows)."""
+    agent: Name | None = None
+    """Whose tasks to suggest (None: each task is paired with the idle agent it suits best)."""
+    limit: PositiveInt = 10
+    """How many to suggest at most."""
+
+
+class Suggestion(_Model):
+    """A task suggested next, with the agent it suits and why (27.4)."""
+
+    task: Key
+    """The task's key."""
+    title: Title
+    """What it is, in a line."""
+    feature: Key
+    """The feature it is part of (its key)."""
+    agent: Name
+    """The agent it suits best."""
+    score: int
+    """How well it suits it: higher comes first."""
+    reasons: list[str] = Field(default_factory=list[str])
+    """Why it was suggested, in the order they were counted."""
+    stack_on: Key | None = None
+    """The task whose branch it stacks on (its need is `ready`, not merged yet)."""
+
+
+class Suggestions(_Model):
+    """What is suggested next, best first (27.4)."""
+
+    project: Name
+    """The project they are of."""
+    suggestions: list[Suggestion] = Field(default_factory=list[Suggestion])
+    """The tasks suggested, best first (empty: nothing is ready to start)."""
 
 
 class MyTaskNote(_Model):

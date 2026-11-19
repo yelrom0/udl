@@ -23,6 +23,7 @@ from udl.errors import DoesNotExist, NotAllowed
 from udl.plugins.apps.base import AppContext, AppPlugin
 from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch import records as stored
+from udl.plugins.apps.orch import suggest as suggested
 from udl.plugins.apps.orch.models import (
     AssignTaskRequest,
     MyTaskNote,
@@ -31,6 +32,8 @@ from udl.plugins.apps.orch.models import (
     QueueEntry,
     QueueRequest,
     ReorderQueueRequest,
+    Suggestions,
+    SuggestRequest,
     TaskQueue,
     UnassignTaskRequest,
 )
@@ -75,7 +78,8 @@ class Orch(AppPlugin[OrchSettings]):
 
     @classmethod
     def operations(cls) -> list[Operation]:
-        """The operations it adds: the queue's (27.3), each one of its methods."""
+        """The operations it adds: the queue's (27.3) and what to do next (27.4), each one of
+        its methods."""
         return [
             cls.operation(
                 "assign",
@@ -98,6 +102,11 @@ class Orch(AppPlugin[OrchSettings]):
                 title="What an agent is on",
                 hints=OperationHints(read_only=True),
             ),
+            cls.operation(
+                "suggest",
+                title="What to do next",
+                hints=OperationHints(read_only=True),
+            ),
         ]
 
     async def serve(self, ctx: AppContext) -> None:
@@ -107,6 +116,25 @@ class Orch(AppPlugin[OrchSettings]):
         once); this one waits on `ctx.stop`, so it is a service that runs while the runtime
         holds its lease and ends when the lease goes."""
         await ctx.stop.wait()
+
+    # -- what to do next (27.4) ----------------------------------------------------------------
+
+    async def suggest(self, request: SuggestRequest) -> Suggestions:
+        """The tasks to do next, best first, each with the agent it suits and why.
+
+        A task is a candidate once everything it needs is merged (or done) — or `ready`, when it
+        may start on that task's branch instead. An active feature, the agent's last task and the
+        tasks it unblocks all count. With no agent, each task is paired with the idle agent it
+        suits best."""
+        project = await self._project(request.project)
+        found = suggested.suggest(
+            await stored.TaskRecords(self.records).tasks(project),
+            await stored.FeatureRecords(self.records).features(project),
+            await stored.AgentRecords(self.records).agents(),
+            agent=request.agent,
+            limit=request.limit,
+        )
+        return Suggestions(project=project, suggestions=found)
 
     # -- the queue (27.3) ----------------------------------------------------------------------
 

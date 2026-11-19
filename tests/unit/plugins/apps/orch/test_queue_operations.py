@@ -64,7 +64,14 @@ def orch_registry() -> PluginRegistry:
 def test_orch_offers_the_queue_s_operations() -> None:
     offered = {op.name: op for op in Orch.operations()}
 
-    assert list(offered) == ["assign", "reorder_queue", "unassign", "get_queue", "my_task"]
+    assert list(offered) == [
+        "assign",
+        "reorder_queue",
+        "unassign",
+        "get_queue",
+        "my_task",
+        "suggest",
+    ]
     # (Reading a queue changes nothing; the ones that move a task are idempotent, and a task
     # that leaves one is not destructive: it is open again.)
     assert offered["get_queue"].hints == OperationHints(read_only=True)
@@ -88,6 +95,7 @@ async def test_the_operations_are_offered_as_orch_s(tmp_path: Path) -> None:
         "orch_unassign",
         "orch_get_queue",
         "orch_my_task",
+        "orch_suggest",
     ]
 
 

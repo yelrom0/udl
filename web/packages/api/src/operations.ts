@@ -64,6 +64,7 @@ export const operations = {
 	orch_get_queue: { method: "post", path: "/plugins/orch/get_queue" },
 	orch_my_task: { method: "post", path: "/plugins/orch/my_task" },
 	orch_reorder_queue: { method: "post", path: "/plugins/orch/reorder_queue" },
+	orch_suggest: { method: "post", path: "/plugins/orch/suggest" },
 	orch_unassign: { method: "post", path: "/plugins/orch/unassign" },
 	preview_schedule: { method: "post", path: "/schedules/preview" },
 	probe_url: { method: "post", path: "/probe" },
