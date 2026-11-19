@@ -103,6 +103,8 @@ def create_server(
         instructions=INSTRUCTIONS,
     )
     for op in operations if operations is not None else OperationRegistry.core():
+        if not op.hints.mcp:
+            continue  # (a merge, a power command: the person's own, never a tool)
         if op.name == "download" and op.namespace is None:
             tool = _tool(op, DownloadRequest, _download, service)
         else:

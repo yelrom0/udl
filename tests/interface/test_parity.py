@@ -144,17 +144,28 @@ def test_every_operation_has_its_cli_command() -> None:
 
 
 def test_every_operation_has_its_api_route() -> None:
+    from udl.core.operations import route
     from udl.interfaces.api.app import create_app
 
+    app = create_app(Settings())
     # (The documented routes, from the OpenAPI schema: its operationIds are the operations'.)
-    paths = create_app(Settings()).openapi()["paths"]
+    paths = app.openapi()["paths"]
     found = {
         f"{method.upper()} {path}": details["operationId"]
         for path, methods in paths.items()
         for method, details in methods.items()
     }
+    # (A plugin's routes are generated from its operations, as /plugins/<plugin>/<op> or, for an
+    # integration's, /integrations/<integration>/<op>: tests/interface/test_generated.py tries
+    # them, over a test plugin, on all three interfaces.)
+    added = {op.name: op for op in app.state.service.operations if op.namespace is not None}
+    assert {f"{route(op).method.upper()} {route(op).path}": name for name, op in added.items()} == {
+        path: op for path, op in found.items() if op in added
+    }
 
-    assert found == {api: op for op, (_, api) in MATRIX.items()} | API_ONLY
+    assert {path: op for path, op in found.items() if op not in added} == {
+        api: op for op, (_, api) in MATRIX.items()
+    } | API_ONLY
 
 
 # ---------------------------------------------------------------------------------------------
@@ -170,4 +181,6 @@ async def test_every_operation_has_its_mcp_tool() -> None:
 
     server = create_server(no_service)
 
-    assert {tool.name for tool in await server.list_tools()} == set(operations())
+    assert {tool.name for tool in await server.list_tools()} == {
+        op.name for op in operations().values() if op.hints.mcp
+    }

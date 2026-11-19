@@ -807,6 +807,131 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/integrations/github/comment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Comment on a pull request's conversation.
+         * @description Comment on a pull request's conversation.
+         */
+        post: operations["github_comment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/github/get_pull": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read one pull request: where it is, whether it may be merged, its checks, and the
+         * @description Read one pull request: where it is, whether it may be merged, its checks, and the
+         *     comments on its conversation and on its diff.
+         */
+        post: operations["github_get_pull"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/github/list_pulls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * List a repository's pull requests, a page at a time: open ones by default, most
+         * @description List a repository's pull requests, a page at a time: open ones by default, most
+         *     recently updated first.
+         */
+        post: operations["github_list_pulls"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/github/merge_pull": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge a pull request (no MCP tool: a person merges). It refuses unless the head is
+         * @description Merge a pull request (no MCP tool: a person merges). It refuses unless the head is
+         *     still the commit named, so what was reviewed is what is merged.
+         */
+        post: operations["github_merge_pull"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/github/open_pull": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open a pull request of a branch into another (the repository's default branch unless
+         * @description Open a pull request of a branch into another (the repository's default branch unless
+         *     one is named). When one is already open for that head, its title and body are updated.
+         */
+        post: operations["github_open_pull"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/github/rerun_checks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run again the failed jobs of a pull request's head: one Actions run per check that
+         * @description Run again the failed jobs of a pull request's head: one Actions run per check that
+         *     failed (nothing when they all passed).
+         */
+        post: operations["github_rerun_checks"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins": {
         parameters: {
             query?: never;
@@ -1281,6 +1406,19 @@ export interface components {
             port: number;
         };
         /**
+         * AccountFailure
+         * @description An account an operation failed in.
+         */
+        AccountFailure: {
+            /**
+             * Account
+             * @description The account (integration:name).
+             */
+            account: string;
+            /** @description Why. */
+            error: components["schemas"]["ErrorInfo"];
+        };
+        /**
          * AccountHealth
          * @description Whether an account works, as checking it found.
          */
@@ -1383,6 +1521,16 @@ export interface components {
             status: components["schemas"]["AccountStatus"];
             /** @description How its watcher is, if it has had one. */
             watcher?: components["schemas"]["WatcherStatus"] | null;
+        };
+        /** AccountItem[PullInfo] */
+        AccountItem_PullInfo_: {
+            /**
+             * Account
+             * @description The account (integration:name).
+             */
+            account: string;
+            /** @description What it found. */
+            item: components["schemas"]["PullInfo"];
         };
         /** AccountList */
         AccountList: {
@@ -1826,11 +1974,64 @@ export interface components {
             challenges: components["schemas"]["WaitingChallenge"][];
         };
         /**
+         * CheckInfo
+         * @description One of a commit's checks.
+         */
+        CheckInfo: {
+            /**
+             * Conclusion
+             * @description What it concluded, once it has (success, failure, neutral, skipped...).
+             */
+            conclusion?: string | null;
+            /**
+             * Name
+             * @description Its name.
+             */
+            name: string;
+            /**
+             * Status
+             * @description Where it is: queued, in_progress or completed.
+             */
+            status: string;
+        };
+        /**
          * ClickStep
          * @description Click an element, e.g. a play button (browser only).
          */
         ClickStep: {
             click: components["schemas"]["CssSelector"];
+        };
+        /**
+         * CommentInfo
+         * @description A comment on a pull request.
+         */
+        CommentInfo: {
+            /**
+             * Author
+             * @description Who wrote it.
+             */
+            author: string;
+            /**
+             * Body
+             * @description What they said.
+             */
+            body: string;
+            /**
+             * Created At
+             * @description When it was written.
+             */
+            created_at?: string | null;
+            /**
+             * Id
+             * @description Its id (GitHub's).
+             */
+            id: number;
+            /**
+             * Is Bot
+             * @description Whether it was a bot (a login ending in [bot]).
+             * @default false
+             */
+            is_bot: boolean;
         };
         /**
          * Condition
@@ -2478,6 +2679,26 @@ export interface components {
         };
         /** Format: path */
         ExpandedPath: string;
+        /** FanOutResult[PullInfo] */
+        FanOutResult_PullInfo_: {
+            /**
+             * Failures
+             * @description The accounts it failed in, and why (the others' items still came back).
+             */
+            failures?: components["schemas"]["AccountFailure"][];
+            /**
+             * Items
+             * @description What it found, each with its account.
+             */
+            items: components["schemas"]["AccountItem_PullInfo_"][];
+            /**
+             * Next Pages
+             * @description The next page of each account that has more (give it as the page, on that account).
+             */
+            next_pages?: {
+                [key: string]: string;
+            };
+        };
         /**
          * FetchAttempt
          * @description One try on a rung of the ladder.
@@ -2947,6 +3168,190 @@ export interface components {
              */
             follow: true;
         };
+        /**
+         * GithubCommentRequest
+         * @description Comment on a pull request.
+         */
+        GithubCommentRequest: {
+            /**
+             * Account
+             * @description The account to use, by name (e.g. work, or github:work); it may be left out while the integration has one account.
+             */
+            account?: string | null;
+            /**
+             * Body
+             * @description What to say.
+             */
+            body: string;
+            /**
+             * Number
+             * @description Its number.
+             */
+            number: number;
+            /**
+             * Repo
+             * @description The repository (owner/name), one of the account's.
+             */
+            repo: string;
+        };
+        /**
+         * GithubGetPullRequest
+         * @description Read one pull request, with its checks and comments.
+         */
+        GithubGetPullRequest: {
+            /**
+             * Account
+             * @description The account to use, by name (e.g. work, or github:work); it may be left out while the integration has one account.
+             */
+            account?: string | null;
+            /**
+             * Number
+             * @description Its number.
+             */
+            number: number;
+            /**
+             * Repo
+             * @description The repository (owner/name), one of the account's.
+             */
+            repo: string;
+        };
+        /**
+         * GithubListPullsRequest
+         * @description List a repository's pull requests.
+         */
+        GithubListPullsRequest: {
+            /**
+             * Account
+             * @description The accounts to run on: one by name (e.g. work, or github:work), a list of them, or * for every one; it may be left out while the integration has one account.
+             */
+            account?: string | string[] | null;
+            /**
+             * Head
+             * @description Only those whose head is this branch (a branch name, or owner:branch).
+             */
+            head?: string | null;
+            /**
+             * Limit
+             * @description How many to give at most.
+             * @default 25
+             */
+            limit: number;
+            /**
+             * Page
+             * @description The page to read, as the last answer's next_page gave it (none: the first).
+             */
+            page?: string | null;
+            /**
+             * Repo
+             * @description The repository (owner/name), one of the account's.
+             */
+            repo: string;
+            /**
+             * @description Which ones: open, closed, or all.
+             * @default open
+             */
+            state: components["schemas"]["PullStateFilter"];
+        };
+        /**
+         * GithubMergePullRequest
+         * @description Merge a pull request.
+         */
+        GithubMergePullRequest: {
+            /**
+             * Account
+             * @description The account to use, by name (e.g. work, or github:work); it may be left out while the integration has one account.
+             */
+            account?: string | null;
+            /**
+             * Confirm
+             * @description Say which pull this is, as owner/repo#number, so a mistyped number merges nothing.
+             */
+            confirm: string;
+            /**
+             * @description How to merge it: merge, squash or rebase.
+             * @default squash
+             */
+            method: components["schemas"]["MergeMethod"];
+            /**
+             * Number
+             * @description Its number.
+             */
+            number: number;
+            /**
+             * Repo
+             * @description The repository (owner/name), one of the account's.
+             */
+            repo: string;
+            /**
+             * Sha
+             * @description The commit at its head that was reviewed: GitHub refuses unless it is still that one.
+             */
+            sha: string;
+        };
+        /**
+         * GithubOpenPullRequest
+         * @description Open a pull request (or update the one already open for that head).
+         */
+        GithubOpenPullRequest: {
+            /**
+             * Account
+             * @description The account to use, by name (e.g. work, or github:work); it may be left out while the integration has one account.
+             */
+            account?: string | null;
+            /**
+             * Base
+             * @description The branch to merge into (none: the repository's default branch).
+             */
+            base?: string | null;
+            /**
+             * Body
+             * @description What it says.
+             */
+            body?: string | null;
+            /**
+             * Draft
+             * @description Whether to open it as a draft (a pull already open for that head cannot be made one:
+             *     GitHub's REST API has no such change).
+             * @default false
+             */
+            draft: boolean;
+            /**
+             * Head
+             * @description The branch to merge from (a branch of the repository, or owner:branch).
+             */
+            head: string;
+            /**
+             * Repo
+             * @description The repository (owner/name), one of the account's.
+             */
+            repo: string;
+            /**
+             * Title
+             * @description Its title.
+             */
+            title: string;
+        };
+        /**
+         * GithubRerunChecksRequest
+         * @description Run a pull request's failed checks again.
+         */
+        GithubRerunChecksRequest: {
+            /**
+             * Account
+             * @description The account to use, by name (e.g. work, or github:work); it may be left out while the integration has one account.
+             */
+            account?: string | null;
+            /**
+             * Number
+             * @description Its number.
+             */
+            number: number;
+            /**
+             * Repo
+             * @description The repository (owner/name), one of the account's.
+             */
+            repo: string;
+        };
         Glob: string;
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -3277,6 +3682,31 @@ export interface components {
          * @enum {string}
          */
         MediaKind: "file" | "hls" | "dash";
+        /** @enum {string} */
+        MergeMethod: "merge" | "squash" | "rebase";
+        /**
+         * MergeResult
+         * @description What merging a pull request did.
+         */
+        MergeResult: {
+            /**
+             * Merged
+             * @description Whether GitHub merged it.
+             */
+            merged: boolean;
+            /**
+             * Message
+             * @description What GitHub said.
+             * @default
+             */
+            message: string;
+            /**
+             * Sha
+             * @description The commit the merge made.
+             * @default
+             */
+            sha: string;
+        };
         /**
          * Misfire
          * @description What a schedule does about the times it missed while udl was stopped.
@@ -3552,6 +3982,171 @@ export interface components {
             tool: string;
         };
         /**
+         * PullDetail
+         * @description A pull request, with what its page shows.
+         */
+        PullDetail: {
+            /**
+             * Author
+             * @description Who opened it.
+             */
+            author: string;
+            /**
+             * Base
+             * @description The branch it is into.
+             */
+            base: string;
+            /**
+             * Body
+             * @description What it says.
+             */
+            body?: string | null;
+            /**
+             * Checks
+             * @description Its checks.
+             */
+            checks?: components["schemas"]["CheckInfo"][];
+            /**
+             * Comments
+             * @description The comments on its conversation.
+             */
+            comments?: components["schemas"]["CommentInfo"][];
+            /**
+             * Draft
+             * @description Whether it is a draft.
+             */
+            draft: boolean;
+            /**
+             * Head
+             * @description The branch its head is.
+             */
+            head: string;
+            /**
+             * Head Sha
+             * @description The commit at its head.
+             */
+            head_sha: string;
+            /**
+             * Html Url
+             * @description Its page on GitHub.
+             */
+            html_url: string;
+            /**
+             * Mergeable
+             * @description Whether GitHub says it may be merged (None: it is still working it out).
+             */
+            mergeable?: boolean | null;
+            /**
+             * Mergeable State
+             * @description GitHub's own word for that (clean, dirty, behind, blocked...).
+             * @default
+             */
+            mergeable_state: string;
+            /**
+             * Merged
+             * @description Whether it was merged.
+             */
+            merged: boolean;
+            /**
+             * Number
+             * @description Its number.
+             */
+            number: number;
+            /**
+             * Repo
+             * @description The repository (owner/name).
+             */
+            repo: string;
+            /**
+             * Review Comments
+             * @description The comments on its diff.
+             */
+            review_comments?: components["schemas"]["ReviewCommentInfo"][];
+            /**
+             * State
+             * @description Where it is: open, closed or merged.
+             */
+            state: string;
+            /**
+             * Title
+             * @description Its title.
+             */
+            title: string;
+            /**
+             * Updated At
+             * @description When GitHub last said it changed.
+             */
+            updated_at?: string | null;
+        };
+        /**
+         * PullInfo
+         * @description A pull request.
+         */
+        PullInfo: {
+            /**
+             * Author
+             * @description Who opened it.
+             */
+            author: string;
+            /**
+             * Base
+             * @description The branch it is into.
+             */
+            base: string;
+            /**
+             * Draft
+             * @description Whether it is a draft.
+             */
+            draft: boolean;
+            /**
+             * Head
+             * @description The branch its head is.
+             */
+            head: string;
+            /**
+             * Head Sha
+             * @description The commit at its head.
+             */
+            head_sha: string;
+            /**
+             * Html Url
+             * @description Its page on GitHub.
+             */
+            html_url: string;
+            /**
+             * Merged
+             * @description Whether it was merged.
+             */
+            merged: boolean;
+            /**
+             * Number
+             * @description Its number.
+             */
+            number: number;
+            /**
+             * Repo
+             * @description The repository (owner/name).
+             */
+            repo: string;
+            /**
+             * State
+             * @description Where it is: open, closed or merged.
+             */
+            state: string;
+            /**
+             * Title
+             * @description Its title.
+             */
+            title: string;
+            /**
+             * Updated At
+             * @description When GitHub last said it changed.
+             */
+            updated_at?: string | null;
+        };
+        /** @enum {string} */
+        PullStateFilter: "open" | "closed" | "all";
+        /**
          * ReadPolicy
          * @description How lookups use several databases.
          * @enum {string}
@@ -3590,6 +4185,22 @@ export interface components {
          * @enum {string}
          */
         RequirementKind: "binary" | "module";
+        /**
+         * Rerun
+         * @description What asking for a pull's failed checks to run again did.
+         */
+        Rerun: {
+            /**
+             * Checks
+             * @description The checks that had failed.
+             */
+            checks: string[];
+            /**
+             * Runs
+             * @description The Actions runs asked for again.
+             */
+            runs: number[];
+        };
         /** RetryFetchRequestBody */
         RetryFetchRequestBody: {
             /**
@@ -3600,6 +4211,49 @@ export interface components {
             items?: string[] | null;
             /** @description Start them at this rung (static, cookies or browser) instead. */
             via?: components["schemas"]["Via"] | null;
+        };
+        /**
+         * ReviewCommentInfo
+         * @description A comment on a line of a pull request's diff.
+         */
+        ReviewCommentInfo: {
+            /**
+             * Author
+             * @description Who wrote it.
+             */
+            author: string;
+            /**
+             * Body
+             * @description What they said.
+             */
+            body: string;
+            /**
+             * Created At
+             * @description When it was written.
+             */
+            created_at?: string | null;
+            /**
+             * Id
+             * @description Its id (GitHub's).
+             */
+            id: number;
+            /**
+             * Is Bot
+             * @description Whether it was a bot (a login ending in [bot]).
+             * @default false
+             */
+            is_bot: boolean;
+            /**
+             * Line
+             * @description The line it is on.
+             */
+            line?: number | null;
+            /**
+             * Path
+             * @description The file it is on.
+             * @default
+             */
+            path: string;
         };
         /** RunActionRequestBody */
         RunActionRequestBody: {
@@ -7981,6 +8635,474 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HostCheck"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    github_comment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GithubCommentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommentInfo"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    github_get_pull: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GithubGetPullRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullDetail"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    github_list_pulls: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GithubListPullsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FanOutResult_PullInfo_"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    github_merge_pull: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GithubMergePullRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MergeResult"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    github_open_pull: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GithubOpenPullRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullInfo"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    github_rerun_checks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GithubRerunChecksRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Rerun"];
                 };
             };
             /** @description Bad Request */

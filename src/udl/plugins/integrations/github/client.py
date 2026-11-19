@@ -66,6 +66,7 @@ from udl.plugins.integrations.github.models import (
 )
 
 __all__ = [
+    "ChangedPulls",
     "GhRateLimit",
     "GitHubClient",
     "MergeMethod",
@@ -154,6 +155,15 @@ def repo_name(repo: str) -> str:
     return repo
 
 
+class ChangedPulls(BaseModel):
+    """A repository's pull requests, when GitHub says they changed."""
+
+    pulls: list[GhPull] | None
+    """The pulls, most recently updated first (None: GitHub answered 304, nothing changed)."""
+    etag: str | None
+    """What to give as the ETag next time (None: GitHub sent none, so every look reads)."""
+
+
 class GitHubClient:
     """A client of the GitHub REST API for one token (None: unauthenticated, which sees only
     public repositories). Made per integration, or per account's client; it holds no state but
@@ -223,9 +233,50 @@ class GitHubClient:
             query["base"] = base
         return await self.paginate(f"/repos/{repo_name(repo)}/pulls", GhPull, query=query)
 
+    async def pulls_page(
+        self,
+        repo: str,
+        *,
+        state: PullStateFilter = "open",
+        head: str | None = None,
+        base: str | None = None,
+        page: int = 1,
+        per_page: int = PAGE_SIZE,
+    ) -> tuple[list[GhPull], str | None]:
+        """One page of a repository's pull requests (GET /repos/{repo}/pulls), and the page after
+        it (None: it was the last)."""
+        query = {"state": state, "per_page": str(per_page), "page": str(page)}
+        if head is not None:
+            query["head"] = head
+        if base is not None:
+            query["base"] = base
+        url = f"{self.base_url}/repos/{repo_name(repo)}/pulls"
+        answer, response = await self._ask("GET", url, params=query)
+        after = self._next(response, url)
+        return self._each(GhPull, answer, url), (after[1].get("page") if after else None)
+
     async def get_pull(self, repo: str, number: int) -> GhPull:
         """One pull request, by number (GET /repos/{repo}/pulls/{number})."""
         return await self._get(f"/repos/{repo_name(repo)}/pulls/{number}", GhPull)
+
+    async def pulls_if_changed(
+        self, repo: str, *, state: PullStateFilter = "all", etag: str | None = None
+    ) -> ChangedPulls:
+        """The pull requests of `repo` (owner/name) that GitHub says changed since the last look,
+        most recently updated first: the first page of them, and the ETag to give next time.
+
+        With `etag` (the last answer's), GitHub answers 304 while nothing changed, so a watcher
+        asks once per repository and reads nothing: `pulls` is None then. The first page holds
+        the most recently updated pulls, so a pull that was just merged or closed is in it."""
+        query = {"state": state, "sort": "updated", "direction": "desc", "per_page": str(PAGE_SIZE)}
+        asked = {"If-None-Match": etag} if etag is not None else None
+        url = f"{self.base_url}/repos/{repo_name(repo)}/pulls"
+        answer, response = await self._ask("GET", url, params=query, headers=asked)
+        if response.status_code == 304:
+            return ChangedPulls(pulls=None, etag=etag)
+        return ChangedPulls(
+            pulls=self._each(GhPull, answer, url), etag=response.headers.get("ETag")
+        )
 
     async def open_pull(
         self,
@@ -252,13 +303,22 @@ class GitHubClient:
         *,
         title: str | None = None,
         body: str | None = None,
+        base: str | None = None,
         state: PullStateChange | None = None,
     ) -> GhPull:
-        """Change a pull request's title, body or state (PATCH /repos/{repo}/pulls/{number});
-        what is None is left as it is."""
+        """Change a pull request's title, body, base branch or state (PATCH
+        /repos/{repo}/pulls/{number}); what is None is left as it is.
+
+        Whether it is a draft is not among them: REST has no such field (converting a pull to a
+        draft needs GraphQL), and sending one would be ignored."""
         sent: dict[str, object] = {
             name: value
-            for name, value in (("title", title), ("body", body), ("state", state))
+            for name, value in (
+                ("title", title),
+                ("body", body),
+                ("base", base),
+                ("state", state),
+            )
             if value is not None
         }
         return await self._send("PATCH", f"/repos/{repo_name(repo)}/pulls/{number}", sent, GhPull)
@@ -298,10 +358,84 @@ class GitHubClient:
             total = max(total, found.total_count)
             return found.check_runs
 
-        runs = await self._walk(path, read)
+        runs, _, _ = await self._walk(path, read)
         if total > len(runs):
             log.warning("%s: %d check runs, %d read", path, total, len(runs))
         return runs
+
+    async def checks_if_changed(
+        self, repo: str, sha: str, *, etag: str | None = None, paged: bool = False
+    ) -> tuple[list[GhCheckRun] | None, str | None, bool]:
+        """The check runs of a commit, read again only when GitHub says they changed: with
+        `etag` (the last answer's), a 304 says they did not, and `checks` is None then. A
+        conditional answer that changed nothing costs no rate limit, so a watcher may ask every
+        minute. Returns them with the ETag to give next time, and whether they took more than a
+        page (see `_list_if_changed`)."""
+        path = f"/repos/{repo_name(repo)}/commits/{sha}/check-runs"
+        total = 0
+
+        def read(body: JsonValue, where: str) -> list[GhCheckRun]:
+            nonlocal total
+            found = self._parsed(_CheckRuns, body, where)
+            total = max(total, found.total_count)
+            return found.check_runs
+
+        runs, etag, paged = await self._list_if_changed(path, read, etag=etag, paged=paged)
+        if runs is not None and total > len(runs):
+            log.warning("%s: %d check runs, %d read", path, total, len(runs))
+        return runs, etag, paged
+
+    async def comments_if_changed(
+        self, repo: str, number: int, *, etag: str | None = None, paged: bool = False
+    ) -> tuple[list[GhComment] | None, str | None, bool]:
+        """The comments on a pull request's conversation, read again only when GitHub says they
+        changed (see checks_if_changed)."""
+        path = f"/repos/{repo_name(repo)}/issues/{number}/comments"
+        return await self._list_if_changed(
+            path, lambda body, where: self._each(GhComment, body, where), etag=etag, paged=paged
+        )
+
+    async def review_comments_if_changed(
+        self, repo: str, number: int, *, etag: str | None = None, paged: bool = False
+    ) -> tuple[list[GhReviewComment] | None, str | None, bool]:
+        """The comments on a pull request's diff, read again only when GitHub says they changed
+        (see checks_if_changed)."""
+        path = f"/repos/{repo_name(repo)}/pulls/{number}/comments"
+        return await self._list_if_changed(
+            path,
+            lambda body, where: self._each(GhReviewComment, body, where),
+            etag=etag,
+            paged=paged,
+        )
+
+    async def _list_if_changed[T](
+        self,
+        path: str,
+        read: Callable[[JsonValue, str], list[T]],
+        *,
+        etag: str | None,
+        paged: bool = False,
+    ) -> tuple[list[T] | None, str | None, bool]:
+        """A list GitHub pages, read again only when GitHub says it changed: None (and the ETag
+        given) when it did not, else every item, the ETag to give next time and whether it took
+        more than one page.
+
+        An ETag is one page's own, and a new item lands on the last one: on a list longer than a
+        page, page one answers 304 while the list has changed. `paged` says the last read took
+        more than a page, and then the list is read whole — page one is still asked for, and its
+        answer is the walk's first page, so nothing is fetched twice."""
+        if paged:
+            items, etag, paged = await self._walk(path, read)
+            return items, etag, paged
+        asked = {"If-None-Match": etag} if etag is not None else None
+        url = f"{self.base_url}{path}"
+        answer, response = await self._ask(
+            "GET", url, params={"per_page": str(PAGE_SIZE)}, headers=asked
+        )
+        if response.status_code == 304:
+            return None, etag, False
+        items, etag, paged = await self._walk(path, read, first=(answer, response))
+        return items, etag, paged
 
     async def list_comments(self, repo: str, number: int) -> list[GhComment]:
         """The comments on a pull request's conversation (GET /repos/{repo}/issues/{number}/
@@ -334,28 +468,44 @@ class GitHubClient:
     ) -> list[T]:
         """Every item of a list GitHub pages (its Link header's rel="next"), read into `model`.
         At most MAX_PAGES pages are read, and a next link on another host is not followed."""
-        return await self._walk(path, lambda body, where: self._each(model, body, where), query)
+        items, _, _ = await self._walk(
+            path, lambda body, where: self._each(model, body, where), query
+        )
+        return items
 
     async def _walk[T](
         self,
         path: str,
         read: Callable[[JsonValue, str], list[T]],
         query: Mapping[str, str] | None = None,
-    ) -> list[T]:
-        """Every page of `path` (as `read` reads one), following the Link header. `query` goes
-        with the first page; later pages carry the Link header's own."""
+        *,
+        first: tuple[JsonValue, httpx.Response] | None = None,
+    ) -> tuple[list[T], str | None, bool]:
+        """Every page of `path` (as `read` reads one), following the Link header: the items, the
+        first page's ETag, and whether it took more than one page. `query` goes with the first
+        page; later pages carry the Link header's own. `first` is a page already asked for (a
+        conditional request that found a change), so it is not asked for twice."""
         items: list[T] = []
         url = f"{self.base_url}{path}"
         params: dict[str, str] = {"per_page": str(PAGE_SIZE), **(query or {})}
-        for _ in range(self.max_pages):
-            answer, response = await self._ask("GET", url, params=params)
-            items.extend(read(answer, path))
+        etag: str | None = None
+        for page in range(self.max_pages):
+            if page == 0 and first is not None:
+                answer, response = first
+            else:
+                answer, response = await self._ask("GET", url, params=params)
+            if etag is None:
+                etag = response.headers.get("ETag")
+            found = read(answer, path)
+            items.extend(found)
             nxt = self._next(response, url)
             if nxt is None:
-                return items
+                # (A last page that is full is one item away from paging: the item that starts
+                # the next page leaves this one as it was.)
+                return items, etag, page > 0 or len(found) >= PAGE_SIZE
             url, params = nxt
         log.warning("%s: stopped after %d pages", path, self.max_pages)
-        return items
+        return items, etag, True
 
     # -- a request -----------------------------------------------------------------------------
 
@@ -405,6 +555,7 @@ class GitHubClient:
         *,
         params: Mapping[str, str] | None = None,
         json: Mapping[str, object] | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> tuple[JsonValue, httpx.Response]:
         """A request's answer (as plain JSON) and the response it came in.
 
@@ -414,13 +565,14 @@ class GitHubClient:
         is not retryable (a 401, a 404, a 403 that is not the rate limit) is raised at once.
         """
         query = dict(params) if params is not None else None
-        headers = {
+        sent = {
             "Accept": ACCEPT,
             "X-GitHub-Api-Version": API_VERSION,
             "User-Agent": user_agent(),
         }
+        sent.update(headers or {})
         if self._token is not None:
-            headers["Authorization"] = f"Bearer {self._token.get_secret_value()}"
+            sent["Authorization"] = f"Bearer {self._token.get_secret_value()}"
         retryable = method in ("GET", "HEAD")
         failed: UDLError | None = None
         status = 0
@@ -430,7 +582,7 @@ class GitHubClient:
                 # and this loop adds a wait between its tries.)
                 async with self._http(tool=TOOL) as client:
                     response = await client.request(
-                        method, url, params=query, headers=headers, json=json
+                        method, url, params=query, headers=sent, json=json
                     )
             except UDLError as e:
                 if not is_retryable(e):

@@ -24,7 +24,7 @@ from pydantic import SecretStr
 
 # Local Imports
 from support.clock import FakeClock
-from support.github import BASE, TOKEN, Body, FakeGitHub, check_run_body
+from support.github import BASE, TOKEN, Body, FakeGitHub, check_run_body, pull_body
 from support.github import repo_body as gh_repo_body
 from udl.errors import (
     ConfigError,
@@ -38,6 +38,7 @@ from udl.errors import (
 from udl.plugins.downloaders.errors import httpx_error
 from udl.plugins.integrations.github.client import (
     DEFAULT_API_URL,
+    PAGE_SIZE,
     GitHubClient,
     new_client,
     rate_limit_of,
@@ -198,6 +199,199 @@ async def test_a_pull_is_merged_by_method(client: GitHubClient, gh: FakeGitHub) 
 async def test_a_merge_of_another_commit_is_refused(client: GitHubClient) -> None:
     with pytest.raises(NotAllowed, match="Head branch was modified"):
         await client.merge_pull(REPO, 7, sha="other")
+
+
+async def test_the_pulls_are_asked_for_again_only_when_they_changed(
+    client: GitHubClient, gh: FakeGitHub
+) -> None:
+    first = await client.pulls_if_changed(REPO)
+
+    assert first.pulls is not None
+    assert [pull.number for pull in first.pulls] == [7, 8]
+    assert first.etag is not None
+    assert gh.calls == [
+        "GET /repos/acme/widgets/pulls?state=all&sort=updated&direction=desc&per_page=100"
+    ]
+
+    again = await client.pulls_if_changed(REPO, etag=first.etag)
+
+    assert again.pulls is None  # (a 304: nothing changed)
+    assert again.etag == first.etag
+
+    gh.open_pull(number=9)
+    changed = await client.pulls_if_changed(REPO, etag=first.etag)
+
+    assert changed.pulls is not None
+    assert [pull.number for pull in changed.pulls] == [7, 8, 9]
+    assert changed.etag != first.etag
+
+
+async def test_a_pulls_answer_without_an_etag_is_read_every_time() -> None:
+    def answer(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[pull_body(REPO, 7).model_dump(mode="json")],
+            headers={"Content-Type": "application/json"},
+        )
+
+    client = GitHubClient(
+        base_url=BASE, token=SecretStr(TOKEN), http=api_of(answer), clock=FakeClock()
+    )
+
+    found = await client.pulls_if_changed(REPO)
+
+    assert found.pulls is not None
+    assert [pull.number for pull in found.pulls] == [7]
+    assert found.etag is None
+
+
+async def test_a_commits_checks_are_asked_about_again_only_when_they_changed(
+    client: GitHubClient, gh: FakeGitHub
+) -> None:
+    gh.set_checks("abc1234", check_run_body("pytest", "failure"))
+
+    checks, etag, paged = await client.checks_if_changed(REPO, "abc1234")
+
+    assert checks is not None
+    assert [run.name for run in checks] == ["pytest"]
+    assert (etag is not None, paged) == (True, False)
+
+    again, same, paged = await client.checks_if_changed(REPO, "abc1234", etag=etag)
+
+    assert again is None  # (a 304: nothing changed, and it costs no rate limit)
+    assert (same, paged) == (etag, False)
+
+    gh.finish_check("abc1234", "success")
+    changed, newer, paged = await client.checks_if_changed(REPO, "abc1234", etag=etag)
+
+    assert changed is not None
+    assert [run.conclusion for run in changed] == ["success"]
+    assert newer != etag
+
+
+async def test_a_pulls_comments_are_asked_about_again_only_when_they_changed(
+    client: GitHubClient, gh: FakeGitHub
+) -> None:
+    gh.comment("Looks good")
+
+    comments, etag, _ = await client.comments_if_changed(REPO, 7)
+
+    assert comments is not None
+    assert [note.body for note in comments] == ["Looks good"]
+    assert etag is not None
+    assert await client.comments_if_changed(REPO, 7, etag=etag) == (None, etag, False)
+
+    gh.comment("And another")
+    changed, newer, _ = await client.comments_if_changed(REPO, 7, etag=etag)
+
+    assert changed is not None
+    assert [note.body for note in changed] == ["Looks good", "And another"]
+    assert newer != etag
+
+
+async def test_the_comments_on_a_pulls_diff_are_asked_about_again_only_when_they_changed(
+    client: GitHubClient, gh: FakeGitHub
+) -> None:
+    gh.review_comment("This line is wrong")
+
+    notes, etag, _ = await client.review_comments_if_changed(REPO, 7)
+
+    assert notes is not None
+    assert [note.body for note in notes] == ["This line is wrong"]
+    assert etag is not None
+    assert await client.review_comments_if_changed(REPO, 7, etag=etag) == (None, etag, False)
+
+    gh.review_comment("And this one")
+    changed, _, _ = await client.review_comments_if_changed(REPO, 7, etag=etag)
+
+    assert changed is not None
+    assert [note.body for note in changed] == ["This line is wrong", "And this one"]
+
+
+async def test_the_pulls_are_read_a_page_at_a_time(client: GitHubClient, gh: FakeGitHub) -> None:
+    gh.page_size = 1
+
+    first, after = await client.pulls_page(REPO, per_page=1)
+
+    assert [pull.number for pull in first] == [7]
+    assert after == "2"
+
+    rest, last = await client.pulls_page(REPO, page=2, per_page=1)
+
+    assert [pull.number for pull in rest] == [8]
+    assert last is None
+
+
+async def test_a_pull_s_base_is_changed(client: GitHubClient, gh: FakeGitHub) -> None:
+    found = await client.update_pull(REPO, 7, base="develop")
+
+    assert found.base.ref == "develop"
+    assert gh.bodies[-1] == {"base": "develop"}
+
+
+async def test_a_long_list_is_read_whole_when_a_later_page_changed(
+    client: GitHubClient, gh: FakeGitHub
+) -> None:
+    """Each page has its own ETag: a comment that lands on the second page leaves the first as it
+    was, so a 304 from page one says nothing about it."""
+    gh.page_size = 2
+    for text in ("one", "two", "three"):
+        gh.comment(text)
+    found, etag, paged = await client.comments_if_changed(REPO, 7)
+
+    assert found is not None
+    assert ([note.body for note in found], paged) == (["one", "two", "three"], True)
+
+    gh.comment("four")
+    gh.calls.clear()
+    changed, _, paged = await client.comments_if_changed(REPO, 7, etag=etag, paged=paged)
+
+    assert changed is not None
+    assert [note.body for note in changed] == ["one", "two", "three", "four"]
+    assert paged is True
+    # (page one is asked for once: what it answered is the first page of the walk)
+    assert (
+        len([call for call in gh.calls if call.startswith("GET /repos/acme/widgets/issues/7")]) == 2
+    )
+
+
+async def test_a_list_that_fills_a_page_is_read_whole_too(
+    client: GitHubClient, gh: FakeGitHub
+) -> None:
+    """A list of exactly one page's worth is one item away from paging: page one is full, and the
+    item that starts page two leaves page one as it was."""
+    gh.page_size = PAGE_SIZE
+    for index in range(PAGE_SIZE):
+        gh.comment(f"note {index}")
+    found, etag, paged = await client.comments_if_changed(REPO, 7)
+
+    assert (len(found or []), paged) == (PAGE_SIZE, True)
+
+    gh.comment("the one after")
+    changed, _, _ = await client.comments_if_changed(REPO, 7, etag=etag, paged=paged)
+
+    assert changed is not None
+    assert len(changed) == PAGE_SIZE + 1
+
+
+async def test_a_list_of_one_page_is_a_304(client: GitHubClient, gh: FakeGitHub) -> None:
+    gh.comment("one")
+    found, etag, paged = await client.comments_if_changed(REPO, 7)
+
+    assert (found is None, paged) == (False, False)
+
+    unchanged, same, paged = await client.comments_if_changed(REPO, 7, etag=etag, paged=paged)
+
+    assert (unchanged, same, paged) == (None, etag, False)
+
+
+async def test_a_merge_says_who_merged_it(client: GitHubClient, gh: FakeGitHub) -> None:
+    gh.merge(number=7)
+
+    found = await client.get_pull(REPO, 7)
+
+    assert found.merged_by is not None
+    assert found.merged_by.login == "udl-bot"
 
 
 async def test_the_check_runs_of_a_commit_are_listed(client: GitHubClient, gh: FakeGitHub) -> None:

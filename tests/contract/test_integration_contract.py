@@ -25,6 +25,9 @@ from pydantic import BaseModel, SecretStr
 
 # Local Imports
 from support.clock import FakeClock
+from support.github import BASE as GITHUB_BASE
+from support.github import TOKEN as GITHUB_TOKEN
+from support.github import FakeGitHub
 from support.integrations import (
     FakeAccountOptions,
     FakeSettings,
@@ -45,6 +48,12 @@ from udl.plugins.integrations.base import (
     Credentials,
     Integration,
 )
+from udl.plugins.integrations.github.plugin import (
+    GitHubIntegration,
+    GitHubOptions,
+    GitHubSettings,
+    GitHubToken,
+)
 
 
 @dataclass
@@ -57,6 +66,9 @@ class Case:
     connected: Callable[[ConnectMethod], Awaitable[tuple[Credentials, BaseModel]]]
     # Make `count` things happen in the account called `name`.
     happen: Callable[[str, int], Awaitable[None]]
+    # Wait until the watcher has read what was already there, for one that starts by taking a
+    # baseline (what is there when it starts is not news, so a test makes things happen after).
+    settle: Callable[[MemoryState], Awaitable[None]] | None = None
 
 
 def fake_case() -> Case:
@@ -85,7 +97,32 @@ def fake_case() -> Case:
     return Case(integration, clock, connected, happen)
 
 
-CASES: dict[str, Callable[[], Case]] = {"fake": fake_case}
+def github_case() -> Case:
+    fake = FakeGitHub()
+    clock = FakeClock()
+    integration = GitHubIntegration(GitHubSettings(), http=fake.http(), clock=clock)
+
+    async def connected(method: ConnectMethod) -> tuple[Credentials, BaseModel]:
+        assert method is ConnectMethod.TOKENS
+        return GitHubToken(token=SecretStr(GITHUB_TOKEN)), GitHubOptions(
+            repos=["acme/widgets"], api_url=GITHUB_BASE
+        )
+
+    made = 8  # (the fake's own pulls are 7 and 8)
+
+    async def happen(name: str, count: int) -> None:
+        nonlocal made
+        for _ in range(count):
+            made += 1
+            fake.open_pull(number=made, head=f"feat/thing-{made}")
+
+    async def settle(state: MemoryState) -> None:
+        await until(lambda: bool(state.saved), clock)
+
+    return Case(integration, clock, connected, happen, settle)
+
+
+CASES: dict[str, Callable[[], Case]] = {"fake": fake_case, "github": github_case}
 
 
 @pytest.fixture(params=sorted(CASES))
@@ -95,6 +132,12 @@ def case(request: pytest.FixtureRequest) -> Case:
 
 def integration_of(case: Case) -> type[Integration[Any, Any]]:
     return type(case.integration)
+
+
+async def settled(case: Case, state: MemoryState) -> None:
+    """Let the watcher take its baseline, where it starts by reading what is already there."""
+    if case.settle is not None:
+        await case.settle(state)
 
 
 async def handle_of(case: Case, name: str = "work") -> StubHandle[Any]:
@@ -191,6 +234,7 @@ async def test_its_watcher_publishes_only_its_own_types(case: Case) -> None:
     state = MemoryState(integration_of(case).state_model)
     watching = asyncio.create_task(case.integration.watch(handle, sink, state))
 
+    await settled(case, state)
     await case.happen("work", 3)
     await until(lambda: len(sink.emitted) >= 3, case.clock)
     await cancelled(watching)
@@ -223,6 +267,7 @@ async def test_its_watcher_goes_on_from_its_saved_state_without_publishing_anyth
     state = MemoryState(plugin.state_model)
     first = RecordingSink(plugin)
     watching = asyncio.create_task(case.integration.watch(handle, first, state))
+    await settled(case, state)
     await case.happen("work", 2)
     await until(lambda: len(first.emitted) >= 2, case.clock)
     await cancelled(watching)

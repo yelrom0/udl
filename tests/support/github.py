@@ -203,6 +203,9 @@ class FakeGitHub:
     """The Actions runs whose failed jobs were asked for again."""
     calls: list[str] = field(default_factory=list[str])
     """Every call made, as "METHOD /path?query"."""
+    conditionals: list[int] = field(default_factory=list[int])
+    """The status of every answer to a request that gave an If-None-Match (304: it changed
+    nothing, which costs no rate limit)."""
     sent: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
     """The headers of every call made (what udl sends: its token, its User-Agent)."""
     bodies: list[JsonObject] = field(default_factory=list[JsonObject])
@@ -240,7 +243,12 @@ class FakeGitHub:
         """Push `sha` to a pull's head (a new commit on it)."""
         pull = self.pull_of(repo, number)
         self.pulls[repo] = [
-            pull.model_copy(update={"head": pull.head.model_copy(update={"sha": sha})})
+            pull.model_copy(
+                update={
+                    "head": pull.head.model_copy(update={"sha": sha}),
+                    "updated_at": datetime.now(UTC),
+                }
+            )
             if item.number == number
             else item
             for item in self.pulls.get(repo, [])
@@ -293,13 +301,27 @@ class FakeGitHub:
         """Merge a pull, as GitHub would."""
         pull = self.pull_of(repo, number)
         self.pulls[repo] = [
-            pull.model_copy(update={"merged": True, "state": PullState.CLOSED, "mergeable": None})
+            pull.model_copy(
+                update={
+                    "merged": True,
+                    "state": PullState.CLOSED,
+                    "mergeable": None,
+                    "merged_by": GhUser(login=self.login, id=99),
+                    "updated_at": datetime.now(UTC),
+                }
+            )
             if item.number == number
             else item
             for item in self.pulls.get(repo, [])
         ]
         self.merged.append(_key(repo, number))
-        return pull.model_copy(update={"merged": True, "state": PullState.CLOSED})
+        return pull.model_copy(
+            update={
+                "merged": True,
+                "state": PullState.CLOSED,
+                "merged_by": GhUser(login=self.login, id=99),
+            }
+        )
 
     def pull_of(self, repo: str, number: int) -> GhPull:
         """A pull of the fake (fails the test when it has none)."""
@@ -415,9 +437,18 @@ class FakeGitHub:
         pull = self.pull_of(repo, int(request.path_params["number"]))
         if request.method == "PATCH":
             body = await self._read(request)
-            pull = pull.model_copy(
-                update={name: value for name, value in body.items() if value is not None}
-            )
+            # (`draft` is not a REST field: GitHub ignores one, and so does the fake, so a
+            # client that sends it is not told it worked.)
+            changes = {
+                name: value
+                for name, value in body.items()
+                if value is not None and name in ("title", "body", "base", "state")
+            }
+            base = changes.pop("base", None)
+            update: dict[str, object] = dict(changes)
+            if base is not None:  # (GitHub is given a branch's name, and answers with the ref)
+                update["base"] = pull.base.model_copy(update={"ref": str(base)})
+            pull = pull.model_copy(update=update)
             self.pulls[repo] = [
                 pull if item.number == pull.number else item for item in self.pulls[repo]
             ]
@@ -537,6 +568,7 @@ class FakeGitHub:
         etag = '"' + hashlib.sha256(_dump(body).encode()).hexdigest()[:16] + '"'
         headers["ETag"] = etag
         if request.headers.get("If-None-Match") == etag:
+            self.conditionals.append(304)
             return Response(status_code=304, headers=headers)
         return JSONResponse(body, status_code=status, headers=headers)
 
@@ -598,12 +630,23 @@ class FakeGitHub:
         return f"{request.path_params['owner']}/{request.path_params['repo']}"
 
     def _comment(self, text: str, *, login: str, repo: str, number: int) -> GhComment:
-        """Put a comment on a pull's conversation."""
+        """Put a comment on a pull's conversation (which says, as GitHub does, that it was
+        updated: what a watcher's ETag and its pulls' updated_at tell it)."""
         found = comment_body(
             9000 + len(self.comments.get(_key(repo, number), [])), text, login=login
         )
         self.comments.setdefault(_key(repo, number), []).append(found)
+        self._touch(repo, number)
         return found
+
+    def _touch(self, repo: str, number: int) -> None:
+        """Say a pull was updated (as GitHub does when something happens to it)."""
+        self.pulls[repo] = [
+            item.model_copy(update={"updated_at": datetime.now(UTC)})
+            if item.number == number
+            else item
+            for item in self.pulls.get(repo, [])
+        ]
 
 
 def _json(model: GhPull | GhComment | GhReviewComment | GhCheckRun | GhRepo | GhUser) -> JsonObject:
