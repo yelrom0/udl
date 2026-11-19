@@ -222,7 +222,7 @@ describe("the live connection", () => {
 		}
 		source?.send("run", { id: "run-1", state: "running" });
 		live500.download("job-1");
-		FakeSource.made[1]?.send("progress", { percent: 40 });
+		FakeSource.made[1]?.send("progress", { type: "progress", job: { id: "job-1" } });
 
 		const state = live.getState();
 		expect(state.events).toHaveLength(500);
@@ -230,7 +230,11 @@ describe("the live connection", () => {
 		expect(state.events[0]?.at).toBe("12:00");
 		expect(state.runs).toEqual({ "run-1": { id: "run-1", state: "running" } });
 		expect(state.jobs).toEqual({
-			"job-1": { name: "progress", at: "12:00", data: { percent: 40 } },
+			"job-1": {
+				name: "progress",
+				at: "12:00",
+				data: { type: "progress", job: { id: "job-1" } },
+			},
 		});
 	});
 
@@ -263,7 +267,7 @@ describe("the live connection", () => {
 		FakeSource.made[0]?.send("event", { id: "e-1" });
 		FakeSource.made[0]?.send("run", { id: "run-1", state: "running" });
 		live500.download("job-1");
-		FakeSource.made[1]?.send("progress", { percent: 40 });
+		FakeSource.made[1]?.send("progress", { type: "progress", job: { id: "job-1" } });
 
 		live500.stop();
 
@@ -286,7 +290,7 @@ describe("the live connection", () => {
 		const stream = FakeSource.made[1];
 		stream?.open();
 
-		stream?.send("finished", { id: "job-1" });
+		stream?.send("finished", { type: "finished", job: { id: "job-1" } });
 		stream?.fail();
 		timers.fire();
 
@@ -305,7 +309,7 @@ describe("the live connection", () => {
 		const stream = FakeSource.made[1];
 		stream?.open();
 
-		stream?.send("finished", { id: "job-1" });
+		stream?.send("finished", { type: "finished", job: { id: "job-1" } });
 		stream?.fail();
 		timers.fire();
 
@@ -320,7 +324,7 @@ describe("the live connection", () => {
 		const stream = FakeSource.made[1];
 		stream?.open();
 
-		stream?.send("progress", { percent: 10 });
+		stream?.send("progress", { type: "progress", job: { id: "job-1" } });
 		stream?.fail();
 		timers.fire();
 

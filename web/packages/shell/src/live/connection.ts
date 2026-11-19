@@ -205,6 +205,17 @@ function parse(data: unknown): unknown {
 }
 
 /** The id of a run or a job, when what came is one (udl sends its models' JSON). */
+/** The id of the job an event is about (a `JobEvent` names it as `job.id`). */
+function jobIdOf(data: unknown): string | null {
+	if (typeof data === "object" && data !== null && "job" in data) {
+		const job = data.job;
+		if (typeof job === "object" && job !== null && "id" in job && typeof job.id === "string") {
+			return job.id;
+		}
+	}
+	return null;
+}
+
 function idOf(data: unknown): string | null {
 	if (typeof data === "object" && data !== null && "id" in data && typeof data.id === "string") {
 		return data.id;
@@ -216,7 +227,7 @@ function idOf(data: unknown): string | null {
 export interface Live {
 	/** Stop following everything (the page signed out). */
 	readonly stop: () => void;
-	/** Follow a download's events (until the page is done with it). */
+	/** Follow a job's events (a job's id, not a batch's), until the job has ended. */
 	readonly download: (id: string) => void;
 }
 
@@ -255,7 +266,7 @@ export function startLive(options: LiveOptions = {}): Live {
 			const path = `/downloads/${id}/events`;
 			connection.watch(path, JOB_TYPES, (name, data) => {
 				setJob(id, { name, at: now(), data });
-				if (JOB_ENDS.includes(name) && idOf(data) === id) {
+				if (JOB_ENDS.includes(name) && jobIdOf(data) === id) {
 					// (The job is over and the server closed the stream: reconnecting to it would
 					// be a request a second for a download that is finished.)
 					connection.stop(path);
