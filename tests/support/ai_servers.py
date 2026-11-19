@@ -124,6 +124,8 @@ class FakeOpenAI:
     """The JSON body of every chat call made (what udl sent)."""
     keys: list[str] = field(default_factory=list[str])
     """The Authorization header of every call made."""
+    headers_seen: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
+    """The headers of every call made, lower-cased (what udl sent of itself)."""
     streamed: list[JsonObject] = field(default_factory=list[JsonObject])
     """The chunks every streamed answer sent (as a test reads them)."""
 
@@ -284,6 +286,7 @@ class FakeOpenAI:
         """The response a call that is refused gets, or None when it is let through."""
         key = request.headers.get("Authorization", "")
         self.keys.append(key)
+        self.headers_seen.append({name.lower(): value for name, value in request.headers.items()})
         if self.refuse:
             raise httpx.ConnectError("the fake server is down", request=httpx.Request("GET", BASE))
         if self.refuse_key and key != f"Bearer {KEY}":
@@ -367,15 +370,14 @@ class FakeOpenRouter(FakeOpenAI):
     """The models that take tools (the others do not say so in `supported_parameters`)."""
     label: str = "deepseek-b"
     """The key's label, as OpenRouter names it."""
-    used: str = "1.25"
-    """How much of the key's limit is used, in USD."""
+    used: str | None = "1.25"
+    """How much of the key's limit is used, in USD (None: it does not say)."""
     limit: str | None = "10"
     """The key's limit, in USD (None: no limit)."""
+    limit_remaining: str | None = None
+    """What is left of the limit now, in USD, when the key resets (None: it does not say)."""
     cost: str = "0.00042"
     """What a chat costs, as OpenRouter says."""
-    headers_seen: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
-    """The headers of every chat call made (what udl sent of itself)."""
-
     def http(self) -> HttpClientFactory:
         """udl's client factory, reaching this fake in-process (and nothing else)."""
 
@@ -437,18 +439,16 @@ class FakeOpenRouter(FakeOpenAI):
                 "label": self.label,
                 "usage": self.used,
                 "limit": self.limit,
+                "limit_remaining": self.limit_remaining,
                 "is_free_tier": self.limit is None,
             }
         }
         return JSONResponse(key)
 
-    async def _chat(self, request: Request) -> Response:
-        self.headers_seen.append({name.lower(): value for name, value in request.headers.items()})
-        return await super()._chat(request)
-
     def _priced(self, answer: JsonObject) -> JsonObject:
-        """`answer` with what it cost, as OpenRouter says of a chat's usage."""
+        """`answer` with what it cost, as OpenRouter says of a chat's usage (a copy: a test's own
+        answer is left as it was)."""
         usage = answer.get("usage")
-        if isinstance(usage, dict):
-            answer["usage"] = {**usage, "cost": float(self.cost)}
-        return answer
+        if not isinstance(usage, dict):
+            return answer
+        return {**answer, "usage": {**usage, "cost": float(self.cost)}}

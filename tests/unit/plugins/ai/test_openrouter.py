@@ -75,15 +75,19 @@ def test_its_url_is_openrouters_unless_the_options_say_otherwise() -> None:
     assert options(url="http://elsewhere.test/api/v1").url == "http://elsewhere.test/api/v1"
 
 
-async def test_a_chat_sends_its_key_and_says_who_it_is() -> None:
-    # (OpenRouter asks who is calling: a chat's headers carry the referer and udl's name.)
+async def test_every_request_sends_its_key_and_says_who_it_is() -> None:
+    # (OpenRouter asks who is calling: every request carries the referer and udl's name.)
     fake = FakeOpenRouter()
+    openrouter = provider(fake)
 
-    await provider(fake).chat(chat())
+    await openrouter.health()
+    await openrouter.models()
+    await openrouter.chat(chat())
 
-    sent = fake.headers_seen[-1]
-    assert sent["authorization"] == f"Bearer {OPENROUTER_KEY}"
-    assert (sent["http-referer"], sent["x-title"]) == (REFERER, "udl")
+    assert len(fake.headers_seen) == 3
+    for sent in fake.headers_seen:
+        assert sent["authorization"] == f"Bearer {OPENROUTER_KEY}"
+        assert (sent["http-referer"], sent["x-title"]) == (REFERER, "udl")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -105,6 +109,26 @@ async def test_a_model_says_how_much_text_it_takes_and_whether_it_takes_tools() 
     assert found[MODEL].context_length == 128_000
     assert found[MODEL].tools
     assert not found["fake-2"].tools
+
+
+async def test_a_variable_priced_model_has_no_price() -> None:
+    # (OpenRouter lists a router, openrouter/auto, at "-1": not a price udl can show.)
+    fake = FakeOpenRouter(prices={"fake-1": ("-1", "-1")})
+
+    found = {model.name: model for model in await provider(fake).models()}
+
+    assert found[MODEL].pricing is None
+
+
+async def test_a_price_that_is_not_a_number_is_no_price() -> None:
+    # (NaN and Infinity parse as Decimals, and Pydantic then refuses them: one odd model must
+    # not lose the whole list.)
+    fake = FakeOpenRouter(prices={"fake-1": ("NaN", "Infinity")})
+
+    found = {model.name: model for model in await provider(fake).models()}
+
+    assert found[MODEL].pricing is None
+    assert found["fake-2"].pricing is not None
 
 
 async def test_a_model_without_a_price_has_none() -> None:
@@ -158,6 +182,26 @@ async def test_its_health_says_its_labels_usage_and_limit() -> None:
         detail="deepseek-b: used 1.25 of 10 USD (8.75 left)",
         credit_left=Decimal("8.75"),
     )
+
+
+async def test_a_key_that_resets_says_what_is_left_now() -> None:
+    # (A key with limit_reset spends up to its limit each day: usage is all-time, so what is
+    # left is OpenRouter's own limit_remaining, not limit - usage.)
+    fake = FakeOpenRouter(used="40", limit="10", limit_remaining="4")
+
+    health = await provider(fake).health()
+
+    assert health.credit_left == Decimal("4")
+    assert health.detail == "deepseek-b: used 40 of 10 USD (4 left)"
+
+
+async def test_a_key_with_a_limit_but_no_usage_still_says_its_limit() -> None:
+    fake = FakeOpenRouter(used=None, limit="10")
+
+    health = await provider(fake).health()
+
+    assert health.credit_left == Decimal("10")
+    assert health.detail == "deepseek-b: 10 USD limit (10 left)"
 
 
 async def test_a_key_with_no_limit_has_no_credit_left() -> None:
