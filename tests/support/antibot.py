@@ -34,6 +34,7 @@ or closes the window).
 import asyncio
 import contextlib
 import json
+import logging
 import secrets
 import socket
 import threading
@@ -52,6 +53,8 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
+
+log = logging.getLogger(__name__)
 
 CONTENT_DIR: Final = Path(__file__).parent.parent / "fixtures" / "antibot"
 HOSTS: Final = ("a.localhost", "b.localhost", "c.localhost")
@@ -273,16 +276,22 @@ class AntiBotSite:
 
     async def _checked(self, request: Request) -> Response:
         user_agent = request.headers.get("user-agent", "")
-        if self._clearances.valid(request.cookies.get(CLEARANCE), user_agent):
+        sent = request.cookies.get(CLEARANCE)
+        where = f"{request.url.hostname}{request.url.path}"
+        if self._clearances.valid(sent, user_agent):
+            log.debug("%s: the page behind the check", where)
             rest = request.path_params["rest"]
             return self._html(
                 request, _page(f"Checked {rest}", f"The page behind the check: {rest}.")
             )
+        why = "no clearance sent" if sent is None else "a clearance it did not give this browser"
+        log.debug("%s: the check (%s)", where, why)
         return self._html(
             request, _interstitial("/checked/__clear"), status=403, **_CLOUDFLARE_HEADERS
         )
 
     async def _clear(self, request: Request) -> Response:
+        log.debug("%s gave a clearance", request.url.hostname)
         token = self.cleared(request.headers.get("user-agent", ""))
         response = Response(status_code=204)
         response.set_cookie(CLEARANCE, token, path="/", httponly=True)
@@ -433,7 +442,9 @@ class FakePerson:
     (through Playwright, as a person's click), leaves it, or closes the window. `attended`
     lists the URLs of the tabs it was given. A person looks for the check for `patience` (as
     long as the window tests give the window, so a slow machine fails for udl, not for the
-    person), and never longer, so a check that never shows fails a test rather than hangs it."""
+    person), and never longer, so a check that never shows fails a test rather than hangs it.
+    It says (at debug, on `support.antibot`) when it pressed a check's button, and why it left
+    one it didn't press, so a window test's report shows what the person did."""
 
     def __init__(
         self, manner: Manner = Manner.PASSES, *, patience: timedelta = timedelta(seconds=120)
@@ -450,9 +461,18 @@ class FakePerson:
             with contextlib.suppress(PlaywrightError):
                 await tab.context.close()
             return
-        with contextlib.suppress(PlaywrightError):  # (a tab that was passed, or closed, meanwhile)
+        try:
             button = tab.locator("#human")
             patience = self.patience.total_seconds() * 1000
             await button.wait_for(timeout=patience)
             await asyncio.sleep(0.1)  # (as a person looks before clicking)
+            # (The check's own page, read before the press: after it, the tab is on its way to
+            # wherever the press sends it; and before the button shows, it may not be the check.)
+            pressed_on = tab.url
             await button.click(timeout=patience)
+        except PlaywrightError as e:  # (a tab that was passed, or closed, meanwhile; or patience)
+            # (Said, not raised: a window test's report then shows why a check was left.)
+            first = (str(e).splitlines() or [type(e).__name__])[0]
+            log.debug("The person left %s without pressing the check's button: %s", tab.url, first)
+            return
+        log.debug("The person pressed the check's button on %s", pressed_on)
