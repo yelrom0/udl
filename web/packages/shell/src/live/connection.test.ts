@@ -256,15 +256,58 @@ describe("the live connection", () => {
 		expect(live.getState().runs).toEqual({});
 	});
 
-	it("says offline, and forgets nothing it was given, when the page stops following", () => {
+	it("forgets everything it was given when the page stops following", () => {
+		// (A signed-out page's data is not kept: the next session must not see the last one's.)
 		const live500 = startLive({ source: FakeSource, timers: fakeTimers() });
 		FakeSource.made[0]?.open();
 		FakeSource.made[0]?.send("event", { id: "e-1" });
+		FakeSource.made[0]?.send("run", { id: "run-1", state: "running" });
+		live500.download("job-1");
+		FakeSource.made[1]?.send("progress", { percent: 40 });
 
 		live500.stop();
 
-		expect(live.getState().connection).toBe("offline");
-		expect(live.getState().events).toHaveLength(1);
+		expect(live.getState()).toEqual({
+			connection: "offline",
+			events: [],
+			runs: {},
+			jobs: {},
+		});
+	});
+
+	it("stops following a download once its job has ended", () => {
+		// (A download's stream is over when the job is: reconnecting to it forever would be a
+		// request a second, and a reload with it.)
+		const timers = fakeTimers();
+		const reload = vi.fn();
+		const live500 = startLive({ source: FakeSource, timers, reload });
+		FakeSource.made[0]?.open();
+		live500.download("job-1");
+		const stream = FakeSource.made[1];
+		stream?.open();
+
+		stream?.send("finished", { id: "job-1" });
+		stream?.fail();
+		timers.fire();
+
+		expect(FakeSource.made).toHaveLength(2); // (no third source: it did not reconnect)
+		expect(reload).not.toHaveBeenCalled();
+		expect(live.getState().jobs["job-1"]).toMatchObject({ name: "finished" });
+	});
+
+	it("keeps following a download while its job is running", () => {
+		const timers = fakeTimers();
+		const live500 = startLive({ source: FakeSource, timers });
+		FakeSource.made[0]?.open();
+		live500.download("job-1");
+		const stream = FakeSource.made[1];
+		stream?.open();
+
+		stream?.send("progress", { percent: 10 });
+		stream?.fail();
+		timers.fire();
+
+		expect(FakeSource.made).toHaveLength(3); // (the first, the job's, and the one it reopened)
 	});
 
 	it("says connecting before its first event, and lives on the page's own clock", () => {

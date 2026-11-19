@@ -8,7 +8,7 @@
  * the connection state the navbar shows.
  */
 
-import { pushEvent, setConnection, setJob, setRun } from "../stores/live";
+import { clear, pushEvent, setConnection, setJob, setRun } from "../stores/live";
 
 /** How long the first retry waits, and the longest one. */
 export const FIRST_DELAY = 1_000;
@@ -29,6 +29,9 @@ export const JOB_TYPES = [
 
 /** What udl sends on its own stream. */
 export const EVENT_TYPES = ["event", "run", "lagged"] as const;
+
+/** A download's job events that end it: its stream is over, so the page stops following it. */
+export const JOB_ENDS: readonly string[] = ["finished", "failed", "cancelled"];
 
 /** The clocks the connection waits on (a test's own, so the backoff is not a wait). */
 export interface Timers {
@@ -244,11 +247,17 @@ export function startLive(options: LiveOptions = {}): Live {
 	return {
 		stop: () => {
 			connection.close();
-			setConnection("offline");
+			clear(); // (a signed-out page's events, runs and jobs are not the next session's)
 		},
 		download: (id: string) => {
-			connection.watch(`/downloads/${id}/events`, JOB_TYPES, (name, data) => {
+			const path = `/downloads/${id}/events`;
+			connection.watch(path, JOB_TYPES, (name, data) => {
 				setJob(id, { name, at: now(), data });
+				if (JOB_ENDS.includes(name)) {
+					// (The job is over and the server closed the stream: reconnecting to it would
+					// be a request a second for a download that is finished.)
+					connection.stop(path);
+				}
 			});
 		},
 	};
