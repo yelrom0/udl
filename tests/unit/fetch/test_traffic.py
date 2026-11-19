@@ -33,6 +33,9 @@ class FakeRequest:
 
 CLEAR = FakeRequest("POST", "http://a.localhost/checked/__clear")
 RELOAD = FakeRequest("GET", "http://a.localhost/checked/1", navigation=True)
+# (An iframe's own document: a navigation request too, but not the main frame's.)
+FRAME = FakeRequest("GET", "http://a.localhost/widget", navigation=True)
+DATA = FakeRequest("GET", "http://a.localhost/api/items")
 
 
 async def test_a_request_that_ended_is_quiet_once_the_delay_has_gone() -> None:
@@ -66,7 +69,7 @@ async def test_a_new_document_drops_what_the_old_one_left_in_flight() -> None:
     traffic = Traffic(clock)
 
     traffic.started(CLEAR)
-    traffic.started(RELOAD)
+    traffic.started(RELOAD, document=True)
     traffic.navigated()
     traffic.ended(RELOAD)
     await clock.advance(QUIET)
@@ -75,12 +78,62 @@ async def test_a_new_document_drops_what_the_old_one_left_in_flight() -> None:
     assert traffic.quiet_for(QUIET)
 
 
+async def test_a_document_whose_request_ended_before_it_committed_still_drops_the_old_ones() -> (
+    None
+):
+    # (A small page's request can be said to end before its commit is: the new document was
+    # asked for since the last commit, so the commit is a new document all the same.)
+    traffic = Traffic(FakeClock())
+
+    traffic.started(CLEAR)
+    traffic.started(RELOAD, document=True)
+    traffic.ended(RELOAD)
+    traffic.navigated()
+
+    assert traffic.inflight() == []
+
+
+async def test_a_new_document_drops_an_old_iframes_document_too() -> None:
+    # (An iframe still loading when the main frame went elsewhere is torn down with it: its
+    # request may never be said to end either.)
+    traffic = Traffic(FakeClock())
+
+    traffic.started(FRAME)
+    traffic.started(RELOAD, document=True)
+    traffic.navigated()
+
+    assert traffic.inflight() == ["GET http://a.localhost/checked/1"]
+
+
+async def test_a_same_document_navigation_drops_nothing() -> None:
+    # (pushState, replaceState, a fragment: the page is still there, and its fetch will end.)
+    traffic = Traffic(FakeClock())
+
+    traffic.started(DATA)
+    traffic.navigated()
+
+    assert traffic.inflight() == ["GET http://a.localhost/api/items"]
+
+
+async def test_a_subframes_commit_drops_nothing() -> None:
+    traffic = Traffic(FakeClock())
+
+    traffic.started(CLEAR)
+    traffic.started(FRAME)
+    traffic.navigated(main=False)
+
+    assert traffic.inflight() == [
+        "GET http://a.localhost/widget",
+        "POST http://a.localhost/checked/__clear",
+    ]
+
+
 async def test_the_navigation_itself_is_kept_until_it_ends() -> None:
     # (A new document's own request is still loading when it commits: it counts until it ends.)
     clock = FakeClock()
     traffic = Traffic(clock)
 
-    traffic.started(RELOAD)
+    traffic.started(RELOAD, document=True)
     traffic.navigated()
     await clock.advance(QUIET)
 

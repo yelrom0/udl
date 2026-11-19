@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Final, Protocol
 
 # Package Imports
-from playwright.async_api import BrowserContext, Frame, Page, Response
+from playwright.async_api import BrowserContext, Frame, Page, Request, Response
 from playwright.async_api import Error as PlaywrightError
 
 # Local Imports
@@ -90,25 +90,35 @@ class Traffic:
     A new document drops what the old one left in flight. Playwright doesn't always say a request
     ended when its page navigated away from it (a check's `fetch()` of its clearance, then
     `location.reload()`), and a request counted for ever kept the tab from ever being quiet: the
-    window then never saw the check passed."""
+    window then never saw the check passed. A commit is a new document when the main frame asked
+    for one since the last commit; a same-document navigation (pushState, replaceState, a
+    fragment) asks for none, so it drops nothing."""
 
     def __init__(self, clock: Clock) -> None:
         self._clock = clock
         self._inflight: set[_Sent] = set()
         self._active_at = clock.now()
+        # The main frame's newest document request since its last commit, if it asked for one.
+        self._document: _Sent | None = None
 
-    def started(self, request: _Sent) -> None:
+    def started(self, request: _Sent, *, document: bool = False) -> None:
+        """A request began; `document`: it is the main frame's request for a new document."""
         self._inflight.add(request)
+        if document:
+            self._document = request
         self._active_at = self._clock.now()
 
     def ended(self, request: _Sent) -> None:
         self._inflight.discard(request)
         self._active_at = self._clock.now()
 
-    def navigated(self) -> None:
-        """The main frame shows a new document: only a navigation's own request is still
-        loading; the old document's requests can no longer end."""
-        self._inflight = {request for request in self._inflight if request.is_navigation_request()}
+    def navigated(self, *, main: bool = True) -> None:
+        """A frame committed (`main`: the main frame). When the main frame commits the document
+        it asked for, only that document's own request may still be loading: the old document's
+        requests, its iframes' among them, can no longer end."""
+        if main and self._document is not None:
+            self._inflight = {request for request in self._inflight if request is self._document}
+            self._document = None
         self._active_at = self._clock.now()
 
     def quiet_for(self, delay: timedelta) -> bool:
@@ -130,15 +140,19 @@ class PlaywrightTab:
         self._clock = clock
         self._document: Response | None = None
         self._traffic = Traffic(clock)
-        page.on("request", self._traffic.started)
+        page.on("request", self._started)
         page.on("requestfinished", self._traffic.ended)
         page.on("requestfailed", self._traffic.ended)
         page.on("framenavigated", self._navigated)
         page.on("response", self._responded)
 
+    def _started(self, request: Request) -> None:
+        # (A navigation request always has its frame; another one may not, a service worker's.)
+        main = request.is_navigation_request() and request.frame == self._page.main_frame
+        self._traffic.started(request, document=main)
+
     def _navigated(self, frame: Frame) -> None:
-        if frame == self._page.main_frame:
-            self._traffic.navigated()
+        self._traffic.navigated(main=frame == self._page.main_frame)
 
     def quiet_for(self, delay: timedelta) -> bool:
         """Whether the tab's network has been quiet for `delay`."""
