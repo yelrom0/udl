@@ -107,9 +107,7 @@ def _fake(shell: RecordingShell, store: Sessions) -> AnAgentRunner:
     )
 
 
-HARNESS = Path(__file__).resolve().parents[1] / "support" / "fake_harness.py"
-"""The fake harness, as the CLI a claude-code runner runs (it answers as `claude` does)."""
-
+# (`HARNESS` is above: the same fake harness, as the CLI a claude-code runner runs.)
 CLAUDE = ClaudeCodeOptions(cli=[sys.executable, str(HARNESS)])
 
 
