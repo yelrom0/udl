@@ -11,10 +11,6 @@ is, never fatal). Exit 0 ends the turn as done; anything else ends it as an erro
 program said on stderr. A jsonl line saying the account is limited (`limited`, with `resets_at`)
 ends the turn as limited, with the RunnerLimited that says when it lifts.
 
-Its sessions may be kept outside the runner (`sessions`, a mapping a service holds): a session then
-outlives the runner object, as a harness's does, and another runner given the same mapping resumes
-it by id.
-
 A program may only be started when its name is in `[orch] allowed_commands` (set in the config
 file only, as an AI provider's command is): the list is given to the runner when it is made, and a
 program that is not in it is refused (NotAllowed) rather than run — both templates' programs, the
@@ -154,10 +150,11 @@ class CommandRunner(AgentRunner[CommandRunnerOptions]):
                     installed=False,
                     detail=f"{program!r} is not in [orch] allowed_commands (the config file).",
                 )
-        try:
-            await self.shell.run(["sh", "-c", f"command -v {shlex.quote(self.program)}"])
-        except PluginFailed, ToolUnavailable:
-            return RunnerHealth(installed=False, detail=f"{self.program!r} is not on this host.")
+        for program in self.programs:
+            try:
+                await self.shell.run(["sh", "-c", f"command -v {shlex.quote(program)}"])
+            except PluginFailed, ToolUnavailable:
+                return RunnerHealth(installed=False, detail=f"{program!r} is not on this host.")
         return RunnerHealth(installed=True, signed_in=True, detail="Started as a command.")
 
     async def models(self) -> list[RunnerModel]:

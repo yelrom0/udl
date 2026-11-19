@@ -188,6 +188,23 @@ async def test_a_resume_argv_whose_program_is_not_allowed_is_refused(cwd: str) -
     assert "sh" in (health.detail or "")
 
 
+async def test_health_says_when_the_resume_program_is_not_on_the_host(cwd: str) -> None:
+    missing = "not-a-program-anywhere"
+    runner = CommandRunner(
+        CommandRunnerOptions(
+            argv=[sys.executable, "-c", "print('first')"], resume_argv=[missing, "--resume"]
+        ),
+        shell=LocalShell(Host.local(cwd)),
+        clock=FakeClock(),
+        allowed=(sys.executable, missing),  # (allowed, but not on this host)
+    )
+
+    health = await runner.health()
+
+    assert not health.installed
+    assert missing in (health.detail or "")
+
+
 async def test_a_second_runner_runs_the_resume_argv_of_a_session_it_resumes(cwd: str) -> None:
     sessions = CommandSessions()
     first = _runner(cwd, "print('first')", sessions=sessions)
