@@ -30,6 +30,8 @@ from udl.db.models import JsonObject
 from udl.db.records import Record, record_kind
 from udl.errors import PluginError
 from udl.plugins.apps.base import AnApp, AppContext, AppEvents, AppPlugin, AppRecords, AppSettings
+from udl.plugins.apps.orch.plugin import Orch
+from udl.plugins.apps.orch.settings import OrchSettings
 from udl.plugins.registry import APPS, PluginRegistry
 
 
@@ -103,7 +105,19 @@ def fake_case() -> Case:
     )
 
 
-CASES: dict[str, Callable[[], Case]] = {"fakeapp": fake_case}
+def orch_case() -> Case:
+    clock = FakeClock()
+    settings = OrchSettings()
+    return Case(
+        plugin=Orch,
+        app=Orch(settings, clock=clock),
+        clock=clock,
+        events=_Events(Orch.name),
+        records=_Records(),
+    )
+
+
+CASES: dict[str, Callable[[], Case]] = {"fakeapp": fake_case, "orch": orch_case}
 
 
 @pytest.fixture(params=sorted(CASES))
@@ -155,7 +169,9 @@ def test_what_is_not_an_app_is_refused() -> None:
 def test_an_app_s_operations_are_operations(case: Case) -> None:
     found = case.plugin.operations()
 
-    assert found
+    # (Every app but orch brings operations: orch's are Phase 26.6's.)
+    if case.plugin is not Orch:
+        assert found
     for op in found:
         assert isinstance(op, Operation)
         assert op.title
@@ -172,7 +188,7 @@ def test_a_service_offers_an_app_s_operations_named_after_it(case: Case) -> None
     ops = OperationRegistry.discover(registry)
 
     assert len(ops.in_namespace(case.plugin.name)) == len(case.plugin.operations())
-    for op in case.plugin.operations():
+    for op in case.plugin.operations():  # (none for an app whose operations are still to come)
         named = ops.get(f"{case.plugin.name}_{op.name}")
         assert named.kind == APPS.group
         assert named.ui == op.ui
@@ -233,10 +249,14 @@ async def test_an_app_s_service_runs_until_it_is_told_to_stop(case: Case) -> Non
     ctx.stop.set()
     await asyncio.wait_for(task, 1)
 
-    assert isinstance(case.app, FakeApp)
-    assert case.app.stopped
-    assert case.events.published
-    assert case.records.kept
+    if isinstance(case.app, FakeApp):
+        assert case.app.stopped
+        assert case.events.published
+        assert case.records.kept
+    else:
+        # (orch's service is a wait on ctx.stop: nothing runs until the dispatcher (27's), and
+        # the await above ending is what shows stopping ends it.)
+        assert isinstance(case.app, Orch)
 
 
 async def test_an_app_s_service_stops_where_it_waits(case: Case) -> None:

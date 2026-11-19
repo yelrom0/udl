@@ -60,6 +60,9 @@ http = "udl.plugins.downloaders.http:HttpDownloader"
 scraper = "udl.plugins.downloaders.scraper:ScraperDownloader"
 yt-dlp = "udl.plugins.downloaders.ytdlp:YtDlpDownloader"
 
+[project.entry-points."udl.apps"]
+orch = "udl.plugins.apps.orch.plugin:Orch"
+
 [project.entry-points."udl.sites"]
 youtube = "udl.plugins.sites.youtube:YouTubePlugin"
 

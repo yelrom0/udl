@@ -114,7 +114,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [ ] 25.11 Managing harnesses on every host: status (version, signed in, plan, limits), install and update, sign-in started from the hub
 - [ ] **Phase 26: Work tracking: projects, features, tasks, links**
   - [~] 26.1 `udl.apps` plugin kind: `AppPlugin` + contract suite + `FakeApp`; app services in the runtime
-  - [ ] 26.2 `Project` and `Repo` records
+  - [~] 26.2 `Project` and `Repo` records
   - [ ] 26.3 `Feature` and `Task` records, task states and their transitions
   - [ ] 26.4 `Link` records: everything linked, both ways; GitHub links kept current by the watcher
   - [ ] 26.5 `Note` records: what was done, decisions, findings, on a task or feature
