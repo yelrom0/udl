@@ -27,24 +27,20 @@ function object(value: JsonValue | undefined, what: string): Readonly<Record<str
 /** Every operation's request body's schema, by the operation's id. */
 function requests(): ReadonlyMap<string, JsonValue> {
 	const found = new Map<string, JsonValue>();
-	for (const [path, item] of Object.entries(object(OPENAPI, "the document"))) {
-		if (path !== "paths") {
-			continue;
-		}
-		for (const [route, methods] of Object.entries(object(item, "paths"))) {
-			for (const [method, operation] of Object.entries(object(methods, route))) {
-				const body = object(operation, `${method} ${route}`).requestBody;
-				if (!isJsonObject(body)) {
-					continue;
-				}
-				const content = object(body.content, "content");
-				const json = object(content["application/json"] ?? {}, "application/json");
-				const schema = json.schema;
-				if (schema === undefined) {
-					continue;
-				}
-				found.set(`${method} ${route}`, schema);
+	const paths = object(object(OPENAPI, "the document").paths, "paths");
+	for (const [route, methods] of Object.entries(paths)) {
+		for (const [method, operation] of Object.entries(object(methods, route))) {
+			const body = object(operation, `${method} ${route}`).requestBody;
+			if (!isJsonObject(body)) {
+				continue;
 			}
+			const content = object(body.content, "content");
+			const json = object(content["application/json"] ?? {}, "application/json");
+			const schema = json.schema;
+			if (schema === undefined) {
+				continue;
+			}
+			found.set(`${method} ${route}`, schema);
 		}
 	}
 	return found;
@@ -81,5 +77,43 @@ describe("every request in openapi.json", () => {
 				expect([name, field.label.length > 0]).toEqual([name, true]);
 			}
 		}
+	});
+});
+
+describe("a field whose type is a definition", () => {
+	it("keeps the help and default it says beside its $ref", () => {
+		// (pydantic writes an enum- or model-typed field's description, default and x-udl-ui next
+		// to its `$ref` — 124 of them in this document — and they are the field's, not the
+		// definition's: the form shows them as its help and its empty value.)
+		const beside: string[] = [];
+		const walk = (node: JsonValue, at: string): void => {
+			if (Array.isArray(node)) {
+				node.forEach((item, index) => {
+					walk(item, `${at}[${index}]`);
+				});
+				return;
+			}
+			if (!isJsonObject(node)) {
+				return;
+			}
+			if (typeof node.$ref === "string") {
+				const own = ["description", "default", "title", "x-udl-ui"].filter(
+					(name) => node[name] !== undefined,
+				);
+				if (own.length > 0) {
+					const resolved = object(resolveRefs(node, OPENAPI), at);
+					for (const name of own) {
+						expect([at, name, resolved[name]]).toEqual([at, name, node[name]]);
+					}
+					beside.push(at);
+				}
+			}
+			for (const [name, value] of Object.entries(node)) {
+				walk(value, `${at}.${name}`);
+			}
+		};
+		walk(OPENAPI, "openapi");
+
+		expect(beside.length).toBeGreaterThan(50);
 	});
 });

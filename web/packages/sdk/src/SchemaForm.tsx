@@ -17,7 +17,15 @@
 
 import { type ReactNode, useState } from "react";
 import type { JsonValue } from "./index";
-import { type FieldSpec, fieldsOf, isJsonObject, resolveRefs, valueAt, withValue } from "./schema";
+import {
+	type FieldSpec,
+	fieldsOf,
+	isJsonObject,
+	resolveRefs,
+	valueAt,
+	withoutValue,
+	withValue,
+} from "./schema";
 
 /** A form's value: a JSON object, as a request's body or a plugin's settings. */
 export type FormValue = Readonly<Record<string, JsonValue>>;
@@ -148,6 +156,13 @@ function Field({
 			onChange(next);
 		}
 	};
+	// (A field cleared is not sent at all: `null` for a non-nullable field with a default is a 422.)
+	const clear = (): void => {
+		const next = withoutValue(value, field.path);
+		if (isJsonObject(next)) {
+			onChange(next);
+		}
+	};
 
 	if (field.fields !== undefined && field.fields.length > 0) {
 		// (An object's own fields: they are the form's, one level in.)
@@ -181,6 +196,7 @@ function Field({
 				field={field}
 				value={current}
 				onChange={set}
+				onClear={clear}
 				disabled={locked}
 				invalid={error !== undefined}
 				secret={isSecret}
@@ -220,26 +236,26 @@ interface ControlProps {
 	readonly field: FieldSpec;
 	readonly value: JsonValue | undefined;
 	readonly onChange: (value: JsonValue) => void;
+	/** The field was cleared: it is taken out of the value, not set to null. */
+	readonly onClear: () => void;
 	readonly disabled: boolean;
 	readonly invalid: boolean;
 	readonly secret: boolean;
 }
 
-function Control({ field, value, onChange, disabled, invalid, secret }: ControlProps) {
+function Control({ field, value, onChange, onClear, disabled, invalid, secret }: ControlProps) {
 	const id = `field-${keyOf(field)}`;
 	const className = `input w-full${invalid ? " input-error" : ""}`;
 	const text = typeof value === "string" || typeof value === "number" ? String(value) : "";
 
 	if (secret || field.widget === "password") {
 		return (
-			<input
+			<SecretBox
 				id={id}
-				type="password"
 				className={className}
-				value={text}
+				set={value !== undefined}
 				disabled={disabled}
-				placeholder={value === undefined ? "(not set)" : ""}
-				onChange={(event) => onChange(event.target.value)}
+				onChange={onChange}
 			/>
 		);
 	}
@@ -266,7 +282,11 @@ function Control({ field, value, onChange, disabled, invalid, secret }: ControlP
 				disabled={disabled}
 				onChange={(event) => {
 					const picked = choices.find((option) => option.label === event.target.value);
-					onChange(picked === undefined ? null : picked.value);
+					if (picked === undefined) {
+						onClear();
+					} else {
+						onChange(picked.value);
+					}
 				}}
 			>
 				<option value="">{field.required ? "(choose)" : "(none)"}</option>
@@ -293,7 +313,11 @@ function Control({ field, value, onChange, disabled, invalid, secret }: ControlP
 				disabled={disabled}
 				onChange={(event) => {
 					const typed = event.target.value;
-					onChange(typed === "" ? null : Number(typed));
+					if (typed === "") {
+						onClear();
+					} else {
+						onChange(Number(typed));
+					}
 				}}
 			/>
 		);
@@ -322,6 +346,37 @@ function Control({ field, value, onChange, disabled, invalid, secret }: ControlP
 			disabled={disabled}
 			placeholder={field.placeholder ?? ""}
 			onChange={(event) => onChange(event.target.value)}
+		/>
+	);
+}
+
+interface SecretBoxProps {
+	readonly id: string;
+	readonly className: string;
+	/** Whether the form holds a value for it (it is not drawn back, only said to be set). */
+	readonly set: boolean;
+	readonly disabled: boolean;
+	readonly onChange: (value: JsonValue) => void;
+}
+
+/**
+ * A password box that is never drawn back: it holds what was typed into it now, and never the
+ * value the form holds — a secret that is set says so, and is not in the page's DOM.
+ */
+function SecretBox({ id, className, set, disabled, onChange }: SecretBoxProps) {
+	const [typed, setTyped] = useState("");
+	return (
+		<input
+			id={id}
+			type="password"
+			className={className}
+			value={typed}
+			disabled={disabled}
+			placeholder={set ? "(set: type to replace)" : "(not set)"}
+			onChange={(event) => {
+				setTyped(event.target.value);
+				onChange(event.target.value);
+			}}
 		/>
 	);
 }

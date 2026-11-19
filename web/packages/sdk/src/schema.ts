@@ -81,6 +81,8 @@ export interface FieldSpec {
 	readonly options?: readonly FieldOption[];
 	/** Its own fields, when it is an object (the form shows them instead of one box). */
 	readonly fields?: readonly FieldSpec[];
+	/** What its items are, when it is a list (their widget, and their choices). */
+	readonly items?: FieldSpec;
 	/** Whether it sits in the form's advanced section. */
 	readonly advanced: boolean;
 	/** Where it sits (the lowest first): `x-udl-ui.order`, else the schema's own order. */
@@ -108,11 +110,13 @@ function asString(value: JsonValue | undefined): string | undefined {
 	return typeof value === "string" ? value : undefined;
 }
 
+function isWidget(value: string): value is FieldWidget {
+	return (fieldWidgets as readonly string[]).includes(value);
+}
+
 function asWidget(value: JsonValue | undefined): FieldWidget | undefined {
 	const found = asString(value);
-	return found !== undefined && (fieldWidgets as readonly string[]).includes(found)
-		? (found as FieldWidget)
-		: undefined;
+	return found !== undefined && isWidget(found) ? found : undefined;
 }
 
 /** What a choice says: its text, or the JSON of anything else. */
@@ -162,6 +166,10 @@ function widgetOf(property: Schema): FieldWidget {
 	if (asArray(property.enum) !== undefined) {
 		return "select";
 	}
+	if (asString(property.type) === "array") {
+		// (pydantic writes `list[Literal[...]]`'s enum under `items`: that is a multiselect.)
+		return asArray(asObject(property.items)?.enum) === undefined ? "json" : "multiselect";
+	}
 	switch (asString(property.type)) {
 		case "boolean":
 			return "switch";
@@ -188,7 +196,8 @@ function fieldOf(
 	// (What the schema says, with `T | None`'s anyOf taken off: a nullable field is its type's.)
 	const said = effective(property);
 	const own = fieldsOf(said, path);
-	const choices = asArray(said.enum);
+	const item = asObject(said.items);
+	const choices = asArray(said.enum) ?? asArray(item?.enum);
 	const help = asString(hints.help) ?? asString(said.description);
 	const placeholder = asString(hints.placeholder);
 	return {
@@ -204,6 +213,7 @@ function fieldOf(
 			? {}
 			: { options: choices.map((value) => ({ value, label: labelOf(value) })) }),
 		...(own.length === 0 ? {} : { fields: own }),
+		...(item === undefined ? {} : { items: fieldOf(name, path, item, index, required) }),
 		advanced: hints.advanced === true,
 		order: typeof hints.order === "number" ? hints.order : index,
 		writeOnly: said.writeOnly === true,
@@ -257,11 +267,19 @@ export function resolveRefs(schema: JsonValue, root: JsonValue = schema): JsonVa
 		}
 		const reference = node.$ref;
 		if (typeof reference === "string" && reference.startsWith("#/")) {
+			// (A field's own keywords sit next to its `$ref` — its description, default and
+			// `x-udl-ui` — and they are the field's: they win over the definition's.)
+			const siblings = Object.fromEntries(
+				Object.entries(node)
+					.filter(([name]) => name !== "$ref")
+					.map(([name, value]) => [name, resolve(value, seen)]),
+			);
 			const target = pointedAt(root, reference);
 			if (target === undefined || seen.includes(reference)) {
-				return {};
+				return siblings;
 			}
-			return resolve(target, [...seen, reference]);
+			const found = resolve(target, [...seen, reference]);
+			return isJsonObject(found) ? { ...found, ...siblings } : found;
 		}
 		return Object.fromEntries(
 			Object.entries(node)
@@ -285,7 +303,7 @@ export function valueAt(value: JsonValue, path: readonly string[]): JsonValue | 
 	return found;
 }
 
-/** `value` with `at` set to `set` (the objects on the way made where they are not there). */
+/** `value` with `path` set to `set` (the objects on the way made where they are not there). */
 export function withValue(value: JsonValue, path: readonly string[], set: JsonValue): JsonValue {
 	const [name, ...rest] = path;
 	if (name === undefined) {

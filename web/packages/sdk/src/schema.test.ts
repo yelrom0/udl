@@ -306,11 +306,18 @@ describe("a schema with references", () => {
 	});
 
 	it("keeps what the schema says beside the reference", () => {
+		// (pydantic writes a field's own description, default and x-udl-ui next to its $ref,
+		// not in an allOf: they are the field's, so they must not be dropped.)
 		const found = resolveRefs(
 			{
 				type: "object",
 				properties: {
-					street: { $ref: "#/components/schemas/Address", description: "Where." },
+					street: {
+						$ref: "#/components/schemas/Address",
+						description: "Where.",
+						default: { street: "1 Test Street" },
+						"x-udl-ui": { label: "Their street" },
+					},
 				},
 			},
 			document,
@@ -322,9 +329,36 @@ describe("a schema with references", () => {
 				street: {
 					type: "object",
 					properties: { street: { type: "string" } },
+					description: "Where.",
+					default: { street: "1 Test Street" },
+					"x-udl-ui": { label: "Their street" },
 				},
 			},
 		});
+	});
+
+	it("keeps them where the reference is a cycle, too", () => {
+		const found = resolveRefs(
+			{
+				type: "object",
+				properties: {
+					tree: { $ref: "#/components/schemas/Node", description: "The tree." },
+				},
+			},
+			{
+				components: {
+					schemas: {
+						Node: {
+							type: "object",
+							properties: { child: { $ref: "#/components/schemas/Node" } },
+						},
+					},
+				},
+			},
+		);
+
+		const properties = (found as { properties: Record<string, unknown> }).properties;
+		expect(properties.tree).toMatchObject({ description: "The tree." });
 	});
 });
 
@@ -343,5 +377,36 @@ describe("the value of a field", () => {
 	it("is taken out of its path, and the objects it leaves stay", () => {
 		expect(withoutValue({ a: { b: 1 }, c: 2 }, ["a", "b"])).toEqual({ a: {}, c: 2 });
 		expect(withoutValue({ a: 1 }, ["b"])).toEqual({ a: 1 });
+	});
+});
+
+describe("a list of choices", () => {
+	// (pydantic writes `list[Literal["a", "b"]]` with the enum under `items`, never on the array.)
+	const schema = {
+		type: "object",
+		properties: {
+			tags: { type: "array", title: "Tags", items: { enum: ["a", "b"] } },
+		},
+	};
+
+	it("is a multiselect, with its items' choices", () => {
+		const tags = of(schema).find((field) => field.name === "tags");
+
+		expect(tags?.widget).toBe("multiselect");
+		expect(tags?.options).toEqual([
+			{ value: "a", label: "a" },
+			{ value: "b", label: "b" },
+		]);
+	});
+
+	it("says what its items are, too", () => {
+		const tags = of(schema).find((field) => field.name === "tags");
+		const names = of({
+			type: "object",
+			properties: { names: { type: "array", title: "Names", items: { type: "string" } } },
+		}).find((field) => field.name === "names");
+
+		expect(tags?.items?.options).toHaveLength(2);
+		expect(names?.items?.widget).toBe("text");
 	});
 });

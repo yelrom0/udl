@@ -85,14 +85,15 @@ describe("what the user types", () => {
 		expect(onChange).toHaveBeenCalledWith({ draft: true });
 	});
 
-	it("is a number for a number, and null when it is emptied", () => {
+	it("is a number for a number, and taken out when it is emptied", () => {
 		const onChange = draw({ wait: 3 });
 
 		fireEvent.change(screen.getByLabelText(/Wait/), { target: { value: "5" } });
 		expect(onChange).toHaveBeenCalledWith({ wait: 5 });
 
+		// (Not null: a non-nullable field with a default refuses one.)
 		fireEvent.change(screen.getByLabelText(/Wait/), { target: { value: "" } });
-		expect(onChange).toHaveBeenCalledWith({ wait: null });
+		expect(onChange).toHaveBeenCalledWith({});
 	});
 
 	it("is the choice's value, not its label", () => {
@@ -159,6 +160,31 @@ describe("a secret", () => {
 		);
 
 		expect(screen.getByLabelText(/Subject/).getAttribute("type")).toBe("password");
+	});
+
+	it("never has the value in the DOM, even when the form holds one", () => {
+		// (A password box bound to the value would put the secret in the page's DOM.)
+		render(
+			<SchemaForm
+				schema={request}
+				value={{ subject: "hunter2" }}
+				onChange={() => {}}
+				secret={["subject"]}
+			/>,
+		);
+
+		const box = screen.getByLabelText(/Subject/) as HTMLInputElement;
+		expect(box.value).toBe("");
+		expect(document.body.innerHTML).not.toContain("hunter2");
+	});
+
+	it("shows what is typed into it, and gives it to the form", () => {
+		const onChange = vi.fn();
+		render(<SchemaForm schema={request} value={{}} onChange={onChange} secret={["subject"]} />);
+
+		fireEvent.change(screen.getByLabelText(/Subject/), { target: { value: "s3cret" } });
+
+		expect(onChange).toHaveBeenCalledWith({ subject: "s3cret" });
 	});
 });
 
@@ -339,5 +365,26 @@ describe("a form that is disabled", () => {
 
 		expect(screen.getByLabelText(/Subject/).hasAttribute("disabled")).toBe(true);
 		expect(screen.getByLabelText(/Draft/).hasAttribute("disabled")).toBe(true);
+	});
+});
+
+describe("a field cleared", () => {
+	it("is not sent at all, rather than as null", () => {
+		// (Choosing "(none)" for a non-nullable field with a default would be a 422 as null.)
+		const onChange = vi.fn();
+		render(<SchemaForm schema={request} value={{ wait: 5 }} onChange={onChange} />);
+
+		fireEvent.change(screen.getByLabelText(/Wait/), { target: { value: "" } });
+
+		expect(onChange).toHaveBeenCalledWith({});
+	});
+
+	it("takes its choice away, leaving no empty string", () => {
+		const onChange = vi.fn();
+		render(<SchemaForm schema={request} value={{ importance: "low" }} onChange={onChange} />);
+
+		fireEvent.change(screen.getByLabelText(/Importance/), { target: { value: "" } });
+
+		expect(onChange).toHaveBeenCalledWith({});
 	});
 });
