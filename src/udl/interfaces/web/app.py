@@ -10,7 +10,8 @@ shell generates its pages from (/ui/generated.json), and / sending a browser the
 The build is package data, so an installed udl serves the shell it was built with; without one
 (a checkout that has not run `make web`), /ui/ says to. The files need no API key, since they
 hold no data; /ui/generated.json does (it says what the plugins do), so it is checked as the API
-is. None of these routes are operations: the OpenAPI schema is the API's.
+is: the key, or the session cookie the shell signed in with. None of these routes are operations:
+the OpenAPI schema is the API's.
 
 The headers on every /ui answer keep the page to udl's own scripts and connections
 (Content-Security-Policy), out of another site's frame, and out of another site's Referer; and
@@ -38,8 +39,8 @@ from starlette.routing import Route
 
 # Local Imports
 from udl.config import Settings
-from udl.interfaces.security import API_KEY_HEADER, check_api_key
 from udl.interfaces.web.generated import generated
+from udl.interfaces.web.sessions import authenticate
 from udl.plugins.registry import PluginRegistry
 from udl.plugins.ui.base import UIBundle
 from udl.plugins.ui.discovery import ui_bundles, ui_plugins
@@ -109,8 +110,9 @@ def add_web_routes(app: FastAPI, settings: Settings, dist: Path | None = None) -
         return JSONResponse(found.model_dump(mode="json", by_alias=True), headers=HEADERS)
 
     async def generated_json(request: Request) -> Response:
-        # (The same auth as the API's: it says what every plugin does, and with what.)
-        check_api_key(request.app.state.settings, request.headers.get(API_KEY_HEADER))
+        # (The same auth as the API's — the key, or a signed-in session's cookie, which is what
+        # the shell has: it says what every plugin does, and with what.)
+        authenticate(request.app.state.settings, request)
         service = request.app.state.service
         body = generated(service.operations, service.registry).model_dump_json(by_alias=True)
         etag = f'"{hashlib.sha256(body.encode()).hexdigest()[:32]}"'

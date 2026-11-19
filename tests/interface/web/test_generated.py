@@ -6,7 +6,8 @@
 GET /ui/generated.json: everything the shell generates its pages from — each plugin's operations
 (with the view it opens in, what it does, its route and both schemas), its settings form, how its
 accounts connect and the event types it publishes — and udl's own operations under the pseudo-
-plugin `udl`. Interface-only (it is not an operation), behind the API's key, revalidated by ETag.
+plugin `udl`. Interface-only (it is not an operation), behind the API's auth (the key, or a
+signed-in session's cookie), revalidated by ETag.
 """
 
 # System Imports
@@ -22,9 +23,10 @@ from support.actions import with_chores
 from support.api import client_for
 from support.integrations import FakeIntegration
 from support.interfaces import Harness
-from udl.config import APISettings
+from udl.config import APISettings, WebSettings
 from udl.core.operations import operations, resolved_view, route
 from udl.interfaces.web.generated import UDL, GeneratedPlugin, GeneratedUI, generated
+from udl.interfaces.web.sessions import SESSION_COOKIE
 from udl.plugins.registry import INTEGRATIONS, SITES
 from udl.plugins.ui.base import UIBundle
 
@@ -258,6 +260,38 @@ async def test_the_route_needs_the_api_key_when_there_is_one(tmp_path: Path) -> 
 
     assert refused.status_code == 401
     assert allowed.status_code == 200
+
+
+async def test_a_signed_in_session_gets_it_without_the_key(tmp_path: Path) -> None:
+    # (The shell is a page: it has no key to send, it has the session's cookie the login set.)
+    harness = Harness(
+        tmp_path,
+        api=APISettings(api_key=SecretStr("a-key")),
+        web=WebSettings(enabled=True),
+    )
+
+    async with client_for(harness) as client:
+        signed = await client.post("/session", json={"api_key": "a-key"})
+        token = signed.headers["set-cookie"].split(";", 1)[0].split("=", 1)[1]
+        client.cookies.set(SESSION_COOKIE, token)
+        answer = await client.get("/ui/generated.json")
+
+    assert signed.status_code == 204
+    assert answer.status_code == 200
+
+
+async def test_a_stale_session_is_no_key(tmp_path: Path) -> None:
+    harness = Harness(
+        tmp_path,
+        api=APISettings(api_key=SecretStr("a-key")),
+        web=WebSettings(enabled=True),
+    )
+
+    async with client_for(harness) as client:
+        client.cookies.set(SESSION_COOKIE, "not-a-session")
+        answer = await client.get("/ui/generated.json")
+
+    assert answer.status_code == 401
 
 
 async def test_the_shell_s_files_still_need_no_key(tmp_path: Path) -> None:
