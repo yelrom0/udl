@@ -531,6 +531,45 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - `tests/support/runners.py`: `FakeOpenCode`, an ASGI app serving those calls with the same shapes (validated against the committed OpenAPI document), Basic auth, and a log that a test can cut and resume.
 - Tests first: the contract over `FakeOpenCode`; `tests/unit/plugins/runners/test_opencode.py`: the ruleset built from a `deny` list; the log resumed from the stored sequence after a dropped connection, with no event lost or repeated; a `permission.asked` rejected; the password in no log line.
 - Done when: an opt-in smoke test runs one prompt on an OpenRouter model (ERNIE or DeepSeek) through OpenRouter, here and on thevault.
+- **Built (deepseek-a, 2026-11-19/20, PR #TBD):** the `opencode` runner.
+  - `udl/plugins/runners/opencode.py`: `OpenCode` (name `opencode`, published under `udl.runners`),
+    `OpenCodeOptions` (`cli`, `models`, `agent`, `title`, `directory`) and `OpenCodeSessions` (a
+    session's spec, its last log sequence and the secrets it was given, kept outside the runner so
+    a runner made later resumes by id).
+  - **The service, as the card says:** `opencode service status` and `~/.config/opencode/service.json`
+    read through the `HostShell` on every connect, Basic auth (a Bearer header is refused), the port
+    through `shell.forward()`. Health is `GET /api/info`; a service that is stopped, a `service.json`
+    that cannot be read and a missing program are each a `RunnerHealth` problem, not an exception.
+  - **A session:** `POST /api/session` with the ruleset, the location, the model (V2's
+    `{providerID, id, variant?}`), the agent and `metadata.udl`. udl's MCP server is added with the
+    token as `{env:UDL_AGENT_TOKEN}`; the token, the spec's `env` and its `secret_env` go to
+    `PUT /api/session/{id}/environment`, so none is in a file or an argv.
+  - **A turn:** `POST /api/session/{id}/prompt` (`delivery: queue`), then the durable log
+    (`/api/experimental/session/{id}/log?after=<seq>&follow=true`), resumed from the sequence the
+    session store kept: a dropped connection loses nothing and repeats nothing (three reads in a row
+    with nothing new fail the turn instead of spinning). `session.text.*` are `TextDelta`s,
+    `session.tool.*` are `ToolStarted`/`ToolFinished` (the tool's name is in the provider's own
+    blob), `session.usage.recorded` is a `Usage`, and `session.execution.succeeded` / `.interrupted` /
+    `.failed` end the turn (done / stopped / error). A failure that says the account is out of
+    quota — `status: 429`, or a `retryAfterMs` — is a `RunnerLimited(until)` and then
+    `TurnEnded(limited)`. A `PluginFailed` mid-turn (a log udl cannot read) is `TurnEnded(error)`,
+    never an exception out of `send`.
+  - **Permissions — a correction to the card's plan.** The session's rules use V2's action names
+    (`shell`, `edit`, `external_directory`, `question`); `tool.use` is a *policy's* action (25.11's
+    hard stops), not a session rule's, so the ruleset is `*/* allow`, then a `shell` deny per
+    `SessionSpec.deny`, then `external_directory * deny`, `edit <cwd>/* allow`, `edit * deny` and
+    `question * deny` (last match wins). A permission is **not in the durable log** (the log has no
+    `permission.*` events, checked against the committed OpenAPI document), so while a turn runs its
+    pending requests are read (`GET /api/session/{id}/permission`) and each is answered `reject` —
+    and once more when the turn ends, so a fast turn's request is not left hanging.
+  - **Fixtures and tests:** `tests/fixtures/opencode/openapi-2.1.2.json` (the document the service
+    serves), `tests/support/opencode.py` (`FakeOpenCode`, an ASGI app of those calls with Basic auth,
+    a log a test can cut, pending permissions, and the contract's slow/limited turns through
+    `FAKE_HARNESS_SLOW`/`FAKE_HARNESS_LIMITED`; `FakeShell`, its shell), the contract's fourth case,
+    40 unit tests (97 % of the module) and `tests/smoke/test_opencode.py` (opt-in, `make smoke`; it
+    skips here because this machine's opencode service is stopped). A test checks that every path
+    the runner calls is a path in the committed document. `docs/plugins.md` gains the runner row in
+    the contract-suite table.
 
 **25.10 `command`** · needs 25.7
 - Build: `udl/plugins/runners/command.py`: any CLI as a runner. Options: `argv` (a template with `{model}`, `{session}`, `{cwd}`; the prompt on stdin), `resume_argv`, `output: text | jsonl`. `argv[0]` must be listed in `[orch] allowed_commands` (file-only), as 17.3's provider commands are. Output lines are `TextDelta`s; exit 0 is `TurnEnded(done)`.

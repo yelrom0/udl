@@ -22,11 +22,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # Package Imports
+import httpx
 import pytest
 from pydantic import SecretStr
 
 # Local Imports
 from support.clock import FakeClock
+from support.opencode import FakeOpenCode, FakeShell
 from support.runners import FakeRunner, FakeRunnerOptions, RecordingShell, Sessions, wait_for_stop
 from udl.errors import PluginError
 from udl.hosts.shell import Host, LocalShell
@@ -49,6 +51,7 @@ from udl.plugins.runners.command import (
     CommandRunnerOptions,
     CommandSessions,
 )
+from udl.plugins.runners.opencode import OpenCode, OpenCodeOptions, OpenCodeSessions
 
 type Build = Callable[[RecordingShell, Sessions], AnAgentRunner]
 """A runner of a plugin class, made with a shell and a session store."""
@@ -127,10 +130,31 @@ def _fake_case() -> Case:
     return _case(FakeRunner, FakeRunnerOptions(), _fake)
 
 
+def _opencode_case() -> Case:
+    """OpenCode, over its fake service (the shell answers `opencode service status` and its
+    password, and every call goes to the service's ASGI app)."""
+    service = FakeOpenCode()
+    shell = RecordingShell(FakeShell())
+    store = Sessions()
+    sessions = OpenCodeSessions(specs=store.specs, seq=store.seq, secret_envs=store.secret_envs)
+
+    def build(given: RecordingShell, _: Sessions) -> AnAgentRunner:
+        return OpenCode(
+            OpenCodeOptions(),
+            shell=given,
+            clock=FakeClock(),
+            transport=httpx.ASGITransport(app=service.app),
+            sessions=sessions,
+        )
+
+    return Case(plugin=OpenCode, options=OpenCodeOptions(), shell=shell, store=store, build=build)
+
+
 CASES: dict[str, Callable[[], Case]] = {
     "claude-code": _claude_case,
     "command": _command_case,
     "fake": _fake_case,
+    "opencode": _opencode_case,
 }
 """Each plugin's case, made for each test (no two tests share a shell or a session store)."""
 

@@ -74,6 +74,7 @@ memory = "udl.plugins.secrets.memory:MemorySecretStore"
 [project.entry-points."udl.runners"]
 claude-code = "udl.plugins.runners.claude_code:ClaudeCode"
 command = "udl.plugins.runners.command:CommandRunner"
+opencode = "udl.plugins.runners.opencode:OpenCode"
 
 [project.entry-points."udl.secret_resolvers"]
 op = "udl.plugins.secrets.onepassword:OnePasswordResolver"
