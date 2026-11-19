@@ -355,13 +355,10 @@ def test_the_orch_app_brings_its_records() -> None:
     assert Orch.name == "orch"
     assert Orch.title
     assert Orch.summary
-    assert set(Orch.record_kinds()) == {
-        ProjectRecord,
-        RepoRecord,
-        FeatureRecord,
-        TaskRecord,
-        CounterRecord,
-    }
+    # (The agent kinds are in the exact set test_agents.py pins: 27.1.)
+    assert {ProjectRecord, RepoRecord, FeatureRecord, TaskRecord, CounterRecord} <= set(
+        Orch.record_kinds()
+    )
 
 
 def test_the_orch_app_has_settings_of_its_own() -> None:

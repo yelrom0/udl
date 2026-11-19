@@ -135,6 +135,11 @@ class AppRecords:
         """Delete the record of `kind` with that id. Returns whether there was one."""
         return await self._db.delete_record(kind, record_id)
 
+    async def prune[R: Record](self, kind: type[R], before: datetime) -> int:
+        """Delete the records of `kind` created before `before` (an app's history, kept as long
+        as its settings say). Returns how many."""
+        return await self._db.prune_records(kind, before)
+
 
 class AppEvents:
     """Where an app publishes its events, and how it waits for others': an event an app publishes

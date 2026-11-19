@@ -3,8 +3,9 @@
 - records.py -
 ---------------
 
-The orchestrator's records: a Project and a Repo (26.2), a Feature and a Task (26.3), and the
-Counter that hands out their keys. Links and notes are 26.4's and 26.5's. Each is a udl record
+The orchestrator's records: a Project and a Repo (26.2), a Feature and a Task (26.3), the
+Counter that hands out their keys, and the agents that do the work (27.1): an Agent, an
+AgentSession and a SessionEvent. Links and notes are 26.4's and 26.5's. Each is a udl record
 (udl.db.records), so every database plugin stores it the same way, and the record contract
 round-trips its example.
 
@@ -16,21 +17,42 @@ project and key (both as the card says).
 The fields are typed with the same aliases orch.models uses, so what a shape refuses a record
 refuses too — one rule, in one place.
 
-ProjectRecords, RepoRecords, FeatureRecords, TaskRecords and Counters are the typed way to read
-and write them: an app holds an AppRecords, and these sit over it, so nothing here knows about
-a database.
+An agent's hierarchy is a forest, and that is checked where an agent is saved: a manager must be
+another agent whose role is manager, and no chain of managers may reach itself. A session's
+events are its transcript: history, which db sync copies once it happened.
+
+ProjectRecords, RepoRecords, FeatureRecords, TaskRecords, Counters, AgentRecords and
+SessionRecords are the typed way to read and write them: an app holds an AppRecords, and these
+sit over it, so nothing here knows about a database.
 """
 
 # System Imports
+from datetime import datetime
+from decimal import Decimal
 from typing import Self
+from uuid import UUID
 
 # Package Imports
-from pydantic import Field, JsonValue
+from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt
 
 # Local Imports
-from udl.db.records import Name, Record, RecordQuery
-from udl.errors import DatabaseError, DoesNotExist, DuplicateKey, NotAllowed
+from udl.db.models import JsonObject
+from udl.db.records import Name, Record, RecordQuery, RecordScope, SyncRule
+from udl.errors import (
+    ConfigError,
+    DatabaseError,
+    DoesNotExist,
+    DuplicateKey,
+    InUse,
+    NotAllowed,
+)
 from udl.plugins.apps.base import AppRecords
+from udl.plugins.apps.orch.agents import (
+    AgentRole,
+    AnAgentEvent,
+    ManagerPowers,
+    SessionState,
+)
 from udl.plugins.apps.orch.models import (
     CANCELLED,
     DONE,
@@ -51,6 +73,7 @@ from udl.plugins.apps.orch.models import (
     TaskKind,
     Title,
 )
+from udl.plugins.runners.base import SessionRef, TextDelta
 
 
 class Project(Record):
@@ -239,6 +262,120 @@ class Counter(Record):
     @classmethod
     def example(cls) -> Self:
         return cls(project="udl", prefix="F-", last=26)
+
+
+class Agent(Record):
+    """An agent, as it is stored: what orch.agents.Agent is (one shape, one place for its rules).
+
+    It is unique by its name. A manager must be another agent whose role is manager, and a
+    manager chain may not reach itself (AgentRecords checks both, since they are facts about the
+    others)."""
+
+    kind = "orch_agent"
+    indexed = ("name", "role", "manager")
+    unique = (("name",),)
+
+    name: Name
+    title: Title
+    runner: Name
+    runner_options: JsonObject = Field(default_factory=dict)
+    model: str = ""
+    host: HostName = "local"
+    role: AgentRole = AgentRole.IMPLEMENTER
+    manager: Name | None = None
+    manages: ManagerPowers = Field(default_factory=ManagerPowers)
+    projects: list[Name] = Field(default_factory=list)
+    brief: str = ""
+    max_nudges: PositiveInt = 3
+    enabled: bool = True
+    paused: bool = False
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            name="deepseek-b",
+            title="deepseek-b",
+            runner="opencode",
+            runner_options={"args": ["--model", "deepseek-v4"]},
+            model="deepseek-v4",
+            host="local",
+            role=AgentRole.IMPLEMENTER,
+            manager="claude",
+            manages=ManagerPowers(),
+            projects=["udl"],
+            brief="Build the task on your queue, test-first.",
+            max_nudges=3,
+            enabled=True,
+            paused=False,
+        )
+
+
+class AgentSession(Record):
+    """A session an agent is in, as it is stored: one runtime's own (a session belongs to the udl
+    that started it, on its host), so it is not synced; its transcript (SessionEvent) is."""
+
+    kind = "orch_agent_session"
+    indexed = ("agent", "task", "state")
+    scope = RecordScope.RUNTIME
+    sync = SyncRule.NEVER
+
+    agent: Name
+    task: str = ""
+    ref: SessionRef
+    state: SessionState = SessionState.STARTING
+    turns: NonNegativeInt = 0
+    nudges: NonNegativeInt = 0
+    limited_until: AwareDatetime | None = None
+    tokens_in: NonNegativeInt = 0
+    tokens_out: NonNegativeInt = 0
+    cost: Decimal | None = None
+    last_text: str = ""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            agent="deepseek-b",
+            task="27.1",
+            ref=SessionRef(runner="opencode", id="ses_7f3a", cwd="/work/udl", host="local"),
+            state=SessionState.RUNNING,
+            turns=2,
+            nudges=0,
+            limited_until=None,
+            tokens_in=1200,
+            tokens_out=340,
+            cost=Decimal("0.03"),
+            last_text="Tests first: the record contract covers the three kinds.",
+        )
+
+
+class SessionEvent(Record):
+    """One thing that happened in a session, as its runner said it: the transcript.
+
+    It is history (a session's live view and, afterwards, its transcript), kept as long as
+    `[apps.orch] session_days` says, and what db sync copies of it is the events that happened."""
+
+    kind = "orch_session_event"
+    indexed = ("agent", "session")
+    scope = RecordScope.RUNTIME
+    sync = SyncRule.ENDED
+
+    agent: Name
+    """The agent whose session it happened in."""
+    session: UUID
+    """The session (AgentSession.id)."""
+    turn: NonNegativeInt = 0
+    """The turn it happened in (0: before the first one)."""
+    event: AnAgentEvent
+    """What happened (its `kind` says which of the runner's events it is)."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            agent="deepseek-b",
+            session=UUID("0b9a1f8e-6a5f-4d1f-9a52-2d0e7f1a3c48"),
+            turn=2,
+            event=TextDelta(text="The tests fail for the right reason; now the records."),
+        )
 
 
 class ProjectRecords:
@@ -588,3 +725,148 @@ class Counters:
         return await self._records.list(
             Counter, RecordQuery(where={"project": project, "prefix": prefix})
         )
+
+
+class AgentRecords:
+    """Where orch keeps its agents: over an app's records, with the hierarchy's rules checked as
+    one is saved (a manager must be an agent whose role is manager, and no chain may reach
+    itself)."""
+
+    def __init__(self, records: AppRecords) -> None:
+        self._records = records
+
+    @property
+    def records(self) -> AppRecords:
+        """The records the agents are kept in (what a SessionRecords is made over too)."""
+        return self._records
+
+    async def save_agent(self, agent: Agent) -> Agent:
+        """Store `agent` (by its id, so storing one again replaces it), after checking its place
+        in the hierarchy. Raises DuplicateKey for another agent with the same name,
+        DoesNotExist for a manager that is not there, and ConfigError for a manager that is not
+        a manager, a chain that reaches itself, or a manager that has reports and is being
+        renamed or is no longer a manager (its reports would be left pointing at nothing)."""
+        await self._check_hierarchy(agent)
+        await self._check_reports(agent)
+        return await self._records.save(agent)
+
+    async def agent(self, name: str) -> Agent | None:
+        """The agent called `name`, or None when there is none."""
+        found = await self._records.list(Agent, RecordQuery(where={"name": name}))
+        return found[0] if found else None
+
+    async def agents(self) -> list[Agent]:
+        """Every agent, by name."""
+        return sorted(await self._records.list(Agent, RecordQuery()), key=lambda one: one.name)
+
+    async def reports(self, name: str) -> list[Agent]:
+        """Every agent whose manager is `name`, by name (empty: it manages nobody)."""
+        found = await self._records.list(Agent, RecordQuery(where={"manager": name}))
+        return sorted(found, key=lambda one: one.name)
+
+    async def delete_agent(self, name: str) -> bool:
+        """Delete the agent called `name`, and its sessions and their events. Returns whether
+        there was one. Raises InUse while it is another agent's manager: deleting it would
+        leave its reports pointing at a name that is not there (they are moved, or its
+        manager's, first)."""
+        agent = await self.agent(name)
+        if agent is None:
+            return False
+        reports = await self.reports(name)
+        if reports:
+            named = ", ".join(found.name for found in reports)
+            raise InUse(f"The agent {name} is the manager of {named}: it cannot be deleted")
+        sessions = await self._records.list(AgentSession, RecordQuery(where={"agent": name}))
+        for session in sessions:
+            for event in await self._records.list(
+                SessionEvent, RecordQuery(where={"session": session.id})
+            ):
+                await self._records.delete(SessionEvent, event.id)
+            await self._records.delete(AgentSession, session.id)
+        return await self._records.delete(Agent, agent.id)
+
+    async def _check_hierarchy(self, agent: Agent) -> None:
+        """Refuse an agent whose manager is not there, is not a manager, or whose chain of
+        managers reaches the agent itself (which is also the case when it manages itself)."""
+        seen = [agent.name]
+        manager = agent.manager
+        while manager is not None:
+            # (The cycle is checked before the lookup: coming back to an agent already seen is
+            # the chain reaching itself, whatever the stored copy's role was.)
+            if manager in seen:
+                raise ConfigError(
+                    f"{agent.name}'s manager chain reaches itself: {' -> '.join([*seen, manager])}"
+                )
+            seen.append(manager)
+            found = await self.agent(manager)
+            if found is None:
+                raise DoesNotExist(f"There is no agent called {manager!r}")
+            if found.role is not AgentRole.MANAGER:
+                raise ConfigError(
+                    f"The agent {agent.name} reports to {manager}, which is not a manager "
+                    f"(its role is {found.role})"
+                )
+            manager = found.manager
+
+    async def _check_reports(self, agent: Agent) -> None:
+        """Refuse to rename a manager that has reports, or to save it without the manager role:
+        either would leave its reports pointing at a name that is not a manager, or at none."""
+        stored = await self._records.get(Agent, agent.id)
+        if stored is None or stored.role is not AgentRole.MANAGER:
+            return
+        reports = await self.reports(stored.name)
+        if not reports:
+            return
+        named = ", ".join(found.name for found in reports)
+        if agent.name != stored.name:
+            raise ConfigError(
+                f"The agent {stored.name} has reports ({named}): it cannot be renamed"
+            )
+        if agent.role is not AgentRole.MANAGER:
+            raise ConfigError(
+                f"The agent {stored.name} has reports ({named}): it cannot stop being a manager"
+            )
+
+
+class SessionRecords:
+    """Where orch keeps its agents' sessions and their transcripts: the newest session first,
+    the transcript in the order things happened."""
+
+    def __init__(self, records: AppRecords) -> None:
+        self._records = records
+
+    async def save_session(self, session: AgentSession) -> AgentSession:
+        """Store `session` (by its id, so storing one again replaces it)."""
+        return await self._records.save(session)
+
+    async def session(self, session_id: UUID) -> AgentSession | None:
+        """The session with that id, or None when there is none."""
+        return await self._records.get(AgentSession, session_id)
+
+    async def sessions(self, agent: str) -> list[AgentSession]:
+        """Every session of `agent`, newest first."""
+        found = await self._records.list(AgentSession, RecordQuery(where={"agent": agent}))
+        return sorted(found, key=lambda one: one.created_at, reverse=True)
+
+    async def current(self, agent: str) -> AgentSession | None:
+        """The session `agent` is in: its newest one that has not ended, or None when it has
+        none (so it is idle)."""
+        for found in await self.sessions(agent):
+            if found.state is not SessionState.ENDED:
+                return found
+        return None
+
+    async def save_event(self, event: SessionEvent) -> SessionEvent:
+        """Store `event`, one thing that happened in its session."""
+        return await self._records.save(event)
+
+    async def prune(self, before: datetime) -> int:
+        """Delete the session events that happened before `before` (what `[apps.orch]
+        session_days` keeps is what the dispatcher passes here, 27.7). Returns how many."""
+        return await self._records.prune(SessionEvent, before)
+
+    async def transcript(self, session: UUID) -> list[SessionEvent]:
+        """Everything that happened in `session`, in the order it happened (by its turn, then
+        by when it was stored)."""
+        found = await self._records.list(SessionEvent, RecordQuery(where={"session": session}))
+        return sorted(found, key=lambda one: (one.turn, one.created_at))

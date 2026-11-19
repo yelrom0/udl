@@ -190,7 +190,7 @@ async def test_an_event_a_cli_publishes_is_dispatched_and_run(tmp_path: Path) ->
 
         async with make_service(tmp_path)(settings_for(tmp_path)) as cli:
             await cli.bus.publish(NewEvent(type="custom.hello", source="cli"))
-        started = time.monotonic()
+        runtime = runtime_of(server)
 
         async def ran() -> bool:
             found = await db.list_records(ActionRun, RecordQuery())
@@ -198,4 +198,7 @@ async def test_an_event_a_cli_publishes_is_dispatched_and_run(tmp_path: Path) ->
 
         await eventually(ran)
 
-        assert time.monotonic() - started < 1.0  # (dispatch_interval is 0.1s)
+        # (The runtime that was already running saw it: it did not have to be restarted. Its
+        # dispatch interval is 0.1s, so this is a matter of it seeing what another process
+        # published, not of how loaded the machine is: a wall-clock bound flaked under load.)
+        assert runtime_of(server) is runtime

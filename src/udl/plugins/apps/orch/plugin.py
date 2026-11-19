@@ -38,9 +38,18 @@ class Orch(AppPlugin[OrchSettings]):
 
     @classmethod
     def record_kinds(cls) -> Sequence[type[Record]]:
-        """The kinds of record orch defines (a project, a repo, a feature, a task and the
-        counter their keys come from — and 26.4's and 26.5's)."""
-        return (stored.Project, stored.Repo, stored.Feature, stored.Task, stored.Counter)
+        """The kinds of record orch defines: a project, a repo, a feature, a task and the counter
+        their keys come from (26.2-26.5), and an agent, its session and the events of it (27.1)."""
+        return (
+            stored.Project,
+            stored.Repo,
+            stored.Feature,
+            stored.Task,
+            stored.Counter,
+            stored.Agent,
+            stored.AgentSession,
+            stored.SessionEvent,
+        )
 
     @classmethod
     def event_types(cls) -> Sequence[EventType[Any]]:

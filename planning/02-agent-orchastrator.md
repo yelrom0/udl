@@ -705,6 +705,32 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - `AgentSession`: `agent`, `task`, `ref: SessionRef`, `state: starting | running | idle | limited | failed | ended`, `turns`, `nudges`, `limited_until`, `tokens_in`, `tokens_out`, `cost`, `last_text`. `SessionEvent` (scope: history; retention from `[apps.orch] session_days`): the stream, for the live view and the transcript.
 - Tests first: `tests/unit/plugins/apps/orch/test_agents.py`: cycles, roles, derived status.
 - Done when: the record contract covers `Agent`, `AgentSession` and `SessionEvent`.
+- **Built (deepseek-b, 2026-11-19, PR #39):** `src/udl/plugins/apps/orch/agents.py` (the shapes: `Agent` with its
+  `status()`, `AgentSession`, `AgentRole`, `AgentStatus`, `SessionState`, `ManagerPowers`, and `AnAgentEvent`, the
+  runner's event union with its `kind` discriminator) and `orch/records.py` (`Agent` `orch_agent`, `AgentSession`
+  `orch_agent_session` — runtime, never synced — and `SessionEvent` `orch_session_event` — runtime history, synced
+  once it happened; `AgentRecords` with the forest's rules and `SessionRecords` with `current()` and
+  `transcript()`). `OrchSettings.session_days = 30`; `Orch.record_kinds()` brings all eight (26.3's five and these three). Tests:
+  `tests/unit/plugins/apps/orch/test_agents.py` (40: what an agent holds and refuses, every derived status
+  including a limited session whose quota is back and a failed one waiting on a person, the manager that is not
+  there / not a manager / whose chain reaches itself / itself, a manager's reports, the session's current one and
+  its transcript in order, and the three kinds in the contract).
+  - **Decisions:** `status()` is on the shape, not the record, and takes `offline` from 27.7's host check and
+    `now` for the limited window — `offline` is never derived here, since a host check is not a session's state.
+    `SessionRef` is 25.7's (`udl.plugins.runners.base`), reused rather than copied. A manager that is not a manager,
+    and a chain that reaches itself, raise `ConfigError` (the data is wrong, not missing); a manager that is not
+    there raises `DoesNotExist`, as a repo's missing project does. `AgentSession` is `SyncRule.NEVER` and
+    `SessionEvent` `SyncRule.ENDED`, since a session belongs to the runtime that started it and only its transcript
+    is history. `ManagerPowers` (27.8's) is defined here as the four bools, all off, because the `Agent` field
+    needs the shape; 27.8 wires each power to its operations.
+  - **Review round (deepseek-b, 19 Nov 2026, PR #39):** the forest is now checked from above too — a manager that has
+    reports cannot be renamed or stop being a manager (`ConfigError`), and cannot be deleted (`InUse`, which is what
+    27.9's `orch_delete_agent` reports), so no report is ever left pointing at nothing. `SessionRecords.prune(before)`
+    (over a new `AppRecords.prune`) is the retention `session_days` names: 27.7's dispatcher calls it, and the
+    docstrings say so instead of claiming it already happens. `an_event` (dead code) is gone, the cycle check runs
+    before the manager lookup (so a chain that comes back says "reaches itself", not "is not a manager"), the second
+    `# Local Imports` header is gone, the limited-session test's name matches what it tests, and one test pins the
+    exact set of `Orch.record_kinds()`.
 
 **27.2 Agent tokens** · needs 27.1
 - Build:
