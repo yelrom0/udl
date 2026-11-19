@@ -76,6 +76,27 @@
         "title": "APISettings",
         "type": "object"
       },
+      "AccountFailure": {
+        "additionalProperties": false,
+        "description": "An account an operation failed in.",
+        "properties": {
+          "account": {
+            "description": "The account (integration:name).",
+            "title": "Account",
+            "type": "string"
+          },
+          "error": {
+            "$ref": "#/components/schemas/ErrorInfo",
+            "description": "Why."
+          }
+        },
+        "required": [
+          "account",
+          "error"
+        ],
+        "title": "AccountFailure",
+        "type": "object"
+      },
       "AccountHealth": {
         "additionalProperties": false,
         "description": "Whether an account works, as checking it found.",
@@ -267,6 +288,26 @@
           "created_at"
         ],
         "title": "AccountInfo",
+        "type": "object"
+      },
+      "AccountItem_PullInfo_": {
+        "additionalProperties": false,
+        "properties": {
+          "account": {
+            "description": "The account (integration:name).",
+            "title": "Account",
+            "type": "string"
+          },
+          "item": {
+            "$ref": "#/components/schemas/PullInfo",
+            "description": "What it found."
+          }
+        },
+        "required": [
+          "account",
+          "item"
+        ],
+        "title": "AccountItem[PullInfo]",
         "type": "object"
       },
       "AccountList": {
@@ -1044,6 +1085,40 @@
         "title": "ChallengeList",
         "type": "object"
       },
+      "CheckInfo": {
+        "additionalProperties": false,
+        "description": "One of a commit's checks.",
+        "properties": {
+          "conclusion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What it concluded, once it has (success, failure, neutral, skipped...).",
+            "title": "Conclusion"
+          },
+          "name": {
+            "description": "Its name.",
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "description": "Where it is: queued, in_progress or completed.",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "status"
+        ],
+        "title": "CheckInfo",
+        "type": "object"
+      },
       "ClickStep": {
         "additionalProperties": false,
         "description": "Click an element, e.g. a play button (browser only).",
@@ -1056,6 +1131,53 @@
           "click"
         ],
         "title": "ClickStep",
+        "type": "object"
+      },
+      "CommentInfo": {
+        "additionalProperties": false,
+        "description": "A comment on a pull request.",
+        "properties": {
+          "author": {
+            "description": "Who wrote it.",
+            "title": "Author",
+            "type": "string"
+          },
+          "body": {
+            "description": "What they said.",
+            "title": "Body",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When it was written.",
+            "title": "Created At"
+          },
+          "id": {
+            "description": "Its id (GitHub's).",
+            "title": "Id",
+            "type": "integer"
+          },
+          "is_bot": {
+            "default": false,
+            "description": "Whether it was a bot (a login ending in [bot]).",
+            "title": "Is Bot",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "author",
+          "body"
+        ],
+        "title": "CommentInfo",
         "type": "object"
       },
       "Condition": {
@@ -2293,6 +2415,40 @@
         "format": "path",
         "type": "string"
       },
+      "FanOutResult_PullInfo_": {
+        "additionalProperties": false,
+        "properties": {
+          "failures": {
+            "description": "The accounts it failed in, and why (the others' items still came back).",
+            "items": {
+              "$ref": "#/components/schemas/AccountFailure"
+            },
+            "title": "Failures",
+            "type": "array"
+          },
+          "items": {
+            "description": "What it found, each with its account.",
+            "items": {
+              "$ref": "#/components/schemas/AccountItem_PullInfo_"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_pages": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The next page of each account that has more (give it as the page, on that account).",
+            "title": "Next Pages",
+            "type": "object"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "FanOutResult[PullInfo]",
+        "type": "object"
+      },
       "FetchAttempt": {
         "additionalProperties": false,
         "description": "One try on a rung of the ladder.",
@@ -3246,6 +3402,310 @@
         "title": "FollowStep",
         "type": "object"
       },
+      "GithubCommentRequest": {
+        "additionalProperties": false,
+        "description": "Comment on a pull request.",
+        "properties": {
+          "account": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The account to use, by name (e.g. work, or github:work); it may be left out while the integration has one account.",
+            "title": "Account"
+          },
+          "body": {
+            "description": "What to say.",
+            "title": "Body",
+            "type": "string"
+          },
+          "number": {
+            "description": "Its number.",
+            "minimum": 1.0,
+            "title": "Number",
+            "type": "integer"
+          },
+          "repo": {
+            "description": "The repository (owner/name), one of the account's.",
+            "title": "Repo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo",
+          "number",
+          "body"
+        ],
+        "title": "GithubCommentRequest",
+        "type": "object"
+      },
+      "GithubGetPullRequest": {
+        "additionalProperties": false,
+        "description": "Read one pull request, with its checks and comments.",
+        "properties": {
+          "account": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The account to use, by name (e.g. work, or github:work); it may be left out while the integration has one account.",
+            "title": "Account"
+          },
+          "number": {
+            "description": "Its number.",
+            "minimum": 1.0,
+            "title": "Number",
+            "type": "integer"
+          },
+          "repo": {
+            "description": "The repository (owner/name), one of the account's.",
+            "title": "Repo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo",
+          "number"
+        ],
+        "title": "GithubGetPullRequest",
+        "type": "object"
+      },
+      "GithubListPullsRequest": {
+        "additionalProperties": false,
+        "description": "List a repository's pull requests.",
+        "properties": {
+          "account": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The accounts to run on: one by name (e.g. work, or github:work), a list of them, or * for every one; it may be left out while the integration has one account.",
+            "title": "Account"
+          },
+          "head": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only those whose head is this branch (a branch name, or owner:branch).",
+            "title": "Head"
+          },
+          "limit": {
+            "default": 25,
+            "description": "How many to give at most.",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The page to read, as the last answer's next_page gave it (none: the first).",
+            "title": "Page"
+          },
+          "repo": {
+            "description": "The repository (owner/name), one of the account's.",
+            "title": "Repo",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/PullStateFilter",
+            "default": "open",
+            "description": "Which ones: open, closed, or all."
+          }
+        },
+        "required": [
+          "repo"
+        ],
+        "title": "GithubListPullsRequest",
+        "type": "object"
+      },
+      "GithubMergePullRequest": {
+        "additionalProperties": false,
+        "description": "Merge a pull request.",
+        "properties": {
+          "account": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The account to use, by name (e.g. work, or github:work); it may be left out while the integration has one account.",
+            "title": "Account"
+          },
+          "confirm": {
+            "description": "Say which pull this is, as owner/repo#number, so a mistyped number merges nothing.",
+            "title": "Confirm",
+            "type": "string"
+          },
+          "method": {
+            "$ref": "#/components/schemas/MergeMethod",
+            "default": "squash",
+            "description": "How to merge it: merge, squash or rebase."
+          },
+          "number": {
+            "description": "Its number.",
+            "minimum": 1.0,
+            "title": "Number",
+            "type": "integer"
+          },
+          "repo": {
+            "description": "The repository (owner/name), one of the account's.",
+            "title": "Repo",
+            "type": "string"
+          },
+          "sha": {
+            "description": "The commit at its head that was reviewed: GitHub refuses unless it is still that one.",
+            "title": "Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo",
+          "number",
+          "sha",
+          "confirm"
+        ],
+        "title": "GithubMergePullRequest",
+        "type": "object"
+      },
+      "GithubOpenPullRequest": {
+        "additionalProperties": false,
+        "description": "Open a pull request (or update the one already open for that head).",
+        "properties": {
+          "account": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The account to use, by name (e.g. work, or github:work); it may be left out while the integration has one account.",
+            "title": "Account"
+          },
+          "base": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The branch to merge into (none: the repository's default branch).",
+            "title": "Base"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What it says.",
+            "title": "Body"
+          },
+          "draft": {
+            "default": false,
+            "description": "Whether to open it as a draft (a pull already open for that head cannot be made one:\nGitHub's REST API has no such change).",
+            "title": "Draft",
+            "type": "boolean"
+          },
+          "head": {
+            "description": "The branch to merge from (a branch of the repository, or owner:branch).",
+            "title": "Head",
+            "type": "string"
+          },
+          "repo": {
+            "description": "The repository (owner/name), one of the account's.",
+            "title": "Repo",
+            "type": "string"
+          },
+          "title": {
+            "description": "Its title.",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo",
+          "head",
+          "title"
+        ],
+        "title": "GithubOpenPullRequest",
+        "type": "object"
+      },
+      "GithubRerunChecksRequest": {
+        "additionalProperties": false,
+        "description": "Run a pull request's failed checks again.",
+        "properties": {
+          "account": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The account to use, by name (e.g. work, or github:work); it may be left out while the integration has one account.",
+            "title": "Account"
+          },
+          "number": {
+            "description": "Its number.",
+            "minimum": 1.0,
+            "title": "Number",
+            "type": "integer"
+          },
+          "repo": {
+            "description": "The repository (owner/name), one of the account's.",
+            "title": "Repo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo",
+          "number"
+        ],
+        "title": "GithubRerunChecksRequest",
+        "type": "object"
+      },
       "Glob": {
         "pattern": "^[A-Za-z0-9_.*?\\[\\]!-]+$",
         "type": "string"
@@ -3927,6 +4387,42 @@
         "title": "MediaKind",
         "type": "string"
       },
+      "MergeMethod": {
+        "enum": [
+          "merge",
+          "squash",
+          "rebase"
+        ],
+        "type": "string"
+      },
+      "MergeResult": {
+        "additionalProperties": false,
+        "description": "What merging a pull request did.",
+        "properties": {
+          "merged": {
+            "description": "Whether GitHub merged it.",
+            "title": "Merged",
+            "type": "boolean"
+          },
+          "message": {
+            "default": "",
+            "description": "What GitHub said.",
+            "title": "Message",
+            "type": "string"
+          },
+          "sha": {
+            "default": "",
+            "description": "The commit the merge made.",
+            "title": "Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "merged"
+        ],
+        "title": "MergeResult",
+        "type": "object"
+      },
       "Misfire": {
         "description": "What a schedule does about the times it missed while udl was stopped.",
         "enum": [
@@ -4444,6 +4940,246 @@
         "title": "ProbeResult",
         "type": "object"
       },
+      "PullDetail": {
+        "additionalProperties": false,
+        "description": "A pull request, with what its page shows.",
+        "properties": {
+          "author": {
+            "description": "Who opened it.",
+            "title": "Author",
+            "type": "string"
+          },
+          "base": {
+            "description": "The branch it is into.",
+            "title": "Base",
+            "type": "string"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What it says.",
+            "title": "Body"
+          },
+          "checks": {
+            "description": "Its checks.",
+            "items": {
+              "$ref": "#/components/schemas/CheckInfo"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "comments": {
+            "description": "The comments on its conversation.",
+            "items": {
+              "$ref": "#/components/schemas/CommentInfo"
+            },
+            "title": "Comments",
+            "type": "array"
+          },
+          "draft": {
+            "description": "Whether it is a draft.",
+            "title": "Draft",
+            "type": "boolean"
+          },
+          "head": {
+            "description": "The branch its head is.",
+            "title": "Head",
+            "type": "string"
+          },
+          "head_sha": {
+            "description": "The commit at its head.",
+            "title": "Head Sha",
+            "type": "string"
+          },
+          "html_url": {
+            "description": "Its page on GitHub.",
+            "title": "Html Url",
+            "type": "string"
+          },
+          "mergeable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whether GitHub says it may be merged (None: it is still working it out).",
+            "title": "Mergeable"
+          },
+          "mergeable_state": {
+            "default": "",
+            "description": "GitHub's own word for that (clean, dirty, behind, blocked...).",
+            "title": "Mergeable State",
+            "type": "string"
+          },
+          "merged": {
+            "description": "Whether it was merged.",
+            "title": "Merged",
+            "type": "boolean"
+          },
+          "number": {
+            "description": "Its number.",
+            "title": "Number",
+            "type": "integer"
+          },
+          "repo": {
+            "description": "The repository (owner/name).",
+            "title": "Repo",
+            "type": "string"
+          },
+          "review_comments": {
+            "description": "The comments on its diff.",
+            "items": {
+              "$ref": "#/components/schemas/ReviewCommentInfo"
+            },
+            "title": "Review Comments",
+            "type": "array"
+          },
+          "state": {
+            "description": "Where it is: open, closed or merged.",
+            "title": "State",
+            "type": "string"
+          },
+          "title": {
+            "description": "Its title.",
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When GitHub last said it changed.",
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "repo",
+          "number",
+          "title",
+          "state",
+          "draft",
+          "merged",
+          "head",
+          "head_sha",
+          "base",
+          "author",
+          "html_url"
+        ],
+        "title": "PullDetail",
+        "type": "object"
+      },
+      "PullInfo": {
+        "additionalProperties": false,
+        "description": "A pull request.",
+        "properties": {
+          "author": {
+            "description": "Who opened it.",
+            "title": "Author",
+            "type": "string"
+          },
+          "base": {
+            "description": "The branch it is into.",
+            "title": "Base",
+            "type": "string"
+          },
+          "draft": {
+            "description": "Whether it is a draft.",
+            "title": "Draft",
+            "type": "boolean"
+          },
+          "head": {
+            "description": "The branch its head is.",
+            "title": "Head",
+            "type": "string"
+          },
+          "head_sha": {
+            "description": "The commit at its head.",
+            "title": "Head Sha",
+            "type": "string"
+          },
+          "html_url": {
+            "description": "Its page on GitHub.",
+            "title": "Html Url",
+            "type": "string"
+          },
+          "merged": {
+            "description": "Whether it was merged.",
+            "title": "Merged",
+            "type": "boolean"
+          },
+          "number": {
+            "description": "Its number.",
+            "title": "Number",
+            "type": "integer"
+          },
+          "repo": {
+            "description": "The repository (owner/name).",
+            "title": "Repo",
+            "type": "string"
+          },
+          "state": {
+            "description": "Where it is: open, closed or merged.",
+            "title": "State",
+            "type": "string"
+          },
+          "title": {
+            "description": "Its title.",
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When GitHub last said it changed.",
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "repo",
+          "number",
+          "title",
+          "state",
+          "draft",
+          "merged",
+          "head",
+          "head_sha",
+          "base",
+          "author",
+          "html_url"
+        ],
+        "title": "PullInfo",
+        "type": "object"
+      },
+      "PullStateFilter": {
+        "enum": [
+          "open",
+          "closed",
+          "all"
+        ],
+        "type": "string"
+      },
       "ReadPolicy": {
         "description": "How lookups use several databases.",
         "enum": [
@@ -4531,6 +5267,34 @@
         "title": "RequirementKind",
         "type": "string"
       },
+      "Rerun": {
+        "additionalProperties": false,
+        "description": "What asking for a pull's failed checks to run again did.",
+        "properties": {
+          "checks": {
+            "description": "The checks that had failed.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "runs": {
+            "description": "The Actions runs asked for again.",
+            "items": {
+              "type": "integer"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs",
+          "checks"
+        ],
+        "title": "Rerun",
+        "type": "object"
+      },
       "RetryFetchRequestBody": {
         "additionalProperties": false,
         "properties": {
@@ -4563,6 +5327,71 @@
           }
         },
         "title": "RetryFetchRequestBody",
+        "type": "object"
+      },
+      "ReviewCommentInfo": {
+        "additionalProperties": false,
+        "description": "A comment on a line of a pull request's diff.",
+        "properties": {
+          "author": {
+            "description": "Who wrote it.",
+            "title": "Author",
+            "type": "string"
+          },
+          "body": {
+            "description": "What they said.",
+            "title": "Body",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When it was written.",
+            "title": "Created At"
+          },
+          "id": {
+            "description": "Its id (GitHub's).",
+            "title": "Id",
+            "type": "integer"
+          },
+          "is_bot": {
+            "default": false,
+            "description": "Whether it was a bot (a login ending in [bot]).",
+            "title": "Is Bot",
+            "type": "boolean"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The line it is on.",
+            "title": "Line"
+          },
+          "path": {
+            "default": "",
+            "description": "The file it is on.",
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "author",
+          "body"
+        ],
+        "title": "ReviewCommentInfo",
         "type": "object"
       },
       "RunActionRequestBody": {
@@ -11541,6 +12370,588 @@
         "summary": "Check a host: run `uname -a` there, and look for the tools the runners need (git,",
         "tags": [
           "udl"
+        ]
+      }
+    },
+    "/integrations/github/comment": {
+      "post": {
+        "description": "Comment on a pull request's conversation.",
+        "operationId": "github_comment",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GithubCommentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Comment on a pull request's conversation.",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/integrations/github/get_pull": {
+      "post": {
+        "description": "Read one pull request: where it is, whether it may be merged, its checks, and the\ncomments on its conversation and on its diff.",
+        "operationId": "github_get_pull",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GithubGetPullRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Read one pull request: where it is, whether it may be merged, its checks, and the",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/integrations/github/list_pulls": {
+      "post": {
+        "description": "List a repository's pull requests, a page at a time: open ones by default, most\nrecently updated first.",
+        "operationId": "github_list_pulls",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GithubListPullsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FanOutResult_PullInfo_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "List a repository's pull requests, a page at a time: open ones by default, most",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/integrations/github/merge_pull": {
+      "post": {
+        "description": "Merge a pull request (no MCP tool: a person merges). It refuses unless the head is\nstill the commit named, so what was reviewed is what is merged.",
+        "operationId": "github_merge_pull",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GithubMergePullRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MergeResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Merge a pull request (no MCP tool: a person merges). It refuses unless the head is",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/integrations/github/open_pull": {
+      "post": {
+        "description": "Open a pull request of a branch into another (the repository's default branch unless\none is named). When one is already open for that head, its title and body are updated.",
+        "operationId": "github_open_pull",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GithubOpenPullRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Open a pull request of a branch into another (the repository's default branch unless",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/integrations/github/rerun_checks": {
+      "post": {
+        "description": "Run again the failed jobs of a pull request's head: one Actions run per check that\nfailed (nothing when they all passed).",
+        "operationId": "github_rerun_checks",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GithubRerunChecksRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Rerun"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Run again the failed jobs of a pull request's head: one Actions run per check that",
+        "tags": [
+          "github"
         ]
       }
     },
