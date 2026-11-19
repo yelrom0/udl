@@ -8,8 +8,10 @@ this process) that the API accepts in place of the header, so that a page can ca
 `EventSource` can stream from it, which cannot send a header of its own.
 
 The cookie alone must not let another site drive udl: a write that comes with the cookie also
-needs the CSRF header, and a write whose Origin names another origin is refused, with the key or
-with the cookie. The MCP server takes the key alone: no page speaks MCP with a cookie.
+needs the CSRF header and an `Origin` naming this server (a browser sends one on every write), and
+a write whose `Origin` names another origin is refused, with the key or with the cookie. A sign-in
+is origin-checked too, so another site's page cannot post the guesses (a script may send none).
+The MCP server takes the key alone: no page speaks MCP with a cookie.
 
 Sessions live in memory: restarting `udl serve` means signing in again.
 """
@@ -167,6 +169,7 @@ def add_session_routes(app: FastAPI, settings: Settings) -> None:
     secure = _is_https(settings)
 
     async def sign_in(request: Request) -> Response:
+        check_write_origin(settings, request.method, request.headers)
         client = request.client.host if request.client else "unknown"
         if not attempts.allowed(client):
             raise RateLimited(
@@ -223,19 +226,32 @@ def authenticate(settings: Settings, request: Request, *, given: str | None = No
             f"This udl server needs its API key, in the {API_KEY_HEADER} header, or a session",
             hint="Sign in at /ui/login, or send the key as api.api_key has it.",
         )
-    if request.method in WRITES and request.headers.get(CSRF_HEADER) != CSRF_VALUE:
-        raise NotAllowed(
-            f"A write with a session's cookie also needs {CSRF_HEADER}: {CSRF_VALUE}",
-            hint="The cookie alone is another site's to send, so a script says it is udl's own.",
-        )
+    if request.method in WRITES:
+        if request.headers.get(CSRF_HEADER) != CSRF_VALUE:
+            raise NotAllowed(
+                f"A write with a session's cookie also needs {CSRF_HEADER}: {CSRF_VALUE}",
+                hint="The cookie alone is another site's to send: a script says it is udl's own.",
+            )
+        # (A browser sends Origin on every write: a cookie write that names none is not udl's
+        # own page, so it is refused like one from elsewhere.)
+        check_write_origin(settings, request.method, request.headers, required=True)
 
 
-def check_write_origin(settings: Settings, method: str, headers: Mapping[str, str]) -> None:
-    """Refuse a write whose `Origin` names another origin: a browser's page from elsewhere."""
+def check_write_origin(
+    settings: Settings, method: str, headers: Mapping[str, str], *, required: bool = False
+) -> None:
+    """Refuse a write whose `Origin` names another origin: a browser's page from elsewhere.
+
+    (`required`: the write must name one, as a browser's does — a session's cookie needs that.)"""
     if method not in WRITES:
         return
     origin = headers.get("origin")
     if origin is None:
+        if required:
+            raise NotAllowed(
+                "A write with a session's cookie must say where it comes from, in Origin",
+                hint="A browser sends it: a request without one is not udl's own page.",
+            )
         return
     host = origin.split("://", 1)[-1].split("/", 1)[0]
     ours = {headers.get("host")}

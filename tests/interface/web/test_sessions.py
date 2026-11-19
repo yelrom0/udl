@@ -38,6 +38,11 @@ async def sign_in(client: httpx.AsyncClient, key: str = KEY) -> httpx.Response:
     return await client.post("/session", json={"api_key": key})
 
 
+def own_origin(client: httpx.AsyncClient) -> str:
+    """This server's own origin, as a browser names it (where the client reaches it)."""
+    return str(client.base_url).rstrip("/")
+
+
 def keep(client: httpx.AsyncClient, token: str) -> None:
     """The browser keeps the session's cookie. (httpx's per-request `cookies=` is deprecated.)"""
     client.cookies.set(SESSION_COOKIE, token)
@@ -122,7 +127,9 @@ async def test_a_write_with_a_session_needs_the_csrf_header(tmp_path: Path) -> N
         token = session_cookie(await sign_in(client))
         keep(client, token)
         refused = await client.post("/probe", json={"url": A})
-        allowed = await client.post("/probe", json={"url": A}, headers={CSRF_HEADER: "1"})
+        allowed = await client.post(
+            "/probe", json={"url": A}, headers={CSRF_HEADER: "1", "Origin": own_origin(client)}
+        )
 
     # (Forbidden, not Unauthorized: the session is good, the write is not one udl's page made.)
     assert refused.status_code == 403
@@ -137,6 +144,40 @@ async def test_a_read_with_a_session_needs_no_csrf_header(tmp_path: Path) -> Non
         sites = await client.get("/sites")
 
     assert sites.status_code == 200
+
+
+async def test_a_write_with_a_session_and_no_origin_is_refused(tmp_path: Path) -> None:
+    async with client_for(secured(tmp_path)) as client:
+        token = session_cookie(await sign_in(client))
+        keep(client, token)
+        # (A browser sends Origin on every write: one that does not is not udl's own page.)
+        answer = await client.post("/probe", json={"url": A}, headers={CSRF_HEADER: "1"})
+
+    assert answer.status_code == 403
+
+
+async def test_a_write_with_the_key_needs_no_origin(tmp_path: Path) -> None:
+    async with client_for(secured(tmp_path)) as client:
+        answer = await client.post("/probe", json={"url": A}, headers={"X-API-Key": KEY})
+
+    assert answer.status_code != 403
+    assert answer.status_code != 401
+
+
+async def test_a_sign_in_from_another_origin_is_refused(tmp_path: Path) -> None:
+    async with client_for(secured(tmp_path)) as client:
+        answer = await client.post(
+            "/session", json={"api_key": KEY}, headers={"Origin": "https://evil.example"}
+        )
+        ours = await client.post(
+            "/session", json={"api_key": KEY}, headers={"Origin": own_origin(client)}
+        )
+        script = await client.post("/session", json={"api_key": KEY})  # (no Origin: a script)
+
+    assert answer.status_code == 403
+    assert "set-cookie" not in answer.headers
+    assert ours.status_code == 204
+    assert script.status_code == 204
 
 
 async def test_a_write_from_another_origin_is_refused_with_a_session(tmp_path: Path) -> None:
@@ -249,7 +290,9 @@ async def test_a_delete_with_a_session_needs_the_csrf_header(tmp_path: Path) -> 
         token = session_cookie(await sign_in(client))
         keep(client, token)
         refused = await client.delete("/sites/alpha.example")
-        allowed = await client.delete("/sites/alpha.example", headers={CSRF_HEADER: "1"})
+        allowed = await client.delete(
+            "/sites/alpha.example", headers={CSRF_HEADER: "1", "Origin": own_origin(client)}
+        )
 
     assert refused.status_code == 403
     assert allowed.status_code != 403

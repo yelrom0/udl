@@ -4389,14 +4389,18 @@ timeout: 5m
     clients whose tries are all older than the window.
   - `KeyRequired` (the `/mcp` app) answers a foreign-origin write itself: a 403 with the
     `NotAllowed`'s info, rather than leaving it to the app's handler, and a 401 without the key.
+  - A session's cookie needs a same-origin `Origin` on a write as well as the CSRF header (a browser
+    always sends one, so a request without it is not udl's page); a write with `X-API-Key` may omit
+    it. `POST /session` is origin-checked too (a script signs in without one, so absent is fine).
   - Tests: `tests/unit/interfaces/web/test_sessions.py` (9: the store's expiry and sign-out, the
     tokens' randomness, an expired session swept by the next sign-in, the attempts' window, a
     client that has gone quiet forgotten by the next try) and `tests/interface/web/test_sessions.py`
-    (17: the cookie's attributes and what signs in, a wrong key, a new token each time, the eleventh
-    try in a minute, sign out, the CSRF header on a POST and a DELETE, another origin's write
-    refused with the cookie and with the key, this origin's allowed, a read from elsewhere allowed,
-    no key meaning no cookie and an open API, a body that is not a sign-in, `/mcp` taking the key
-    and refusing another origin's write).
+    (20: the cookie's attributes and what signs in, a wrong key, a new token each time, the eleventh
+    try in a minute, sign out, the CSRF header on a POST and a DELETE, a cookie write with no
+    `Origin` refused, a key write without one allowed, another origin's write refused with the
+    cookie and with the key, this origin's allowed, a read from elsewhere allowed, no key meaning
+    no cookie and an open API, a body that is not a sign-in, a sign-in from another origin refused
+    (a script's, with none, allowed), `/mcp` taking the key and refusing another origin's write).
   - `tests/interface/api/test_app.py`: a cross-origin `POST /downloads` is now a 403 (it was a 422
     from the body's content type), since the origin is refused before the body is read.
   - Decisions:
