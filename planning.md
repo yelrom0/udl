@@ -79,7 +79,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
 
 ### Next to build: Phases 23–30, the agent orchestrator (highest priority)
 
-The user's (13 and 17 Nov 2026): these phases come **before** Phases 13–22. They pull Phase 18 forward (as 24.1) and tasks 17.1 and 17.3 (as 25.2), and every plugin gets a generated web UI. The spec, the decisions and every task's card are in [planning/02-agent-orchastrator.md](planning/02-agent-orchastrator.md); **this tracker is the one to mark**. Four implementation agents build them (`ernie-a`…`ernie-d`, queues in [planning/agent-queues/](planning/agent-queues/)); Claude reviews; the user is told what is ready in [planning/human-comms.md](planning/human-comms.md).
+The user's (13 and 17 Nov 2026): these phases come **before** Phases 13–22. They pull Phase 18 forward (as 24.1) and tasks 17.1 and 17.3 (as 25.2), and every plugin gets a generated web UI. The spec, the decisions and every task's card are in [planning/02-agent-orchastrator.md](planning/02-agent-orchastrator.md); **this tracker is the one to mark**. Two implementation agents build them (`deepseek-a` and `deepseek-b` since 19 Nov 2026 AEDT, after four ERNIE ones; queues in [planning/agent-queues/](planning/agent-queues/)); Claude reviews; the user is told what is ready in [planning/human-comms.md](planning/human-comms.md).
 
 Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing open, waiting for Claude's review and the merge (**set by the agent in its own queue file**, `planning/agent-queues/<agent>.md`, which is local and not in git; this tracker never shows `[r]`) · `- [~]` built by the implementation agent, PR merged into `main` (the agent writes what it did, the PR and anything it hit under the task's card in the plan file) · `- [!]` blocked on something only the user or Claude can do (the reason follows `BLOCKED:`) · `- [x]` **only Claude**, after reviewing the work against the plan. Tasks marked **(Claude)** or **(user)** are not for implementation agents.
 
@@ -89,7 +89,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 23.3 **(Claude + user)** Secrets and variables for the bot; `main` locked with a ruleset
   - [x] 23.4 Working agreement updated: feature branch → PR → `main`; no more fast-forwarding `main`
   - [ ] 23.5 **(Claude)** oc-guard on jeff-wiggle with a udl `agent-push` profile and `pr-status`
-  - [ ] 23.6 **(Claude)** Agent queues, rules and briefs in `planning/agent-queues/`; four ERNIE-5.5-Flash-Preview agents (OpenRouter, free) registered, with a watchdog
+  - [ ] 23.6 **(Claude)** Agent queues, rules and briefs in `planning/agent-queues/`; two DeepSeek V4.1 Flash agents (OpenRouter, paid; four free ERNIE ones until 19 Nov AEDT) registered, with a watchdog
 - [ ] **Phase 24: Web UI foundations, and a generated UI for every plugin**
   - [ ] 24.1 Phase 18 (18.1–18.10, ticked in their own tracker below), pulled forward and built as written, with the amendments in 24.1's card
   - [~] 24.2 `UISpec` on operations and `ui_field()` on request, settings and account fields

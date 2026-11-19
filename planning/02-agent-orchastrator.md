@@ -30,7 +30,7 @@ Alongside it come three things the notes ask for: a bot workspace on this machin
 | **O-D6** | **1Password sign-in is a service account token,** limited to the allowed vaults, kept in udl's secret store | The desktop app's integration; either per machine |
 | **O-D7** | **Many projects, each with several repos, from the start; agents run on this machine and on others over SSH** (thevault) | Local agents only; udl's repo only |
 | **O-D8** | **Markdown is imported, then retired.** udl's database is the only tracker afterwards | Regenerated snapshots in git; two-way sync |
-| **O-D9** | **The bot workspace mirrors thevault:** OpenCode + oc-guard, a udl `agent-push` profile, a queue file per agent. **Four ERNIE-5.5-Flash-Preview agents** (`baidu/ernie-5.5-flash-preview:free` on OpenRouter) instead of the two DeepSeek ones first planned (user, 17 Nov 2026); Claude supervises them and keeps human-comms.md | One agent; Claude Code only; two DeepSeek agents (13 Nov) |
+| **O-D9** | **The bot workspace mirrors thevault:** OpenCode + oc-guard, a udl `agent-push` profile, a queue file per agent. **Two DeepSeek V4.1 Flash 1017 agents** (`deepseek/deepseek-v4.1-flash-1017` on OpenRouter, paid, each key spend-capped) since 19 Nov 2026 AEDT (user); from 17 Nov until then, four free ERNIE-5.5-Flash-Preview agents. Claude supervises them and keeps human-comms.md | One agent; Claude Code only; four free ERNIE agents (17–18 Nov) |
 | **O-D10** | **A manager model may assign and reorder tasks, answer its reports' questions, review before "ready", and create or split tasks. Each is a setting, allowed per manager** | A fixed set |
 | **O-D11** | **Other machines are reached over SSH now. udl clients come later** (see [Later](#later-not-in-these-phases)): udl itself in client mode on a machine, a full node on which the hub can run any allowed operation. `HostShell` (25.6) is the seam a client transport plugs into, so nothing above it changes. (Clients are planned now: Phase 34, after Phase 30, per H-D1, H-D3 and H-D4 in [04-shared-data-layer.md](04-shared-data-layer.md).) | Clients in this plan with SSH only to bootstrap; both transports now |
 | **O-D12** | **udl manages the `claude` CLI on every host, not only this one:** running and following sessions, status (version, signed in, plan, limit state), installing and updating it, and starting its sign-in from the hub for the user to finish. The same for OpenCode | Sessions only |
@@ -61,7 +61,7 @@ Alongside it come three things the notes ask for: a bot workspace on this machin
 | **Task** | The second tier: one piece of a feature that one agent (or one human) does, usually one PR (`22.4`). It always links back to its feature |
 | **Link** | A typed pointer from a feature, task, question or action to something else: a PR, issue, commit, CI run, file, URL, Stitch screen, or another task. Looked up both ways |
 | **Note** | An entry on a task or feature: what was built, a decision, a finding. Never edited, only added |
-| **Agent** | A named AI worker: a runner, a model, a host, a role and, optionally, a manager (another agent). `ernie-a`, `claude` |
+| **Agent** | A named AI worker: a runner, a model, a host, a role and, optionally, a manager (another agent). `deepseek-a`, `claude` |
 | **Runner** | A plugin (`udl.runners`) that drives one harness: starts a session in a directory, sends prompts, streams what happens |
 | **Host** | A machine agents run on: `local`, or an SSH target |
 | **Queue** | An agent's assigned tasks, in order |
@@ -153,26 +153,29 @@ A task's life: **assigned** (dragged to an agent, or picked from its suggestions
   - Commit signing for agents through the local 1Password SSH agent.
 - Done when: the smoke test in oc-guard's README passes here: a write in the main checkout, `git push` and `gh pr merge` are all refused in an agent session.
 
-- **Partly done (Claude, 17 Nov 2026):** oc-guard now knows two owners, LIIVE-LY's repos (base `develop`) and `yelrom0/udl` (base `main`), from the remote (also through an SSH host alias) or the checkout's place, and `agent-push` and `pr-status` take the owner and base from the repo. A `udl` profile gates with `make fmt` (the formatter) then `make check`, installing the venv with uv. The card's 12 Nov `pr-status` fix was already in oc-guard. An agent's `git push` and `gh pr merge` are refused, checked in a probe session. What is left, and the host's setup, are in Claude's local notes (`planning/human-comms.md`, not in git), since the repo is public.
+- **Partly done (Claude, 17 Nov 2026):** oc-guard now knows two owners, LIIVE-LY's repos (base `develop`) and `yelrom0/udl` (base `main`), from the remote (also through an SSH host alias) or the checkout's place, and `agent-push` and `pr-status` take the owner and base from the repo. A `udl` profile gates with `make fmt` (the formatter) then `make check`, installing the venv with uv. The card's 12 Nov `pr-status` fix was already in oc-guard. An agent's `git push` and `gh pr merge` are refused, checked in a probe session. What is left, and the host's setup, are in Claude's local notes (not in git), since the repo is public.
 
 **23.6 (Claude) Queues and agents** · needs 23.5
-- Build: `planning/agent-queues/` with `_rules.md` (thevault's, with udl's flow: `[r]` at READY, never merge, `[!]` + the question when blocked, never wait, end the turn only when no `[ ]` line is left), `ernie-a.md` … `ernie-d.md`, a brief for each, and `register.sh` setting each OpenCode session's queue (`oc-guard-check --session … --set-queue …`). All four run `baidu/ernie-5.5-flash-preview:free` through OpenRouter (user, 17 Nov 2026), each in its own worktrees. The queue files and `human-comms.md` are live files in the main checkout, kept out of git by `.git/info/exclude`, as `planning/` is on thevault: agents edit only their own queue file there, and tracker marks and card notes go in each task's PR. A watchdog re-prompts an idle agent whose queue still has an open line, as `nemotron-watchdog` does on thevault.
-- Free-model limits (OpenRouter, 17 Nov 2026): 20 requests a minute and 1,000 a day **per account**, shared by all four agents. A `429` is a limit, not a failure: the watchdog backs off and retries.
-- First queues (lanes chosen so agents rarely touch the same files):
+- Build: `planning/agent-queues/` with `_rules.md` (thevault's, with udl's flow: `[r]` at READY, never merge, `[!]` + the question when blocked, never wait, end the turn only when no `[ ]` line is left), `deepseek-a.md` and `deepseek-b.md`, a brief for each, and `register.sh` setting each OpenCode session's queue (`oc-guard-check --session … --set-queue …`). Both run `deepseek/deepseek-v4.1-flash-1017` through OpenRouter (user, 19 Nov 2026 AEDT; from 17 Nov until then, four agents `ernie-a` … `ernie-d` on `baidu/ernie-5.5-flash-preview:free`), each in its own worktrees. The queue files and `human-comms.md` are live files in the main checkout, kept out of git by `.git/info/exclude`, as `planning/` is on thevault: agents edit only their own queue file there, and tracker marks and card notes go in each task's PR. A watchdog re-prompts an idle agent whose queue still has an open line, as `nemotron-watchdog` does on thevault.
+- Limits: a `429` is a limit, not a failure, and the watchdog backs off and retries. A paid key at its spend cap fails every request, so the watchdog leaves that agent for Claude. (The ERNIE agents' free tier allowed 20 requests a minute and 1,000 a day **per account**, shared by all four.)
+- Queues (lanes chosen so agents rarely touch the same files). Each agent works its first lane, then its second:
 
-  | Agent | Lane | First tasks, in order |
+  | Agent | Lanes | Tasks, in order |
   |---|---|---|
-  | `ernie-a` | the web shell: `web/`, `udl/interfaces/web` | 18.1 → 18.2 → 18.3 → 18.4 → 18.5 → 18.6 → 18.9 → 18.10 → 24.6 → 24.8 |
-  | `ernie-b` | UI contracts and the generated UI: `udl/core/operations.py`, the `udl.ui` kind, `web/packages/ui-sdk`, `web/packages/shell/src/generated` | 24.2 → 26.1 → 18.7 → 18.8 → 24.3 → 24.4 → 24.5 → 24.7 → 24.9 |
-  | `ernie-c` | connections: `udl/plugins/integrations/github`, `udl/plugins/secrets`, `udl/plugins/ai`, their fakes | 25.4 → 25.5 → 25.1 → 25.2 (17.1, 17.3) → 25.3 |
-  | `ernie-d` | hosts and runners: `udl/hosts.py`, `udl/plugins/runners`, their fakes | 25.6 → 25.7 → 25.10 → 25.8 → 25.9 → 25.11 |
+  | `deepseek-a` | the web shell: `web/`, `udl/interfaces/web`; then hosts and runners: `udl/plugins/runners`, their fakes | 18.1 → 18.2 → 18.3 → 18.4 → 18.5 → 18.6 → 18.9 → 18.10 → 24.6 → 24.8; then 25.7 → 25.10 → 25.8 → 25.9 → 25.11 |
+  | `deepseek-b` | UI contracts and the generated UI: `udl/core/operations.py`, the `udl.ui` kind, `web/packages/ui-sdk`, `web/packages/shell/src/generated`; then connections: `udl/plugins/integrations/github`, `udl/plugins/secrets`, `udl/plugins/ai`, their fakes | 24.2 → 26.1 → 18.7 → 18.8 → 24.3 → 24.4 → 24.5 → 24.7 → 24.9; then 25.5 → 25.1 → 25.2 (17.1, 17.3) → 25.3 |
+
+  (Until 19 Nov these were four lanes, one ERNIE agent each: `ernie-a` the web shell, `ernie-b` the UI contracts, `ernie-c` the connections from 25.4, and `ernie-d` hosts and runners from 25.6.)
 
   Phases 26 (from 26.2), 27 and 28 are handed out by Claude as lanes empty, in the order the cards' `needs` allow.
 - Done when: each agent, started once, takes its first task and reaches a PR without being prompted again.
 
 - **Partly done (Claude, 17 Nov 2026):** the user chose **four ERNIE-5.5-Flash-Preview agents** (`baidu/ernie-5.5-flash-preview:free`, OpenRouter) instead of two DeepSeek ones: `ernie-a`…`ernie-d`, each on its own spend-capped key, with queues, `_rules.md` and briefs in `planning/agent-queues/` (local, not in git). A session started through OpenCode's API **runs on the default model unless the model is named when it is created**, and its shell gets a bare environment, so the script that starts sessions sets both. A watchdog timer re-prompts an idle agent whose queue has open lines and waits for a rate limit's reset. **Free-model limits are per account:** the 1,000 requests a day lasted about 45 minutes with four agents (they reset at 00:00 UTC), so the user chose (Q-4) to keep four until each current task is a PR, then run two. **Left:** "each agent takes its first task and reaches a PR without being prompted again".
+- **The user's other answers (17–19 Nov 2026 AEDT):** when the free tier's daily cap runs out, wait for its reset, since the work is free (Q-2). Sending udl's code to the free ERNIE endpoint, which keeps no zero-data-retention promise, is fine, because udl is open source (Q-3).
+- **Partly done (Claude, 19 Nov 2026 AEDT):** the user switched to **two paid DeepSeek V4.1 Flash 1017 agents**, `deepseek-a` and `deepseek-b`, set up as on thevault: one provider, zero data retention, no data collection, and a spend cap on each key. They took over the ERNIE agents' open PRs (#8, #9) and lanes, as in the table above. The ERNIE agents are parked. Claude asks the user before raising a cap. The "Done when" is met for both: `deepseek-a`, started once, finished #8's review fixes and then opened #12 (18.2) on its own; `deepseek-b` finished #9's and then opened #15 (25.5) on its own. **Left:** 23.5, which 23.6 needs.
+- **When the review bot is out of usage (the user, Q-6, 19 Nov 2026 AEDT):** its token's weekly limit ran out on 19 Nov at 03:11 AEDT, and it resets on 20 Nov at 20:00 AEDT. Until then the agents keep working, and each PR waits as `[!]` ("waiting for the review bot") in its agent's queue. When the bot works again, Claude re-runs the reviews, oldest first and stacked PRs bottom-up, and merges each one that comes back clear.
 
-**Phase 23 is done when:** a throwaway one-line PR opened by `ernie-a` goes red on a failing test, green after the fix, gets the bot's review, and can only be merged through the PR.
+**Phase 23 is done when:** a throwaway one-line PR opened by an implementation agent goes red on a failing test, green after the fix, gets the bot's review, and can only be merged through the PR.
 
 ---
 
@@ -767,8 +770,8 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 
 **30.4 (Claude + user) Live check** · needs 30.3
 1. The user makes the 1Password service account (read access to one vault) and runs `udl secrets onepassword login`.
-2. Claude connects OpenRouter (by reference), GitHub, and the hosts `local` and `thevault`; creates `ernie-a` (`opencode`, local) and one `claude-code` agent as `reviewer`.
-3. The user drags a small real udl task to `ernie-a`. It must reach Ready to merge by itself; Claude reviews and merges it.
+2. Claude connects OpenRouter (by reference), GitHub, and the hosts `local` and `thevault`; creates `deepseek-a` (`opencode`, local) and one `claude-code` agent as `reviewer`.
+3. The user drags a small real udl task to `deepseek-a`. It must reach Ready to merge by itself; Claude reviews and merges it.
 4. The same with an agent on thevault, on a small Liively task in a `liively` project entered by hand (its open human-comms.md items entered as questions and actions).
 
 ## Later (not in these phases)
