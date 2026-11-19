@@ -110,7 +110,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [~] 25.7 `udl.runners` plugin kind: `AgentRunner` + contract suite + `FakeRunner`
   - [ ] 25.8 `claude-code` runner: the `claude` CLI on any host, on that host's own login (so subscription models)
   - [ ] 25.9 `opencode` runner: OpenCode 2's server API on any host (OpenRouter and any other provider it has)
-  - [ ] 25.10 `command` runner (any other AI's CLI)
+  - [~] 25.10 `command` runner (any other AI's CLI)
   - [ ] 25.11 Managing harnesses on every host: status (version, signed in, plan, limits), install and update, sign-in started from the hub
 - [ ] **Phase 26: Work tracking: projects, features, tasks, links**
   - [~] 26.1 `udl.apps` plugin kind: `AppPlugin` + contract suite + `FakeApp`; app services in the runtime

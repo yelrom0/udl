@@ -85,6 +85,8 @@ class Sessions:
     """What each session was started with, by id."""
     stopped: set[str] = field(default_factory=set[str])
     """The sessions that were stopped."""
+    sent: set[str] = field(default_factory=set[str])
+    """The sessions that have had a turn (the command runner's resume turns run after one)."""
     turns: int = 0
     """How many turns were sent."""
     gates: dict[str, asyncio.Event] = field(default_factory=dict[str, asyncio.Event])

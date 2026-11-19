@@ -203,6 +203,7 @@ from udl.plugins.registry import (
     DOWNLOADERS,
     INTEGRATIONS,
     PLUGIN_KINDS,
+    RUNNERS,
     SECRETS,
     SITES,
     UI,
@@ -1023,6 +1024,8 @@ class UDLService:
             missing = unmet(self.registry.get(APPS, info.name).requires)
         elif info.kind == UI.group:
             missing = unmet(())
+        elif info.kind == RUNNERS.group:
+            missing = unmet(self.registry.get(RUNNERS, info.name).requires)
         else:  # a database
             missing = unmet(self.registry.get(DATABASES, info.name).requires)
         return PluginStatus.model_validate(

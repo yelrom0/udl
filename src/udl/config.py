@@ -312,6 +312,14 @@ class AISettings(_Frozen):
     allowed_commands: list[str] = Field(default_factory=list[str])
 
 
+class OrchSettings(_Frozen):
+    """The [orch] table: what the orchestrator's agents may do on this machine."""
+
+    # The programs a `command` runner may start (25.10): set here only, as they run on this
+    # machine, as [ai] allowed_commands is for an AI provider's command.
+    allowed_commands: list[str] = Field(default_factory=list[str])
+
+
 class WebSettings(_Frozen):
     """The [web] table: the web UI, which `udl serve` serves at /ui."""
 
@@ -430,6 +438,7 @@ class Settings(BaseSettings):
     secrets: SecretsSettings = Field(default_factory=SecretsSettings)
     automations: AutomationsSettings = Field(default_factory=AutomationsSettings)
     ai: AISettings = Field(default_factory=AISettings)
+    orch: OrchSettings = Field(default_factory=OrchSettings)
     web: WebSettings = Field(default_factory=WebSettings)
     fetch: FetchSettings = Field(default_factory=FetchSettings)
     # Per-downloader options, e.g. [tools.yt-dlp]; each downloader validates its own (task 2.1).
