@@ -564,7 +564,8 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
     `session.execution.started` is not used as a shortcut, since the service does not clear
     `outcome` as a new turn starts and the event itself is volatile — a test keeps the previous
     `succeeded` in place for a turn that says nothing, and the turn is not ended by it; another
-    replaces it with `failed`, and that turn ends as an error. A
+    leaves `failed` behind for a turn that succeeded with its events off the stream, and that turn
+    ends as done — only the session's own outcome says so. A
     turn that keeps sending events is never ended by silence, however long it runs (30 reads with
     nothing at all, an hour, is a turn given up on). A drop can lose text — the stream is
     volatile — but never the end of the turn. `session.text.delta` streams a `TextDelta`, and

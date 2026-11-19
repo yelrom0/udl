@@ -567,21 +567,27 @@ async def test_a_stale_outcome_is_not_taken_for_this_turn(service: FakeOpenCode)
 
 
 async def test_a_later_turn_s_own_outcome_replaces_the_stale_one(service: FakeOpenCode) -> None:
-    # (The other side of the gate: the second turn's own events are gone, but the service has
-    # replaced the first turn's `succeeded` with this turn's `failed`, so it ends as an error.)
+    # (The other side of the gate: the first turn left `failed` behind, the second one succeeded —
+    # and its events never reached the stream — so only the session's own `outcome`, with its
+    # `time.idle` moved on, can say how this turn ended. A runner that never asks ends as an error
+    # after its reads run out, so this can only pass on the outcome.)
     service.keep_outcome = True
-    runner = _runner(service, FakeShell())
-    session = await runner.start(SPEC)
-    await _turn(runner, session)
     service.script = as_sequence(
         [event("session.execution.failed", 1, {"sessionID": "ses", "error": {"type": "Boom"}})]
     )
+    runner = _runner(service, FakeShell())
+    session = await runner.start(SPEC)
+    first = await _turn(runner, session)
+    assert first[-1] == TurnEnded(reason=TurnReason.ERROR, text="Boom")
+
+    service.script = as_sequence([event("session.execution.succeeded", 1, {"sessionID": "ses"})])
+    service.ends_before_served = True  # (the turn ends on the service, not on the stream)
+    service.cut_after = 0  # (and none of its events reach this read)
+    service.cut_always = True
 
     events = await _turn(runner, session, "again")
 
-    assert len(events) == 1
-    assert isinstance(events[0], TurnEnded)
-    assert events[0].reason is TurnReason.ERROR
+    assert events == [TurnEnded(reason=TurnReason.DONE)]
 
 
 async def test_a_second_turn_never_takes_the_first_turn_s_outcome(service: FakeOpenCode) -> None:
