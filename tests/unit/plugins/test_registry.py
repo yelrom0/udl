@@ -29,6 +29,8 @@ from udl.plugins.registry import (
     DATABASES,
     DOWNLOADERS,
     INTEGRATIONS,
+    PLUGIN_KINDS,
+    RUNNERS,
     SITES,
     PluginInfo,
     PluginRegistry,
@@ -241,6 +243,45 @@ def test_later_plugin_dirs_override_earlier_ones(tmp_path: Path) -> None:
     assert registry.get(WIDGETS, "gear")().spin() == "second"
     [info] = registry.plugins()
     assert info.overrides == str(first / "gears.py")  # (the one it replaced, not the first)
+
+
+def test_the_runners_kind_is_a_kind_and_finds_a_runner_in_a_plugin_dir(tmp_path: Path) -> None:
+    write_plugin(
+        tmp_path,
+        "harness.py",
+        """
+        from udl.plugins.runners.base import AgentRunner, RunnerOptions, RunnerHealth, RunnerModel
+
+        class Options(RunnerOptions):
+            pass
+
+        class Harness(AgentRunner[Options]):
+            name = "harness"
+            options_model = Options
+
+            async def health(self):
+                return RunnerHealth(installed=True)
+
+            async def models(self):
+                return [RunnerModel(id="m", name="M")]
+
+            async def start(self, spec):
+                raise NotImplementedError
+
+            async def send(self, session, prompt):
+                yield
+
+            async def stop(self, session):
+                return None
+        """,
+    )
+
+    registry = PluginRegistry.discover([tmp_path], kinds=[RUNNERS])
+
+    assert RUNNERS in PLUGIN_KINDS
+    assert RUNNERS.group == "udl.runners"
+    [info] = registry.plugins()
+    assert (info.kind, info.name) == ("udl.runners", "harness")
 
 
 def test_a_missing_plugin_dir_is_skipped(tmp_path: Path) -> None:

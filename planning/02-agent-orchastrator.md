@@ -369,6 +369,53 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - `RUNNERS` in `PLUGIN_KINDS`; `tests/support/runners.py`: `FakeRunner`, scripted per prompt, able to call back into a `UDLService` as an agent would (so e2e tests need no model); and `fake_harness.py`, a small script the real runners' tests point their binary at.
 - Tests first: `tests/contract/test_runner_contract.py` over `fake`: the phase's second bullet.
 - Done when: `FakeRunner` passes the contract.
+- **Built (deepseek-a, 2026-11-18, PR #22):** the kind, its contract and the fake.
+  - `udl/plugins/runners/base.py`: `AgentRunner[O]` with `name`, `options_model`, `requires`, the
+    `options`/`shell`/`clock` it is given, `health()`/`models()`/`start()`/`send()`/`stop()`, and
+    `install()`/`login()` whose defaults refuse (`PluginError`: "cannot be installed by udl", "cannot
+    sign in by itself") so 25.11 can add them where a harness allows it.
+  - The models: `RunnerOptions`, `McpEndpoint`, `SessionSpec`, `SessionRef`, `RunnerHealth`,
+    `RunnerModel`, and `AgentEvent` with `TextDelta`, `ToolStarted`, `ToolFinished`, `Usage`,
+    `TurnEnded`, and the two that say a turn could not go on, `RunnerLimited` and `RunnerFailed`.
+  - `RUNNERS` is in `PLUGIN_KINDS` (`udl.runners`); a runner in a plugin dir is found and named
+    (`tests/unit/plugins/test_registry.py`).
+  - `tests/support/runners.py`: `FakeRunner`, scripted per prompt (`script={prompt: turn}`), with a
+    `count_sites` turn that asks udl as an agent's tool call would (it takes an `AsksUDL`, the one
+    operation it calls, so a test needs no database) and a `wait_for_stop` turn that waits until the
+    session is stopped; its sessions live in a `Sessions` store, not in the runner, so a session
+    outlives the runner object as a real harness's does (two runners given one store share it), and
+    a spec whose environment says `FAKE_HARNESS_LIMITED=1` is out of quota with a reset time. Each
+    session has its own stop gate (stopping one lets that one's waiting turn go, not another's).
+    `RecordingShell` is a real local shell that records every argv and every secret environment
+    (a secret reaches the harness through the last, and is in no argv).
+    `tests/support/fake_harness.py` is a program the real runners' tests point their binary at
+    (`--version`, `auth status`, a stream-json turn, `FAKE_HARNESS_FAILS`, `FAKE_HARNESS_LIMITED`
+    with its `resets_at`, and `FAKE_HARNESS_SLOW` so a stop can end a turn).
+  - `tests/contract/test_runner_contract.py` over `fake`: named, its options model, its requires;
+    health, models, start (the spec's cwd, the shell's host); a prompt's events ending in exactly
+    one `TurnEnded`; a session resuming by id after the runner object is thrown away; `stop()`
+    ending a turn that is running (the spec asks the harness to be slow, `FAKE_HARNESS_SLOW`, so a
+    real runner's turn is still running when the stop comes); a rate limit as a `RunnerLimited`
+    with its `until`, followed by
+    `TurnEnded(LIMITED)`; secrets given as `secret_env` reaching the harness and in no argv; a
+    stopped session saying
+    `STOPPED` rather than hanging (and stopping twice is fine); and the refusing `install`/`login`.
+    22 tests (11 of them the contract's); `udl/plugins/runners` at 100 %.
+  - Decisions:
+    - **`AgentEvent` is a base class, not a `type` alias**: the contract (and 26.x's consumer) asks
+      `isinstance(event, AgentEvent)`, which a union alias cannot answer. Each kind is a subclass
+      with its own `kind: Literal[...]`, so a discriminated parse is still one `Field` away.
+    - **A `RunnerLimited`/`RunnerFailed` is followed by the turn's `TurnEnded`**, which is always
+      the last event: `base.py`'s docstring and the two classes say so, and the contract asserts it.
+    - **`login()` is `async def`**, unlike the card's `def login(self) -> Interaction`, because
+      `HostShell.interact()` returns `Awaitable[Interaction]` (25.6), which a synchronous signature
+      could not implement.
+    - **`RunnerLimited`/`RunnerFailed` are events in the stream, not exceptions**: a turn ends with
+      one of them rather than raising into the reader, so an orch turn (26.x) reads a reason
+      whatever happened. `TurnEnded.reason` keeps `done|stopped|error|limited` as the card has it.
+    - **A runner's settings table (`[runners.<name>]`) is not wired yet**: `RunnerOptions` documents
+      it, and 25.11 (which adds install/login and the harness management) puts it in the config
+      beside `[apps.<name>]` and `[integrations.<name>]`.
 
 **25.8 `claude-code`** · needs 25.7
 - Build: `udl/plugins/runners/claude_code.py`. Everything goes through the runner's `HostShell`, so a `claude` on thevault is driven exactly as the one here: each host has its own install, its own login and its own limits, and an agent's `host` picks which.
