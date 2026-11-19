@@ -263,7 +263,12 @@ async def test_a_browser_runs_the_script_and_gets_the_page(
     await settled(page, "Plain one")
 
     visits = antibot.visits("/plain-500/one")
-    assert [visit.status for visit in visits] == [500, 200]
+    statuses = [visit.status for visit in visits]
+    # (A reload can race the cookie it just set, so the 500s before the page are one or more:
+    # what matters is that a client which runs no script never gets past the first one.)
+    assert statuses[0] == 500
+    assert statuses[-1] == 200
+    assert set(statuses[1:-1]) <= {500}
     # (The 500's own report is cut short by its reload.)
     assert visits[-1].cookies == {JS_COOKIE: "1"}
     async with asyncio.timeout(5):
