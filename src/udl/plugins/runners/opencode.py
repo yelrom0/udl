@@ -87,8 +87,9 @@ _LOG_TIMEOUT: Final = httpx.Timeout(
     connect=_SECONDS, read=_LOG_SECONDS, write=_SECONDS, pool=_SECONDS
 )
 """How long one call may take before it is a failure."""
-_DROPS: int = 3
-"""How many reads of the event stream in a row may bring nothing before the turn is given up."""
+_DROPS: int = 30
+"""How many reads of the event stream in a row may bring nothing before the turn is given up (each
+waits `_LOG_SECONDS`, so this is an hour of silence from a session that says nothing at all)."""
 _AGENT: Final = "udl"
 """The prefix of the agent files udl writes on a host."""
 _WRITE_AGENT: Final = (
@@ -175,7 +176,7 @@ class _Tokens(BaseModel):
 
 
 class _Event(BaseModel):
-    """One item of the event stream: its type, its durable sequence, and what it says."""
+    """One item of the event stream: its type, its durable marker, and what it says."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -242,12 +243,10 @@ class OpenCodeSessions:
     """An opencode runner's sessions, outside any runner object (a service may hold one).
 
     A session outlives the runner that started it: OpenCode keeps it, so a runner made later
-    resumes it by id, from the sequence number udl stored."""
+    resumes it by id."""
 
     specs: MutableMapping[str, SessionSpec] = field(default_factory=dict[str, SessionSpec])
     """What each session was started with, by id."""
-    seq: MutableMapping[str, int] = field(default_factory=dict[str, int])
-    """The last durable sequence number udl read, by session id."""
 
 
 class OpenCode(AgentRunner[OpenCodeOptions]):
@@ -349,7 +348,6 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
                     json={"variables": variables},
                 )
         self._sessions.specs[session.id] = spec
-        self._sessions.seq[session.id] = 0
         return session
 
     async def _agent(self, spec: SessionSpec) -> str | None:
@@ -395,15 +393,9 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
         ended: TurnEnded | None = None
         try:
             async with self._api() as api:
-                await self._call(
-                    api,
-                    "POST",
-                    f"/api/session/{session.id}/prompt",
-                    json={"text": prompt, "delivery": "queue", "metadata": {"udl": True}},
-                )
                 watching = asyncio.create_task(self._watch_permissions(api, session))
                 try:
-                    async for event in self._follow(api, session):
+                    async for event in self._follow(api, session, prompt):
                         if isinstance(event, TurnEnded):
                             ended = event
                             break
@@ -427,16 +419,23 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
     # -- the events -------------------------------------------------------------------------
 
     async def _follow(
-        self, api: httpx.AsyncClient, session: SessionRef
+        self, api: httpx.AsyncClient, session: SessionRef, prompt: str
     ) -> AsyncIterator[AgentEvent]:
         """The service's event stream, as the session's own events, until the turn ends.
 
         The stream is OpenCode's volatile one (`/api/event`): its session log, in 2.1.2, replays
-        nothing (a read of it says only `log.synced`), so a turn is followed here and the session's
-        own `outcome` is the backstop — a stream that drops is opened again, and when it brings
-        nothing three times the session says how its turn ended. Nothing is said twice: text
-        streamed as deltas is not repeated by the message's own `ended`."""
+        nothing (a read of it says only `log.synced`), so the subscription is opened **before** the
+        prompt is sent — otherwise a fast turn's own events are gone before udl listens — and a
+        stream that drops is opened again. Nothing is said twice: text streamed as deltas is not
+        repeated by the message's own `ended`.
+
+        The session's own `outcome` is the backstop for a stream that says nothing: once this turn
+        has started (`session.execution.started`, so the *previous* turn's outcome is never taken
+        for this one) and the stream brings nothing, the session says how it ended. Silence alone
+        does not end a turn that is still sending events, however long it runs."""
         idle = 0
+        started = False
+        prompted = False
         streamed: set[str] = set()
         while True:
             try:
@@ -446,12 +445,23 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
                         raise PluginFailed(f"opencode's events said {answer.status_code}")
                     self._running[session.id] = answer
                     try:
+                        if not prompted:
+                            await self._call(
+                                api,
+                                "POST",
+                                f"/api/session/{session.id}/prompt",
+                                json={
+                                    "text": prompt,
+                                    "delivery": "queue",
+                                    "metadata": {"udl": True},
+                                },
+                            )
+                            prompted = True
                         async for said in _sse(answer):
                             if _session_of(said) != session.id:
                                 continue  # (one stream, every session on the host)
-                            self._sessions.seq[session.id] = _sequence(
-                                said, self._sessions.seq.get(session.id, 0)
-                            )
+                            idle = 0  # (progress: only a stream that says nothing runs out)
+                            started = started or said.type == "session.execution.started"
                             for event in await self._events(said, streamed):
                                 yield event
                                 if isinstance(event, TurnEnded):
@@ -463,7 +473,7 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
                 log.debug("opencode's events for %s dropped: %s", session.id, failure)
             if session.id in self._stopped:
                 return
-            if (ended := await self._outcome(api, session)) is not None:
+            if started and (ended := await self._outcome(api, session)) is not None:
                 yield ended
                 return
             idle += 1
@@ -471,7 +481,7 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
                 raise PluginFailed(
                     f"opencode's events for {session.id} keep dropping without an answer."
                 )
-            await asyncio.sleep(0)  # (three tries at most: a yield is enough between them)
+            await asyncio.sleep(0)  # (a yield between tries is enough: the reads time out)
 
     async def _outcome(self, api: httpx.AsyncClient, session: SessionRef) -> TurnEnded | None:
         """How the session's last turn ended, if it has (None: it is still running)."""
@@ -704,14 +714,6 @@ async def _sse(answer: httpx.Response) -> AsyncIterator[_Event]:
 def _session_of(event: _Event) -> str | None:
     """Which session an event is about (None: it is not about one)."""
     return _text(event.data.get("sessionID"))
-
-
-def _sequence(event: _Event, after: int) -> int:
-    """The sequence number udl has read up to, after reading `event`."""
-    durable = event.durable
-    if durable is not None and isinstance(seq := durable.get("seq"), int):
-        return max(after, seq)
-    return after
 
 
 def _ruleset(cwd: str, deny: list[str]) -> list[dict[str, str]]:

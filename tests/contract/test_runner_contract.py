@@ -136,7 +136,7 @@ def _opencode_case() -> Case:
     service = FakeOpenCode()
     shell = RecordingShell(FakeShell())
     store = Sessions()
-    sessions = OpenCodeSessions(specs=store.specs, seq=store.seq)
+    sessions = OpenCodeSessions(specs=store.specs)
     # (The secrets reach the service over HTTP, not the shell: the fake records them where the
     # contract looks for what reached the harness.)
     service.record_into = store.secret_envs

@@ -211,6 +211,8 @@ class FakeOpenCode:
     """The environment sessions were given (`PUT /api/session/{id}/environment`)."""
     pending_outcome: str | None = None
     """How the turn whose events the stream is serving ended (published with its last event)."""
+    silent_reads: int = 0
+    """How many subscriptions say nothing before the events are served."""
     keep_log: bool = False
     """Whether the event stream replays what it already sent (the service does not)."""
     report_outcome: bool = True
@@ -463,11 +465,16 @@ class FakeOpenCode:
         self.calls.append(("GET", "/api/event", dict(request.query_params)))
         if self.log_status != 200:
             return Response(status_code=self.log_status)
-        waiting = list(self.log)
-        if not self.keep_log:
+        silent = bool(self.silent_reads)
+        if silent:  # (a stream that is open and says nothing yet)
+            self.silent_reads -= 1
+        waiting = [] if silent else list(self.log)
+        if not self.keep_log and not silent:
             self.log = []
 
         async def lines() -> AsyncGenerator[bytes]:
+            # (The test transport runs the app to its end before the runner can send the prompt, so
+            # a subscription opened before it serves nothing here; a real service streams it live.)
             for sent, said in enumerate(waiting):
                 if self.cut_after is not None and sent >= self.cut_after:
                     if not self.cut_always:

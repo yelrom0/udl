@@ -534,12 +534,12 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - **The real run, here (2026-11-20):** `openrouter-ds-a/deepseek-v4.1-flash-1017-instant`, one
     prompt — `TextDelta("Hello there, friend.")`, `Usage(input 2828, output 9, $0.0003305932)`,
     `TurnEnded(done)`. (The free ERNIE models were out of their daily quota: `provider.rate-limit`,
-    which the runner reads as a `RunnerLimited`.) On thevault is still to do.
+    which the runner reads as a `RunnerLimited`.) **On thevault is still to do:** `opencode` is not
+    installed there (checked over SSH, 2026-11-20), so the smoke test cannot run until it is.
 - **Built (deepseek-a, 2026-11-19/20, PR #TBD):** the `opencode` runner.
   - `udl/plugins/runners/opencode.py`: `OpenCode` (name `opencode`, published under `udl.runners`),
-    `OpenCodeOptions` (`cli`, `models`, `agent`, `title`, `directory`) and `OpenCodeSessions` (a
-    session's spec, its last log sequence and the secrets it was given, kept outside the runner so
-    a runner made later resumes by id).
+    `OpenCodeOptions` (`cli`, `models`, `agent`, `task`, `title`, `directory`) and `OpenCodeSessions`
+    (a session's spec, kept outside the runner so a runner made later resumes by id).
   - **The service, as the card says:** `opencode service status` and `~/.config/opencode/service.json`
     read through the `HostShell` on every connect, Basic auth (a Bearer header is refused), the port
     through `shell.forward()`. Health is `GET /api/info`; a service that is stopped, a `service.json`
@@ -548,15 +548,25 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
     `{providerID, id, variant?}`), the agent and `metadata.udl`. udl's MCP server is added with the
     token as `{env:UDL_AGENT_TOKEN}`; the token, the spec's `env` and its `secret_env` go to
     `PUT /api/session/{id}/environment`, so none is in a file or an argv.
-  - **A turn:** `POST /api/session/{id}/prompt` (`delivery: queue`), then the durable log
-    (`/api/experimental/session/{id}/log?after=<seq>&follow=true`), resumed from the sequence the
-    session store kept: a dropped connection loses nothing and repeats nothing (three reads in a row
-    with nothing new fail the turn instead of spinning). `session.text.*` are `TextDelta`s,
+  - **A turn — a correction to the card's plan, from the real run.** The stream is subscribed
+    (`GET /api/event`, filtered to the session) **before** `POST /api/session/{id}/prompt`
+    (`delivery: queue`) is sent: the stream has no replay, so a prompt sent first loses a fast
+    turn's own events. The card's durable log (`/api/experimental/session/{id}/log`) **replays
+    nothing in 2.1.2** — a real turn read with `after=0`, `after=1`, `after=12` and no `after`
+    answers only `log.synced`, while the same turn's events carry `durable.{aggregateID,seq}` on
+    `/api/event`. That makes `/api/event` the source and the session's own `outcome`
+    (`GET /api/session/{id}`) the backstop: a stream that drops is opened again, and one that
+    brings nothing asks the session how the turn ended — but only once **this** turn has started
+    (`session.execution.started`), so a second turn never takes the first one's `succeeded`. A
+    turn that keeps sending events is never ended by silence, however long it runs (30 reads with
+    nothing at all, an hour, is a turn given up on). A drop can lose text — the stream is
+    volatile — but never the end of the turn. `session.text.delta` streams a `TextDelta`, and
+    `session.text.ended` is not repeated when its deltas were read;
     `session.tool.*` are `ToolStarted`/`ToolFinished` (the tool's name is in the provider's own
-    blob), `session.usage.recorded` / `.updated` are a `Usage`, and `session.execution.succeeded` / `.interrupted` /
-    `.failed` end the turn (done / stopped / error). A failure that says the account is out of
+    blob), `session.usage.recorded` / `.updated` are a `Usage`, and `session.execution.succeeded` /
+    `.interrupted` / `.failed` end the turn (done / stopped / error). A failure that says the account is out of
     quota — `status: 429`, or a `retryAfterMs` — is a `RunnerLimited(until)` and then
-    `TurnEnded(limited)`. A `PluginFailed` mid-turn (a log udl cannot read) is `TurnEnded(error)`,
+    `TurnEnded(limited)`. A `PluginFailed` mid-turn (a stream udl cannot read) is `TurnEnded(error)`,
     never an exception out of `send`.
   - **Permissions — a correction to the card's plan.** The session's rules use V2's action names
     (`shell`, `edit`, `external_directory`, `question`); `tool.use` is a *policy's* action (25.11's
@@ -576,11 +586,14 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
     serves), `tests/fixtures/opencode/events-2.1.2.json` (one real turn's events, exact payloads), `tests/support/opencode.py` (`FakeOpenCode`, an ASGI app of those calls with Basic auth,
     a log a test can cut, pending permissions, and the contract's slow/limited turns through
     `FAKE_HARNESS_SLOW`/`FAKE_HARNESS_LIMITED`; `FakeShell`, its shell), the contract's fourth case,
-    49 unit tests and `tests/smoke/test_opencode.py` (opt-in, `make smoke`; it skips here because
-    this machine's opencode service is stopped). A test reads the real-turn fixture and asserts the
-    `TextDelta` / `Usage` / `TurnEnded` it becomes. A test checks that every path
-    the runner calls is a path in the committed document. `docs/plugins.md` gains the runner row in
-    the contract-suite table.
+    52 unit tests and `tests/smoke/test_opencode.py` (opt-in, `make smoke`). The smoke test runs one
+    real turn in the directory the suite was started from (OpenCode's service is per directory) on
+    the first OpenRouter model the host has, or `OPENCODE_SMOKE_MODEL`; a model whose free daily
+    quota is spent is a skip that says so. **It passes here** with
+    `OPENCODE_SMOKE_MODEL=openrouter-ds-a/deepseek-v4.1-flash-1017-instant` (the free ERNIE models
+    were out of quota). A test reads the real-turn fixture and asserts the `TextDelta` / `Usage` /
+    `TurnEnded` it becomes. A test checks that every path the runner calls is a path in the
+    committed document. `docs/plugins.md` gains the runner row in the contract-suite table.
 
 **25.10 `command`** · needs 25.7
 - Build: `udl/plugins/runners/command.py`: any CLI as a runner. Options: `argv` (a template with `{model}`, `{session}`, `{cwd}`; the prompt on stdin), `resume_argv`, `output: text | jsonl`. `argv[0]` must be listed in `[orch] allowed_commands` (file-only), as 17.3's provider commands are. Output lines are `TextDelta`s; exit 0 is `TurnEnded(done)`.

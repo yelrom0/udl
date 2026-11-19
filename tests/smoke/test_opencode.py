@@ -10,9 +10,14 @@ runs it.
 
 OpenCode's service is per directory (`opencode service status` answers only where it was started),
 so the turn runs in the directory the suite was started from, with every shell command denied.
+
+The card asks for an OpenRouter model, so the first one the host has is used; `OPENCODE_SMOKE_MODEL`
+names another (`provider/id`), for a host whose free models have spent their daily quota. A model
+that answers `RunnerLimited` is not a failure of the runner, so the test skips and says so.
 """
 
 # System Imports
+import os
 from pathlib import Path
 
 # Package Imports
@@ -49,11 +54,14 @@ async def test_opencode_answers_one_prompt(monkeypatch: pytest.MonkeyPatch) -> N
     models = await runner.models()
     if not models:
         pytest.skip("opencode has no model signed in here")
-
+    # (The card asks for an OpenRouter model; a host with none signed in runs its first one.)
+    chosen = os.environ.get("OPENCODE_SMOKE_MODEL") or next(
+        (one.id for one in models if one.id.startswith("openrouter")), models[0].id
+    )
     session = await runner.start(
         SessionSpec(
             cwd=str(where),
-            model=models[0].id,
+            model=chosen,
             instructions="Answer in one short word. Use no tools.",
             deny=["*"],
         )
@@ -61,6 +69,8 @@ async def test_opencode_answers_one_prompt(monkeypatch: pytest.MonkeyPatch) -> N
     events: list[AgentEvent] = [event async for event in runner.send(session, "Say hello.")]
     await runner.stop(session)
 
+    if isinstance(events[-1], TurnEnded) and events[-1].reason is TurnReason.LIMITED:
+        pytest.skip(f"{chosen} is rate-limited here; set OPENCODE_SMOKE_MODEL to another model")
     assert any(isinstance(event, TextDelta) and event.text for event in events), events
     assert isinstance(events[-1], TurnEnded)
     assert events[-1].reason is TurnReason.DONE, events[-1]

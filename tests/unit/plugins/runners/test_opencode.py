@@ -340,7 +340,6 @@ async def test_another_runner_resumes_a_session_by_id(service: FakeOpenCode) -> 
     assert events[-1] == TurnEnded(reason=TurnReason.DONE)
     # (The session store carries what the first runner knew: its spec, and the last sequence.)
     assert sessions.specs[session.id] == SPEC
-    assert sessions.seq[session.id] == service.seq
 
 
 def _real_turn() -> list[dict[str, object]]:
@@ -407,17 +406,15 @@ async def test_a_turn_is_a_prompt_and_the_log_from_the_sequence_udl_stored(
 async def test_each_turn_is_followed_on_the_service_s_own_event_stream(
     service: FakeOpenCode, shell: FakeShell
 ) -> None:
-    sessions = OpenCodeSessions()
-    runner = _runner(service, shell, sessions=sessions)
+    runner = _runner(service, shell)
     session = await runner.start(SPEC)
     await _turn(runner, session)
     await _turn(runner, session, "again")
 
-    # (The session log replays nothing in 2.1.2, so a turn is followed on `/api/event`, once per
-    # turn; the sequence the events carry is kept, for 27.x's audit.)
+    # (The session log replays nothing in 2.1.2, so a turn is followed on `/api/event`, subscribed
+    # before its prompt — one subscription per turn, and one more when a read ends empty.)
     reads = [call for call in service.calls if call[1] == "/api/event"]
-    assert len(reads) == 2
-    assert sessions.seq[session.id] == service.seq
+    assert len(reads) == 2 * 2
 
 
 async def test_a_dropped_stream_is_opened_again_and_the_turn_still_ends(
@@ -435,20 +432,7 @@ async def test_a_dropped_stream_is_opened_again_and_the_turn_still_ends(
     assert [event for event in events if isinstance(event, TextDelta)] == [TextDelta(text="Hello!")]
     assert events[-1] == TurnEnded(reason=TurnReason.DONE)
     reads = [call for call in service.calls if call[1] == "/api/event"]
-    assert len(reads) == 2
-
-
-async def test_a_stream_that_keeps_dropping_still_ends_the_turn_as_the_session_says(
-    service: FakeOpenCode,
-) -> None:
-    service.cut_after = 0  # (every subscription drops before its first event)
-    service.cut_always = True
-    runner = _runner(service, FakeShell())
-    session = await runner.start(SPEC)
-
-    events = await _turn(runner, session)
-
-    assert events == [TurnEnded(reason=TurnReason.DONE)]
+    assert len(reads) >= 3  # (the empty first read, the dropped one, and the one that brought it)
 
 
 async def test_a_stream_that_keeps_dropping_with_no_outcome_fails_the_turn(
@@ -466,6 +450,45 @@ async def test_a_stream_that_keeps_dropping_with_no_outcome_fails_the_turn(
     assert isinstance(events[0], TurnEnded)
     assert events[0].reason is TurnReason.ERROR
     assert "keep dropping" in (events[0].text or "")
+
+
+async def test_the_stream_is_open_before_the_prompt_is_sent(service: FakeOpenCode) -> None:
+    runner = _runner(service, FakeShell())
+    session = await runner.start(SPEC)
+
+    await _turn(runner, session)
+
+    # (The stream has no replay: a fast turn's own events would be gone before udl listened.)
+    order = [call[1] for call in service.calls]
+    assert order.index("/api/event") < order.index(f"/api/session/{session.id}/prompt")
+
+
+async def test_a_turn_that_is_silent_for_a_while_is_not_given_up_on(service: FakeOpenCode) -> None:
+    runner = _runner(service, FakeShell())
+    session = await runner.start(SPEC)
+    service.silent_reads = 5  # (five subscriptions that say nothing, then the turn)
+
+    events = await _turn(runner, session)
+
+    assert events[-1] == TurnEnded(reason=TurnReason.DONE)
+    assert [event for event in events if isinstance(event, TextDelta)] == [TextDelta(text="Hello!")]
+
+
+async def test_a_second_turn_never_takes_the_first_turn_s_outcome(service: FakeOpenCode) -> None:
+    runner = _runner(service, FakeShell())
+    session = await runner.start(SPEC)
+    await _turn(runner, session)
+    service.report_outcome = False  # (the second turn's own outcome is never said)
+    service.cut_after = 0  # (its stream drops before a single event)
+    service.cut_always = True
+
+    events = await _turn(runner, session, "again")
+
+    # (The first turn ended `succeeded`; without this turn's own `execution.started` that must not
+    # be read as this turn's end.)
+    assert len(events) == 1
+    assert isinstance(events[0], TurnEnded)
+    assert events[0].reason is TurnReason.ERROR
 
 
 async def test_a_permission_asked_is_refused(service: FakeOpenCode) -> None:
@@ -594,10 +617,9 @@ async def test_a_stream_read_that_errors_does_not_fail_the_turn(
 
     events = await _turn(runner, session)
 
-    # (The subscription that errored had already taken the events with it; the session says how
-    # the turn ended, and the turn never hangs.)
-    assert events == [TurnEnded(reason=TurnReason.DONE)]
-    assert reads["n"] == 1
+    # (The read that errored had taken nothing; the next one brought the turn, which still ended.)
+    assert events == [TextDelta(text="one"), TurnEnded(reason=TurnReason.DONE)]
+    assert reads["n"] == 2
 
 
 async def test_a_permission_of_another_session_is_left_alone(service: FakeOpenCode) -> None:
