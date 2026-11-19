@@ -15,8 +15,9 @@ It answers the way the harnesses do:
   `result` (the stream-json shape), one per line, with the prompt echoed back.
 
 `FAKE_HARNESS_FAILS=1` makes a turn exit 1 after its first line, and `FAKE_HARNESS_LIMITED=1` makes
-it print a usage-limit result whose `resets_at` says when the limit lifts (an epoch second, as the
-harnesses say it in a line of text), so a runner's error paths have something to parse.
+it print a usage-limit result that says when the limit lifts in both the ways the harnesses do: a
+`resets_at` epoch field, and the `…|epoch` text `claude` prints, so a runner's error paths have
+something to parse whichever it reads.
 `FAKE_HARNESS_SLOW=1` makes a turn wait before it answers, so a runner's stop can end it.
 """
 
@@ -72,7 +73,7 @@ def turn() -> int:
                     "is_error": True,
                     "limited": True,
                     "resets_at": RESETS_AT,
-                    "result": f"Your limit resets at {RESETS_AT}|{RESETS_AT}.",
+                    "result": f"Claude AI usage limit reached|{RESETS_AT}",
                 }
             )
         )

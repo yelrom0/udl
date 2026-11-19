@@ -216,7 +216,7 @@ def test_the_harness_can_be_told_to_fail_or_to_be_limited() -> None:
     said = json.loads(limited.stdout.splitlines()[-1])
     assert said["limited"] is True
     assert said["resets_at"] == 1_800_000_000
-    assert "resets at 1800000000" in said["result"]
+    assert said["result"] == "Claude AI usage limit reached|1800000000"  # (as `claude` says it)
 
 
 def test_the_harness_says_whether_it_is_signed_in() -> None:
