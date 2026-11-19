@@ -62,6 +62,11 @@ interface Sort {
 	readonly ascending: boolean;
 }
 
+/** Whether a cell holds nothing. */
+function blank(value: JsonValue | undefined): boolean {
+	return value === undefined || value === null;
+}
+
 /** The rows in the sort's order: numbers as numbers, nothing last, the rest as text. */
 function sorted(rows: readonly Row[], sort: Sort | null): readonly Row[] {
 	if (sort === null) {
@@ -74,11 +79,15 @@ function sorted(rows: readonly Row[], sort: Sort | null): readonly Row[] {
 		if (a === b) {
 			return 0;
 		}
-		// (Nothing is last, whichever way it is sorted: a blank cell is not a small one.)
-		if (a === undefined || a === null) {
+		// (Nothing is last, whichever way it is sorted: a blank cell is not a small one, and
+		// `undefined` and `null` are the same nothing — else the two orders disagree.)
+		if (blank(a) && blank(b)) {
+			return 0;
+		}
+		if (blank(a)) {
 			return 1;
 		}
-		if (b === undefined || b === null) {
+		if (blank(b)) {
 			return -1;
 		}
 		if (typeof a === "number" && typeof b === "number") {
@@ -96,7 +105,9 @@ function Table({ shape, pageSize }: TableProps) {
 	const [page, setPage] = useState(1);
 	const rows = useMemo(() => sorted(shape.rows, sort), [shape.rows, sort]);
 	const pages = Math.max(1, Math.ceil(rows.length / pageSize));
-	const shown = rows.slice((page - 1) * pageSize, page * pageSize);
+	// (A smaller answer than the page that was open: the last page there is, never an empty one.)
+	const current = Math.min(page, pages);
+	const shown = rows.slice((current - 1) * pageSize, current * pageSize);
 
 	const change = (column: string): void => {
 		setPage(1);
@@ -137,9 +148,10 @@ function Table({ shape, pageSize }: TableProps) {
 					</tr>
 				</thead>
 				<tbody>
-					{shown.map((row) => (
-						// (The row itself is its key: sorting moves it, and it stays the same row.)
-						<tr key={JSON.stringify(row)}>
+					{shown.map((row, index) => (
+						// (The row's own JSON, and where it sits: two rows that are the same are
+						// still two rows, and neither may share a key with the other.)
+						<tr key={`${JSON.stringify(row)}#${index}`}>
 							{shape.columns.map((column) => (
 								<td key={column.name}>
 									<Value field={column} value={row[column.name]} />
@@ -149,9 +161,15 @@ function Table({ shape, pageSize }: TableProps) {
 					))}
 				</tbody>
 			</table>
-			{pages > 1 ? <Paged page={page} pages={pages} onChange={setPage} /> : null}
+			{pages > 1 ? <Paged page={current} pages={pages} onChange={setPage} /> : null}
 		</div>
 	);
+}
+
+/** Whether a string is a link a browser may follow: `http` or `https`, nothing else. */
+function isHttp(value: string): boolean {
+	const scheme = /^(https?):\/\//i.exec(value);
+	return scheme !== null;
 }
 
 interface ValueProps {
@@ -175,7 +193,7 @@ export function Value({ field, value }: ValueProps) {
 			</span>
 		);
 	}
-	if (field.widget === "url" && typeof value === "string") {
+	if (field.widget === "url" && typeof value === "string" && isHttp(value)) {
 		return (
 			<a href={value} target="_blank" rel="noreferrer" className="link link-primary">
 				{value}

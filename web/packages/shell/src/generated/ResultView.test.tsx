@@ -9,7 +9,7 @@
  */
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ResultView } from "./ResultView";
 
 const accountInfo = {
@@ -281,5 +281,66 @@ describe("what the API sends", () => {
 		render(<ResultView schema={schema} value={[{ note: "javascript:alert(1)" }]} />);
 
 		expect(screen.queryByRole("link")).toBeNull();
+	});
+});
+
+describe("a page that the value no longer has", () => {
+	it("shows the last page there is, not an empty one", () => {
+		const many = Array.from({ length: 30 }, (_, index) => ({
+			id: `e${String(index + 1).padStart(2, "0")}`,
+			depth: index,
+			account_id: "a1",
+		}));
+		const { rerender } = render(<ResultView schema={eventList} value={{ events: many }} />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Next" }));
+		fireEvent.click(screen.getByRole("button", { name: "Next" }));
+		rerender(<ResultView schema={eventList} value={{ events: many.slice(0, 5) }} />);
+
+		expect(within(table()).getAllByRole("row")).toHaveLength(6);
+		expect(screen.queryByRole("navigation", { name: "Pages" })).toBeNull();
+	});
+});
+
+describe("rows that are the same", () => {
+	it("are drawn once each, without a key of their own twice", () => {
+		// (Two events with every field equal are two rows, not one React row twice.)
+		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const twice = [
+			{ id: "e1", depth: 0, account_id: "a1" },
+			{ id: "e1", depth: 0, account_id: "a1" },
+		];
+
+		render(<ResultView schema={eventList} value={{ events: twice }} />);
+
+		expect(within(table()).getAllByRole("row")).toHaveLength(3);
+		expect(spy.mock.calls.map((call) => String(call[0]))).not.toContain(
+			expect.stringContaining("same key"),
+		);
+		spy.mockRestore();
+	});
+});
+
+describe("a URL field", () => {
+	it("is a link only for http and https, not any scheme", () => {
+		const schema = {
+			type: "array",
+			items: {
+				type: "object",
+				properties: { homepage: { type: "string", format: "uri", title: "Homepage" } },
+			},
+		};
+
+		render(
+			<ResultView
+				schema={schema}
+				value={[{ homepage: "javascript:alert(1)" }, { homepage: "https://udl.example" }]}
+			/>,
+		);
+
+		const links = screen.getAllByRole("link");
+		expect(links).toHaveLength(1);
+		expect(links[0]?.getAttribute("href")).toBe("https://udl.example");
+		expect(screen.getByText("javascript:alert(1)")).toBeDefined();
 	});
 });

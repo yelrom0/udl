@@ -7,6 +7,8 @@
  *
  * - A list of objects is a table: `list_accounts`' `{accounts: [...]}` and `list_events`'
  *   `{events: [...]}` are an object whose one list is the rows, and a bare array is its own.
+ * - A fan-out's answer (`{items: [{account, item}], failures, next_pages}`) is a table of its
+ *   items, with the account each came from first: it has two lists, so it would be JSON.
  * - An object whose values are all scalars is a description list.
  * - Anything else — a scalar, a nested value, two lists (which one is the table?) — is JSON.
  *
@@ -98,6 +100,51 @@ function propertyOf(schema: JsonValue, name: string): JsonValue {
 	return properties[name] ?? {};
 }
 
+/** The account column a fan-out's rows are tagged by (11.4). */
+const ACCOUNT: FieldSpec = {
+	name: "account",
+	path: ["account"],
+	label: "Account",
+	widget: "text",
+	required: true,
+	advanced: false,
+	order: -1,
+	writeOnly: false,
+};
+
+/** Whether `entry` is one of a fan-out's items: an account, and what it found there. */
+function isAccountItem(
+	entry: Row,
+): entry is Row & { readonly account: string; readonly item: Row } {
+	return typeof entry.account === "string" && isJsonObject(entry.item);
+}
+
+/**
+ * A fan-out's answer (`FanOutResult[T]`: `{items: [{account, item}], failures, next_pages}`) as
+ * a table: each item's own fields, with the account it came from first. A fan-out has two lists,
+ * so it would otherwise be JSON — or a table of its "items" column alone, which says nothing.
+ */
+function fanOutOf(
+	value: Readonly<Record<string, JsonValue>>,
+	schema: JsonValue,
+): TableShape | undefined {
+	const items = value.items;
+	if (!Array.isArray(items)) {
+		return undefined;
+	}
+	const rows: Row[] = [];
+	for (const entry of items) {
+		if (!isJsonObject(entry) || !isAccountItem(entry)) {
+			return undefined;
+		}
+		rows.push({ ...entry.item, account: entry.account });
+	}
+	// (An empty list, every account failed: the schema still says what the columns are.)
+	const entry = itemsOf(propertyOf(schema, "items"));
+	const columns = [ACCOUNT, ...columnsOf(propertyOf(entry, "item"))];
+	return { kind: "table", columns, rows };
+}
+
 /** The schema of a list's items (`{items: {...}}`), or nothing. */
 function itemsOf(schema: JsonValue): JsonValue {
 	return isJsonObject(schema) ? (schema.items ?? {}) : {};
@@ -121,6 +168,11 @@ export function shapeOf(
 
 	if (!isJsonObject(value)) {
 		return { kind: "json" };
+	}
+
+	const fanOut = fanOutOf(value, said);
+	if (fanOut !== undefined) {
+		return fanOut;
 	}
 
 	const list = listOf(value, said);

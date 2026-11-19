@@ -247,3 +247,72 @@ describe("the order of the columns", () => {
 		expect(shape.columns.map((column) => column.name)).toEqual(["second", "first", "third"]);
 	});
 });
+
+describe("a fan-out's answer (11.4)", () => {
+	// (`FanOutResult[T]`: `{items: [{account, item}], failures, next_pages}`.)
+	const fanOut = {
+		type: "object",
+		properties: {
+			items: {
+				type: "array",
+				items: {
+					type: "object",
+					properties: {
+						account: { type: "string", title: "Account" },
+						item: {
+							type: "object",
+							properties: {
+								id: { type: "string", title: "Id" },
+								subject: { type: "string", title: "Subject" },
+							},
+						},
+					},
+				},
+			},
+			failures: {
+				type: "array",
+				items: {
+					type: "object",
+					properties: { account: { type: "string" }, error: { type: "string" } },
+				},
+			},
+			next_pages: { type: "object" },
+		},
+	};
+
+	it("is a table of the items, with the account they came from beside them", () => {
+		const found = shapeOf(fanOut, {
+			items: [
+				{ account: "gmail:work", item: { id: "m1", subject: "Hi" } },
+				{ account: "gmail:home", item: { id: "m2", subject: "Hello" } },
+			],
+			failures: [],
+			next_pages: {},
+		});
+
+		expect(found.kind).toBe("table");
+		if (found.kind !== "table") {
+			throw new Error("not a table");
+		}
+		expect(found.columns.map((column) => column.name)).toEqual(["account", "id", "subject"]);
+		expect(found.rows).toEqual([
+			{ account: "gmail:work", id: "m1", subject: "Hi" },
+			{ account: "gmail:home", id: "m2", subject: "Hello" },
+		]);
+	});
+
+	it("keeps its columns when every account failed", () => {
+		const found = shapeOf(fanOut, {
+			items: [],
+			failures: [{ account: "gmail:work", error: { message: "no" } }],
+			next_pages: {},
+		});
+
+		expect(found.kind).toBe("table");
+		if (found.kind !== "table") {
+			throw new Error("not a table");
+		}
+		expect(found.columns.map((column) => column.name)).toEqual(["account", "id", "subject"]);
+		expect(found.rows).toEqual([]);
+	});
+});
