@@ -29,6 +29,7 @@ from udl.plugins.apps.orch.models import (
     OPEN,
     QUEUED,
     READY,
+    STATE,
     Principal,
 )
 from udl.plugins.apps.orch.records import Task
@@ -76,10 +77,8 @@ TRANSITIONS: Final[dict[tuple[str, str], tuple[str, ...]]] = {
     (CANCELLED, QUEUED): ("move", "human"),
 }
 
-# (The states, as one place to read them from.)
-_STATES: Final = frozenset(
-    {OPEN, QUEUED, "in_progress", BLOCKED, READY, MERGED, DONE, MOVED, "cancelled"}
-)
+# (The states, as one place to read them from: the one list, in orch.models.)
+_STATES: Final = frozenset(STATE)
 
 
 def roles(from_state: str, to_state: str) -> tuple[str, ...]:
