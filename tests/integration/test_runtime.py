@@ -49,7 +49,10 @@ from udl.plugins.registry import ACTIONS, DATABASES
 from udl.plugins.secrets.memory import MemorySecretStore
 
 FAKE = fake_action("fake")
-TTL = timedelta(seconds=0.6)
+# (A lease long enough that "before it expires" is a margin, not a scheduler's hiccup: at 0.6s the
+# slack between a released lease found at the next renewal and one left to expire was 0.4s, and a
+# late wake-up on a loaded machine missed it.)
+TTL = timedelta(seconds=1.5)
 
 
 def settings_for(tmp_path: Path) -> Settings:
@@ -171,8 +174,9 @@ async def test_the_other_takes_over_at_once_when_the_first_closes(tmp_path: Path
         await eventually(lambda: _is(second, AutomationState.RUNNING))
 
         # (Renewing every TTL/3, it finds the lease released rather than waiting for it to
-        # expire.)
-        assert time.monotonic() - started < TTL.total_seconds()
+        # expire: a lease left to expire is noticed no sooner than 2/3 of a TTL after the close —
+        # the TTL, less the up to TTL/3 that had already gone at the last renewal.)
+        assert time.monotonic() - started < TTL.total_seconds() * 2 / 3
 
 
 async def test_an_event_a_cli_publishes_is_dispatched_and_run(tmp_path: Path) -> None:
