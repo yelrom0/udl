@@ -87,6 +87,7 @@ _UDL_KINDS: Final = (
     "udl.fetch.ladder",
     "udl.fetch.models",
     "udl.hosts.shell",
+    "udl.plugins.ai.base",
 )
 
 NAME_PATTERN: Final = r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$"

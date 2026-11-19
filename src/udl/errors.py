@@ -46,6 +46,7 @@ class ErrorCode(StrEnum):
     IN_USE = "in_use"
     AMBIGUOUS_ACCOUNT = "ambiguous_account"
     CHALLENGE_REQUIRED = "challenge_required"
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
 
 
 class ErrorInfo(BaseModel):
@@ -311,6 +312,17 @@ class ReauthRequired(UDLError):
     expired): it has to be connected again."""
 
     code = ErrorCode.REAUTH_REQUIRED
+
+
+class ProviderUnavailable(UDLError):
+    """An AI provider does not answer: it is not running, or nothing is at its URL.
+
+    The hint names its URL or the `command` that starts it. Trying again later may work (the
+    provider may be started, or come back), so it is retryable.
+    """
+
+    code = ErrorCode.PROVIDER_UNAVAILABLE
+    retryable = True
 
 
 def _classes(cls: type[UDLError]) -> list[type[UDLError]]:

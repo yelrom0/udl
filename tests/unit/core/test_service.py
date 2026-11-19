@@ -22,6 +22,7 @@ import pytest
 from pydantic import BaseModel, SecretStr, ValidationError
 
 # Local Imports
+from support.ai import FakeAI
 from support.downloaders import FakeDownloader, FakeMedia
 from support.engine import (
     StaticCookies,
@@ -77,6 +78,7 @@ from udl.errors import (
 from udl.fetch.models import BatchStatus, FetchBatch
 from udl.plugins.databases.memory import MemoryDatabase
 from udl.plugins.registry import (
+    AI,
     DATABASES,
     DOWNLOADERS,
     INTEGRATIONS,
@@ -1071,6 +1073,30 @@ async def test_listing_the_plugins_says_which_integrations_can_run(make: Make) -
     assert (found["needs-an-sdk"].available, found["needs-an-sdk"].missing) == (
         False,
         list(NeedsAnSDK.requires),
+    )
+
+
+class NeedsAModelServer(FakeAI):
+    """An AI provider that needs a program udl does not have."""
+
+    name = "needs-a-model-server"
+    requires: ClassVar[tuple[Requirement, ...]] = (
+        Requirement.binary("udl-no-such-model-server", hint="Install the model server"),
+    )
+
+
+async def test_listing_the_plugins_says_which_ai_providers_can_run(make: Make) -> None:
+    plugins = registry()
+    plugins.register(AI, FakeAI)
+    plugins.register(AI, NeedsAModelServer)
+    service = await make(plugins=plugins)
+
+    found = {p.name: p for p in (await service.list_plugins(ListPluginsRequest())).plugins}
+
+    assert (found["fake"].kind, found["fake"].available) == ("udl.ai", True)
+    assert (found["needs-a-model-server"].available, found["needs-a-model-server"].missing) == (
+        False,
+        list(NeedsAModelServer.requires),
     )
 
 
