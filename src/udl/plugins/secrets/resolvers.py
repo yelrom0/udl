@@ -10,7 +10,9 @@ read.
 
 A value that names a reference is kept as its text, so `secrets.json` and the keyring hold only
 `op://vault/item/field`. Reading it asks the resolver, and keeps the answer for cache_ttl (on
-the Clock), so a page of secrets is one call, not one per field.
+the Clock), so a page of secrets is one call, not one per field. Only what a resolver answered is
+kept: a value the store itself holds is read again each time, so one another process wrote is
+seen at once.
 
 A resolver only answers for the references its allow-list covers, and a value that no resolver
 may read — another resolver's scheme, or a vault outside the allow-list — is refused when it is
@@ -153,13 +155,14 @@ class ResolvingStore(SecretStore):
         self._clock = clock
         self.cache_ttl = cache_ttl
         """How long a resolved value is kept."""
-        self._cache: dict[SecretRef, tuple[datetime, SecretStr | None]] = {}
+        self._cache: dict[SecretRef, tuple[datetime, SecretStr]] = {}
 
     # -- references ----------------------------------------------------------------------------
 
     def _named(self, text: str) -> tuple[SecretResolver, str] | None:
         """(the resolver for `text`, the reference it names) when `text` is a reference, else
-        None. Raises ConfigError for a reference no resolver answers for."""
+        None. Only a scheme a resolver answers for is one: a URL (`https://…`, a DSN) is a
+        value, not a reference."""
         found = _REFERENCE.match(text)
         if found is None:
             return None
@@ -167,20 +170,23 @@ class ResolvingStore(SecretStore):
         for resolver in self.resolvers:
             if resolver.scheme == scheme:
                 return resolver, reference
-        raise ConfigError(
-            f"{text!r} is a {scheme} reference, and udl has no resolver for {scheme}",
-            hint="Enable one in [secrets] (e.g. [secrets.onepassword] enabled = true).",
-        )
+        return None
 
     def _allowed(self, ref: SecretRef, text: str) -> None:
-        """Raise ConfigError when no resolver may read `text`."""
+        """Raise ConfigError when `text` is a reference no resolver may read."""
         named = self._named(text)
-        if named is not None and not named[0].allows(named[1]):
-            resolver, _ = named
-            raise ConfigError(
-                f"{ref} is a {resolver.scheme} reference outside the allow-list, and is refused",
-                hint=f"Add its vault to [secrets.{resolver.scheme}] vaults in the config.",
-            )
+        if named is not None:
+            self._refused(ref, named[0], named[1])
+
+    @staticmethod
+    def _refused(ref: SecretRef, resolver: SecretResolver, reference: str) -> None:
+        """Raise ConfigError when `resolver` may not read `reference`."""
+        if resolver.allows(reference):
+            return
+        raise ConfigError(
+            f"{ref} is a {resolver.scheme} reference outside the allow-list, and is refused",
+            hint=f"Add its vault to [secrets.{resolver.scheme}] vaults in the config.",
+        )
 
     # -- the store -----------------------------------------------------------------------------
 
@@ -188,24 +194,17 @@ class ResolvingStore(SecretStore):
         kept = self._cache.get(ref)
         if kept is not None and kept[0] > self._clock.now():
             return kept[1]
-        found = await self._read(ref)
-        self._cache[ref] = (self._clock.now() + self.cache_ttl, found)
-        return found
-
-    async def _read(self, ref: SecretRef) -> SecretStr | None:
         text = await self.wrapped.get(ref)
         if text is None:
             return None
         named = self._named(text.get_secret_value())
         if named is None:
-            return text
+            return text  # (the store's own: read again next time, not kept here)
         resolver, reference = named
-        if not resolver.allows(reference):
-            raise ConfigError(
-                f"{ref} is a {resolver.scheme} reference outside the allow-list, and is refused",
-                hint=f"Add its vault to [secrets.{resolver.scheme}] vaults in the config.",
-            )
-        return await resolver.resolve(reference)
+        self._refused(ref, resolver, reference)
+        resolved = await resolver.resolve(reference)
+        self._cache[ref] = (self._clock.now() + self.cache_ttl, resolved)
+        return resolved
 
     async def set(self, ref: SecretRef, value: SecretStr) -> None:
         self._allowed(ref, value.get_secret_value())

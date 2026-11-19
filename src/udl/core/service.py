@@ -1901,7 +1901,10 @@ def _without_secrets(settings: Settings) -> Settings:
 
 async def _resolver_status(resolver: SecretResolver) -> ResolverStatus:
     """A resolver, with what checking it found: its health says whether it works, what is wrong
-    and what it can read (never what is in it). A check that fails is a problem, not an error."""
+    and what it can read (never what is in it). A check that fails is a problem, not an error,
+    and one udl does not read through is not checked at all (it may be turned off)."""
+    if not resolver.enabled:
+        return ResolverStatus(name=resolver.scheme, enabled=False)
     try:
         health = await resolver.check()
     except Exception as e:  # (a broken tool is a status, not a failure to show the status)

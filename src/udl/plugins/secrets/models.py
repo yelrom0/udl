@@ -24,8 +24,8 @@ class ResolverStatus(_Frozen):
     """Its scheme (op), which its references start with."""
     enabled: bool
     """Whether udl reads references through it (its settings table says so)."""
-    ok: bool
-    """Whether it works."""
+    ok: bool | None = None
+    """Whether it works (None when udl does not read through it, so nothing was checked)."""
     problems: list[str] = Field(default_factory=list[str])
     """What is wrong with it (a tool that is missing, a sign-in that is needed)."""
     vaults: list[str] = Field(default_factory=list[str])

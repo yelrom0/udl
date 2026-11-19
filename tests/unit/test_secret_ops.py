@@ -115,14 +115,43 @@ async def test_a_resolver_that_does_not_work_is_shown_with_what_is_wrong(
     assert (resolver.ok, resolver.problems) == (False, ["no token"])
 
 
-async def test_a_resolver_that_is_off_is_shown_as_off(service: UDLService) -> None:
+class TurnedOff(Checked):
+    """A resolver that is off (as [secrets.onepassword] enabled = false is): nothing runs."""
+
+    scheme = "off"
+
+    @property
+    def enabled(self) -> bool:
+        return False
+
+    async def check(self) -> ResolverHealth:
+        raise AssertionError("a resolver that is off is not checked")
+
+
+async def test_a_resolver_that_is_off_is_shown_as_off_and_not_checked(
+    service: UDLService,
+) -> None:
+    service.registry.register(SECRET_RESOLVERS, TurnedOff)
+
+    found = await service.get_secrets_status(GetSecretsStatusRequest())
+
+    [resolver] = found.resolvers
+    assert (resolver.name, resolver.enabled, resolver.ok, resolver.problems) == (
+        "off",
+        False,
+        None,
+        [],
+    )
+
+
+async def test_a_real_op_that_is_off_runs_nothing(service: UDLService) -> None:
+    # (A read-only MCP tool must not run `op whoami` with the token when 1Password is off.)
     service.registry.register(SECRET_RESOLVERS, OnePasswordResolver)
 
     found = await service.get_secrets_status(GetSecretsStatusRequest())
 
     [resolver] = found.resolvers
-    assert (resolver.name, resolver.enabled) == ("op", False)
-    assert resolver.problems == ["there is no service account token"]
+    assert (resolver.enabled, resolver.ok, resolver.problems) == (False, None, [])
 
 
 async def test_the_status_names_no_value(service: UDLService) -> None:

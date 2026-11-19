@@ -158,11 +158,13 @@ async def test_a_reference_outside_the_allow_list_is_refused_when_it_is_saved() 
         await store.set(SecretRef("openrouter/key"), SecretStr("fake://elsewhere/item"))
 
 
-async def test_a_reference_udl_has_no_resolver_for_is_refused_when_it_is_saved() -> None:
+async def test_a_scheme_no_resolver_answers_for_is_a_value() -> None:
+    # (Only a registered resolver's scheme is a reference: anything else is a value udl keeps.)
     store = resolving(FakeResolver(settings()))
 
-    with pytest.raises(ConfigError, match="no resolver"):
-        await store.set(SecretRef("openrouter/key"), SecretStr("nope://a/b"))
+    await store.set(SecretRef("openrouter/key"), SecretStr("nope://a/b"))
+
+    assert await store.get(SecretRef("openrouter/key")) == SecretStr("nope://a/b")
 
 
 async def test_a_resolver_is_asked_only_once_within_the_cache() -> None:
@@ -192,7 +194,7 @@ async def test_the_cache_expires_on_the_clock() -> None:
     assert resolver.asked == ["allowed/item", "allowed/item"]
 
 
-async def test_a_failing_resolver_is_a_tool_unavailable_with_a_hint() -> None:
+async def test_a_failing_resolver_is_a_secret_store_error() -> None:
     store = resolving(FakeResolver(settings(), fails=True))
 
     await store.set(SecretRef("key"), SecretStr("fake://allowed/item"))
@@ -235,6 +237,44 @@ async def test_deleting_a_prefix_forgets_everything_under_it() -> None:
 # ---------------------------------------------------------------------------------------------
 # Which store udl opens
 # ---------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://hooks.example.com/services/T000/B000/XXXX",
+        "postgresql://udl:hunter2@db.example.com:5432/udl",
+        "apprise://mailto:someone@example.com",
+    ],
+)
+async def test_a_url_is_a_value_not_a_reference(value: str) -> None:
+    # (A scheme no resolver answers for is part of a value: a webhook's URL is not a reference.)
+    fake = FakeResolver(settings())
+    store = resolving(fake, clock=FakeClock())
+    ref = SecretRef.of("webhook", "service", "url")
+
+    await store.set(ref, SecretStr(value))
+    kept = await store.get(ref)
+
+    assert kept is not None
+    assert kept.get_secret_value() == value
+    assert fake.asked == []
+
+
+async def test_a_value_the_store_holds_is_read_again_each_time() -> None:
+    # (The cache is for what a resolver answered: a token another process wrote — a CLI while the
+    # server runs — is seen at once, not after cache_ttl.)
+    fake = FakeResolver(settings())
+    store = resolving(fake, clock=FakeClock())
+    ref = SecretRef.of("webhook", "service", "url")
+    await store.wrapped.set(ref, SecretStr("first"))
+
+    first = await store.get(ref)
+    await store.wrapped.set(ref, SecretStr("second"))
+    second = await store.get(ref)
+
+    assert (first, second) == (SecretStr("first"), SecretStr("second"))
+    assert fake.asked == []
 
 
 def test_the_wrapped_store_is_used_when_no_resolver_is_enabled() -> None:

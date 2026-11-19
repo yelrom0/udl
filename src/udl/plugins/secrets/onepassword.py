@@ -1,7 +1,7 @@
 """
 ------------------
 - onepassword.py -
-----------------
+------------------
 
 OnePasswordResolver: reads a secret from 1Password when it is used, as `op read` says — the
 reference is `op://<vault>/<item>/<field>`, and the value is never written to disk.
@@ -17,7 +17,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import TYPE_CHECKING, Final, cast
+from typing import TYPE_CHECKING, Final
 
 # Package Imports
 from pydantic import JsonValue, SecretStr
@@ -99,9 +99,10 @@ class OnePasswordResolver(SecretResolver):
             if result.returncode != 0
         ]
         named = [
-            str(cast(dict[str, JsonValue], vault).get("name") or vault.get("id"))
+            label
             for vault in _json(vaults.stdout)
             if isinstance(vault, dict)
+            if (label := _label(vault)) is not None
         ]
         return ResolverHealth(ok=not problems, problems=problems, vaults=named)
 
@@ -127,6 +128,9 @@ async def _op(*args: str, token: SecretStr | None, within: Duration) -> ProcessR
     from udl.process import CancelToken, run_process
 
     env = {"PATH": os.environ.get("PATH", os.defpath)}
+    # (op keeps its config under HOME: without it, a real op cannot find its account.)
+    if "HOME" in os.environ:
+        env["HOME"] = os.environ["HOME"]
     if token is not None:
         env[TOKEN_ENV] = token.get_secret_value()
     try:
@@ -142,6 +146,15 @@ async def _op(*args: str, token: SecretStr | None, within: Duration) -> ProcessR
             "op did not answer in time",
             hint=f"It gets {within}. Raise [secrets.onepassword] timeout, or check 1Password.",
         ) from e
+
+
+def _label(vault: dict[str, JsonValue]) -> str | None:
+    """A vault's name (or its id, when it has none, or a name that is not a name)."""
+    for key in ("name", "id"):
+        found = vault.get(key)
+        if isinstance(found, str) and found:
+            return found
+    return None
 
 
 def _json(text: str) -> list[JsonValue]:

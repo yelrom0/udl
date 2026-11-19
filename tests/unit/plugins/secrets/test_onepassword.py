@@ -11,6 +11,7 @@ downloader tests fake their tools.
 """
 
 # System Imports
+import os
 from datetime import timedelta
 from pathlib import Path
 from typing import Final
@@ -127,6 +128,21 @@ async def test_the_token_is_in_the_child_s_environment_and_never_in_its_argv(
     assert TOKEN not in (folder / "args").read_text()
 
 
+async def test_the_child_gets_the_home_it_needs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (op keeps its config under HOME: without it, a real op cannot find its account.)
+    folder = fake_op(tmp_path, monkeypatch)
+    monkeypatch.setenv("HOME", "/home/tester")
+    found = settings()
+
+    await resolver(found, await with_token(found)).resolve(REFERENCE)
+
+    environment = (folder / "env").read_text().splitlines()
+    assert "HOME=/home/tester" in environment
+    assert f"PATH={os.environ['PATH']}" in environment
+
+
 async def test_an_empty_field_is_an_empty_secret(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -230,6 +246,26 @@ esac
 
     assert health.ok is False
     assert health.problems == ["op vault list exited with 1"]
+
+
+async def test_a_vault_with_no_name_is_its_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_op(
+        tmp_path,
+        monkeypatch,
+        script="""#!/bin/sh
+case "$1" in
+    whoami) printf '%s' '{}' ;;
+    vault) printf '%s' '[{"id": "v1"}, {"id": "v2", "name": 7}, "v3", {"name": "vault-d"}]' ;;
+esac
+""",
+    )
+    found = settings()
+
+    health = await resolver(found, await with_token(found)).check()
+
+    assert health.vaults == ["v1", "v2", "vault-d"]
 
 
 async def test_a_vault_list_that_is_not_json_is_no_vaults(
