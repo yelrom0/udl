@@ -186,6 +186,24 @@ describe("a secret", () => {
 
 		expect(onChange).toHaveBeenCalledWith({ subject: "s3cret" });
 	});
+
+	it("takes the secret out when what was typed is erased", () => {
+		// (An empty string saved over a set secret would replace it with one.)
+		const onChange = vi.fn();
+		render(
+			<SchemaForm
+				schema={request}
+				value={{ subject: "hunter2" }}
+				onChange={onChange}
+				secret={["subject"]}
+			/>,
+		);
+
+		fireEvent.change(screen.getByLabelText(/Subject/), { target: { value: "x" } });
+		fireEvent.change(screen.getByLabelText(/Subject/), { target: { value: "" } });
+
+		expect(onChange).toHaveBeenLastCalledWith({});
+	});
 });
 
 describe("a plugin's own widget", () => {
@@ -216,27 +234,23 @@ describe("a box of JSON", () => {
 		expect(onChange).toHaveBeenCalledWith({ extra: { a: 1 } });
 	});
 
-	it("says null when it is emptied", () => {
+	it("is taken out when it is emptied", () => {
+		// (Null is what a non-nullable object field refuses.)
 		const onChange = vi.fn();
 		render(<SchemaForm schema={request} value={{ extra: { a: 1 } }} onChange={onChange} />);
 
 		fireEvent.change(screen.getByLabelText(/Extra/), { target: { value: "" } });
 
-		expect(onChange).toHaveBeenCalledWith({ extra: null });
+		expect(onChange).toHaveBeenCalledWith({});
 	});
 });
 
 describe("a multiselect", () => {
+	// (As pydantic writes `list[Literal["a", "b", "c"]]`: the enum is the items', never the array's.)
 	const schema = {
 		type: "object",
 		properties: {
-			tags: {
-				type: "array",
-				title: "Tags",
-				items: { type: "string" },
-				enum: ["a", "b", "c"],
-				"x-udl-ui": { widget: "multiselect" },
-			},
+			tags: { type: "array", title: "Tags", items: { enum: ["a", "b", "c"] } },
 		},
 	};
 

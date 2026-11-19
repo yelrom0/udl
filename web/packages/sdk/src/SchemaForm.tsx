@@ -256,6 +256,7 @@ function Control({ field, value, onChange, onClear, disabled, invalid, secret }:
 				set={value !== undefined}
 				disabled={disabled}
 				onChange={onChange}
+				onClear={onClear}
 			/>
 		);
 	}
@@ -335,7 +336,9 @@ function Control({ field, value, onChange, onClear, disabled, invalid, secret }:
 		);
 	}
 	if (field.widget === "json") {
-		return <JsonBox id={id} value={value} onChange={onChange} disabled={disabled} />;
+		return (
+			<JsonBox id={id} value={value} onChange={onChange} onClear={onClear} disabled={disabled} />
+		);
 	}
 	return (
 		<input
@@ -357,13 +360,14 @@ interface SecretBoxProps {
 	readonly set: boolean;
 	readonly disabled: boolean;
 	readonly onChange: (value: JsonValue) => void;
+	readonly onClear: () => void;
 }
 
 /**
  * A password box that is never drawn back: it holds what was typed into it now, and never the
  * value the form holds — a secret that is set says so, and is not in the page's DOM.
  */
-function SecretBox({ id, className, set, disabled, onChange }: SecretBoxProps) {
+function SecretBox({ id, className, set, disabled, onChange, onClear }: SecretBoxProps) {
 	const [typed, setTyped] = useState("");
 	return (
 		<input
@@ -375,7 +379,12 @@ function SecretBox({ id, className, set, disabled, onChange }: SecretBoxProps) {
 			placeholder={set ? "(set: type to replace)" : "(not set)"}
 			onChange={(event) => {
 				setTyped(event.target.value);
-				onChange(event.target.value);
+				if (event.target.value === "") {
+					// (Erased: the field is taken out, not saved over the stored secret as "".)
+					onClear();
+				} else {
+					onChange(event.target.value);
+				}
 			}}
 		/>
 	);
@@ -385,6 +394,7 @@ interface JsonBoxProps {
 	readonly id: string;
 	readonly value: JsonValue | undefined;
 	readonly onChange: (value: JsonValue) => void;
+	readonly onClear: () => void;
 	readonly disabled: boolean;
 }
 
@@ -392,7 +402,7 @@ interface JsonBoxProps {
  * A box of JSON: what it holds, printed. What is typed is kept as text while it is not JSON
  * (half-typed), and the value is only changed when it is — so a form never sends half a value.
  */
-function JsonBox({ id, value, onChange, disabled }: JsonBoxProps) {
+function JsonBox({ id, value, onChange, onClear, disabled }: JsonBoxProps) {
 	const printed = value === undefined ? "" : JSON.stringify(value, null, 2);
 	const [text, setText] = useState(printed);
 	const [was, setWas] = useState(printed);
@@ -413,7 +423,8 @@ function JsonBox({ id, value, onChange, disabled }: JsonBoxProps) {
 			onChange={(event) => {
 				setText(event.target.value);
 				if (event.target.value.trim() === "") {
-					onChange(null);
+					// (Emptied: the field is taken out, not sent as null, which a non-nullable one refuses.)
+					onClear();
 					return;
 				}
 				try {
