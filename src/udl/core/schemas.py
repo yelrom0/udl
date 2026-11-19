@@ -33,10 +33,16 @@ def inlined(schema: dict[str, JsonValue]) -> dict[str, JsonValue]:
             reference = node.get("$ref")
             if isinstance(reference, str) and reference.startswith(_DEFS):
                 name = reference.removeprefix(_DEFS)
+                # (A field's own keywords sit next to its `$ref` — its description, title,
+                # default and ui_field() hint — and they are the field's: they win.)
+                siblings = {
+                    key: expand(value, stack) for key, value in node.items() if key != "$ref"
+                }
                 if name in stack:  # (a cycle: the reference stays, and its definitions with it)
                     cyclic.add(name)
-                    return {"$ref": reference}
-                return expand(definitions[name], (*stack, name))
+                    return {"$ref": reference, **siblings}
+                found = expand(definitions[name], (*stack, name))
+                return {**found, **siblings} if isinstance(found, dict) else found
             return {key: expand(value, stack) for key, value in node.items() if key != "$defs"}
         if isinstance(node, list):
             return [expand(item, stack) for item in node]
