@@ -204,7 +204,6 @@ function parse(data: unknown): unknown {
 	}
 }
 
-/** The id of a run or a job, when what came is one (udl sends its models' JSON). */
 /** The id of the job an event is about (a `JobEvent` names it as `job.id`). */
 function jobIdOf(data: unknown): string | null {
 	if (typeof data === "object" && data !== null && "job" in data) {
@@ -216,6 +215,7 @@ function jobIdOf(data: unknown): string | null {
 	return null;
 }
 
+/** The id of a run, when what came is one (udl sends its models' JSON). */
 function idOf(data: unknown): string | null {
 	if (typeof data === "object" && data !== null && "id" in data && typeof data.id === "string") {
 		return data.id;
