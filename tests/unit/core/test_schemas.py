@@ -9,7 +9,7 @@ keeps its `$defs` so it still resolves.
 """
 
 # Package Imports
-from pydantic import BaseModel, JsonValue
+from pydantic import BaseModel, Field, JsonValue
 
 # Local Imports
 from udl.core.operations import json_schema
@@ -23,12 +23,23 @@ class Address(BaseModel):
     city: str
 
 
+class Home(BaseModel):
+    """A home address, which a person may have a description and a default for."""
+
+    street: str
+
+
 class Person(BaseModel):
     """Someone."""
 
     name: str
     address: Address
     other: Address | None = None
+    home: Home = Field(
+        default_factory=lambda: Home(street="1 Test Street"),
+        json_schema_extra={"title": "Their home", "default": {"street": "1 Test Street"}},
+        description="Where they live",
+    )
 
 
 class Node(BaseModel):
@@ -72,3 +83,19 @@ def test_a_definition_that_refers_to_itself_keeps_its_definitions() -> None:
 
 def test_model_schema_is_the_schema_inlined() -> None:
     assert model_schema(Person) == inlined(json_schema(Person))
+
+
+def test_a_field_s_keys_beside_its_reference_survive() -> None:
+    # (pydantic writes a field's own keywords next to its `$ref`, not in an `allOf`: its
+    # description, title and default — and a `ui_field()` hint — are the field's, not the
+    # definition's, so inlining must keep them.)
+    found = inlined(json_schema(Person))
+
+    properties = found["properties"]
+    assert isinstance(properties, dict)
+    home = properties["home"]
+    assert isinstance(home, dict)
+    assert home["description"] == "Where they live"
+    assert home["title"] == "Their home"
+    assert home["default"] == {"street": "1 Test Street"}
+    assert home["properties"] == {"street": {"type": "string", "title": "Street"}}

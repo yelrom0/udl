@@ -271,7 +271,10 @@ async def test_the_shell_s_files_still_need_no_key(tmp_path: Path) -> None:
 
 
 def test_the_json_is_the_same_twice(tmp_path: Path) -> None:
-    # (The shell caches it by its ETag: two generations of the same udl are the same JSON.)
+    # (The shell caches it by its ETag, a hash of the serialised JSON: two generations of the
+    # same udl must be the same bytes, not merely equal as models, which ignores key order.)
     harness = with_chores(Harness(tmp_path))
 
-    assert ui_of(harness) == ui_of(harness)
+    assert ui_of(harness).model_dump_json(by_alias=True) == ui_of(harness).model_dump_json(
+        by_alias=True
+    )
