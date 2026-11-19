@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict
 # Local Imports
 from udl.errors import PluginError
 from udl.plugins.actions.base import ActionPlugin
+from udl.plugins.ai.base import AIProvider, AnAI
 from udl.plugins.apps.base import AnApp, AppPlugin
 from udl.plugins.databases.base import DatabasePlugin
 from udl.plugins.downloaders.base import Downloader
@@ -94,6 +95,7 @@ INTEGRATIONS: Final = PluginKind[Integration[Any, Any]]("udl.integrations", Inte
 APPS: Final = PluginKind[AnApp]("udl.apps", AppPlugin)
 RUNNERS: Final = PluginKind[AnAgentRunner]("udl.runners", AgentRunner)
 UI: Final = PluginKind("udl.ui", UIPlugin)
+AI: Final = PluginKind[AnAI]("udl.ai", AIProvider)
 
 # Every kind of plugin udl uses.
 PLUGIN_KINDS: Final[tuple[PluginKind[Any], ...]] = (
@@ -107,6 +109,7 @@ PLUGIN_KINDS: Final[tuple[PluginKind[Any], ...]] = (
     APPS,
     RUNNERS,
     UI,
+    AI,
 )
 
 

@@ -298,7 +298,7 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
   - [ ] 16.7 Operations (`pages_preview`, `pages_suggest`, `pages_poll`) via CLI, API and MCP; `udl pages wizard <url>` (suggest → pick → preview → save, optionally with a subscription)
 
 - [ ] **Phase 17: Local AI**
-  - [ ] 17.1 `udl.ai` plugin kind: `AIProvider` base + contract suite + `FakeAI` (scripted); `AIProviderConnection` records (pulled forward, built as part of **25.2**)
+  - [~] 17.1 `udl.ai` plugin kind: `AIProvider` base + contract suite + `FakeAI` (scripted); `AIProviderConnection` records (pulled forward, built as part of **25.2**)
   - [ ] 17.2 `ollama` provider: chat with tool calls, models, `keep_alive`, pulling a model
   - [ ] 17.3 `openai-compatible` provider (llama.cpp's `llama-server`, LM Studio, vLLM…); any provider's optional `command` is started on demand and stopped when idle (pulled forward, built as part of **25.2**)
   - [ ] 17.4 Tools from operations: schemas from request models; `ToolPolicy` (allowlist; destructive / open-world tools wait for approval in `ask` mode and run unattended in `auto` mode; `admin` operations never, for now)
@@ -3844,6 +3844,23 @@ the wizard. Examples for `docs/automations.md`:
 - Tests first: `tests/contract/test_ai_provider_contract.py`, over `fake` (17.2 and 17.3 add theirs): the
   phase's first bullet.
 - Done when: `FakeAI` passes the contract.
+- **Built (ernie-d, 2026-11-19, PR #32):** `udl/plugins/ai/base.py` (`AIProvider`, `ProviderOptions`, the chat
+  models, `AIProviderConnection`), `AI` in `PLUGIN_KINDS`, `ProviderUnavailable` in `udl.errors` (code
+  `provider_unavailable`, 503, retryable), `tests/support/ai.py` (`FakeAI`, scripted) and the contract over
+  `fake`. `FakeAI` passes it; `make check` is green and the record contract round-trips `ai_provider` in memory and
+  SQLite.
+- **Decisions:**
+  - `ProviderUnavailable` lives in `udl.errors` with every other `UDLError` (so `error_from_info` can rebuild it and
+    `test_errors.py` sees it) and is re-exported from `udl.plugins.ai.base`, which the card's bullet list implies but
+    does not say.
+  - `command` and `idle_timeout` are **not** on `ProviderOptions`: they belong to a provider that can be started
+    (17.3 adds `ProcessOptions`), so a provider that cannot — ollama, a system service — never accepts a `command` it
+    would ignore.
+  - `stream()` and `pull()` are async generators; the default `stream()` is the whole answer in one `ChatChunk` (so a
+    provider that cannot stream still works for the playground), and the default `pull()` raises `PluginError` for a
+    provider whose `supports_pull` is false, rather than yielding nothing (which a caller would read as "pulled").
+  - A `tool` message must name the call it answers (`tool_call_id`), checked by a model validator: a chat's tool
+    results are rebuilt from the transcript (17.6), and an answer that lost its call id would hang the loop.
 
 **17.2 `ollama`** · needs 17.1
 - Build: `udl/plugins/ai/ollama.py`.

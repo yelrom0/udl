@@ -1958,7 +1958,8 @@
           "action_failed",
           "in_use",
           "ambiguous_account",
-          "challenge_required"
+          "challenge_required",
+          "provider_unavailable"
         ],
         "title": "ErrorCode",
         "type": "string"
