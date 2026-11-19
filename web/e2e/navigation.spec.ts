@@ -35,9 +35,15 @@ test("the nav is reachable at a phone's width", async ({ page }) => {
 
 	// (The nav is behind the menu button until it is opened.)
 	await page.getByRole("button", { name: "Menu" }).click();
+	const nav = page.locator("#nav");
+	await expect(nav).toBeChecked();
 	await page.getByRole("link", { name: "Sites", exact: true }).first().click();
 
 	await expect(page.getByRole("heading", { level: 1, name: "Sites" })).toBeVisible();
+
+	// (And choosing a page closes it: the nav must not cover the page it opened.)
+	await expect(nav).not.toBeChecked();
+	await expect(page.locator(".drawer-overlay")).toBeHidden();
 });
 
 test("the theme is switched, and stays switched", async ({ page }) => {

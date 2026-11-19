@@ -118,7 +118,16 @@ function Layout() {
 				<ul className="menu min-h-full w-56 bg-base-200 p-2">
 					{NAV.map((item) => (
 						<li key={item.to}>
-							<Link to={item.to} activeProps={{ className: "menu-active" }}>
+							<Link
+								to={item.to}
+								activeProps={{ className: "menu-active" }}
+								onClick={() => {
+									// (On a phone the nav covers the page: choosing a page closes it.)
+									if (nav.current !== null) {
+										nav.current.checked = false;
+									}
+								}}
+							>
 								{item.label}
 							</Link>
 						</li>

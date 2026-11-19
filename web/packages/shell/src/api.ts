@@ -6,11 +6,27 @@
 
 import { createUdlClient } from "@udl/api";
 
+/** What to do when udl answers a request with a 401: the page's session is gone (`stores/session`
+ * says which page to show; `api` itself knows nothing of it, so the two do not import each
+ * other in a circle). */
+let unauthorized: () => void = () => {};
+
+/** Say what a 401 from udl means (the session store sets the page to the login page). */
+export function onUnauthorized(handler: () => void): void {
+	unauthorized = handler;
+}
+
 export const api = createUdlClient({
 	baseUrl: window.location.origin,
 	// (`fetch` as it is when a request is made, not when this module was read: a test's own
 	// `fetch` replaces it, and so would a service worker's.)
-	fetch: (input, init) => globalThis.fetch(input, init),
+	fetch: async (input, init) => {
+		const answer = await globalThis.fetch(input, init);
+		if (answer.status === 401) {
+			unauthorized();
+		}
+		return answer;
+	},
 });
 
 /**

@@ -3,11 +3,17 @@
  * answers everything, so this page is only reached when udl asked for one.
  */
 
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { SignInError, signIn } from "../stores/session";
+import { SignInError, session, signIn } from "../stores/session";
 
 export const Route = createFileRoute("/login")({
+	beforeLoad: () => {
+		// (A page already signed in has nothing to do here: the dashboard is where it goes.)
+		if (session.getState().state === "signed-in") {
+			throw redirect({ to: "/" });
+		}
+	},
 	component: LoginPage,
 });
 

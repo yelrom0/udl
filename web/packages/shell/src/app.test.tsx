@@ -114,6 +114,46 @@ describe("the shell", () => {
 		});
 	});
 
+	it("goes to the login page when the session is lost mid-visit", async () => {
+		// (The sessions live in udl's memory: a restart or an expiry answers a 401 from then on,
+		// and a page that is already open must go back to the login page, not show an error.)
+		udl();
+		draw("/ui/downloads");
+		await screen.findByRole("heading", { name: "Downloads" });
+
+		udl({ signedIn: false });
+		fireEvent.click(screen.getAllByRole("link", { name: "Dashboard" })[0] as HTMLElement);
+
+		expect(await screen.findByLabelText("API key")).toBeTruthy();
+		expect(session.getState().state).toBe("signed-out");
+	});
+
+	it("sends a signed-in visit to the login page on to the dashboard", async () => {
+		udl();
+		draw("/ui/login");
+
+		expect(await screen.findByRole("heading", { level: 1, name: "Dashboard" })).toBeTruthy();
+		expect(screen.queryByLabelText("API key")).toBeNull();
+	});
+
+	it("closes the phone's nav when a page is chosen", async () => {
+		// (On a phone the nav covers the page: a link that leaves it open hides what it opened.)
+		udl();
+		draw("/ui/downloads");
+		await screen.findByRole("heading", { name: "Downloads" });
+		const nav = document.querySelector<HTMLInputElement>("#nav");
+		expect(nav).not.toBeNull();
+		if (nav === null) {
+			return;
+		}
+		nav.checked = true;
+
+		fireEvent.click(screen.getAllByRole("link", { name: "Events" })[0] as HTMLElement);
+
+		await screen.findByRole("heading", { name: "Events" });
+		expect(nav.checked).toBe(false);
+	});
+
 	it("signs out from the navbar", async () => {
 		udl();
 		draw("/ui/downloads");

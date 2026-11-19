@@ -8,11 +8,15 @@
 import type { ErrorInfo } from "@udl/api";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
-import { isSaid } from "../api";
+import { isSaid, onUnauthorized } from "../api";
 
 export type SessionState = "unknown" | "signed-in" | "signed-out";
 
 export const session = createStore<{ state: SessionState }>(() => ({ state: "unknown" }));
+
+// (A session lives in udl's memory: after a restart or an expiry every request is a 401, and
+// the page goes back to the login page rather than showing an error it cannot fix.)
+onUnauthorized(() => session.setState({ state: "signed-out" }));
 
 /** What udl says about a sign-in that was refused: its error, and the status it came with. */
 export class SignInError extends Error {
