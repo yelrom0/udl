@@ -26,9 +26,12 @@ from udl.plugins.apps.orch import models as data
 from udl.plugins.apps.orch.models import DEFAULT_BRANCH_PATTERN, MergePolicy
 from udl.plugins.apps.orch.models import Project as ProjectData
 from udl.plugins.apps.orch.models import Repo as RepoData
+from udl.plugins.apps.orch.records import Counter as CounterRecord
+from udl.plugins.apps.orch.records import Feature as FeatureRecord
 from udl.plugins.apps.orch.records import Project as ProjectRecord
 from udl.plugins.apps.orch.records import ProjectRecords, RepoRecords
 from udl.plugins.apps.orch.records import Repo as RepoRecord
+from udl.plugins.apps.orch.records import Task as TaskRecord
 
 # ---------------------------------------------------------------------------------------------
 # A project
@@ -178,13 +181,14 @@ def test_a_repos_branch_pattern_may_not_start_or_end_with_a_slash() -> None:
 
 # (The record kinds' examples are what the record contract stores in every database; here we
 # check that the shapes and the records say the same thing about the fields they share.)
-@pytest.mark.parametrize("model", [data.Project, data.Repo])
+@pytest.mark.parametrize("model", [data.Project, data.Repo, data.Feature, data.Task])
 def test_a_shape_and_its_record_agree_on_every_field(model: type[BaseModel]) -> None:
+    # (The same fields, and the same type for each: the record is not looser than the shape.)
     record = record_model(model)
 
     assert set(record.model_fields) >= set(model.model_fields)
-    for name in model.model_fields:
-        assert name in record.model_fields
+    for name, field in model.model_fields.items():
+        assert record.model_fields[name].annotation == field.annotation, name
 
 
 def test_a_repos_example_says_where_its_checkouts_are() -> None:
@@ -196,8 +200,14 @@ def test_a_repos_example_says_where_its_checkouts_are() -> None:
 
 
 def record_model(model: type[BaseModel]) -> type[Record]:
-    """The record kind whose fields are `model`'s (Project or Repo)."""
-    return ProjectRecord if model is data.Project else RepoRecord
+    """The record kind whose fields are `model`'s."""
+    by_shape: dict[type[BaseModel], type[Record]] = {
+        data.Project: ProjectRecord,
+        data.Repo: RepoRecord,
+        data.Feature: FeatureRecord,
+        data.Task: TaskRecord,
+    }
+    return by_shape[model]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -345,7 +355,13 @@ def test_the_orch_app_brings_its_records() -> None:
     assert Orch.name == "orch"
     assert Orch.title
     assert Orch.summary
-    assert set(Orch.record_kinds()) == {ProjectRecord, RepoRecord}
+    assert set(Orch.record_kinds()) == {
+        ProjectRecord,
+        RepoRecord,
+        FeatureRecord,
+        TaskRecord,
+        CounterRecord,
+    }
 
 
 def test_the_orch_app_has_settings_of_its_own() -> None:

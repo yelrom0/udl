@@ -3,52 +3,63 @@
 - models.py -
 -------------
 
-What a project and a repo are: a Project (a body of work and its merge policy) and a Repo (a
-GitHub repository of a project, with its base branch, its gate, its checkouts and how its task
-branches are named).
+The shapes of the orchestrator's operations (Phase 26): a project and its repos (26.2), a
+feature and a task (26.3), a link (26.4) and a note (26.5). The records they are stored as are
+in orch.records, typed with these same aliases, so a shape and a record say the same thing.
 
-These are not records: they are what the orch operations take and answer, and what the project
-card's fields say. orch.records holds them as records, typed with the same aliases, so a stored
-project or repo is the same shape.
-
-A branch pattern is checked as it is read, so a repo that is stored renders its branches the same
-way tomorrow: it may only name the parts udl fills in ({type}, {key}, {slug}), each once, and
-what is left must read as one git ref.
+These are not records: they are what the operations take and answer, and what the cards' fields
+say. Nothing here reaches outside udl: a project is a body of work, and the rules an agent on
+it is given are the project's own text.
 """
 
 # System Imports
 import string
 from enum import StrEnum
-from typing import Annotated, Final
+from typing import Annotated, Final, Literal, get_args
 
 # Package Imports
-from pydantic import (
-    AfterValidator,
-    BaseModel,
-    ConfigDict,
-    Field,
-    StringConstraints,
-)
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 
 # Local Imports
 from udl.db.records import Name
 
 __all__ = [
+    "BLOCKED",
     "BRANCH_PARTS",
+    "CANCELLED",
     "DEFAULT_BRANCH_PATTERN",
     "DEFAULT_GATE",
+    "DONE",
+    "IN_PROGRESS",
+    "MERGED",
+    "MOVED",
+    "OPEN",
+    "QUEUED",
+    "READY",
     "REF_MARKS",
+    "ROLE",
+    "STATE",
+    "STATE_MARK",
     "BranchName",
     "BranchPattern",
+    "Feature",
+    "FeatureStatus",
     "Gate",
     "GateArg",
     "GitHubAccount",
     "GitHubSlug",
     "HostName",
+    "Key",
     "MergePolicy",
+    "Principal",
     "Project",
     "Promotion",
     "Repo",
+    "Role",
+    "Spec",
+    "State",
+    "Task",
+    "TaskKind",
     "Title",
     "branch_pattern_problem",
     "render_branch",
@@ -82,12 +93,95 @@ DEFAULT_BRANCH_PATTERN: str = "{type}/{key}-{slug}"
 DEFAULT_GATE: list[str] = ["make", "check"]
 """The gate argv a repo gets unless it says otherwise (23.1)."""
 
+GateArg = Annotated[str, StringConstraints(min_length=1)]
+"""One argument of a gate argv (an empty argument is a mistake, never meant)."""
+
+Key = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$", max_length=40)]
+"""A feature's or a task's key within its project (`F-<n>`, `22`, `22.4`)."""
+
+Spec = Annotated[str, StringConstraints(max_length=100_000)]
+"""A task's or a feature's spec, as markdown."""
+
+
+def _not_empty(text: str) -> str:
+    """`text` with something in it. Raises ValueError otherwise."""
+    if not text.strip():
+        raise ValueError("is empty (a title says what it is)")
+    return text
+
+
+Title = Annotated[str, StringConstraints(min_length=1), AfterValidator(_not_empty)]
+"""A title: not empty, not only spaces."""
+
 
 class MergePolicy(StrEnum):
     """Who merges a ready PR (O-D3): a human, or the task's own agent when it is green."""
 
     HUMAN = "human"
     AGENT = "agent"
+
+
+type State = Literal[
+    "open", "queued", "in_progress", "blocked", "ready", "merged", "done", "moved", "cancelled"
+]
+"""A task's state (the Concepts table in planning.md)."""
+
+STATE: Final[tuple[State, ...]] = get_args(State.__value__)
+"""Every state a task is in (read from `State`, so there is one list of them)."""
+
+type Role = Literal["assign", "start", "block", "ready", "merge", "review", "move", "cancel"]
+"""What a caller is doing when it moves a task: one role per verb (26.3's table)."""
+
+ROLE: Final[tuple[Role, ...]] = get_args(Role.__value__)
+"""Every role, read from `Role` (one list of them)."""
+
+type TaskKind = Literal["build", "human", "review"]
+"""What kind of work a task is (the card's build | human | review)."""
+
+type FeatureStatus = Literal["planned", "active", "done", "parked"]
+"""Where a feature is: its own setting, or what its tasks make it (orch.records)."""
+
+STATE_MARK: Final[dict[str, str]] = {
+    "open": "[ ]",
+    "queued": "[ ]",
+    "in_progress": "[ ]",
+    "blocked": "[!]",
+    "ready": "[r]",
+    "merged": "[~]",
+    "done": "[x]",
+    "moved": "[m]",
+    "cancelled": "\u2014",
+}
+"""The mark a state is imported from and printed as (the Concepts table): `[ ]` open, queued or
+in progress, `[!]` blocked, `[r]` ready, `[~]` merged, `[x]` done, `[m]` moved, and none for a
+cancelled task."""
+
+OPEN: Final = "open"
+"""A task nobody has taken: not assigned (the Concepts table's first state)."""
+
+IN_PROGRESS: Final = "in_progress"
+"""A task the agent is on."""
+
+QUEUED: Final = "queued"
+"""A task in an agent's queue."""
+
+BLOCKED: Final = "blocked"
+"""A task only a human or a manager can unblock."""
+
+READY: Final = "ready"
+"""A task whose PR is green, waiting to be merged."""
+
+MERGED: Final = "merged"
+"""A task merged into its repo's base branch."""
+
+DONE: Final = "done"
+"""A task reviewed against its spec (a reviewer's or a human's mark)."""
+
+MOVED: Final = "moved"
+"""A task taken from one agent for another."""
+
+CANCELLED: Final = "cancelled"
+"""A task that is not going to be done."""
 
 
 def _an_argv(argv: list[str]) -> list[str]:
@@ -105,14 +199,8 @@ def _an_argv(argv: list[str]) -> list[str]:
     return argv
 
 
-GateArg = Annotated[str, StringConstraints(min_length=1)]
-"""One argument of a gate argv (an empty argument is a mistake, never meant)."""
-
 Gate = Annotated[list[GateArg], AfterValidator(_an_argv)]
-"""A gate's argv: a program, then its arguments — at least one, none of them empty.
-
-It is an argv, not a shell line: `["make", "check"]`, never `["make check"]`, which is one
-argument with a space in it."""
+"""A gate's argv: a program, then its arguments — at least one, none of them empty."""
 
 
 def slugify(text: str) -> str:
@@ -184,14 +272,6 @@ def _checked_branch_pattern(pattern: str) -> str:
     return pattern
 
 
-CheckedBranchPattern = Annotated[BranchPattern, AfterValidator(_checked_branch_pattern)]
-"""A branch pattern, checked: only udl's parts, once each, and one git ref."""
-
-
-class _Model(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
-
-
 def _promotion(branches: list[str]) -> list[str]:
     """The branches after a repo's base, in order: no branch twice."""
     if len(branches) != len(set(branches)):
@@ -199,11 +279,15 @@ def _promotion(branches: list[str]) -> list[str]:
     return branches
 
 
+CheckedBranchPattern = Annotated[BranchPattern, AfterValidator(_checked_branch_pattern)]
+"""A branch pattern, checked: only udl's parts, once each, and one git ref."""
+
 Promotion = Annotated[list[BranchName], AfterValidator(_promotion)]
 """The branches after the repo's base, in order (e.g. ["rc", "main"]); each once."""
 
-Title = Annotated[str, StringConstraints(min_length=1)]
-"""How a project is shown (e.g. udl): not empty."""
+
+class _Model(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
 
 class Project(_Model):
@@ -255,3 +339,90 @@ class Repo(_Model):
 
         The slug is slugified (lower case, dashes), so a task's title is a branch's tail."""
         return render_branch(self.branch_pattern, type=type, key=key, slug=slug)
+
+
+class Principal(_Model):
+    """Who is acting: a person, an agent, or udl itself.
+
+    A person is `human:<name>`; an agent is one of udl's agents (`ernie-c`), or the reviewer
+    (`reviewer`), whose merge is a review."""
+
+    kind: Literal["human", "agent", "system"]
+    """What kind of caller it is."""
+    name: str = ""
+    """Who it is: an agent's name, or `human:<name>`; empty for udl itself."""
+    role: Role | None = None
+    """What it is doing (the operation it calls: `ready`, `block`, `merge`), or None."""
+
+    @property
+    def is_human(self) -> bool:
+        """Whether a person is acting (the reviewer's own merge, a human's cancel).
+
+        By its `kind`, not its name: an agent called `human:x` is an agent, and is held to the
+        rules the agents are."""
+        return self.kind == "human"
+
+    @property
+    def is_reviewer(self) -> bool:
+        """Whether this is the reviewer agent (only it, or a human, reaches `done`)."""
+        return self.kind == "agent" and self.name == "reviewer"
+
+    @property
+    def who(self) -> str:
+        """How it is written in a note: an agent's name, or `human:<name>`."""
+        return self.name or "udl"
+
+
+class Feature(_Model):
+    """A goal with a spec: the top tier (udl's 26.3, or an imported 22)."""
+
+    project: Name
+    """The project it belongs to."""
+    key: Key
+    """Its key within the project (`F-<n>`, or an imported key like `22`)."""
+    title: Title
+    """What it is, in a line."""
+    spec: Spec = ""
+    """Its spec, as markdown."""
+    status: FeatureStatus = "planned"
+    """Where it is: its own setting, or what its tasks make it (orch.records)."""
+    order: int = 0
+    """Where it sits among its project's features."""
+
+
+class Task(_Model):
+    """One piece of a feature that one agent (or one human) does, usually one PR."""
+
+    project: Name
+    """The project it belongs to."""
+    feature: Key
+    """The feature it is part of (its key: a task always links back)."""
+    key: Key
+    """Its key within the project (`<feature key>.<n>`, or the key it was given)."""
+    title: Title
+    """What it is, in a line."""
+    spec: Spec = ""
+    """Its spec, as markdown (its card, when it was imported)."""
+    task_kind: TaskKind = "build"
+    """What kind of work it is: a build, a person's, or a review's. (Not `kind`: a record's
+    `kind` is the name of its kind, and a field may not shadow it.)"""
+    state: State = OPEN
+    """Where it is (the Concepts table); set only by move() (orch.transitions)."""
+    needs: list[str] = Field(default_factory=list)
+    """The tasks that must be done first, by key."""
+    repo: str | None = None
+    """The repo it is done in (a repo of its project), or None."""
+    assignee: str | None = None
+    """An agent's name, or `human:<name>`; None while it is nobody's."""
+    position: int | None = None
+    """Its place in its assignee's queue."""
+    hold: str | None = None
+    """Why it is held (built now, merged later), or None."""
+    blocked_on: str | None = None
+    """The question's key or free text it waits on, while it is blocked."""
+    branch: str | None = None
+    """The branch it is done on (its repo's branch pattern), once it has one."""
+    worktree: str | None = None
+    """The worktree it is done in, once the dispatcher has made one."""
+    updated_by: str = ""
+    """Who last moved it (a role, or an agent's name)."""
