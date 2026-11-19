@@ -32,6 +32,8 @@ from udl.db.records import Name, Record, RecordQuery
 from udl.errors import DatabaseError, DoesNotExist, DuplicateKey, NotAllowed
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.models import (
+    CANCELLED,
+    DONE,
     OPEN,
     BranchName,
     CheckedBranchPattern,
@@ -451,9 +453,9 @@ class TaskRecords:
             return
         tasks = await self.tasks(task.project, feature=task.feature)
         states = {found.state for found in tasks}
-        if states and states <= {"done", "cancelled"}:
+        if states and states <= {DONE, CANCELLED}:
             status: FeatureStatus = "done"
-        elif states - {OPEN, "cancelled"}:
+        elif states - {OPEN, CANCELLED}:
             status = "active"
         else:
             status = "planned"
