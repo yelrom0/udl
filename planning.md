@@ -121,7 +121,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [ ] 26.6 Operations (projects, repos, features, tasks, links, notes) via CLI, API and MCP
   - [ ] 26.7 Markdown import: a planning file's tracker, cards and spec sections become features and tasks
 - [ ] **Phase 27: Agents, assignment and the dispatcher**
-  - [ ] 27.1 `Agent` records: runner, model, host, role, manager (the hierarchy), permissions
+  - [~] 27.1 `Agent` records: runner, model, host, role, manager (the hierarchy), permissions
   - [ ] 27.2 Agent tokens: an agent calls udl as itself, and only the operations its role allows
   - [ ] 27.3 Queues: assign, reorder, unassign
   - [ ] 27.4 Suggested next tasks, ranked, each with its reasons
