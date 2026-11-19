@@ -69,6 +69,7 @@ keyring = "udl.plugins.secrets.keyring:KeyringSecretStore"
 memory = "udl.plugins.secrets.memory:MemorySecretStore"
 
 [project.entry-points."udl.runners"]
+claude-code = "udl.plugins.runners.claude_code:ClaudeCode"
 command = "udl.plugins.runners.command:CommandRunner"
 
 [project.entry-points."udl.secret_resolvers"]
