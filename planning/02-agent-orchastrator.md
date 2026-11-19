@@ -534,9 +534,10 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - **The real run, here (2026-11-20):** `openrouter-ds-a/deepseek-v4.1-flash-1017-instant`, one
     prompt — `TextDelta("Hello there, friend.")`, `Usage(input 2828, output 9, $0.0003305932)`,
     `TurnEnded(done)`. (The free ERNIE models were out of their daily quota: `provider.rate-limit`,
-    which the runner reads as a `RunnerLimited`.) **On thevault is still to do:** `opencode` is not
-    installed there (checked over SSH, 2026-11-20), so the card's second run needs the user to
-    install it — installing software on another machine is not the agent's call.
+    which the runner reads as a `RunnerLimited`.) **On thevault is still to do, and is the user's
+    call:** `opencode` is not installed there (checked over SSH, 2026-11-20), and installing
+    software on another machine is not the agent's. Asked on PR #40 (2026-11-20): install it there
+    and the run follows, or agree to defer it and that agreement goes here.
 - **Built (deepseek-a, 2026-11-19/20, PR #40):** the `opencode` runner.
   - `udl/plugins/runners/opencode.py`: `OpenCode` (name `opencode`, published under `udl.runners`),
     `OpenCodeOptions` (`cli`, `models`, `agent`, `task`, `title`, `directory`) and `OpenCodeSessions`
