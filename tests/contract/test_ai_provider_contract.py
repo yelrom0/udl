@@ -10,7 +10,8 @@ is healthy, lists its models, and answers a chat; a chat with tools gets tool ca
 ToolCalls; a streamed answer is the same answer; a provider that does not answer is a
 ProviderUnavailable naming its URL; and pulling a model reports progress where the provider can.
 
-17.2 and 17.3 add their providers here, against fake servers (tests/support/ai_servers.py).
+17.2, 17.3 and 25.3 add their providers here, against fake servers
+(tests/support/ai_servers.py).
 """
 
 # System Imports
@@ -24,7 +25,7 @@ import pytest
 
 # Local Imports
 from support.ai import DEFAULT_URL, FakeAI, FakeProviderOptions
-from support.ai_servers import BASE, FakeOpenAI
+from support.ai_servers import BASE, OPENROUTER_BASE, FakeOpenAI, FakeOpenRouter
 from support.clock import FakeClock
 from udl.errors import PluginError, ProviderUnavailable
 from udl.plugins.ai.base import (
@@ -40,6 +41,7 @@ from udl.plugins.ai.base import (
     ToolSpec,
 )
 from udl.plugins.ai.openai import OpenAICompatibleProvider
+from udl.plugins.ai.openrouter import OpenRouterProvider
 from udl.plugins.registry import AI, PluginRegistry
 
 # The tool a chat is offered, and the arguments the fake's call carries for it.
@@ -96,7 +98,30 @@ def openai_case() -> Case:
     )
 
 
-CASES: dict[str, Callable[[], Case]] = {"fake": fake_case, "openai": openai_case}
+def openrouter_case() -> Case:
+    """OpenRouter's provider, against the fake OpenRouter API (in-process)."""
+    return Case(
+        plugin=OpenRouterProvider,
+        provider=OpenRouterProvider(
+            OpenRouterProvider.options_of({"url": OPENROUTER_BASE}),
+            http=FakeOpenRouter().http(),
+            clock=FakeClock(),
+        ),
+        broken=OpenRouterProvider(
+            OpenRouterProvider.options_of({"url": OPENROUTER_BASE}),
+            http=FakeOpenRouter(refuse=True).http(),
+            clock=FakeClock(),
+        ),
+        url=OPENROUTER_BASE,
+        model="fake-1",
+    )
+
+
+CASES: dict[str, Callable[[], Case]] = {
+    "fake": fake_case,
+    "openai": openai_case,
+    "openrouter": openrouter_case,
+}
 
 
 @pytest.fixture(params=sorted(CASES))

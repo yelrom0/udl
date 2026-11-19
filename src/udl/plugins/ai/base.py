@@ -23,6 +23,7 @@ tests/contract/test_ai_provider_contract.py is the behaviour every provider must
 # System Imports
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
+from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Self
 
@@ -66,6 +67,7 @@ __all__ = [
     "ChatRole",
     "DoneReason",
     "ModelInfo",
+    "ModelPricing",
     "ProviderHealth",
     "ProviderOptions",
     "ProviderUnavailable",
@@ -172,6 +174,8 @@ class Usage(_Model):
     """The tokens it wrote."""
     total_tokens: int = 0
     """Both together."""
+    cost: Decimal | None = None
+    """What it cost, in USD, when the provider says (OpenRouter does)."""
 
 
 class ChatResponse(_Model):
@@ -204,6 +208,15 @@ class ChatChunk(_Model):
 # ---------------------------------------------------------------------------------------------
 
 
+class ModelPricing(_Model):
+    """What a model costs: in USD per million tokens, as a provider that charges says."""
+
+    prompt: Decimal
+    """What a million tokens given to it cost."""
+    completion: Decimal
+    """What a million tokens it wrote cost."""
+
+
 class ModelInfo(_Model):
     """A model a provider has: what it is called, and what it can do when the provider says."""
 
@@ -215,6 +228,8 @@ class ModelInfo(_Model):
     """How much text it takes at once, in tokens, when the provider says."""
     tools: bool = False
     """Whether it can be given tools (a chat may call them)."""
+    pricing: ModelPricing | None = None
+    """What it costs, when the provider charges for it (OpenRouter does)."""
 
 
 class ProviderHealth(_Model):
@@ -226,6 +241,8 @@ class ProviderHealth(_Model):
     """What is wrong with it."""
     detail: str = ""
     """What it says of itself (its version, its key's label and limit), shown as it is."""
+    credit_left: Decimal | None = None
+    """What is left to spend, in USD, when the provider says (OpenRouter's key does)."""
 
 
 class PullProgress(_Model):

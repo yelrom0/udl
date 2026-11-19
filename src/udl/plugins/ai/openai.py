@@ -22,6 +22,7 @@ Retry-After, and a model it has not ConfigError.
 import json
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
+from decimal import Decimal, InvalidOperation
 from typing import Final, Self
 
 # Package Imports
@@ -144,6 +145,7 @@ class _Usage(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    cost: JsonValue = None  # (OpenRouter's, in USD)
 
 
 class _ModelEntry(BaseModel):
@@ -563,4 +565,17 @@ def _usage(given: _Usage | None) -> Usage | None:
         prompt_tokens=given.prompt_tokens,
         completion_tokens=given.completion_tokens,
         total_tokens=given.total_tokens,
+        cost=as_money(given.cost),
     )
+
+
+def as_money(given: JsonValue) -> Decimal | None:
+    """`given` as USD — a number or a string of one, as a provider gives a price or a cost — or
+    None when it is neither a number nor finite (a price of "NaN" is no price)."""
+    if given is None or isinstance(given, bool):
+        return None
+    try:
+        money = Decimal(str(given))
+    except InvalidOperation:
+        return None
+    return money if money.is_finite() else None

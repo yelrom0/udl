@@ -291,6 +291,26 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - `FakeOpenRouter` in `tests/support/ai_servers.py`.
 - Tests first: the AI provider contract over `FakeOpenRouter`; `tests/unit/plugins/ai/test_openrouter.py` for prices, credit and the two errors.
 - Done when: `udl ai models --provider openrouter` lists models with prices against the fake, and an opt-in smoke test does against the real one.
+- **Built (deepseek-b, 2026-11-19, PR #36):** `src/udl/plugins/ai/openrouter.py` (`OpenRouterProvider(OpenAICompatibleProvider)`,
+  `OpenRouterOptions` with `url` defaulting to `https://openrouter.ai/api/v1`, registered as `openrouter` in `pyproject.toml`),
+  `FakeOpenRouter` in `tests/support/ai_servers.py` (`/api/v1/models` with per-token prices, `/api/v1/key` with label, usage
+  and limit, the same chats priced, usage sent for `usage: {"include": true}`), its contract case in
+  `tests/contract/test_ai_provider_contract.py`, `tests/unit/plugins/ai/test_openrouter.py` (prices per million, context and
+  tools, cost of a chat and of a stream, the key's label/limit/credit, 402 as `NotAllowed` "out of credit", 429 as
+  `RateLimited` with its Retry-After, the `HTTP-Referer`/`X-Title` headers) and `tests/smoke/test_openrouter.py` (network, skipped
+  without `UDL_OPENROUTER_KEY`: the real models still carry prices, the key still says what it has, a chat still says what it
+  cost). `ModelInfo.pricing` (`ModelPricing`, USD per million), `Usage.cost` and `ProviderHealth.credit_left` are new, all
+  optional. **The Done-when's `udl ai models` is 17.9's CLI (and `list_ai_models` its operation), not built yet:** the prices are
+  proven through `models()` against the fake here, and the smoke test proves them against the real API.
+  **Review round (deepseek-b, 19 Nov 2026, PR #36):** what is left on a key that resets is OpenRouter's own
+  `limit_remaining` (`limit - usage` only when it says none, since `usage` is all-time); a key with a limit and no
+  usage says its limit rather than "used None"; a variable-priced router (`"-1"`) and a non-finite price
+  (`"NaN"`, `"Infinity"`) are no price, so one odd model does not lose the list; `as_money` (in `openai.py`) is the
+  one helper both providers parse a price or cost with; `FakeOpenRouter` prices a copy of the answer, never a test's
+  own; and every request — `/key` and `/models` too, not only a chat — is tested for its `HTTP-Referer` and
+  `X-Title`. The new tests came first, in their own commit (`8f2b87a`). Round 2: a resetting key's detail
+  says each period plainly (`"used 40 USD; 4 of 10 USD left"`), since all-time usage and a per-period limit are not
+  the same period.
 
 **25.4 Fake GitHub, typed client** · needs nothing
 - Build:
