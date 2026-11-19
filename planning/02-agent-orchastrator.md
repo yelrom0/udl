@@ -394,7 +394,9 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - `tests/contract/test_runner_contract.py` over `fake`: named, its options model, its requires;
     health, models, start (the spec's cwd, the shell's host); a prompt's events ending in exactly
     one `TurnEnded`; a session resuming by id after the runner object is thrown away; `stop()`
-    ending a turn that is running; a rate limit as a `RunnerLimited` with its `until`, followed by
+    ending a turn that is running (the spec asks the harness to be slow, `FAKE_HARNESS_SLOW`, so a
+    real runner's turn is still running when the stop comes); a rate limit as a `RunnerLimited`
+    with its `until`, followed by
     `TurnEnded(LIMITED)`; secrets given as `secret_env` reaching the harness and in no argv; a
     stopped session saying
     `STOPPED` rather than hanging (and stopping twice is fine); and the refusing `install`/`login`.

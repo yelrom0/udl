@@ -182,7 +182,8 @@ async def test_a_session_resumes_by_id_after_the_runner_object_is_thrown_away(
 
 @pytest.mark.asyncio
 async def test_stop_ends_a_turn_that_is_running(runner: AnAgentRunner, spec: SessionSpec) -> None:
-    session = await runner.start(spec)
+    slow = spec.model_copy(update={"env": {"FAKE_HARNESS_SLOW": "1"}})
+    session = await runner.start(slow)
     reading = asyncio.create_task(_turn(runner, session, "wait"))
     await asyncio.sleep(0.05)  # (let the turn start)
 
