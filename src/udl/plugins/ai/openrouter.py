@@ -72,15 +72,20 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         used, limit = as_money(key.usage), as_money(key.limit)
         # (A key with limit_reset spends up to its limit each period: usage is all-time, so what
         # is left is OpenRouter's own limit_remaining, and limit - usage only when it says none.)
-        credit = as_money(key.limit_remaining)
+        remaining = as_money(key.limit_remaining)
+        resets = remaining is not None  # (a key that resets: usage is all-time, its limit is not)
+        credit = remaining
         if credit is None and limit is not None:
             credit = limit - (used or Decimal(0))
         if used is None and limit is None:
             detail = key.label
         elif used is None:
-            detail = f"{key.label}: {limit} USD limit ({credit} left)"
+            detail = f"{key.label}: {credit} of {limit} USD left"
         elif limit is None:
             detail = f"{key.label}: used {used} USD"
+        elif resets:
+            # (All-time usage and a per-period limit are not the same period: say each plainly.)
+            detail = f"{key.label}: used {used} USD; {credit} of {limit} USD left"
         else:
             detail = f"{key.label}: used {used} of {limit} USD ({credit} left)"
         return ProviderHealth(ok=True, detail=detail, credit_left=credit)

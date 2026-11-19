@@ -308,7 +308,9 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   (`"NaN"`, `"Infinity"`) are no price, so one odd model does not lose the list; `as_money` (in `openai.py`) is the
   one helper both providers parse a price or cost with; `FakeOpenRouter` prices a copy of the answer, never a test's
   own; and every request — `/key` and `/models` too, not only a chat — is tested for its `HTTP-Referer` and
-  `X-Title`. The new tests came first, in their own commit (`8f2b87a`).
+  `X-Title`. The new tests came first, in their own commit (`8f2b87a`). Round 2: a resetting key's detail
+  says each period plainly (`"used 40 USD; 4 of 10 USD left"`), since all-time usage and a per-period limit are not
+  the same period.
 
 **25.4 Fake GitHub, typed client** · needs nothing
 - Build:

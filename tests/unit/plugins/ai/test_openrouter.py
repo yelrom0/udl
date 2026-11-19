@@ -192,7 +192,8 @@ async def test_a_key_that_resets_says_what_is_left_now() -> None:
     health = await provider(fake).health()
 
     assert health.credit_left == Decimal("4")
-    assert health.detail == "deepseek-b: used 40 of 10 USD (4 left)"
+    # (All-time usage and a per-period limit are not the same period: say each plainly.)
+    assert health.detail == "deepseek-b: used 40 USD; 4 of 10 USD left"
 
 
 async def test_a_key_with_a_limit_but_no_usage_still_says_its_limit() -> None:
@@ -201,7 +202,7 @@ async def test_a_key_with_a_limit_but_no_usage_still_says_its_limit() -> None:
     health = await provider(fake).health()
 
     assert health.credit_left == Decimal("10")
-    assert health.detail == "deepseek-b: 10 USD limit (10 left)"
+    assert health.detail == "deepseek-b: 10 of 10 USD left"
 
 
 async def test_a_key_with_no_limit_has_no_credit_left() -> None:
