@@ -27,6 +27,8 @@ from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.models import Principal
 from udl.plugins.apps.orch.queue import assign, next_task, queue_of, reorder, unassign
 from udl.plugins.apps.orch.records import (
+    Agent,
+    AgentRecords,
     Feature,
     FeatureRecords,
     Note,
@@ -52,6 +54,10 @@ async def tasks(tmp_path: Path) -> TaskRecords:
     features = FeatureRecords(records)
     await features.save_feature(Feature(project="udl", key="F-1", title="The queue"))
     await features.save_feature(Feature(project="udl", key="F-2", title="The dispatcher"))
+    # (The agents the queues are of: a task is only assigned to an agent there is, 27.1.)
+    agents = AgentRecords(records)
+    for name in ("ernie-c", "deepseek-b"):
+        await agents.save_agent(Agent(name=name, title=name, runner="fake"))
     return TaskRecords(records)
 
 
@@ -213,6 +219,95 @@ async def test_a_human_task_is_a_persons_and_never_an_agents(tasks: TaskRecords)
     assert (assigned.state, assigned.assignee) == ("queued", "human:claude")
     assert await keys_of(tasks, "human:claude") == ["F-1.1"]
     assert await keys_of(tasks, "ernie-c") == []
+
+
+async def test_an_agent_that_is_not_one_is_refused(tasks: TaskRecords) -> None:
+    # (A typo would make a queue no dispatcher ever picks up: the task would vanish from view.)
+    await a_task(tasks, "F-1.1")
+
+    with pytest.raises(NotAllowed, match="erine-c") as refused:
+        await assign(tasks, "F-1.1", "erine-c", project="udl", by=ME)
+
+    assert "ernie-c" in (refused.value.hint or "")
+    assert "deepseek-b" in (refused.value.hint or "")
+
+
+async def test_a_person_is_named_and_a_persons_task_is_their_own(tasks: TaskRecords) -> None:
+    await a_task(tasks, "F-1.1", task_kind="human")
+    await a_task(tasks, "F-1.2")
+
+    # (A person is named: `human:` alone is nobody.)
+    with pytest.raises(NotAllowed, match="human"):
+        await assign(tasks, "F-1.1", "human:", project="udl", by=ME)
+
+    # (And a task that is nobody's person's work is not a person's to take: a build task is an
+    # agent's, and a person's is theirs.)
+    with pytest.raises(NotAllowed, match="not a person's task"):
+        await assign(tasks, "F-1.2", "human:claude", project="udl", by=ME)
+
+    assigned = await assign(tasks, "F-1.1", "human:claude", project="udl", by=ME)
+    assert assigned.assignee == "human:claude"
+
+
+async def test_a_task_an_agent_is_on_is_not_requeued_to_it(tasks: TaskRecords) -> None:
+    # (An in-progress task's session is running: a drag that put it back on the same agent's
+    # queue would leave that session working a task that is no longer its own.)
+    await a_task(tasks, "F-1.1")
+    await a_task(tasks, "F-1.2")
+    await assign(tasks, "F-1.1", "ernie-c", project="udl", by=ME)
+    await assign(tasks, "F-1.2", "ernie-c", project="udl", by=ME)
+    queued = await tasks.task("udl", "F-1.1")
+    assert queued is not None
+    await tasks.move(
+        queued, "in_progress", by=Principal(kind="agent", name="ernie-c", role="start")
+    )
+
+    with pytest.raises(NotAllowed, match="on it"):
+        await assign(tasks, "F-1.1", "ernie-c", project="udl", by=ME)
+
+
+async def test_a_refused_reassign_leaves_the_task_where_it_was(tasks: TaskRecords) -> None:
+    # (The old agent's queue is only touched once the new assignment is certain.)
+    await a_task(tasks, "F-1.1")
+    await assign(tasks, "F-1.1", "ernie-c", project="udl", by=ME)
+    queued = await tasks.task("udl", "F-1.1")
+    assert queued is not None
+    started = await tasks.move(
+        queued, "in_progress", by=Principal(kind="agent", name="ernie-c", role="start")
+    )
+    await tasks.move(started, "ready", by=Principal(kind="agent", name="ernie-c", role="ready"))
+
+    with pytest.raises(NotAllowed, match="ready"):
+        await assign(
+            tasks,
+            "F-1.1",
+            "deepseek-b",
+            project="udl",
+            by=Principal(kind="agent", name="ernie-c", role="assign"),
+        )
+
+    found = await tasks.task("udl", "F-1.1")
+    assert found is not None
+    assert (found.state, found.assignee) == ("ready", "ernie-c")
+    assert await notes_on(tasks, "F-1.1") == []
+
+
+async def test_a_reassign_without_a_caller_moves_the_task_itself(tasks: TaskRecords) -> None:
+    # (The operations call the queue with no caller: udl does it, and the two moves of a
+    # reassign are the same move — not an assign that the table would refuse after the first.)
+    await a_task(tasks, "F-1.1")
+    await assign(tasks, "F-1.1", "ernie-c", project="udl", by=None)
+    queued = await tasks.task("udl", "F-1.1")
+    assert queued is not None
+    await tasks.move(
+        queued, "in_progress", by=Principal(kind="agent", name="ernie-c", role="start")
+    )
+
+    moved = await assign(tasks, "F-1.1", "deepseek-b", project="udl", by=None)
+
+    assert (moved.state, moved.assignee, moved.position) == ("queued", "deepseek-b", 0)
+    assert await keys_of(tasks, "ernie-c") == []
+    assert await keys_of(tasks, "deepseek-b") == ["F-1.1"]
 
 
 async def test_assigning_a_task_that_is_not_there_is_refused(tasks: TaskRecords) -> None:

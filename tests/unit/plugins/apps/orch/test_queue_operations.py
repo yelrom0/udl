@@ -34,6 +34,8 @@ from udl.plugins.apps.orch.models import (
 )
 from udl.plugins.apps.orch.plugin import Orch
 from udl.plugins.apps.orch.records import (
+    Agent,
+    AgentRecords,
     Feature,
     FeatureRecords,
     Note,
@@ -105,6 +107,9 @@ async def service(tmp_path: Path) -> AsyncIterator[UDLService]:
             await TaskRecords(records).save_task(
                 TaskRecord(project="udl", feature="F-1", key=key, title=key)
             )
+        agents = AgentRecords(records)
+        for name in ("ernie-c", "deepseek-b"):
+            await agents.save_agent(Agent(name=name, title=name, runner="fake"))
         yield running
 
 
@@ -130,6 +135,27 @@ async def test_assigning_through_the_operation_answers_the_queue(service: UDLSer
         ("F-1.2", 0, "queued"),
         ("F-1.1", 1, "queued"),
     ]
+
+
+async def test_a_reassign_through_the_operation_moves_the_task(service: UDLService) -> None:
+    # (The board's drag from one agent to another, 29.4: it is one call, and it must not strand
+    # the task between the two queues.)
+    await assign(service, "F-1.1", "ernie-c")
+    await assign(service, "F-1.2", "ernie-c")
+
+    moved = await assign(service, "F-1.1", "deepseek-b")
+
+    assert [(entry.key, entry.assignee) for entry in moved.tasks] == [("F-1.1", "deepseek-b")]
+    left = await a_queue(service, "orch_get_queue", agent="ernie-c", project="udl")
+    assert [entry.key for entry in left.tasks] == ["F-1.2"]
+    assert [entry.position for entry in left.tasks] == [0]
+
+
+async def test_an_agent_that_is_not_one_is_refused_through_the_operation(
+    service: UDLService,
+) -> None:
+    with pytest.raises(NotAllowed, match="erine-c"):
+        await service.call("orch_assign", {"key": "F-1.1", "agent": "erine-c", "project": "udl"})
 
 
 async def test_the_queue_is_read_by_its_operation(service: UDLService) -> None:

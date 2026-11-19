@@ -26,6 +26,7 @@ from collections.abc import Sequence
 
 # Local Imports
 from udl.errors import DoesNotExist, NotAllowed
+from udl.plugins.apps.orch import transitions
 from udl.plugins.apps.orch.models import (
     IN_PROGRESS,
     MOVED,
@@ -34,8 +35,15 @@ from udl.plugins.apps.orch.models import (
     NoteKind,
     OwnerKind,
     Principal,
+    Role,
 )
-from udl.plugins.apps.orch.records import Note, NoteRecords, Task, TaskRecords
+from udl.plugins.apps.orch.records import (
+    AgentRecords,
+    Note,
+    NoteRecords,
+    Task,
+    TaskRecords,
+)
 
 __all__ = ["HUMAN", "assign", "next_task", "queue_of", "reorder", "unassign"]
 
@@ -43,11 +51,11 @@ HUMAN = "human:"
 """What a person's assignee begins with (`human:<name>`)."""
 
 
-def _by(by: Principal | None, role: str) -> Principal:
+def _by(by: Principal | None, role: Role) -> Principal:
     """Who is moving a task: `by`, or udl itself doing `role` (the queue's own moves)."""
     if by is not None:
         return by if by.role is not None else by.model_copy(update={"role": role})
-    return Principal(kind="system", role=role)  # pyright: ignore[reportArgumentType]
+    return Principal(kind="system", role=role)
 
 
 async def assign(
@@ -69,14 +77,13 @@ async def assign(
     task = await tasks.task(project, key)
     if task is None:
         raise DoesNotExist(f"There is no task called {key!r} in {project!r}")
-    if not agent.strip():
+    await _check_agent(tasks, task, agent, key=key)
+    if task.assignee == agent and task.state != QUEUED:
+        # (Its session is working the task: putting it back on that queue would leave the
+        # session working what is no longer its own, and nobody told to stop.)
         raise NotAllowed(
-            f"{key!r} cannot be assigned to nobody", hint="Name the agent that takes it."
-        )
-    if task.task_kind == "human" and not agent.startswith(HUMAN):
-        raise NotAllowed(
-            f"{key!r} is a person's task: it is assigned to {HUMAN}<name>, not {agent!r}",
-            hint=f"A human task is a person's (28.2's To action); assign it to {HUMAN}<name>.",
+            f"{key!r} is already {agent}'s, and it is on it ({task.state!r})",
+            hint="Unassign it first, or reorder the queue it is on.",
         )
     others = [
         found for found in await queue_of(tasks, project=project, agent=agent) if found.key != key
@@ -88,11 +95,20 @@ async def assign(
             hint=f"The positions are 0 to {len(others)} (its end, when it is {len(others)}).",
         )
     stopped = task.assignee if task.assignee is not None and task.assignee != agent else None
+    # (A reassign is one move, twice: to `moved` for the agent that had it, then to `queued` for
+    # the new one, both with the role `move` the table gives that pair.)
+    role: Role = "move" if stopped is not None else "assign"
+    # (The moves are planned on copies first, so a refusal cannot leave a task half-moved.)
+    planned = task
+    if stopped is not None:
+        planned = transitions.move(planned, MOVED, by=_by(by, "move"))
+    if planned.state != QUEUED:
+        planned = transitions.move(planned, QUEUED, by=_by(by, role))
     current = task
     if stopped is not None:
         current = await tasks.move(current, MOVED, by=_by(by, "move"))
     if current.state != QUEUED:
-        current = await tasks.move(current, QUEUED, by=_by(by, "assign"))
+        current = await tasks.move(current, QUEUED, by=_by(by, role))
     placed = await tasks.save_task(current.model_copy(update={"assignee": agent, "position": at}))
     order = [*others[:at], placed, *others[at:]]
     await _place(tasks, order)
@@ -100,6 +116,42 @@ async def assign(
         await _stopped(tasks, placed, stopped=stopped, agent=agent)
         await _renumber(tasks, project=project, agent=stopped)
     return placed
+
+
+async def _check_agent(tasks: TaskRecords, task: Task, agent: str, *, key: str) -> None:
+    """`agent` may take `task`: an agent there is (27.1), or a named person for a person's task.
+
+    Raises NotAllowed for a blank name, for `human:` with no name after it, for a person's task
+    given to an agent, for a task that is not a person's given to one, and for an agent that is
+    not one (a typo would make a queue no dispatcher ever picks up)."""
+    if not agent.strip():
+        raise NotAllowed(f"{key!r} cannot be assigned to nobody", hint="Name who takes it.")
+    if agent.startswith(HUMAN):
+        if not agent.removeprefix(HUMAN).strip():
+            raise NotAllowed(
+                f"{key!r} cannot be assigned to {HUMAN!r}: a person has a name",
+                hint=f"Name the person: {HUMAN}<name>.",
+            )
+        if task.task_kind != "human":
+            raise NotAllowed(
+                f"{key!r} is not a person's task: it is an agent's",
+                hint=(
+                    f"A person's task is a `human` one (28.2's To action); assign {key!r} to "
+                    "the agent that does it."
+                ),
+            )
+        return
+    if task.task_kind == "human":
+        raise NotAllowed(
+            f"{key!r} is a person's task: it is assigned to {HUMAN}<name>, not {agent!r}",
+            hint=f"A human task is a person's (28.2's To action); assign it to {HUMAN}<name>.",
+        )
+    known = [found.name for found in await AgentRecords(tasks.records).agents()]
+    if agent not in known:
+        raise NotAllowed(
+            f"There is no agent called {agent!r}",
+            hint=f"The agents: {', '.join(known) or 'none'} (add it first, 27.1).",
+        )
 
 
 async def reorder(
