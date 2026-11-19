@@ -5,7 +5,11 @@
  * browser gives it — no casts, and no mocks.
  */
 
-import { vi } from "vitest";
+import { cleanup } from "@testing-library/react";
+import { afterEach, vi } from "vitest";
+
+// (A test's page starts empty: each test renders its own, and the one before it is taken away.)
+afterEach(cleanup);
 
 const QUERY = "(prefers-color-scheme: dark)";
 

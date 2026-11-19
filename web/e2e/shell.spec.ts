@@ -1,10 +1,12 @@
 import { expect, test } from "@playwright/test";
+import { signIn } from "./helpers";
 
 // The card's own check: `/ui/` loads in both themes, from the build `make web` makes (which
-// `make e2e` runs first).
+// `make e2e` runs first). The server has an API key, so the page is signed in first.
 test("the shell loads", async ({ page }) => {
-	await page.goto("/ui/");
-	await expect(page.getByRole("heading", { name: "udl", level: 1 })).toBeVisible();
+	await signIn(page);
+
+	await expect(page.getByRole("link", { name: "udl" })).toBeVisible();
 	await expect(page.locator("html")).toHaveAttribute("data-theme", /light|dark/);
 });
 
