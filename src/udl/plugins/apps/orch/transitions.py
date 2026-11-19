@@ -152,9 +152,10 @@ def _default_role(from_state: str, to: str) -> str | None:
 
 
 def _is_yours(task: Task, by: Principal) -> bool:
-    """Whether `by` may touch `task`: the reviewer may (it reviews other agents' work), and an
-    agent only its own task. (A person is asked before this.)"""
-    if by.is_reviewer:
+    """Whether `by` may touch `task`: udl itself may (the dispatcher assigns, the watcher merges),
+    the reviewer may (it reviews other agents' work), and an agent only its own task. (A person
+    is asked before this.)"""
+    if by.kind == "system" or by.is_reviewer:
         return True
     return task.assignee is not None and task.assignee == by.who
 

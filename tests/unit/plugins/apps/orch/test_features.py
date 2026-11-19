@@ -23,6 +23,7 @@ from udl.plugins.apps.base import AppRecords
 # Local Imports
 from udl.plugins.apps.orch.models import OPEN, Principal
 from udl.plugins.apps.orch.records import (
+    Counter,
     Counters,
     Feature,
     FeatureRecords,
@@ -391,6 +392,18 @@ async def test_a_number_claimed_is_never_handed_out_again(counters: Counters) ->
 
 async def test_nothing_claimed_means_no_counter(counters: Counters) -> None:
     assert await counters.latest("udl", "F-") is None
+
+
+async def test_a_claim_newer_than_the_one_stored_is_never_cleared(counters: Counters) -> None:
+    # (A caller clears only the claims older than the number it stored: one another caller made
+    # meanwhile is newer, and clearing it would hand its number out again.)
+    five = await counters.records.save(Counter(project="udl", prefix="F-", last=5))
+    six = await counters.records.save(Counter(project="udl", prefix="F-", last=6))
+
+    await counters.keep("udl", "F-", five)
+
+    assert sorted(claim.last for claim in await counters.claims("udl", "F-")) == [5, 6]
+    assert (await counters.latest("udl", "F-")) == six
 
 
 async def test_only_the_last_claim_is_kept(counters: Counters) -> None:

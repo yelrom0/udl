@@ -157,6 +157,22 @@ def test_an_agent_may_not_claim_to_be_a_person_by_its_name() -> None:
         move(task_in(MERGED), DONE, by=Principal(kind="agent", name="human:claude", role="review"))
 
 
+def test_udl_itself_moves_a_task_that_is_not_its_own() -> None:
+    # (The dispatcher assigns an open task, which is nobody's, and the watcher merges a ready
+    # one, which is the implementer's: both are udl, and stay bound by the table.)
+    udl = Principal(kind="system")
+
+    assert move(task_in(OPEN), QUEUED, by=udl).state == QUEUED
+    assert move(task_in(READY, assignee="ernie-c"), MERGED, by=udl).state == MERGED
+    with pytest.raises(NotAllowed, match=r"from 'open' to 'merged'"):
+        move(task_in(OPEN), MERGED, by=udl)
+
+
+def test_an_implementer_saying_assign_is_still_refused_another_agents_task() -> None:
+    with pytest.raises(NotAllowed, match=r"not yours"):
+        move(task_in(OPEN), QUEUED, by=Principal(kind="agent", name="ernie-c", role="assign"))
+
+
 def test_a_role_does_not_make_another_agents_task_yours() -> None:
     # (A caller says what it is doing; it does not say what it may touch.)
     task = task_in("in_progress", assignee="ernie-b")

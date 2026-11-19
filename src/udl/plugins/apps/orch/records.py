@@ -350,17 +350,30 @@ class FeatureRecords:
         found = await self._records.list(Feature, RecordQuery(where={"project": project}))
         return sorted(found, key=lambda feature: (feature.order, feature.key))
 
-    async def create_feature(self, project: str, title: str, **fields: object) -> Feature:
-        """A feature of `project` with the next `F-` number of its counter as its key (unless
-        `fields` gives one), stored. Raises DoesNotExist when the project is not there."""
-        key = fields.pop("key", None)
+    async def create_feature(
+        self,
+        project: str,
+        title: str,
+        *,
+        key: Key | None = None,
+        spec: Spec = "",
+        status: FeatureStatus = "planned",
+        order: int = 0,
+    ) -> Feature:
+        """A feature of `project` with `key`, or the next `F-` number of its counter, stored.
+        Raises DoesNotExist when the project is not there."""
         claimed = (
-            key
-            if isinstance(key, str)
-            else f"F-{await Counters(self._records).claim(project, 'F-')}"
+            key if key is not None else f"F-{await Counters(self._records).claim(project, 'F-')}"
         )
         return await self.save_feature(
-            Feature(project=project, key=claimed, title=title, **fields)  # pyright: ignore[reportArgumentType]
+            Feature(
+                project=project,
+                key=claimed,
+                title=title,
+                spec=spec,
+                status=status,
+                order=order,
+            )
         )
 
     async def delete_feature(self, project: str, key: str) -> bool:
@@ -459,17 +472,40 @@ class TaskRecords:
             found = [task for task in found if task.state == state]
         return sorted(found, key=lambda task: task.key)
 
-    async def create_task(self, project: str, feature: str, title: str, **fields: object) -> Task:
-        """A task of `feature` with the next `<feature key>.` number of its counter as its key
-        (unless `fields` gives one), stored. Raises DoesNotExist when the project is not there."""
-        key = fields.pop("key", None)
+    async def create_task(
+        self,
+        project: str,
+        feature: Key,
+        title: str,
+        *,
+        key: Key | None = None,
+        spec: Spec = "",
+        task_kind: TaskKind = "build",
+        repo: str | None = None,
+        assignee: str | None = None,
+        position: int | None = None,
+        hold: str | None = None,
+    ) -> Task:
+        """A task of `feature` with `key`, or the next `<feature key>.` number of its counter,
+        stored. Raises DoesNotExist when the project is not there."""
         claimed = (
             key
-            if isinstance(key, str)
+            if key is not None
             else f"{feature}.{await Counters(self._records).claim(project, f'{feature}.')}"
         )
         return await self.save_task(
-            Task(project=project, feature=feature, key=claimed, title=title, **fields)  # pyright: ignore[reportArgumentType]
+            Task(
+                project=project,
+                feature=feature,
+                key=claimed,
+                title=title,
+                spec=spec,
+                task_kind=task_kind,
+                repo=repo,
+                assignee=assignee,
+                position=position,
+                hold=hold,
+            )
         )
 
     async def delete_task(self, project: str, key: str) -> bool:
@@ -511,9 +547,7 @@ class Counters:
                 saved = await self._records.save(nxt)
             except DuplicateKey:
                 continue  # (someone claimed that number first)
-            for older in await self.claims(project, prefix):
-                if older.id != saved.id:
-                    await self._records.delete(Counter, older.id)
+            await self.keep(project, prefix, saved)
             return saved.last
         raise RuntimeError(f"Could not claim a {prefix} number in {project!r}: ten tries lost")
 
@@ -521,6 +555,14 @@ class Counters:
         """The last number claimed for `prefix` in `project`, or None when none has been."""
         found = await self.claims(project, prefix)
         return max(found, key=lambda counter: counter.last) if found else None
+
+    async def keep(self, project: str, prefix: str, saved: Counter) -> None:
+        """Clear the claims of `prefix` older than `saved` (the one just stored). A claim newer
+        than it — one another caller made meanwhile — is never cleared: clearing it would hand
+        its number out twice."""
+        for older in await self.claims(project, prefix):
+            if older.last < saved.last:
+                await self._records.delete(Counter, older.id)
 
     async def claims(self, project: str, prefix: str) -> list[Counter]:
         """The claims kept for `prefix` in `project` (the last one, and any a concurrent
