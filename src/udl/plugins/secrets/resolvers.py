@@ -14,9 +14,10 @@ the Clock), so a page of secrets is one call, not one per field. Only what a res
 kept: a value the store itself holds is read again each time, so one another process wrote is
 seen at once.
 
-A resolver only answers for the references its allow-list covers, and a value that no resolver
-may read — another resolver's scheme, or a vault outside the allow-list — is refused when it is
-saved, not when it is used.
+A resolver only answers for the references its allow-list covers, and a reference outside it — a
+vault udl was not told about — is refused when it is saved, not when it is used. Only a registered
+resolver's scheme makes a reference at all: a value with any other scheme (`https://…`, a
+`postgresql://` DSN) is a value udl keeps and reads back.
 """
 
 # System Imports
