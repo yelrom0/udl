@@ -23,10 +23,11 @@ import pytest
 from pydantic import ValidationError
 
 # Local Imports
+from support.clock import FakeClock
 from support.engine import databases, registry, settings
 from udl.config import Settings
 from udl.db.records import RecordScope, SyncRule
-from udl.errors import ConfigError, DoesNotExist, DuplicateKey
+from udl.errors import ConfigError, DoesNotExist, DuplicateKey, InUse
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.agents import (
     Agent,
@@ -45,6 +46,12 @@ from udl.plugins.apps.orch.records import (
 )
 from udl.plugins.apps.orch.records import (
     AgentSession as AgentSessionRecord,
+)
+from udl.plugins.apps.orch.records import (
+    Project as ProjectRecord,
+)
+from udl.plugins.apps.orch.records import (
+    Repo as RepoRecord,
 )
 from udl.plugins.apps.orch.settings import OrchSettings
 from udl.plugins.runners.base import SessionRef, TextDelta
@@ -183,7 +190,7 @@ def test_an_agent_whose_session_is_limited_is_limited_until_its_quota_is_back() 
     assert agent().status(limited, now=NOW + timedelta(hours=2)) is AgentStatus.IDLE
 
 
-def test_a_limited_session_that_says_when_it_is_back_waits_while_it_does() -> None:
+def test_a_limited_session_that_does_not_say_when_it_is_back_stays_limited() -> None:
     # (A limited session that did not say until when stays limited: it has nothing to run.)
     assert agent().status(session(state=SessionState.LIMITED), now=NOW) is AgentStatus.LIMITED
 
@@ -293,6 +300,50 @@ async def test_a_managers_reports_are_listed_by_name(agents: AgentRecords) -> No
     assert await agents.reports("alone") == []
 
 
+async def test_a_manager_with_reports_cannot_stop_being_a_manager(agents: AgentRecords) -> None:
+    boss = await agents.save_agent(stored(name="boss", role=AgentRole.MANAGER))
+    await agents.save_agent(stored(name="one", manager="boss"))
+
+    with pytest.raises(ConfigError, match="has reports"):
+        await agents.save_agent(
+            AgentRecord.model_validate({**boss.model_dump(), "role": AgentRole.IMPLEMENTER})
+        )
+
+
+async def test_a_manager_with_reports_cannot_be_renamed(agents: AgentRecords) -> None:
+    # (A rename would leave its reports pointing at a name that is not there.)
+    boss = await agents.save_agent(stored(name="boss", role=AgentRole.MANAGER))
+    await agents.save_agent(stored(name="one", manager="boss"))
+
+    with pytest.raises(ConfigError, match="has reports"):
+        await agents.save_agent(AgentRecord.model_validate({**boss.model_dump(), "name": "chief"}))
+
+
+async def test_a_manager_with_reports_cannot_be_deleted(agents: AgentRecords) -> None:
+    await agents.save_agent(stored(name="boss", role=AgentRole.MANAGER))
+    await agents.save_agent(stored(name="one", manager="boss"))
+
+    with pytest.raises(InUse, match="manager of one"):
+        await agents.delete_agent("boss")
+    assert await agents.agent("boss") is not None
+
+
+async def test_a_deleted_agents_sessions_and_transcript_are_gone(
+    agents: AgentRecords, sessions: SessionRecords
+) -> None:
+    await agents.save_agent(stored())
+    saved = await sessions.save_session(AgentSessionRecord.model_validate(session().model_dump()))
+    await sessions.save_event(
+        SessionEvent(agent="fake-a", session=saved.id, turn=1, event=TextDelta(text="On it."))
+    )
+
+    assert await agents.delete_agent("fake-a")
+
+    assert await sessions.session(saved.id) is None
+    assert await sessions.sessions("fake-a") == []
+    assert await sessions.transcript(saved.id) == []
+
+
 async def test_a_deleted_agent_is_gone(agents: AgentRecords) -> None:
     await agents.save_agent(stored())
 
@@ -364,6 +415,34 @@ def test_orch_keeps_a_sessions_transcript_for_thirty_days() -> None:
 
 
 def test_orch_brings_its_agent_kinds() -> None:
-    kinds = {kind.kind for kind in Orch.record_kinds()}
+    # (The exact set: a kind added or left in by mistake would be noticed here.)
+    assert set(Orch.record_kinds()) == {
+        ProjectRecord,
+        RepoRecord,
+        AgentRecord,
+        AgentSessionRecord,
+        SessionEvent,
+    }
 
-    assert {"orch_agent", "orch_agent_session", "orch_session_event"} <= kinds
+
+async def test_an_old_transcript_is_pruned_and_a_recent_one_kept(tmp_path: Path) -> None:
+    # (The records are stamped with the database's clock, so the test moves it.)
+    clock = FakeClock(NOW)
+    db = databases(settings(tmp_path), registry(), clock=clock)
+    await db.connect()
+    sessions = SessionRecords(AppRecords(db))
+    saved = await sessions.save_session(AgentSessionRecord.model_validate(session().model_dump()))
+    old = await sessions.save_event(
+        SessionEvent(agent="fake-a", session=saved.id, turn=1, event=TextDelta(text="Long ago."))
+    )
+    await clock.advance(timedelta(days=40))
+    recent = await sessions.save_event(
+        SessionEvent(agent="fake-a", session=saved.id, turn=2, event=TextDelta(text="Today."))
+    )
+
+    # (session_days is 30: what is older than that goes, and what is newer stays.)
+    pruned = await sessions.prune(clock.now() - timedelta(days=30))
+
+    assert pruned == 1
+    assert await sessions.transcript(saved.id) == [recent]
+    assert old.id != recent.id
