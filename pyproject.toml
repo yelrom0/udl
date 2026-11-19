@@ -117,6 +117,10 @@ markers = [
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+# A failing test's "Captured log" lines say when each was logged, so a run that failed only on a
+# loaded CI runner shows how long each wait took.
+log_format = "%(asctime)s.%(msecs)03d %(levelname)-8s %(name)s:%(filename)s:%(lineno)d %(message)s"
+log_date_format = "%H:%M:%S"
 
 [tool.coverage.run]
 branch = true

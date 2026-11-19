@@ -165,7 +165,7 @@ async def test_a_person_who_closes_the_window_leaves_the_urls_waiting(
 
 
 async def test_a_person_who_never_comes_leaves_the_urls_waiting(
-    antibot: AntiBotSite, tmp_path: Path
+    antibot: AntiBotSite, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     async with kits(tmp_path, challenge_timeout="3s") as (db, config):
         kit = kit_on(db, config, person=FakePerson(Manner.IGNORES))
@@ -177,6 +177,8 @@ async def test_a_person_who_never_comes_leaves_the_urls_waiting(
 
     assert batch.status is BatchStatus.WAITING
     assert item.status is ItemStatus.CHALLENGE
+    # (The window says why it left the site: here, its tab still shows the check.)
+    assert f"{HOSTS[0]} was left: its page is still the check" in caplog.text
 
 
 async def test_wait_mode_opens_nothing_until_someone_solves(

@@ -100,6 +100,10 @@ class PlaywrightTab:
         """Whether the tab's network has been quiet for `delay`."""
         return not self._inflight and self._clock.now() - self._active_at >= delay
 
+    def inflight(self) -> list[str]:
+        """The requests the tab has started and not seen end, as `METHOD url`, in order."""
+        return sorted(f"{request.method} {request.url}" for request in self._inflight)
+
     def _responded(self, response: Response) -> None:
         if response.request.is_navigation_request() and response.frame == self._page.main_frame:
             self._document = response
