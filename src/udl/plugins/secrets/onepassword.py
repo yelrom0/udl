@@ -60,6 +60,11 @@ class OnePasswordResolver(SecretResolver):
         return self.table.enabled
 
     @property
+    def settings_table(self) -> str:
+        """`[secrets.onepassword]` (its references are `op://`, its table is not)."""
+        return "onepassword"
+
+    @property
     def cache_ttl(self) -> Duration:
         """How long a value `op` gave is kept."""
         return self.table.cache_ttl

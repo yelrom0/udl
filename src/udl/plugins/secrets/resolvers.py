@@ -98,6 +98,12 @@ class SecretResolver(ABC):
         return True
 
     @property
+    def settings_table(self) -> str:
+        """Its table in the config: `[secrets.<settings_table>]` (its scheme, unless it says
+        otherwise: a resolver's scheme names its references, which is not always its table)."""
+        return self.scheme
+
+    @property
     def cache_ttl(self) -> Duration:
         """How long a value it resolved is kept (the resolver's own setting, or the default)."""
         return CACHE_TTL
@@ -186,7 +192,7 @@ class ResolvingStore(SecretStore):
             return
         raise ConfigError(
             f"{ref} is a {resolver.scheme} reference outside the allow-list, and is refused",
-            hint=f"Add its vault to [secrets.{resolver.scheme}] vaults in the config.",
+            hint=f"Add its vault to [secrets.{resolver.settings_table}] vaults in the config.",
         )
 
     # -- the store -----------------------------------------------------------------------------

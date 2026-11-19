@@ -161,9 +161,11 @@ async def test_a_vault_udl_may_not_read_is_refused_without_running_op(
     folder = fake_op(tmp_path, monkeypatch)
     found = settings(vaults=["vault-a"])
 
-    with pytest.raises(ConfigError, match="vault udl may read"):
+    with pytest.raises(ConfigError, match="vault udl may read") as raised:
         await resolver(found, await with_token(found)).resolve("vault-b/item-1/field-1")
 
+    # (The hint names its config table, which is not its scheme: op's is [secrets.onepassword].)
+    assert "[secrets.onepassword] vaults" in (raised.value.hint or "")
     assert not (folder / "args").exists()  # (op was never run)
 
 

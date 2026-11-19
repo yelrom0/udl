@@ -61,7 +61,9 @@ def secrets_settings(*, vaults: list[str] | None = None) -> SecretsSettings:
     """The [secrets] settings with the memory store and 1Password on."""
     return SecretsSettings(
         store="memory",
-        onepassword=OnePasswordSettings(enabled=True, vaults=vaults or ["vault-a"]),
+        onepassword=OnePasswordSettings(
+            enabled=True, vaults=["vault-a"] if vaults is None else vaults
+        ),
     )
 
 
@@ -112,6 +114,20 @@ async def test_a_vault_outside_the_allow_list_is_refused_when_it_is_saved(
     with pytest.raises(ConfigError, match="refused"):
         await store.set(STORE_REF, SecretStr(REFERENCE))
 
+    assert await store.wrapped.get(STORE_REF) is None
+
+
+async def test_with_no_vault_allowed_a_reference_is_refused_when_it_is_saved(
+    op_on_path: Path,
+) -> None:
+    # (Vaults are allow-listed: with none named, saving a reference refuses it, and says where
+    # to name the vault.)
+    store = resolving(secrets_settings(vaults=[]))
+
+    with pytest.raises(ConfigError, match="refused") as raised:
+        await store.set(STORE_REF, SecretStr(REFERENCE))
+
+    assert "[secrets.onepassword] vaults" in (raised.value.hint or "")
     assert await store.wrapped.get(STORE_REF) is None
 
 
