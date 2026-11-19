@@ -193,6 +193,7 @@ from udl.integrations.models import (
     SetAccountRequest,
 )
 from udl.integrations.watchers import WatcherSupervisor
+from udl.plugins.ai.process import close_default_pool
 from udl.plugins.downloaders.auth import AuthCookies
 from udl.plugins.downloaders.base import Cookie, ProbeContext, ProbeResult
 from udl.plugins.integrations.base import AccountHealth
@@ -401,6 +402,7 @@ class UDLService:
         await self.runner.shutdown()
         await self.fetches.close()
         await self.accounts.close()
+        await close_default_pool()  # (the AI providers udl started)
         await self.db.close()
         self._lock.release()
 

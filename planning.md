@@ -300,7 +300,7 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
 - [ ] **Phase 17: Local AI**
   - [~] 17.1 `udl.ai` plugin kind: `AIProvider` base + contract suite + `FakeAI` (scripted); `AIProviderConnection` records (pulled forward, built as part of **25.2**)
   - [ ] 17.2 `ollama` provider: chat with tool calls, models, `keep_alive`, pulling a model
-  - [ ] 17.3 `openai-compatible` provider (llama.cpp's `llama-server`, LM Studio, vLLM…); any provider's optional `command` is started on demand and stopped when idle (pulled forward, built as part of **25.2**)
+  - [~] 17.3 `openai-compatible` provider (llama.cpp's `llama-server`, LM Studio, vLLM…); any provider's optional `command` is started on demand and stopped when idle (pulled forward, built as part of **25.2**)
   - [ ] 17.4 Tools from operations: schemas from request models; `ToolPolicy` (allowlist; destructive / open-world tools wait for approval in `ask` mode and run unattended in `auto` mode; `admin` operations never, for now)
   - [ ] 17.5 The agent loop: tool calls, step / time / size limits, the transcript kept on the run
   - [ ] 17.6 Approvals (`ask` mode): a run waits (`awaiting_approval`), `decide_run`, a `udl.action.awaiting_approval` event, denied after a timeout
@@ -3904,6 +3904,32 @@ the wizard. Examples for `docs/automations.md`:
     started, waited for, and stopped when idle; a command outside the allowed places is refused when the
     provider is saved.
 - Done when: a `llama-server` command in `allowed_commands` starts on the first chat and stops when idle.
+- **Built (ernie-d, 2026-11-19, PR #35):** `udl/plugins/ai/openai.py` (`OpenAICompatibleProvider`, registered as
+  `openai-compatible` in `pyproject.toml`) and `udl/plugins/ai/process.py` (`ProcessOptions`, `ProviderProcess`,
+  `ProcessPool`, `allowed_command`), with `FakeOpenAI` in `tests/support/ai_servers.py`, the contract over it, and
+  `tests/unit/plugins/ai/test_process.py` / `test_openai.py`. `make check` is green (4758 passed, 3 skipped) and a `llama-server`
+  command starts on the first chat and stops when idle (a tiny Python server stands in for it). `17.1`'s `AIProvider`
+  gained `processes` and `check()`, and `ToolCall` gained `arguments_error` (see the note under 17.1). **Review round (deepseek-b, 19 Nov 2026, PR #35):** a streamed answer's `usage` comes from the trailing chunk OpenAI sends after `finish_reason` (`choices: []`), so the one final chunk is emitted when the stream ends — `FakeOpenAI` now sends it the way OpenAI does, and `test_a_stream_reads_what_it_used_from_the_chunk_after_the_finish` pins it; a 200 body that is not the API's JSON (a `url` missing `/v1` landing on a web page) is a `ProviderUnavailable` in `chat()` and `models()`, not a raw `ValidationError` (`test_a_chat_answer_that_is_not_json_is_a_provider_that_cannot_be_read`, the same for `models()`); a program that exits while something else answers on its port is not ready (`_wait_until_ready` gives it POLL seconds to die, `test_a_program_that_exits_while_another_server_answers_is_not_ready`); `_poll` waits on the exit alone (one health request a tick); the idle keeper's deadline is pinned (`test_it_is_stopped_at_the_first_look_past_the_idle_timeout`, which fails on the old full-pause code); and `_redacted` is `_shown`'s own loop.
+- **Decisions:**
+  - **`ToolCall.arguments_error`** (17.1's model, extended here): a tool call whose `arguments` are not a JSON
+    object cannot be run, and the card says it "goes back to the model as an error". The provider reads the string
+    it was given; when it cannot, the call keeps `arguments={}` and carries why. 17.5's loop then answers that call
+    with the error instead of running it — the alternative was an error code of its own, which the taxonomy does
+    not have and this does not need.
+  - **A provider's `command` and its timeouts are options, not udl's settings:** `ProcessOptions` extends
+    `ProviderOptions`, so they are set per connection (with everything else) and `[ai]` keeps only
+    `allowed_commands` (file-only) and `scripts_dir` (which is `[automations]`'s, as for a script action). A bare
+    name is looked for in scripts_dir first, then in `allowed_commands` (then on PATH, which is where a
+    `llama-server` is); anything else is `NotAllowed` at `check()` — so no API client can make udl run a program of
+    its choosing.
+  - **The start is counted, not read off the clock:** a real program starts in real time, so `start_timeout` is a
+    number of 0.5 s health polls (240 of them by default). The idle timeout *is* on the clock, so a test moves time
+    on (FakeClock) and udl's own processes stop themselves. A provider that is starting is stopped again if the wait
+    fails, and the last of its output says why.
+  - **One process per provider is keyed by its url and its command,** not its name: two connections of one provider
+    share one process, two connections at different urls do not.
+  - **`OpenAICompatibleProvider.check()`** is the hook 17.9's `set_ai_provider` calls: it refuses a command udl may
+    not start (and `OpenAIOptions` refuses options with no url).
 
 **17.4 Tools from operations: `ToolPolicy`** · needs 8.1, 17.1
 - Build: `udl/ai/agent.py`.

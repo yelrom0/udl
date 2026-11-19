@@ -24,6 +24,7 @@ import pytest
 
 # Local Imports
 from support.ai import DEFAULT_URL, FakeAI, FakeProviderOptions
+from support.ai_servers import BASE, FakeOpenAI
 from support.clock import FakeClock
 from udl.errors import PluginError, ProviderUnavailable
 from udl.plugins.ai.base import (
@@ -38,6 +39,7 @@ from udl.plugins.ai.base import (
     PullProgress,
     ToolSpec,
 )
+from udl.plugins.ai.openai import OpenAICompatibleProvider
 from udl.plugins.registry import AI, PluginRegistry
 
 # The tool a chat is offered, and the arguments the fake's call carries for it.
@@ -75,7 +77,26 @@ def fake_case() -> Case:
     )
 
 
-CASES: dict[str, Callable[[], Case]] = {"fake": fake_case}
+def openai_case() -> Case:
+    """The OpenAI-compatible provider, against the fake OpenAI API (in-process)."""
+    return Case(
+        plugin=OpenAICompatibleProvider,
+        provider=OpenAICompatibleProvider(
+            OpenAICompatibleProvider.options_of({"url": BASE}),
+            http=FakeOpenAI().http(),
+            clock=FakeClock(),
+        ),
+        broken=OpenAICompatibleProvider(
+            OpenAICompatibleProvider.options_of({"url": BASE}),
+            http=FakeOpenAI(refuse=True).http(),
+            clock=FakeClock(),
+        ),
+        url=BASE,
+        model="fake-1",
+    )
+
+
+CASES: dict[str, Callable[[], Case]] = {"fake": fake_case, "openai": openai_case}
 
 
 @pytest.fixture(params=sorted(CASES))
