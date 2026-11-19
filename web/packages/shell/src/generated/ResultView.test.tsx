@@ -314,7 +314,7 @@ describe("rows that are the same", () => {
 		render(<ResultView schema={eventList} value={{ events: twice }} />);
 
 		expect(within(table()).getAllByRole("row")).toHaveLength(3);
-		expect(spy.mock.calls.map((call) => String(call[0]))).not.toContain(
+		expect(spy.mock.calls.map((call) => String(call[0]))).not.toContainEqual(
 			expect.stringContaining("same key"),
 		);
 		spy.mockRestore();
@@ -342,5 +342,86 @@ describe("a URL field", () => {
 		expect(links).toHaveLength(1);
 		expect(links[0]?.getAttribute("href")).toBe("https://udl.example");
 		expect(screen.getByText("javascript:alert(1)")).toBeDefined();
+	});
+});
+
+describe("sorting a table", () => {
+	it("moves a row, instead of drawing it again", () => {
+		// (A key that is the row's place after sorting would remount every row on every click.)
+		const many = Array.from({ length: 5 }, (_, index) => ({
+			id: `e${String(index + 1).padStart(2, "0")}`,
+			depth: index,
+			account_id: "a1",
+		}));
+		render(<ResultView schema={eventList} value={{ events: many }} />);
+		const first = within(table()).getAllByRole("row")[1] as HTMLElement;
+
+		fireEvent.click(screen.getByRole("button", { name: /Depth/ }));
+		fireEvent.click(screen.getByRole("button", { name: /Depth/ }));
+
+		expect(document.contains(first)).toBe(true);
+	});
+});
+
+describe("a fan-out's answer", () => {
+	const fanOut = {
+		type: "object",
+		properties: {
+			items: {
+				type: "array",
+				items: {
+					type: "object",
+					properties: {
+						account: { type: "string", title: "Account" },
+						item: {
+							type: "object",
+							properties: { id: { type: "string", title: "Id" } },
+						},
+					},
+				},
+			},
+			failures: {
+				type: "array",
+				items: {
+					type: "object",
+					properties: { account: { type: "string" }, error: { type: "object" } },
+				},
+			},
+		},
+	};
+
+	it("is a table with the account each item came from", () => {
+		render(
+			<ResultView
+				schema={fanOut}
+				value={{
+					items: [
+						{ account: "gmail:work", item: { id: "m1" } },
+						{ account: "gmail:home", item: { id: "m2" } },
+					],
+					failures: [],
+				}}
+			/>,
+		);
+
+		expect(within(table()).getByText("Account")).toBeDefined();
+		expect(screen.getByText("gmail:work")).toBeDefined();
+	});
+
+	it("says why an account it found nothing in failed", () => {
+		render(
+			<ResultView
+				schema={fanOut}
+				value={{
+					items: [],
+					failures: [
+						{ account: "gmail:work", error: { code: "rate_limited", message: "out of credit" } },
+					],
+				}}
+			/>,
+		);
+
+		expect(screen.getByText("Nothing yet.")).toBeDefined();
+		expect(screen.getByText(/gmail:work: rate_limited: out of credit/)).toBeDefined();
 	});
 });

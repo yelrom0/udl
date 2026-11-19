@@ -18,7 +18,7 @@ import { useMemo, useState } from "react";
 import { JsonTree } from "../components/JsonTree";
 import { Paged } from "../components/Paged";
 import { TimeAgo } from "../components/TimeAgo";
-import { type ResultShape, type Row, shapeOf } from "./result";
+import { type Failure, type ResultShape, type Row, shapeOf } from "./result";
 
 /** How many rows a page holds. */
 export const PAGE_SIZE = 25;
@@ -67,15 +67,21 @@ function blank(value: JsonValue | undefined): boolean {
 	return value === undefined || value === null;
 }
 
+/** A row with the key it keeps: the row's own JSON, and where it sits in the answer. */
+interface KeyedRow {
+	readonly row: Row;
+	readonly key: string;
+}
+
 /** The rows in the sort's order: numbers as numbers, nothing last, the rest as text. */
-function sorted(rows: readonly Row[], sort: Sort | null): readonly Row[] {
+function sorted<T extends KeyedRow>(rows: readonly T[], sort: Sort | null): readonly T[] {
 	if (sort === null) {
 		return rows;
 	}
 	const direction = sort.ascending ? 1 : -1;
 	return [...rows].sort((left, right) => {
-		const a = left[sort.column];
-		const b = right[sort.column];
+		const a = left.row[sort.column];
+		const b = right.row[sort.column];
 		if (a === b) {
 			return 0;
 		}
@@ -103,11 +109,18 @@ function sorted(rows: readonly Row[], sort: Sort | null): readonly Row[] {
 function Table({ shape, pageSize }: TableProps) {
 	const [sort, setSort] = useState<Sort | null>(null);
 	const [page, setPage] = useState(1);
-	const rows = useMemo(() => sorted(shape.rows, sort), [shape.rows, sort]);
+	// (The key is the row's place in the answer, before any sorting: sorting moves a row with
+	// its key, so it is moved and not drawn again, and two rows that are the same keep two.)
+	const keyed = useMemo(
+		() => shape.rows.map((row, index) => ({ row, key: `${JSON.stringify(row)}#${index}` })),
+		[shape.rows],
+	);
+	const rows = useMemo(() => sorted(keyed, sort), [keyed, sort]);
 	const pages = Math.max(1, Math.ceil(rows.length / pageSize));
 	// (A smaller answer than the page that was open: the last page there is, never an empty one.)
 	const current = Math.min(page, pages);
 	const shown = rows.slice((current - 1) * pageSize, current * pageSize);
+	const failures = shape.failures ?? [];
 
 	const change = (column: string): void => {
 		setPage(1);
@@ -119,7 +132,12 @@ function Table({ shape, pageSize }: TableProps) {
 	};
 
 	if (shape.rows.length === 0) {
-		return <p className="py-6 text-center text-sm opacity-60">Nothing yet.</p>;
+		return (
+			<div>
+				<p className="py-6 text-center text-sm opacity-60">Nothing yet.</p>
+				<Failures failures={failures} />
+			</div>
+		);
 	}
 
 	return (
@@ -148,10 +166,8 @@ function Table({ shape, pageSize }: TableProps) {
 					</tr>
 				</thead>
 				<tbody>
-					{shown.map((row, index) => (
-						// (The row's own JSON, and where it sits: two rows that are the same are
-						// still two rows, and neither may share a key with the other.)
-						<tr key={`${JSON.stringify(row)}#${index}`}>
+					{shown.map(({ row, key }) => (
+						<tr key={key}>
 							{shape.columns.map((column) => (
 								<td key={column.name}>
 									<Value field={column} value={row[column.name]} />
@@ -162,7 +178,25 @@ function Table({ shape, pageSize }: TableProps) {
 				</tbody>
 			</table>
 			{pages > 1 ? <Paged page={current} pages={pages} onChange={setPage} /> : null}
+			<Failures failures={failures} />
 		</div>
+	);
+}
+
+/** The accounts a fan-out failed in: their items are empty, and this is why. */
+function Failures({ failures }: { readonly failures: readonly Failure[] }) {
+	if (failures.length === 0) {
+		return null;
+	}
+	return (
+		<ul className="mt-2 space-y-1 text-sm">
+			{failures.map((failure, index) => (
+				<li key={`${failure.account}#${index}`} className="text-error">
+					{failure.account}: {failure.code === undefined ? "" : `${failure.code}: `}
+					{failure.message}
+				</li>
+			))}
+		</ul>
 	);
 }
 

@@ -22,6 +22,14 @@ import { type FieldSpec, fieldsOf, isJsonObject, type JsonValue, resolveRefs } f
 /** A row of a table: one item of a list, as it came. */
 export type Row = Readonly<Record<string, JsonValue>>;
 
+/** An account a fan-out failed in, and why (11.4). */
+export interface Failure {
+	readonly account: string;
+	/** The error's code (`rate_limited`), when it has one. */
+	readonly code?: string;
+	readonly message: string;
+}
+
 /** A table: what `list_accounts` and `list_events` are. */
 export interface TableShape {
 	readonly kind: "table";
@@ -29,6 +37,8 @@ export interface TableShape {
 	readonly caption?: string;
 	readonly columns: readonly FieldSpec[];
 	readonly rows: readonly Row[];
+	/** The accounts a fan-out failed in: their items came back empty, not wrong. */
+	readonly failures?: readonly Failure[];
 }
 
 /** A description list: a flat object, as `status` is. */
@@ -119,6 +129,32 @@ function isAccountItem(
 	return typeof entry.account === "string" && isJsonObject(entry.item);
 }
 
+/** Whether `schema` is a fan-out's answer: its `items` are `{account, item}` entries. */
+function isFanOutSchema(schema: JsonValue): boolean {
+	const entry = itemsOf(propertyOf(schema, "items"));
+	const properties = isJsonObject(entry) ? entry.properties : undefined;
+	return isJsonObject(properties) && "account" in properties && "item" in properties;
+}
+
+/** The accounts a fan-out failed in, as it says: its `failures`, each with an account and an error. */
+function failuresOf(value: Readonly<Record<string, JsonValue>>): readonly Failure[] {
+	const failures = value.failures;
+	if (!Array.isArray(failures)) {
+		return [];
+	}
+	const said: Failure[] = [];
+	for (const failure of failures) {
+		if (!isJsonObject(failure) || typeof failure.account !== "string") {
+			continue;
+		}
+		const error = isJsonObject(failure.error) ? failure.error : {};
+		const message = typeof error.message === "string" ? error.message : JSON.stringify(error);
+		const code = typeof error.code === "string" ? { code: error.code } : {};
+		said.push({ account: failure.account, ...code, message });
+	}
+	return said;
+}
+
 /**
  * A fan-out's answer (`FanOutResult[T]`: `{items: [{account, item}], failures, next_pages}`) as
  * a table: each item's own fields, with the account it came from first. A fan-out has two lists,
@@ -129,7 +165,7 @@ function fanOutOf(
 	schema: JsonValue,
 ): TableShape | undefined {
 	const items = value.items;
-	if (!Array.isArray(items)) {
+	if (!Array.isArray(items) || !isFanOutSchema(schema)) {
 		return undefined;
 	}
 	const rows: Row[] = [];
@@ -141,8 +177,13 @@ function fanOutOf(
 	}
 	// (An empty list, every account failed: the schema still says what the columns are.)
 	const entry = itemsOf(propertyOf(schema, "items"));
-	const columns = [ACCOUNT, ...columnsOf(propertyOf(entry, "item"))];
-	return { kind: "table", columns, rows };
+	// (The item's own "account", when it has one, is the same account: one column, the tagging's.)
+	const columns = [
+		ACCOUNT,
+		...columnsOf(propertyOf(entry, "item")).filter((column) => column.name !== ACCOUNT.name),
+	];
+	const failures = failuresOf(value);
+	return { kind: "table", columns, rows, ...(failures.length > 0 ? { failures } : {}) };
 }
 
 /** The schema of a list's items (`{items: {...}}`), or nothing. */

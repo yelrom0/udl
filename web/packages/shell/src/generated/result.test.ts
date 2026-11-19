@@ -301,10 +301,12 @@ describe("a fan-out's answer (11.4)", () => {
 		]);
 	});
 
-	it("keeps its columns when every account failed", () => {
+	it("keeps its columns when every account failed, and says why each did", () => {
 		const found = shapeOf(fanOut, {
 			items: [],
-			failures: [{ account: "gmail:work", error: { message: "no" } }],
+			failures: [
+				{ account: "gmail:work", error: { code: "rate_limited", message: "out of credit" } },
+			],
 			next_pages: {},
 		});
 
@@ -314,5 +316,64 @@ describe("a fan-out's answer (11.4)", () => {
 		}
 		expect(found.columns.map((column) => column.name)).toEqual(["account", "id", "subject"]);
 		expect(found.rows).toEqual([]);
+		expect(found.failures).toEqual([
+			{ account: "gmail:work", code: "rate_limited", message: "out of credit" },
+		]);
+	});
+
+	it("is not one for a page of items that the schema does not call accounts'", () => {
+		// (`{items: [], next_page: null}` is a page of one list, not a fan-out's answer: its one
+		// column is the item's `id`, and an empty page has no phantom "Account" column.)
+		const page = {
+			type: "object",
+			properties: {
+				items: { type: "array", items: { type: "object", properties: { id: { type: "string" } } } },
+				next_page: { type: "string" },
+			},
+		};
+
+		const found = shapeOf(page, { items: [], next_page: null });
+
+		expect(found.kind).toBe("table");
+		if (found.kind !== "table") {
+			throw new Error("not a table");
+		}
+		expect(found.columns.map((column) => column.name)).toEqual(["id"]);
+		expect(found.rows).toEqual([]);
+	});
+
+	it("has one account column even when the item has an account of its own", () => {
+		const own = {
+			type: "object",
+			properties: {
+				items: {
+					type: "array",
+					items: {
+						type: "object",
+						properties: {
+							account: { type: "string", title: "Account" },
+							item: {
+								type: "object",
+								properties: {
+									account: { type: "string", title: "Account" },
+									id: { type: "string", title: "Id" },
+								},
+							},
+						},
+					},
+				},
+			},
+		};
+
+		const found = shapeOf(own, {
+			items: [{ account: "gmail:work", item: { account: "x", id: "m1" } }],
+		});
+
+		expect(found.kind).toBe("table");
+		if (found.kind !== "table") {
+			throw new Error("not a table");
+		}
+		expect(found.columns.map((column) => column.name)).toEqual(["account", "id"]);
+		expect(found.rows).toEqual([{ account: "gmail:work", id: "m1" }]);
 	});
 });

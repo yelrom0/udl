@@ -129,3 +129,66 @@ describe("list_events", () => {
 		expect(screen.getByRole("table")).toBeDefined();
 	});
 });
+
+describe("github_list_pulls (11.4's fan-out)", () => {
+	// (Its response is `FanOutResult[PullInfo]`: an account's pulls, each with its account.)
+	const schema = responseOf("github_list_pulls");
+	const value = {
+		items: [
+			{
+				account: "github:work",
+				item: {
+					author: "someone",
+					base: "main",
+					draft: false,
+					head: "feat/x",
+					head_sha: "abc123",
+					html_url: "https://github.com/yelrom0/udl/pull/1",
+					merged: false,
+					number: 1,
+					repo: "yelrom0/udl",
+					state: "open",
+					title: "A pull",
+					updated_at: "2026-11-19T00:00:00Z",
+				},
+			},
+		],
+		failures: [],
+		next_pages: {},
+	} as JsonValue;
+
+	it("is a table of the pulls, with their account first", () => {
+		const shape = shapeOf(schema, value, OPENAPI);
+
+		expect(shape.kind).toBe("table");
+		if (shape.kind !== "table") {
+			throw new Error("not a table");
+		}
+		expect(shape.columns.map((column) => column.name)).toEqual([
+			"account",
+			"author",
+			"base",
+			"draft",
+			"head",
+			"head_sha",
+			"html_url",
+			"merged",
+			"number",
+			"repo",
+			"state",
+			"title",
+			"updated_at",
+		]);
+		expect(shape.rows).toEqual([
+			{ ...(value as { items: [{ item: Row }] }).items[0].item, account: "github:work" },
+		]);
+	});
+
+	it("renders as one", () => {
+		render(<ResultView schema={schema} value={value} document={OPENAPI} />);
+
+		const table = screen.getByRole("table");
+		expect(within(table).getByText("github:work")).toBeDefined();
+		expect(within(table).getByText("A pull")).toBeDefined();
+	});
+});
