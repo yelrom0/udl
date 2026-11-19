@@ -23,7 +23,7 @@ from udl.config import Duration
 from udl.core.operations import Operation, OperationHints, UISpec
 from udl.db.models import utcnow
 from udl.db.records import Record
-from udl.plugins.apps.base import AppContext, AppPlugin, AppSettings
+from udl.plugins.apps.base import AppContext, AppPlugin, AppRecords, AppSettings
 from udl.plugins.requirements import Requirement
 
 
@@ -101,8 +101,10 @@ class FakeApp(AppPlugin[FakeAppSettings]):
     settings_model = FakeAppSettings
     requires = (Requirement.binary("sh"),)
 
-    def __init__(self, settings: FakeAppSettings, *, clock: Clock) -> None:
-        super().__init__(settings, clock=clock)
+    def __init__(
+        self, settings: FakeAppSettings, *, clock: Clock, records: AppRecords | None = None
+    ) -> None:
+        super().__init__(settings, clock=clock, records=records)
         self.done: list[Tick] = []
         """The ticks it has done, oldest first."""
         self.stopped = False

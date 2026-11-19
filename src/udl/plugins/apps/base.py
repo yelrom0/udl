@@ -370,9 +370,21 @@ class AppPlugin[S: AppSettings](ABC):
     # (24.3-24.6) as every other plugin does.
     ui: ClassVar[UIBundle | None] = None
 
-    def __init__(self, settings: S, *, clock: Clock) -> None:
+    def __init__(self, settings: S, *, clock: Clock, records: AppRecords | None = None) -> None:
         self.settings = settings
         self.clock = clock
+        self._records = records
+
+    @property
+    def records(self) -> AppRecords:
+        """Where it keeps its records: what its operations read and write (its service is given
+        them too, in its AppContext). Raises RuntimeError when it was made without them."""
+        if self._records is None:
+            raise RuntimeError(
+                f"The {self.name} app has no records: it was made without them (an app udl makes "
+                "has them)"
+            )
+        return self._records
 
     @classmethod
     def event_types(cls) -> Sequence[EventType[Any]]:

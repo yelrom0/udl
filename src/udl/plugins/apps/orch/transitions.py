@@ -55,10 +55,12 @@ TRANSITIONS: Final[dict[tuple[str, str], tuple[str, ...]]] = {
     (IN_PROGRESS, READY): ("ready", "human"),
     (IN_PROGRESS, BLOCKED): ("block", "human"),
     (IN_PROGRESS, QUEUED): ("assign", "move", "human"),
+    (IN_PROGRESS, MOVED): ("move", "human"),  # (taken for another agent: the queue, 27.3)
     (IN_PROGRESS, CANCELLED): ("cancel", "move", "human"),
     # -- blocked: only a human or a manager unblocks ------------------------------------------
     (BLOCKED, IN_PROGRESS): ("start", "block", "move", "human"),
     (BLOCKED, QUEUED): ("assign", "move", "human"),
+    (BLOCKED, MOVED): ("move", "human"),  # (taken for another agent: the queue, 27.3)
     (BLOCKED, CANCELLED): ("cancel", "move", "human"),
     # -- ready: PR green, waiting to be merged -------------------------------------------------
     (READY, MERGED): ("merge", "human"),

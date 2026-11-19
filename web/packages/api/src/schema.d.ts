@@ -955,6 +955,121 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/assign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Assign a task to an agent: it joins that agent's queue (at its end, or at a position).
+         * @description Assign a task to an agent: it joins that agent's queue (at its end, or at a position).
+         *
+         *     A task another agent holds leaves that agent's queue, and a system note says who must
+         *     stop. A person's task is assigned to `human:<name>` (28.2's To action), never to an
+         *     agent. The answer is the agent's queue, in the order it will work it.
+         */
+        post: operations["orch_assign"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/get_queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What an agent's queue is: its tasks, in the order it will work them.
+         * @description What an agent's queue is: its tasks, in the order it will work them.
+         *
+         *     A person's own list is asked for the same way, by `human:<name>`.
+         */
+        post: operations["orch_get_queue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/my_task": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What an agent is to work next: the task it is in progress on, else the first on its
+         * @description What an agent is to work next: the task it is in progress on, else the first on its
+         *     queue, and nothing when it has none.
+         *
+         *     The dispatcher asks this when it starts a session (27.7); an agent asks it when it is
+         *     told to go on.
+         */
+        post: operations["orch_my_task"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/reorder_queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set an agent's queue to exactly these keys, in this order.
+         * @description Set an agent's queue to exactly these keys, in this order.
+         *
+         *     Every task on the queue is named once: one that is not on it is not the reorder's to
+         *     move, and one left out would be lost. The answer is the queue as it now is.
+         */
+        post: operations["orch_reorder_queue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/unassign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Take a task out of its agent's queue: it is open again, and nobody's.
+         * @description Take a task out of its agent's queue: it is open again, and nobody's.
+         *
+         *     The answer is the queue it left, with no gap in it.
+         */
+        post: operations["orch_unassign"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/{name}/settings": {
         parameters: {
             query?: never;
@@ -1757,6 +1872,29 @@ export interface components {
             started_at?: string | null;
             /** @description Where its service is. */
             state: components["schemas"]["AppState"];
+        };
+        /**
+         * AssignTaskRequest
+         * @description Assigning a task to an agent, at the end of its queue or at a position in it.
+         */
+        AssignTaskRequest: {
+            /**
+             * Agent
+             * @description Who takes it: an agent's name, or `human:<name>` for a person's task.
+             */
+            agent: string;
+            /**
+             * Key
+             * @description The task to assign (`27.3`).
+             */
+            key: string;
+            /**
+             * Position
+             * @description Where in the queue it goes (None: its end).
+             */
+            position?: number | null;
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
         };
         /**
          * AtSpec
@@ -3756,6 +3894,78 @@ export interface components {
          * @enum {string}
          */
         Misfire: "skip" | "once";
+        /**
+         * MyTaskNote
+         * @description A note on the task an agent is on, as `orch_my_task` answers with it (26.5).
+         */
+        MyTaskNote: {
+            /**
+             * At
+             * Format: date-time
+             * @description When it was written.
+             */
+            at: string;
+            /**
+             * Author
+             * @description Who wrote it: an agent's name, `human:<name>`, or `udl`.
+             */
+            author: string;
+            /** @description What kind of note it is; `system` is what udl itself writes. */
+            note_kind: components["schemas"]["NoteKind"];
+            /**
+             * Text
+             * @description What it says, as markdown.
+             */
+            text: string;
+        };
+        /**
+         * MyTaskRequest
+         * @description Asking what an agent is to work next.
+         */
+        MyTaskRequest: {
+            /**
+             * Agent
+             * @description Whose queue it is: an agent's name, or `human:<name>`.
+             */
+            agent: string;
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+        };
+        /**
+         * MyTaskResponse
+         * @description What an agent is on: the task, what it is for, and what it is told before it starts.
+         *
+         *     Everything an agent's session is given at its start (27.7): the task and its place, its
+         *     feature and the feature's spec, the task's own spec, its notes, and the project's rules.
+         *     Its links are 26.4's, and are added when they are built.
+         */
+        MyTaskResponse: {
+            /**
+             * Feature Spec
+             * @description The spec of the feature the task is part of (empty when there is no task).
+             * @default
+             */
+            feature_spec: string;
+            /**
+             * Notes
+             * @description The task's notes, oldest first.
+             */
+            notes?: components["schemas"]["MyTaskNote"][];
+            /**
+             * Rules
+             * @description The project's rules: the ground rules every agent on it is given.
+             * @default
+             */
+            rules: string;
+            /**
+             * Spec
+             * @description The task's own spec.
+             * @default
+             */
+            spec: string;
+            /** @description The task it is in progress on, or the first on its queue; None when there is none. */
+            task?: components["schemas"]["QueueEntry"] | null;
+        };
         Name: string;
         /**
          * NetworkStep
@@ -3784,6 +3994,13 @@ export interface components {
             /** @description The filter. */
             not: components["schemas"]["Filter-Output"];
         };
+        /**
+         * NoteKind
+         * @description What kind of note it is: what was done, a decision, a finding, a review, or what udl itself
+         *     says (a state change, a task moved to another agent's queue).
+         * @enum {string}
+         */
+        NoteKind: "progress" | "decision" | "finding" | "review" | "system";
         /**
          * OnePasswordSettings
          * @description The [secrets.onepassword] table: whether udl reads secrets from 1Password, which vaults it
@@ -4222,6 +4439,58 @@ export interface components {
         /** @enum {string} */
         PullStateFilter: "open" | "closed" | "all";
         /**
+         * QueueEntry
+         * @description A task on a queue, as the operations answer with it: what a board shows, and nothing that
+         *     is not needed to show it.
+         */
+        QueueEntry: {
+            /**
+             * Assignee
+             * @description An agent's name, or `human:<name>`; None while it is nobody's.
+             */
+            assignee?: string | null;
+            /**
+             * Feature
+             * @description The feature it is part of (its key).
+             */
+            feature: string;
+            /**
+             * Key
+             * @description Its key within the project (`27.3`).
+             */
+            key: string;
+            /**
+             * Position
+             * @description Its place in its queue (0 is the next one).
+             */
+            position?: number | null;
+            /**
+             * Repo
+             * @description The repo it is done in, or None.
+             */
+            repo?: string | null;
+            /** @description Where it is (a queued task is on a queue; the one an agent is on is in progress). */
+            state: components["schemas"]["State"];
+            /**
+             * Title
+             * @description What it is, in a line.
+             */
+            title: string;
+        };
+        /**
+         * QueueRequest
+         * @description Asking what an agent's queue is.
+         */
+        QueueRequest: {
+            /**
+             * Agent
+             * @description Whose queue it is: an agent's name, or `human:<name>`.
+             */
+            agent: string;
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+        };
+        /**
          * ReadPolicy
          * @description How lookups use several databases.
          * @enum {string}
@@ -4237,6 +4506,24 @@ export interface components {
             pick: components["schemas"]["Pick"];
             /** Regex */
             regex: string;
+        };
+        /**
+         * ReorderQueueRequest
+         * @description Setting an agent's queue to exactly these keys, in this order.
+         */
+        ReorderQueueRequest: {
+            /**
+             * Agent
+             * @description Whose queue it is: an agent's name, or `human:<name>`.
+             */
+            agent: string;
+            /**
+             * Keys
+             * @description Its tasks, in the order they will be worked: every one on the queue, each once.
+             */
+            keys: string[];
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
         };
         /** ReplayEventRequestBody */
         ReplayEventRequestBody: {
@@ -5272,6 +5559,8 @@ export interface components {
              */
             waiting: string[];
         };
+        /** @enum {string} */
+        State: "open" | "queued" | "in_progress" | "blocked" | "ready" | "merged" | "done" | "moved" | "cancelled";
         Step: components["schemas"]["SelectStep"] | components["schemas"]["FollowStep"] | components["schemas"]["RegexStep"] | components["schemas"]["JsonStep"] | components["schemas"]["WaitForStep"] | components["schemas"]["ClickStep"] | components["schemas"]["NetworkStep"];
         /**
          * StepTrace
@@ -5659,6 +5948,24 @@ export interface components {
             steps: components["schemas"]["Step"][];
         };
         /**
+         * TaskQueue
+         * @description One agent's queue: the tasks it is on, in the order it works them.
+         */
+        TaskQueue: {
+            /**
+             * Agent
+             * @description Whose queue it is: an agent's name, or `human:<name>`.
+             */
+            agent: string;
+            /** @description The project the tasks are of. */
+            project: components["schemas"]["Name"];
+            /**
+             * Tasks
+             * @description Its tasks, in the order they will be worked (empty: it has nothing to do).
+             */
+            tasks?: components["schemas"]["QueueEntry"][];
+        };
+        /**
          * Throttle
          * @description At most `max_runs` runs `per` this long (also written `10 per 1h`).
          */
@@ -5704,6 +6011,19 @@ export interface components {
              * @description What `--version` says, when it is installed and told us.
              */
             version?: string | null;
+        };
+        /**
+         * UnassignTaskRequest
+         * @description Taking a task out of its agent's queue, back to open.
+         */
+        UnassignTaskRequest: {
+            /**
+             * Key
+             * @description The task to take out (`27.3`).
+             */
+            key: string;
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
         };
         /**
          * UpcomingSchedule
@@ -9318,6 +9638,396 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PluginList"];
+                };
+            };
+        };
+    };
+    orch_assign: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignTaskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskQueue"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_get_queue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QueueRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskQueue"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_my_task: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MyTaskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyTaskResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_reorder_queue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReorderQueueRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskQueue"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_unassign: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnassignTaskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskQueue"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
                 };
             };
         };

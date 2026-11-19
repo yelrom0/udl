@@ -18,7 +18,14 @@ from enum import StrEnum
 from typing import Annotated, Final, Literal, get_args
 
 # Package Imports
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+)
 
 # Local Imports
 from udl.db.records import Name
@@ -40,6 +47,7 @@ __all__ = [
     "ROLE",
     "STATE",
     "STATE_MARK",
+    "AssignTaskRequest",
     "BranchName",
     "BranchPattern",
     "Feature",
@@ -51,16 +59,26 @@ __all__ = [
     "HostName",
     "Key",
     "MergePolicy",
+    "MyTaskNote",
+    "MyTaskRequest",
+    "MyTaskResponse",
+    "NoteKind",
+    "OwnerKind",
     "Principal",
     "Project",
     "Promotion",
+    "QueueEntry",
+    "QueueRequest",
+    "ReorderQueueRequest",
     "Repo",
     "Role",
     "Spec",
     "State",
     "Task",
     "TaskKind",
+    "TaskQueue",
     "Title",
+    "UnassignTaskRequest",
     "branch_pattern_problem",
     "render_branch",
     "slugify",
@@ -112,6 +130,26 @@ def _not_empty(text: str) -> str:
 
 Title = Annotated[str, StringConstraints(min_length=1), AfterValidator(_not_empty)]
 """A title: not empty, not only spaces."""
+
+
+class OwnerKind(StrEnum):
+    """What a note (or a link) is about: a feature, a task, a question or an action (26.4-26.5)."""
+
+    FEATURE = "feature"
+    TASK = "task"
+    QUESTION = "question"
+    ACTION = "action"
+
+
+class NoteKind(StrEnum):
+    """What kind of note it is: what was done, a decision, a finding, a review, or what udl itself
+    says (a state change, a task moved to another agent's queue)."""
+
+    PROGRESS = "progress"
+    DECISION = "decision"
+    FINDING = "finding"
+    REVIEW = "review"
+    SYSTEM = "system"
 
 
 class MergePolicy(StrEnum):
@@ -426,3 +464,117 @@ class Task(_Model):
     """The worktree it is done in, once the dispatcher has made one."""
     updated_by: str = ""
     """Who last moved it (a role, or an agent's name)."""
+
+
+# ---------------------------------------------------------------------------------------------
+# The queue's operations (27.3)
+# ---------------------------------------------------------------------------------------------
+
+
+class QueueEntry(_Model):
+    """A task on a queue, as the operations answer with it: what a board shows, and nothing that
+    is not needed to show it."""
+
+    key: Key
+    """Its key within the project (`27.3`)."""
+    feature: Key
+    """The feature it is part of (its key)."""
+    title: Title
+    """What it is, in a line."""
+    state: State
+    """Where it is (a queued task is on a queue; the one an agent is on is in progress)."""
+    position: int | None = None
+    """Its place in its queue (0 is the next one)."""
+    assignee: str | None = None
+    """An agent's name, or `human:<name>`; None while it is nobody's."""
+    repo: str | None = None
+    """The repo it is done in, or None."""
+
+
+class TaskQueue(_Model):
+    """One agent's queue: the tasks it is on, in the order it works them."""
+
+    project: Name
+    """The project the tasks are of."""
+    agent: str
+    """Whose queue it is: an agent's name, or `human:<name>`."""
+    tasks: list[QueueEntry] = Field(default_factory=list[QueueEntry])
+    """Its tasks, in the order they will be worked (empty: it has nothing to do)."""
+
+
+class MyTaskNote(_Model):
+    """A note on the task an agent is on, as `orch_my_task` answers with it (26.5)."""
+
+    note_kind: NoteKind
+    """What kind of note it is; `system` is what udl itself writes."""
+    text: str
+    """What it says, as markdown."""
+    author: str
+    """Who wrote it: an agent's name, `human:<name>`, or `udl`."""
+    at: AwareDatetime
+    """When it was written."""
+
+
+class MyTaskResponse(_Model):
+    """What an agent is on: the task, what it is for, and what it is told before it starts.
+
+    Everything an agent's session is given at its start (27.7): the task and its place, its
+    feature and the feature's spec, the task's own spec, its notes, and the project's rules.
+    Its links are 26.4's, and are added when they are built."""
+
+    task: QueueEntry | None = None
+    """The task it is in progress on, or the first on its queue; None when there is none."""
+    feature_spec: Spec = ""
+    """The spec of the feature the task is part of (empty when there is no task)."""
+    spec: Spec = ""
+    """The task's own spec."""
+    rules: Spec = ""
+    """The project's rules: the ground rules every agent on it is given."""
+    notes: list[MyTaskNote] = Field(default_factory=list[MyTaskNote])
+    """The task's notes, oldest first."""
+
+
+class AssignTaskRequest(_Model):
+    """Assigning a task to an agent, at the end of its queue or at a position in it."""
+
+    key: Key
+    """The task to assign (`27.3`)."""
+    agent: str
+    """Who takes it: an agent's name, or `human:<name>` for a person's task."""
+    position: int | None = None
+    """Where in the queue it goes (None: its end)."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class ReorderQueueRequest(_Model):
+    """Setting an agent's queue to exactly these keys, in this order."""
+
+    agent: str
+    """Whose queue it is: an agent's name, or `human:<name>`."""
+    keys: list[Key]
+    """Its tasks, in the order they will be worked: every one on the queue, each once."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class UnassignTaskRequest(_Model):
+    """Taking a task out of its agent's queue, back to open."""
+
+    key: Key
+    """The task to take out (`27.3`)."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class QueueRequest(_Model):
+    """Asking what an agent's queue is."""
+
+    agent: str
+    """Whose queue it is: an agent's name, or `human:<name>`."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class MyTaskRequest(QueueRequest):
+    """Asking what an agent is to work next."""

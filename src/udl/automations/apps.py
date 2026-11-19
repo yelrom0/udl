@@ -188,7 +188,7 @@ class AppSupervisor:
                 f"The {name} app's settings are {type(made).__qualname__}, not its "
                 f"settings_model's ({plugin.settings_model.__qualname__})"
             )
-        app: AnApp = plugin(made, clock=self._service.clock)
+        app: AnApp = plugin(made, clock=self._service.clock, records=AppRecords(self._service.db))
         self._apps[name] = app
         return app
 
