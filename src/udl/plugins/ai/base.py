@@ -1,7 +1,7 @@
 """
 -----------
 - base.py -
-------------
+-----------
 
 AIProvider: the interface every AI provider implements (the udl.ai kind), the models a chat is
 made of, and AIProviderConnection, a provider udl has been set up with.

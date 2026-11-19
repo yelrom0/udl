@@ -1,7 +1,7 @@
 """
 -------------
 - ai (kind) -
----------------
+-------------
 
 udl.ai: an AI provider that answers chats (a local model server, a hosted API), with its models,
 its key and what it used. The kind's interface is udl.plugins.ai.base.

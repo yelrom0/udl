@@ -1,7 +1,7 @@
 """
 ----------------
 - test_base.py -
---------------
+----------------
 
 The udl.ai plugin kind (udl.plugins.ai.base): an AI provider's options (its own model, with a
 secret in it kept as a reference and brought back on use), the chat models (a tool message names
