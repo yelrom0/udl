@@ -45,7 +45,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 # Local Imports
 from udl.clock import Clock
 from udl.errors import PluginFailed, ToolUnavailable
-from udl.hosts.shell import HostShell
+from udl.hosts.shell import HostShell, Interaction
 from udl.plugins.requirements import Requirement
 from udl.plugins.runners.base import (
     AgentEvent,
@@ -191,10 +191,43 @@ class ClaudeCode(AgentRunner[ClaudeCodeOptions]):
             status = await self.shell.run([*self.options.cli, "auth", "status"])
         except (ToolUnavailable, PluginFailed) as failure:
             return RunnerHealth(installed=False, detail=str(failure))
-        return _health(version.stdout.strip(), status.stdout)
+        # (Its doctor says what is wrong; a doctor that cannot run is not a broken harness.)
+        problems = await self._problems()
+        return _health(version.stdout.strip(), status.stdout, problems)
+
+    async def _problems(self) -> list[str]:
+        """What `claude doctor` says is wrong (an empty list when it says nothing, or cannot
+        run: a harness with no doctor is not a broken one)."""
+        try:
+            said = await self.shell.run([*self.options.cli, "doctor"])
+        except ToolUnavailable, PluginFailed:
+            return []
+        return [
+            line.strip()
+            for line in said.stdout.splitlines()
+            if line.strip() and any(word in line.lower() for word in _TROUBLE)
+        ]
 
     async def models(self) -> list[RunnerModel]:
         return [RunnerModel(id=model, name=model) for model in self.options.models]
+
+    def install(self, version: str | None = None) -> AsyncIterator[str]:
+        """Install or update it: `claude update`, or `claude install <version>` (its own two
+        argvs, and nothing else runs on the host)."""
+        argv = (
+            [*self.options.cli, "update"]
+            if version is None
+            else [*self.options.cli, "install", version]
+        )
+        return _lines(self.shell.stream(argv))
+
+    async def login(self, provider: str | None = None) -> Interaction:
+        """`claude auth login`, relayed: it prints a URL and takes the code back."""
+        return await self.shell.interact([*self.options.cli, "auth", "login"])
+
+    async def logout(self) -> None:
+        """`claude auth logout`."""
+        await self.shell.run([*self.options.cli, "auth", "logout"])
 
     async def start(self, spec: SessionSpec) -> SessionRef:
         session = SessionRef(
@@ -442,18 +475,37 @@ def _mcp_config(spec: SessionSpec) -> str:
     return json.dumps({"mcpServers": {"udl": server}}, indent=2)
 
 
-def _health(version: str, status: str) -> RunnerHealth:
-    """What `--version` and `auth status` say about the harness."""
+_TROUBLE: tuple[str, ...] = ("error", "missing", "not found", "problem", "failed")
+"""What a doctor's line says when it is worth showing as a problem."""
+
+
+def _health(version: str, status: str, problems: list[str]) -> RunnerHealth:
+    """What `--version`, `auth status` and `doctor` say about the harness."""
     if not version:
-        return RunnerHealth(installed=False, detail="claude says no version.")
+        return RunnerHealth(installed=False, detail="claude says no version.", problems=problems)
     try:
         said = _Status.model_validate_json(status)
     except ValidationError:
-        return RunnerHealth(installed=True, version=version, detail=status.strip() or None)
+        return RunnerHealth(
+            installed=True,
+            version=version,
+            detail=status.strip() or None,
+            guards=True,  # (its deny list is a settings file per session: 25.8's)
+            problems=problems,
+        )
     return RunnerHealth(
         installed=True,
         signed_in=said.logged_in,
         version=version,
         account=said.email,
+        plan=said.subscription_type,
         detail=said.subscription_type,
+        guards=True,
+        problems=problems,
     )
+
+
+async def _lines(chunks: AsyncIterator[bytes]) -> AsyncIterator[str]:
+    """A stream's bytes as the text they are (an install's output, as it comes)."""
+    async for chunk in chunks:
+        yield chunk.decode(errors="replace")

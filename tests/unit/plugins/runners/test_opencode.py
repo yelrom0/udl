@@ -138,6 +138,88 @@ async def test_its_health_is_the_service_s_version(service: FakeOpenCode, shell:
     assert health.detail == "pid 1234"
 
 
+async def test_health_names_the_account_and_whether_the_guards_are_in_place(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    shell.auths = '[{"provider": "openrouter", "account": "me@example.com"}]'
+
+    health = await _runner(service, shell).health()
+
+    assert health.account == "me@example.com"
+    assert health.guards is False  # (no policies file on the host yet)
+
+
+async def test_the_guards_are_in_place_once_the_policies_are(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    shell.files["$HOME/.config/opencode/opencode.json"] = json.dumps(
+        {
+            "policies": [
+                {"action": "tool.use", "resource": "shell:git push *", "effect": "deny"},
+                {"action": "tool.use", "resource": "shell:gh pr merge *", "effect": "deny"},
+            ]
+        }
+    )
+
+    health = await _runner(service, shell).health()
+
+    assert health.guards is True
+
+
+async def test_a_policies_file_without_the_denials_is_no_guard(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    shell.files["$HOME/.config/opencode/opencode.json"] = json.dumps({"policies": []})
+
+    health = await _runner(service, shell).health()
+
+    assert health.guards is False
+
+
+async def test_its_install_upgrades_and_restarts_the_service(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    shell.streams.append((["opencode", "upgrade", "2.1.5"], "upgraded to 2.1.5\n"))
+
+    said = [chunk async for chunk in _runner(service, shell).install("2.1.5")]
+
+    assert "upgraded to 2.1.5" in "".join(said)
+    assert ["opencode", "upgrade", "2.1.5"] in shell.runs
+    assert ["opencode", "service", "restart"] in shell.runs
+
+
+async def test_a_setup_writes_the_policies_and_an_agent_file_per_role(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    written = await _runner(service, shell).setup(["implementer"], {"OPENROUTER_API_KEY": "sk-1"})
+
+    assert written == [
+        "$HOME/.config/opencode/opencode.json",
+        "$HOME/.config/opencode/agents/udl-implementer.md",
+    ]
+    assert "shell:git push *" in shell.files["$HOME/.config/opencode/opencode.json"]
+    assert "udl's implementer agent" in shell.files["udl-implementer"]
+    # (The key reaches the command through its environment, never an argv.)
+    assert all("sk-1" not in " ".join(argv) for argv in shell.runs)
+    assert ["sh", "-c", 'opencode service set env OPENROUTER_API_KEY "$UDL_PROVIDER_KEY"'] in (
+        shell.runs
+    )
+
+
+async def test_its_login_relays_the_provider(service: FakeOpenCode, shell: FakeShell) -> None:
+    await _runner(service, shell).login("openrouter")
+
+    assert shell.started == [["opencode", "auth", "login", "openrouter"]]
+
+
+async def test_its_sign_out_names_every_account(service: FakeOpenCode, shell: FakeShell) -> None:
+    shell.auths = json.dumps([{"provider": "openrouter", "account": "me@example.com"}])
+
+    await _runner(service, shell).logout()
+
+    assert ["opencode", "auth", "logout", "me@example.com"] in shell.runs
+
+
 async def test_health_says_a_service_that_is_not_running(service: FakeOpenCode) -> None:
     health = await _runner(service, FakeShell(status="stopped")).health()
 

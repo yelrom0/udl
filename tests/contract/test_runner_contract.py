@@ -17,8 +17,9 @@ sign in itself says that, instead of pretending it did.
 # System Imports
 import asyncio
 import sys
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from typing import Final
 from pathlib import Path
 
 # Package Imports
@@ -35,6 +36,7 @@ from udl.hosts.shell import Host, LocalShell
 from udl.plugins.requirements import Requirement
 from udl.plugins.runners.base import (
     AgentEvent,
+    AgentRunner,
     AnAgentRunner,
     RunnerHealth,
     RunnerLimited,
@@ -52,6 +54,11 @@ from udl.plugins.runners.command import (
     CommandSessions,
 )
 from udl.plugins.runners.opencode import OpenCode, OpenCodeOptions, OpenCodeSessions
+
+_BASE_INSTALL: Final = vars(AgentRunner)["install"]
+"""The install every runner starts with (a runner that manages itself replaces it)."""
+_BASE_LOGIN: Final = vars(AgentRunner)["login"]
+"""The sign-in every runner starts with (a runner that signs itself in replaces it)."""
 
 type Build = Callable[[RecordingShell, Sessions], AnAgentRunner]
 """A runner of a plugin class, made with a shell and a session store."""
@@ -319,9 +326,20 @@ async def test_a_stopped_session_says_so_rather_than_hanging(
 
 @pytest.mark.asyncio
 async def test_a_runner_that_cannot_install_or_sign_in_says_so(runner: AnAgentRunner) -> None:
-    with pytest.raises(PluginError, match="cannot be installed"):
-        async for _ in runner.install(None):
-            pass
+    """A runner either manages itself — its install and sign-in are its own, and 25.11's tests
+    run them — or it says it cannot, rather than pretending it did."""
+    if type(runner).install is _BASE_INSTALL:
+        with pytest.raises(PluginError, match="cannot be installed"):
+            async for _ in runner.install(None):
+                pass
+    else:
+        # (Its own argv, built and run only when it is iterated: nothing runs here.)
+        assert isinstance(runner.install(None), AsyncIterator)
 
-    with pytest.raises(PluginError, match="cannot sign in"):
-        await runner.login()
+    if type(runner).login is _BASE_LOGIN:
+        with pytest.raises(PluginError, match="cannot sign in"):
+            await runner.login()
+    else:
+        # (Its own sign-in starts a program, so the contract only says it has one: the manage
+        # tests drive it.)
+        assert type(runner).login is not _BASE_LOGIN

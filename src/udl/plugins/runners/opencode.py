@@ -35,7 +35,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping, MutableMapping
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping, MutableMapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -45,12 +45,12 @@ from urllib.parse import urlparse
 
 # Package Imports
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 # Local Imports
 from udl.clock import Clock
 from udl.errors import NotAllowed, PluginFailed, ToolUnavailable
-from udl.hosts.shell import HostShell
+from udl.hosts.shell import HostShell, Interaction
 from udl.plugins.requirements import Requirement
 from udl.plugins.runners.base import (
     AgentEvent,
@@ -99,6 +99,19 @@ _WRITE_AGENT: Final = (
     'mkdir -p "$HOME/.config/opencode/agents" && cat > "$HOME/.config/opencode/agents/{name}.md"'
 )
 """Write an agent file on the host, its text on the command's stdin (in no argv)."""
+_POLICIES: Final = "$HOME/.config/opencode/opencode.json"
+"""Where udl's deny policies go on a host (the service's own global config)."""
+_AGENTS: Final = "$HOME/.config/opencode/agents"
+"""Where udl's agent files go on a host."""
+_DENIED: Final = ("shell:git push *", "shell:gh pr merge *")
+"""What a session may never do, whatever its own rules say (25.9's hard stops)."""
+_BRIEF: Final = (
+    "You are udl's {role} agent. You work one task at a time, test first, and you never merge:"
+    " the PR is Claude's to review and the user's to merge."
+)
+"""What each agent file says (the session's own brief is added to it)."""
+_KEY_VAR: Final = "UDL_PROVIDER_KEY"
+"""The variable a provider's key is passed in (never an argv)."""
 _REFUSAL: Final = "Not allowed here: ask with orch_ask."
 """What a refused permission says (so the agent learns the way to ask, not to retry)."""
 _PERMISSIONS: timedelta = timedelta(milliseconds=500)
@@ -148,6 +161,41 @@ class _Models(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     data: list[_ModelInfo] = Field(default_factory=lambda: list[_ModelInfo]())
+
+
+class _Auth(BaseModel):
+    """One account `opencode auth list` names."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    provider: str = ""
+    account: str = ""
+
+
+class _Auths(BaseModel):
+    """`opencode auth list --format json`."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    items: list[_Auth] = Field(default_factory=lambda: list[_Auth]())
+
+
+class _Policy(BaseModel):
+    """One entry of the service's config: what a tool may do, and to what."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    action: str = ""
+    resource: str = ""
+    effect: str = ""
+
+
+class _Config(BaseModel):
+    """The service's own config on a host (`opencode.json`), as far as udl reads it."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    policies: list[_Policy] = Field(default_factory=lambda: list[_Policy]())
 
 
 class _When(BaseModel):
@@ -294,17 +342,126 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
         except (ToolUnavailable, PluginFailed) as failure:
             return RunnerHealth(installed=False, detail=str(failure))
         version = said.stdout.strip() or None
+        accounts = await self._accounts()
+        guards = await self.guards()
         try:
             async with self._api() as api:
                 info = await self._get(api, "/api/info", _Info)
         except (ToolUnavailable, PluginFailed) as failure:
-            return RunnerHealth(installed=True, version=version, detail=str(failure))
+            return RunnerHealth(
+                installed=True,
+                version=version,
+                detail=str(failure),
+                account=accounts[0] if accounts else None,
+                signed_in=bool(accounts),
+                guards=guards,
+            )
         return RunnerHealth(
             installed=True,
             signed_in=True,  # (the API takes the service's own password, never an account)
             version=info.version or version,
+            account=accounts[0] if accounts else None,
+            plan=None,  # (a provider's plan is not something the service says)
+            guards=guards,
             detail=f"pid {info.pid}",
         )
+
+    async def _accounts(self) -> list[str]:
+        """The accounts its providers are signed in as (`opencode auth list`), in order: an
+        empty list when none is, and when the CLI cannot say."""
+        try:
+            said = await self.shell.run([*self.options.cli, "auth", "list", "--format", "json"])
+        except ToolUnavailable, PluginFailed:
+            return []
+        try:
+            listed = _Auths.model_validate_json(said.stdout)
+        except ValidationError:
+            try:  # (the CLI prints a bare list in some versions)
+                found = TypeAdapter(list[_Auth]).validate_json(said.stdout)
+            except ValidationError:
+                return []
+            return [item.account for item in found if item.account]
+        return [item.account for item in listed.items if item.account]
+
+    async def guards(self) -> bool:
+        """Whether udl's deny policies are in the service's config on the host (25.9's rules,
+        written there by setup)."""
+        try:
+            said = await self.shell.run(["sh", "-c", f"cat {_POLICIES} 2>/dev/null"])
+        except ToolUnavailable, PluginFailed:
+            return False
+        try:
+            config = _Config.model_validate_json(said.stdout or "{}")
+        except ValidationError:
+            return False
+        resources = {policy.resource for policy in config.policies if policy.effect == "deny"}
+        return all(resource in resources for resource in _DENIED)
+
+    def install(self, version: str | None = None) -> AsyncIterator[str]:
+        """Install or update it: `opencode upgrade [<version>]`, then restart its service (the
+        caller refuses while a session is running)."""
+        argv = [*self.options.cli, "upgrade", *([version] if version is not None else [])]
+        return self._install(argv)
+
+    async def _install(self, argv: list[str]) -> AsyncIterator[str]:
+        """The upgrade's output, then its service restarted."""
+        async for chunk in self.shell.stream(argv):
+            yield chunk.decode(errors="replace")
+        await self.shell.run([*self.options.cli, "service", "restart"])
+
+    async def setup(
+        self,
+        roles: Sequence[str] = (),
+        env: Mapping[str, str] | None = None,
+    ) -> list[str]:
+        """Write the deny policies (25.9's) and one agent file per role, then set the service's
+        environment (`env`: a provider's key by variable name, its value never in an argv)."""
+        written: list[str] = []
+        policies = json.dumps(
+            {
+                "$schema": "https://opencode.ai/config.json",
+                "policies": [
+                    {"action": "tool.use", "resource": resource, "effect": "deny"}
+                    for resource in _DENIED
+                ],
+            },
+            indent=2,
+        )
+        await self._write(_POLICIES, policies)
+        written.append(_POLICIES)
+        for role in roles:
+            name = f"{_AGENT}-{role}"
+            await self._write(
+                f"{_AGENTS}/{name}.md",
+                f"---\nmode: primary\n---\n\n{_BRIEF.format(role=role)}\n",
+            )
+            written.append(f"{_AGENTS}/{name}.md")
+        for name, value in (env or {}).items():
+            # (The value reaches the command through its environment, never its argv.)
+            await self.shell.run(
+                ["sh", "-c", f'{self.options.cli[0]} service set env {name} "${_KEY_VAR}"'],
+                secret_env={_KEY_VAR: value},
+            )
+        return written
+
+    async def _write(self, path: str, text: str) -> None:
+        """Write a file on the host through its shell (0600: a policy and a brief are udl's)."""
+        written = await self.shell.run(
+            ["sh", "-c", f'umask 077 && mkdir -p "$(dirname {path})" && cat > {path}'],
+            stdin=text.encode(),
+        )
+        if written.returncode != 0:
+            raise PluginFailed(f"{path} cannot be written: {written.stderr.strip()[:200]}")
+
+    async def login(self, provider: str | None = None) -> Interaction:
+        """`opencode auth login [<provider>]`, relayed: it prints a URL and takes the code back."""
+        argv = [*self.options.cli, "auth", "login", *([provider] if provider else [])]
+        return await self.shell.interact(argv)
+
+    async def logout(self) -> None:
+        """`opencode auth logout`, for every account it lists."""
+        for account in await self._accounts():
+            await self.shell.run([*self.options.cli, "auth", "logout", account])
 
     async def models(self) -> list[RunnerModel]:
         try:

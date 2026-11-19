@@ -23,7 +23,7 @@ tests/contract/test_runner_contract.py is the behaviour every runner must have.
 
 # System Imports
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping, Sequence
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, ClassVar, Literal
@@ -194,18 +194,29 @@ class RunnerFailed(AgentEvent):
 
 
 class RunnerHealth(_Model):
-    """Whether a harness is there, and signed in: what `udl runners` says about it (25.11)."""
+    """Whether a harness is there, and signed in: what `udl orch runners` says about it (25.11)."""
 
     installed: bool
     """Whether its program is on the host."""
-    signed_in: bool = False
-    """Whether its account is signed in."""
     version: str | None = None
     """Its version, when it says."""
+    latest: str | None = None
+    """The newest version there is, when udl can tell."""
+    signed_in: bool = False
+    """Whether its account is signed in."""
     account: str | None = None
     """The account it is signed in as (shown, never logged)."""
+    plan: str | None = None
+    """The plan its account is on, when the harness says."""
+    limited_until: AwareDatetime | None = None
+    """When its quota is back, if the dispatcher last saw it out of quota (27.7)."""
+    guards: bool = False
+    """Whether the deny policies are in place: always true for a runner that enforces them per
+    session (25.9's `deny`), else whether 25.11's setup wrote them on the host."""
+    problems: list[str] = Field(default_factory=lambda: list[str]())
+    """What the harness's own doctor says is wrong, when it says anything."""
     detail: str | None = None
-    """Anything else worth showing (a limit, a missing sign-in's hint)."""
+    """Anything else worth showing (a missing sign-in's hint)."""
 
 
 class RunnerModel(_Model):
@@ -263,10 +274,25 @@ class AgentRunner[O: RunnerOptions](ABC):
         install itself says so, rather than pretending it did."""
         return self._refuse(f"{self.name} cannot be installed by udl")
 
-    async def login(self) -> Interaction:
+    async def setup(
+        self,
+        roles: Sequence[str] = (),
+        env: Mapping[str, str] | None = None,
+    ) -> list[str]:
+        """Write its deny policies and one agent file per role on the host, set the service's
+        environment (`env`: a provider's key by variable name), and give the files it wrote
+        (25.11). A runner that enforces its deny list per session (as Claude Code's settings file
+        does) has nothing to write."""
+        return []
+
+    async def login(self, provider: str | None = None) -> Interaction:
         """Its own sign-in, relayed to the person (25.11). A runner that cannot sign in itself
-        says so."""
+        says so, with the command to run on the host instead."""
         raise PluginError(f"{self.name} cannot sign in by itself")
+
+    async def logout(self) -> None:
+        """Sign its account out (25.11). A runner that cannot sign out itself says so."""
+        raise PluginError(f"{self.name} cannot sign out by itself")
 
     @abstractmethod
     async def start(self, spec: SessionSpec) -> SessionRef:

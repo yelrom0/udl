@@ -1,0 +1,457 @@
+"""
+-------------------
+- test_manage.py -
+-------------------
+
+Managing harnesses on every host (25.11): what each runner is and whether it is signed in, its
+install (its own fixed argv, a version checked first, never while a session runs), its setup (the
+deny policies and the agent files), a sign-in relayed end to end and ended after ten minutes, and a
+sign-out that names what it signs out.
+
+Every test drives `Harnesses` on a real service whose hosts answer through a `ScriptedShell`, so
+nothing here runs a harness: the tests say what it prints.
+"""
+
+# System Imports
+import asyncio
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+# Package Imports
+import pytest
+
+# Local Imports
+from support.clock import FakeClock
+from support.engine import settings
+from support.harnesses import ScriptedShell
+from udl.core.operations import Operation, OperationRegistry
+from udl.core.service import UDLService
+from udl.errors import DoesNotExist, NotAllowed
+from udl.hosts.shell import Host, HostTransport
+from udl.plugins.apps.orch.plugin import Orch
+from udl.plugins.registry import APPS, PluginRegistry
+from udl.plugins.runners.manage import (
+    Harnesses,
+    InstallRunnerRequest,
+    ListRunnersRequest,
+    LoginReplyRequest,
+    LoginStatusRequest,
+    LogoutRunnerRequest,
+    SetupRunnerRequest,
+    StartLoginRequest,
+)
+
+HOSTS: tuple[str, ...] = ("local", "thevault")
+"""The hosts every test's service has."""
+
+CLAUDE_STATUS: str = '{"loggedIn": true, "email": "me@example.com", "subscriptionType": "max"}'
+"""What `claude auth status` prints."""
+
+OPENCODE_AUTHS: str = '[{"provider": "openrouter", "account": "me@example.com"}]'
+"""What `opencode auth list --format json` prints."""
+
+LIMIT: datetime = datetime(2026, 11, 20, 12, 0, tzinfo=UTC)
+"""When a quota is back, in a test."""
+
+
+class Hosts:
+    """A started service with two hosts, and the shell each answers through."""
+
+    def __init__(self, service: UDLService, shells: dict[str, ScriptedShell]) -> None:
+        self.service = service
+        self.shells = shells
+
+    @property
+    def harnesses(self) -> Harnesses:
+        return Harnesses(self.service)
+
+    def shell(self, host: str) -> ScriptedShell:
+        return self.shells[host]
+
+
+def host(name: str) -> Host:
+    """One of the two hosts every test has."""
+    if name == "local":
+        return Host.local("/w")
+    return Host(name=name, transport=HostTransport.SSH, ssh=name, work_dir="/w")
+
+
+@pytest.fixture
+async def hosts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Hosts]:
+    """A started service with `local` and `thevault`, each answering through a script."""
+    shells = {name: ScriptedShell(host(name)) for name in HOSTS}
+    def shell_for(found: Host) -> ScriptedShell:
+        return shells[found.name]
+
+    monkeypatch.setattr("udl.hosts.manager.shell_for", shell_for)
+    service = UDLService(
+        settings(tmp_path), registry=PluginRegistry.discover(builtin_only=True), clock=FakeClock()
+    )
+    async with service:
+        for name in HOSTS:
+            await service.db.upsert_record(host(name))
+        yield Hosts(service, shells)
+
+
+def script_claude(shell: ScriptedShell, *, version: str = "2.0.1 (Claude Code)") -> None:
+    """A host whose `claude` answers as a signed-in one."""
+    shell.answer(["claude", "--version"], version)
+    shell.answer(["claude", "auth", "status"], CLAUDE_STATUS)
+    shell.answer(["claude", "doctor"], "All good\n")
+
+
+def script_opencode(shell: ScriptedShell, *, version: str = "2.1.4") -> None:
+    """A host whose `opencode` is installed and signed in, with the deny policies in place."""
+    shell.answer(["opencode", "--version"], version)
+    shell.answer(["opencode", "auth", "list", "--format", "json"], OPENCODE_AUTHS)
+
+
+# ---------------------------------------------------------------------------------------------
+# What each harness is
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_every_host_s_harnesses_are_listed(hosts: Hosts) -> None:
+    for name in HOSTS:
+        script_claude(hosts.shell(name))
+
+    listed = await hosts.harnesses.all(ListRunnersRequest())
+
+    claude = [
+        item for item in listed.items if item.runner == "claude-code" and item.host == "local"
+    ]
+    assert len(claude) == 1
+    health = claude[0].health
+    assert health.installed is True
+    assert health.version == "2.0.1 (Claude Code)"
+    assert health.signed_in is True
+    assert health.account == "me@example.com"
+    assert health.plan == "max"
+    assert health.guards is True  # (its deny list is a settings file per session)
+    assert health.problems == []
+    assert listed.problems  # (opencode was not scripted, so it cannot be asked)
+
+
+async def test_a_harness_that_is_not_there_says_so(hosts: Hosts) -> None:
+    listed = await hosts.harnesses.all(ListRunnersRequest(host="local"))
+
+    assert [item.health.installed for item in listed.items if item.runner == "claude-code"] == [
+        False
+    ]
+
+
+async def test_only_one_host_s_harnesses_are_listed(hosts: Hosts) -> None:
+    for name in HOSTS:
+        script_claude(hosts.shell(name))
+
+    listed = await hosts.harnesses.all(ListRunnersRequest(host="thevault"))
+
+    assert {item.host for item in listed.items} == {"thevault"}
+
+
+async def test_an_unknown_host_is_refused(hosts: Hosts) -> None:
+    with pytest.raises(DoesNotExist):
+        await hosts.harnesses.all(ListRunnersRequest(host="nowhere"))
+
+
+async def test_a_harness_that_cannot_be_asked_is_a_problem(hosts: Hosts) -> None:
+    """opencode is there but its service is not: it is listed as a problem, not a failure."""
+    shell = hosts.shell("local")
+    shell.answer(["opencode", "--version"], "2.1.4")
+
+    listed = await hosts.harnesses.all(ListRunnersRequest(host="local"))
+
+    assert any("local/opencode" in problem for problem in listed.problems)
+
+
+async def test_a_quota_is_what_the_dispatcher_saw(hosts: Hosts) -> None:
+    script_claude(hosts.shell("local"))
+    harnesses = hosts.harnesses
+    harnesses.limited("local", "claude-code", LIMIT)
+
+    listed = await harnesses.all(ListRunnersRequest(host="local"))
+
+    [claude] = [item for item in listed.items if item.runner == "claude-code"]
+    assert claude.health.limited_until == LIMIT
+
+
+# ---------------------------------------------------------------------------------------------
+# Installing
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_an_install_runs_the_runner_s_own_argv(hosts: Hosts) -> None:
+    shell = hosts.shell("local")
+    script_claude(shell)
+    shell.answer(["claude", "install", "2.0.2"], "installed 2.0.2\n")
+    shell.answer(["claude", "--version"], "2.0.2 (Claude Code)")
+
+    installed = await hosts.harnesses.install(
+        InstallRunnerRequest(host="local", runner="claude-code", version="2.0.2")
+    )
+
+    assert ["claude", "install", "2.0.2"] in shell.runs
+    assert installed.version == "2.0.2 (Claude Code)"
+    assert "installed 2.0.2" in installed.output
+
+
+async def test_an_update_without_a_version_updates(hosts: Hosts) -> None:
+    shell = hosts.shell("local")
+    script_claude(shell)
+
+    await hosts.harnesses.install(InstallRunnerRequest(host="local", runner="claude-code"))
+
+    assert ["claude", "update"] in shell.runs
+
+
+async def test_opencode_s_install_restarts_its_service(hosts: Hosts) -> None:
+    shell = hosts.shell("local")
+    script_opencode(shell)
+
+    await hosts.harnesses.install(
+        InstallRunnerRequest(host="local", runner="opencode", version="2.1.5")
+    )
+
+    assert ["opencode", "upgrade", "2.1.5"] in shell.runs
+    assert ["opencode", "service", "restart"] in shell.runs
+
+
+async def test_a_bad_version_is_refused_before_anything_runs(hosts: Hosts) -> None:
+    shell = hosts.shell("local")
+    script_claude(shell)
+
+    with pytest.raises(NotAllowed):
+        await hosts.harnesses.install(
+            InstallRunnerRequest(host="local", runner="claude-code", version="1.2; rm -rf /")
+        )
+
+    assert shell.runs == []
+
+
+async def test_an_update_is_refused_while_a_session_runs(hosts: Hosts) -> None:
+    shell = hosts.shell("local")
+    script_claude(shell)
+    harnesses = hosts.harnesses
+    harnesses.started("local", "claude-code", "s-1")
+
+    with pytest.raises(NotAllowed):
+        await harnesses.install(InstallRunnerRequest(host="local", runner="claude-code"))
+
+    assert harnesses.running("local", "claude-code") == 1
+    harnesses.ended("local", "claude-code", "s-1")
+    assert harnesses.running("local", "claude-code") == 0
+    await harnesses.install(InstallRunnerRequest(host="local", runner="claude-code"))
+    assert ["claude", "update"] in shell.runs
+
+
+# ---------------------------------------------------------------------------------------------
+# Setting up
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_setup_writes_the_policies_and_the_agent_files(hosts: Hosts) -> None:
+    shell = hosts.shell("local")
+    script_opencode(shell)
+
+    setup = await hosts.harnesses.setup(
+        SetupRunnerRequest(host="local", runner="opencode"), roles=["implementer", "reviewer"]
+    )
+
+    policies = shell.files["$HOME/.config/opencode/opencode.json"]
+    assert "shell:git push *" in policies
+    assert "shell:gh pr merge *" in policies
+    assert set(setup.files) == {
+        "$HOME/.config/opencode/opencode.json",
+        "$HOME/.config/opencode/agents/udl-implementer.md",
+        "$HOME/.config/opencode/agents/udl-reviewer.md",
+    }
+    assert (
+        "udl's implementer agent" in shell.files["$HOME/.config/opencode/agents/udl-implementer.md"]
+    )
+
+
+async def test_a_setup_keeps_a_provider_key_out_of_every_argv(hosts: Hosts) -> None:
+    shell = hosts.shell("local")
+    script_opencode(shell)
+
+    await hosts.harnesses.setup(
+        SetupRunnerRequest(host="local", runner="opencode"), env={"OPENROUTER_API_KEY": "sk-secret"}
+    )
+
+    assert all("sk-secret" not in " ".join(argv) for argv in shell.runs)
+    assert {"UDL_PROVIDER_KEY": "sk-secret"} in shell.secret_envs
+
+
+async def test_a_harness_that_enforces_its_own_guards_needs_no_files(hosts: Hosts) -> None:
+    shell = hosts.shell("local")
+    script_claude(shell)
+
+    setup = await hosts.harnesses.setup(
+        SetupRunnerRequest(host="local", runner="claude-code"), roles=["implementer"]
+    )
+
+    assert setup.files == []
+    assert setup.guards is True
+
+
+async def test_a_setup_says_whether_the_guards_are_in_place(hosts: Hosts) -> None:
+    shell = hosts.shell("local")
+    script_opencode(shell)
+
+    before = await hosts.harnesses.setup(SetupRunnerRequest(host="local", runner="opencode"))
+
+    assert before.guards is True  # (the file it wrote is what `guards()` reads)
+
+
+# ---------------------------------------------------------------------------------------------
+# Signing in
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_sign_in_is_relayed_end_to_end(hosts: Hosts) -> None:
+    shell = hosts.shell("local")
+    script_claude(shell)
+    shell.says = ("Open https://claude.ai/oauth?code=abc and paste the code\n",)
+
+    harnesses = hosts.harnesses  # (one manager: an attempt outlives the call that started it)
+    started = await harnesses.login(StartLoginRequest(host="local", runner="claude-code"))
+
+    assert shell.starts == [["claude", "auth", "login"]]
+    assert "https://claude.ai/oauth" in started.prompt
+    assert started.expects == "code"
+    assert started.done is False
+    answered = await harnesses.reply(LoginReplyRequest(id=started.id, text="abc-123"))
+    assert shell.interactions[0].written == ["abc-123"]
+    assert answered.done is False  # (it is still waiting for the harness to end)
+    await asyncio.sleep(0)  # (the watcher ends it: the script's exit code is 0)
+    await asyncio.sleep(0)
+    status = await harnesses.status(LoginStatusRequest(id=started.id))
+    assert status.attempt.done is True
+    assert status.attempt.ok is True
+
+
+async def test_a_sign_in_that_is_not_driven_says_the_command(hosts: Hosts) -> None:
+    started = await hosts.harnesses.login(StartLoginRequest(host="local", runner="command"))
+
+    assert started.done is True
+    assert started.ok is False
+    assert started.command is not None
+    assert "command" in started.command
+
+
+async def test_one_sign_in_runs_per_host_and_runner(hosts: Hosts) -> None:
+    shell = hosts.shell("local")
+    script_claude(shell)
+    shell.says = ("Open https://claude.ai/oauth and paste the code\n",)
+    harnesses = hosts.harnesses
+    await harnesses.login(StartLoginRequest(host="local", runner="claude-code"))
+
+    with pytest.raises(NotAllowed):
+        await harnesses.login(StartLoginRequest(host="local", runner="claude-code"))
+
+    await harnesses.stop()
+
+
+async def test_a_sign_in_that_times_out_is_ended(hosts: Hosts) -> None:
+    shell = hosts.shell("local")
+    script_claude(shell)
+    shell.says = ("Open https://claude.ai/oauth and paste the code\n",)
+    harnesses = hosts.harnesses
+    started = await harnesses.login(StartLoginRequest(host="local", runner="claude-code"))
+    clock = hosts.service.clock
+    assert isinstance(clock, FakeClock)
+
+    await clock.advance(timedelta(minutes=11))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert shell.interactions[0].closed is True
+    status = await harnesses.status(LoginStatusRequest(id=started.id))
+    assert status.attempt.done is True
+    assert status.attempt.ok is False
+
+
+async def test_an_unknown_sign_in_is_refused(hosts: Hosts) -> None:
+    with pytest.raises(DoesNotExist):
+        await hosts.harnesses.status(LoginStatusRequest(id="nope"))
+
+
+# ---------------------------------------------------------------------------------------------
+# Signing out
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_sign_out_needs_the_host_and_runner(hosts: Hosts) -> None:
+    shell = hosts.shell("local")
+    script_claude(shell)
+    harnesses = hosts.harnesses
+
+    with pytest.raises(NotAllowed):
+        await harnesses.logout(
+            LogoutRunnerRequest(host="local", runner="claude-code", confirm="local")
+        )
+    assert ["claude", "auth", "logout"] not in shell.runs
+
+    signed_out = await harnesses.logout(
+        LogoutRunnerRequest(host="local", runner="claude-code", confirm="local/claude-code")
+    )
+    assert signed_out.signed_out is True
+    assert ["claude", "auth", "logout"] in shell.runs
+
+
+async def test_opencode_s_sign_out_names_every_account(hosts: Hosts) -> None:
+    shell = hosts.shell("local")
+    script_opencode(shell)
+
+    await hosts.harnesses.logout(
+        LogoutRunnerRequest(host="local", runner="opencode", confirm="local/opencode")
+    )
+
+    assert ["opencode", "auth", "logout", "me@example.com"] in shell.runs
+
+
+# ---------------------------------------------------------------------------------------------
+# The operations orch offers
+# ---------------------------------------------------------------------------------------------
+
+
+def orch_operations() -> dict[str, Operation]:
+    """The operations orch adds, as the registry offers them (by their full names)."""
+    plugins = PluginRegistry()
+    plugins.register(APPS, Orch)
+    found = OperationRegistry.discover(plugins)
+    return {operation.name: operation for operation in found.in_namespace("orch")}
+
+
+def test_orch_offers_the_harness_operations() -> None:
+    offered = list(orch_operations())
+    assert offered[-7:] == [
+        "orch_list_runners",
+        "orch_runner_install",
+        "orch_runner_setup",
+        "orch_runner_login",
+        "orch_runner_login_reply",
+        "orch_runner_login_status",
+        "orch_runner_logout",
+    ]  # (the queue's and the token's come before them)
+
+
+def test_a_harness_s_operations_are_udl_orch_runners_commands() -> None:
+    paths = {
+        name: operation.cli.path if operation.cli is not None else None
+        for name, operation in orch_operations().items()
+    }
+
+    assert paths["orch_list_runners"] == ("orch", "runners")
+    assert paths["orch_runner_install"] == ("orch", "runners", "install")
+    assert paths["orch_runner_logout"] == ("orch", "runners", "logout")
+
+
+def test_a_sign_in_is_never_an_mcp_tool() -> None:
+    hints = {name: operation.hints for name, operation in orch_operations().items()}
+
+    assert hints["orch_runner_login"].mcp is False
+    assert hints["orch_runner_login_reply"].mcp is False
+    assert hints["orch_runner_logout"].mcp is True
+    assert hints["orch_runner_logout"].destructive is True
