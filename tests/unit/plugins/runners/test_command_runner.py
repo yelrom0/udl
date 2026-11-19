@@ -36,6 +36,7 @@ from udl.plugins.runners.command import (
     CommandOutput,
     CommandRunner,
     CommandRunnerOptions,
+    CommandSessions,
 )
 
 ECHO = "import sys; print(sys.stdin.read().upper())"
@@ -52,7 +53,7 @@ def _runner(
     cwd: str,
     *argv: str,
     allowed: bool = True,
-    sessions: dict[str, SessionSpec] | None = None,
+    sessions: CommandSessions | dict[str, SessionSpec] | None = None,
     **options: object,
 ) -> CommandRunner:
     program = sys.executable
@@ -143,6 +144,20 @@ async def test_jsonl_output_is_read_as_one_object_a_line(cwd: str) -> None:
     assert events[1] == TextDelta(text="not json")  # (a line it cannot read is said, not fatal)
 
 
+async def test_a_jsonl_turns_answer_is_what_its_last_line_said(cwd: str) -> None:
+    runner = _runner(
+        cwd,
+        "import json; print(json.dumps({'type': 'result', 'result': 'the answer'}))",
+        output=CommandOutput.JSONL,
+    )
+    session = await runner.start(_session(cwd))
+
+    events = await _turn(runner, session, "")
+
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].text == "the answer"  # (not the raw JSON line)
+
+
 async def test_a_limit_line_says_when_it_lifts_and_ends_the_turn_as_limited(cwd: str) -> None:
     runner = _runner(
         cwd,
@@ -160,6 +175,37 @@ async def test_a_limit_line_says_when_it_lifts_and_ends_the_turn_as_limited(cwd:
     assert isinstance(events[-1], TurnEnded)
     assert events[-1].reason is TurnReason.LIMITED
     assert sum(isinstance(event, TurnEnded) for event in events) == 1
+
+
+async def test_a_resume_argv_whose_program_is_not_allowed_is_refused(cwd: str) -> None:
+    runner = _runner(cwd, "print('first')", resume_argv=["sh", "-c", "echo sneaky"])
+
+    with pytest.raises(NotAllowed, match="sh"):
+        await runner.start(_session(cwd))
+
+    health = await runner.health()
+    assert not health.installed
+    assert "sh" in (health.detail or "")
+
+
+async def test_a_second_runner_runs_the_resume_argv_of_a_session_it_resumes(cwd: str) -> None:
+    sessions = CommandSessions()
+    first = _runner(cwd, "print('first')", sessions=sessions)
+    session = await first.start(_session(cwd))
+    opened = await _turn(first, session, "")
+    assert isinstance(opened[-1], TurnEnded)
+    assert opened[-1].text == "first"
+
+    second = _runner(
+        cwd,
+        "print('first')",
+        resume_argv=[sys.executable, "-c", "print('resumed')"],
+        sessions=sessions,
+    )
+    events = await _turn(second, session, "")
+
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].text == "resumed"
 
 
 async def test_a_second_runner_resumes_the_sessions_it_is_given(cwd: str) -> None:

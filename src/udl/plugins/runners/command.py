@@ -17,13 +17,19 @@ it by id.
 
 A program may only be started when its name is in `[orch] allowed_commands` (set in the config
 file only, as an AI provider's command is): the list is given to the runner when it is made, and a
-program that is not in it is refused (NotAllowed) rather than run.
+program that is not in it is refused (NotAllowed) rather than run — both templates' programs, the
+first turn's and `resume_argv`'s, since either may be the one that runs.
+
+Its sessions may be kept outside the runner (`CommandSessions`): a session then outlives the runner
+object, as a harness's does, and another runner given the same one resumes it by id — running
+`resume_argv`, since the store says the session has had its first turn.
 """
 
 # System Imports
 import logging
 import shlex
 from collections.abc import AsyncIterator, MutableMapping, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import ClassVar
@@ -54,7 +60,17 @@ from udl.process import CancelToken
 
 log = logging.getLogger(__name__)
 
-__all__ = ["CommandOutput", "CommandRunner", "CommandRunnerOptions"]
+__all__ = ["CommandOutput", "CommandRunner", "CommandRunnerOptions", "CommandSessions"]
+
+
+@dataclass
+class CommandSessions:
+    """A command runner's sessions, outside any runner object (a service may hold one)."""
+
+    specs: MutableMapping[str, SessionSpec] = field(default_factory=dict[str, SessionSpec])
+    """What each session was started with, by id."""
+    sent: set[str] = field(default_factory=set[str])
+    """The sessions that have had a turn (their next one runs `resume_argv`)."""
 
 
 class CommandOutput(StrEnum):
@@ -104,12 +120,17 @@ class CommandRunner(AgentRunner[CommandRunnerOptions]):
         shell: HostShell,
         clock: Clock,
         allowed: Sequence[str] = (),
-        sessions: MutableMapping[str, SessionSpec] | None = None,
+        sessions: CommandSessions | MutableMapping[str, SessionSpec] | None = None,
     ) -> None:
         super().__init__(options, shell=shell, clock=clock)
         self._allowed = frozenset(allowed)
-        self._sessions: MutableMapping[str, SessionSpec] = sessions if sessions is not None else {}
-        self._sent: set[str] = set()
+        # (A bare mapping is the specs alone: it says nothing of first turns, so each runner
+        # object keeps its own — give it a `CommandSessions` for a session to outlive the object.)
+        self._sessions = (
+            sessions
+            if isinstance(sessions, CommandSessions)
+            else CommandSessions(specs=sessions if sessions is not None else {})
+        )
         self._stopped: set[str] = set()
         self._cancels: dict[str, CancelToken] = {}
 
@@ -118,14 +139,21 @@ class CommandRunner(AgentRunner[CommandRunnerOptions]):
         """The program it runs (the first of its argv, before any template is filled in)."""
         return self.options.argv[0] if self.options.argv else ""
 
+    @property
+    def programs(self) -> tuple[str, ...]:
+        """Every program a turn may run: the first turn's, and `resume_argv`'s when it has one."""
+        resume = self.options.resume_argv
+        return tuple(dict.fromkeys([self.program, *(resume[:1] if resume else [])]))
+
     async def health(self) -> RunnerHealth:
         if not self.program:
             return RunnerHealth(installed=False, detail="No argv is set: nothing to run.")
-        if self.program not in self._allowed:
-            return RunnerHealth(
-                installed=False,
-                detail=f"{self.program!r} is not in [orch] allowed_commands (the config file).",
-            )
+        for program in self.programs:
+            if program not in self._allowed:
+                return RunnerHealth(
+                    installed=False,
+                    detail=f"{program!r} is not in [orch] allowed_commands (the config file).",
+                )
         try:
             await self.shell.run(["sh", "-c", f"command -v {shlex.quote(self.program)}"])
         except PluginFailed, ToolUnavailable:
@@ -138,14 +166,15 @@ class CommandRunner(AgentRunner[CommandRunnerOptions]):
     async def start(self, spec: SessionSpec) -> SessionRef:
         if not self.program:
             raise NotAllowed("The command runner has no argv: set one in [runners.command].")
-        if self.program not in self._allowed:
-            raise NotAllowed(
-                f"{self.program!r} is not in [orch] allowed_commands: add it to the config file."
-            )
+        for program in self.programs:
+            if program not in self._allowed:
+                raise NotAllowed(
+                    f"{program!r} is not in [orch] allowed_commands: add it to the config file."
+                )
         session = SessionRef(
             runner=self.name, id=uuid4().hex, cwd=spec.cwd, host=self.shell.host.name
         )
-        self._sessions[session.id] = spec
+        self._sessions.specs[session.id] = spec
         return session
 
     async def stop(self, session: SessionRef) -> None:
@@ -154,7 +183,7 @@ class CommandRunner(AgentRunner[CommandRunnerOptions]):
             cancel.cancel()
 
     async def send(self, session: SessionRef, prompt: str) -> AsyncIterator[AgentEvent]:
-        spec = self._sessions.get(session.id)
+        spec = self._sessions.specs.get(session.id)
         if spec is None:
             yield TurnEnded(reason=TurnReason.ERROR, text=f"No session {session.id!r}.")
             return
@@ -163,7 +192,7 @@ class CommandRunner(AgentRunner[CommandRunnerOptions]):
             return
         cancel = CancelToken()
         self._cancels[session.id] = cancel
-        first = session.id not in self._sent
+        first = session.id not in self._sessions.sent
         try:
             result = await self.shell.run(
                 self._argv(session, spec, first=first),
@@ -185,8 +214,8 @@ class CommandRunner(AgentRunner[CommandRunnerOptions]):
             return
         finally:
             self._cancels.pop(session.id, None)
-        self._sent.add(session.id)
-        lines = result.stdout.splitlines()
+        self._sessions.sent.add(session.id)
+        lines = [line for line in result.stdout.splitlines() if line.strip()]
         for line in lines:
             if (limited := self._limited(line)) is not None:
                 yield limited
@@ -194,8 +223,9 @@ class CommandRunner(AgentRunner[CommandRunnerOptions]):
                 return
             if (event := self._event(line)) is not None:
                 yield event
-        last = [line for line in lines if line.strip()]
-        yield TurnEnded(reason=TurnReason.DONE, text=last[-1] if last else "")
+        # (Its answer is what the last line said, read as its output is: a jsonl line's text.)
+        answer = self._said(lines[-1]) if lines else ""
+        yield TurnEnded(reason=TurnReason.DONE, text=answer)
 
     def _argv(self, session: SessionRef, spec: SessionSpec, *, first: bool) -> list[str]:
         """The program and its arguments, with the template filled in.
@@ -228,6 +258,16 @@ class CommandRunner(AgentRunner[CommandRunnerOptions]):
         return RunnerLimited(
             until=until, message=said.result or said.text or "The account is limited."
         )
+
+    def _said(self, line: str) -> str:
+        """What a line says, read as its output is (a jsonl object's text, or the line itself)."""
+        if self.options.output is CommandOutput.TEXT:
+            return line
+        try:
+            said = _Said.model_validate_json(line)
+        except ValidationError:
+            return line
+        return said.result or said.text or line
 
     def _event(self, line: str) -> AgentEvent | None:
         """What a line of the program's output is, or None when it is empty."""
