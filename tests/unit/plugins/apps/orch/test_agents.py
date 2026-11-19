@@ -48,10 +48,19 @@ from udl.plugins.apps.orch.records import (
     AgentSession as AgentSessionRecord,
 )
 from udl.plugins.apps.orch.records import (
+    Counter as CounterRecord,
+)
+from udl.plugins.apps.orch.records import (
+    Feature as FeatureRecord,
+)
+from udl.plugins.apps.orch.records import (
     Project as ProjectRecord,
 )
 from udl.plugins.apps.orch.records import (
     Repo as RepoRecord,
+)
+from udl.plugins.apps.orch.records import (
+    Task as TaskRecord,
 )
 from udl.plugins.apps.orch.settings import OrchSettings
 from udl.plugins.runners.base import SessionRef, TextDelta
@@ -419,6 +428,9 @@ def test_orch_brings_its_agent_kinds() -> None:
     assert set(Orch.record_kinds()) == {
         ProjectRecord,
         RepoRecord,
+        FeatureRecord,
+        TaskRecord,
+        CounterRecord,
         AgentRecord,
         AgentSessionRecord,
         SessionEvent,
