@@ -12,11 +12,13 @@ callers never get the same number. Stored, they are udl records (orch.records).
 
 # System Imports
 from pathlib import Path
+from uuid import UUID, uuid4
 
 # Package Imports
 import pytest
 
 from udl.config import Settings
+from udl.db.records import Record, RecordQuery
 from udl.errors import DoesNotExist, DuplicateKey, NotAllowed
 from udl.plugins.apps.base import AppRecords
 
@@ -125,8 +127,38 @@ async def records(tmp_path: Path) -> FeatureRecords:
 
 @pytest.fixture
 async def tasks(records: FeatureRecords) -> TaskRecords:
-    """Orch's tasks, over the same records (so a task's project is the one saved above)."""
+    """Orch's tasks, over the same records, with two features for them (a task links back to
+    one: `F-1` and `F-2` are there)."""
+    await records.save_feature(Feature(project="udl", key="F-1", title="a"))
+    await records.save_feature(Feature(project="udl", key="F-2", title="b"))
     return TaskRecords(records.records)
+
+
+class Racing(AppRecords):
+    """Records where another caller claims a number just before this one stores its own (the
+    race `claim()` is written for: the database refuses the second of the two)."""
+
+    def __init__(self, inner: AppRecords) -> None:
+        super().__init__(inner._db)
+        self.inner = inner
+        self.race_next = False
+
+    async def save[R: Record](self, record: R) -> R:
+        if self.race_next and isinstance(record, Counter):
+            self.race_next = False
+            # (Another caller stores the number this one was about to: a row of its own, so the
+            # uniqueness of (project, prefix, last) is what refuses this one.)
+            await self.inner.save(record.model_copy(update={"id": uuid4()}))
+        return await self.inner.save(record)
+
+    async def get[R: Record](self, kind: type[R], record_id: UUID) -> R | None:
+        return await self.inner.get(kind, record_id)
+
+    async def list[R: Record](self, kind: type[R], query: RecordQuery | None = None) -> list[R]:
+        return await self.inner.list(kind, query)
+
+    async def delete[R: Record](self, kind: type[R], record_id: UUID) -> bool:
+        return await self.inner.delete(kind, record_id)
 
 
 @pytest.fixture
@@ -218,6 +250,33 @@ async def test_tasks_are_read_by_feature_state_and_assignee(tasks: TaskRecords) 
     assert keys(await tasks.tasks("udl", assignee="ernie-c")) == ["F-1.2"]
 
 
+async def test_deleting_a_feature_takes_its_tasks_with_it(
+    records: FeatureRecords, tasks: TaskRecords
+) -> None:
+    await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.1", title="a"))
+    await tasks.save_task(Task(project="udl", feature="F-2", key="F-2.1", title="b"))
+
+    assert await records.delete_feature("udl", "F-1") is True
+
+    assert await tasks.tasks("udl") == [await tasks.task("udl", "F-2.1")]
+
+
+async def test_deleting_a_project_takes_all_of_it_with_it(
+    records: FeatureRecords, tasks: TaskRecords
+) -> None:
+    await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.1", title="a"))
+    await ProjectRecords(records.records).save_project(Project(name="other", title="other"))
+    await records.save_feature(Feature(project="other", key="F-1", title="x"))
+    await Counters(records.records).claim("udl", "F-")
+
+    assert await ProjectRecords(records.records).delete_project("udl") is True
+
+    assert await records.features("udl") == []
+    assert await tasks.tasks("udl") == []
+    assert await Counters(records.records).latest("udl", "F-") is None
+    assert [feature.key for feature in await records.features("other")] == ["F-1"]
+
+
 async def test_deleting_a_task(tasks: TaskRecords) -> None:
     await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.1", title="x"))
 
@@ -244,6 +303,18 @@ async def test_a_task_is_saved_open_and_moved_through_the_table(tasks: TaskRecor
         await tasks.move(theirs, "ready", by=Principal(kind="agent", name="ernie-b", role="ready"))
 
 
+async def test_a_save_may_not_slip_a_state_past_the_check_by_changing_the_key(
+    tasks: TaskRecords,
+) -> None:
+    # (The stored task is found by its id, so re-saving it under another key with `open` is still
+    # a state change, and refused.)
+    saved = await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.1", title="x"))
+    moved = await tasks.move(saved, "queued", by=Principal(kind="human", name="human:claude"))
+
+    with pytest.raises(NotAllowed, match="would be saved in 'open'"):
+        await tasks.save_task(moved.model_copy(update={"key": "F-1.9", "state": "open"}))
+
+
 async def test_a_save_may_not_move_a_task_to_another_state(tasks: TaskRecords) -> None:
     saved = await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.1", title="x"))
 
@@ -259,7 +330,6 @@ async def test_a_save_may_not_move_a_task_to_another_state(tasks: TaskRecords) -
 async def test_a_feature_is_planned_while_its_tasks_are_open(
     records: FeatureRecords, tasks: TaskRecords
 ) -> None:
-    await records.save_feature(Feature(project="udl", key="F-1", title="x"))
     await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.1", title="a"))
 
     found = await records.feature("udl", "F-1")
@@ -270,7 +340,6 @@ async def test_a_feature_is_planned_while_its_tasks_are_open(
 async def test_a_feature_is_active_once_a_task_is_past_open(
     records: FeatureRecords, tasks: TaskRecords
 ) -> None:
-    await records.save_feature(Feature(project="udl", key="F-1", title="x"))
     saved = await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.1", title="a"))
     await tasks.move(saved, "queued", by=Principal(kind="human", name="human:claude"))
 
@@ -282,7 +351,6 @@ async def test_a_feature_is_active_once_a_task_is_past_open(
 async def test_a_feature_is_done_when_all_its_tasks_are_done_or_cancelled(
     records: FeatureRecords, tasks: TaskRecords
 ) -> None:
-    await records.save_feature(Feature(project="udl", key="F-1", title="x"))
     first = await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.1", title="a"))
     second = await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.2", title="b"))
     reviewer = Principal(kind="agent", name="reviewer")
@@ -304,7 +372,9 @@ async def test_a_feature_is_done_when_all_its_tasks_are_done_or_cancelled(
 async def test_a_parked_feature_is_left_as_a_person_set_it(
     records: FeatureRecords, tasks: TaskRecords
 ) -> None:
-    await records.save_feature(Feature(project="udl", key="F-1", title="x", status="parked"))
+    parked = await records.feature("udl", "F-1")
+    assert parked is not None
+    await records.save_feature(parked.model_copy(update={"status": "parked"}))
     saved = await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.1", title="a"))
     await tasks.move(saved, "queued", by=Principal(kind="human", name="human:claude"))
 
@@ -313,11 +383,13 @@ async def test_a_parked_feature_is_left_as_a_person_set_it(
     assert found.status == "parked"
 
 
-async def test_a_task_of_a_feature_that_is_not_there_is_still_stored(tasks: TaskRecords) -> None:
-    # (An imported task may arrive before its feature does: only the project must be there.)
-    saved = await tasks.save_task(Task(project="udl", feature="F-9", key="F-9.1", title="a"))
+async def test_a_task_of_a_feature_that_is_not_there_is_refused(tasks: TaskRecords) -> None:
+    # (A task always links back to its feature, so one of a feature that is not there is not
+    # stored: the feature comes first.)
+    with pytest.raises(DoesNotExist, match="no feature 'F-9'"):
+        await tasks.save_task(Task(project="udl", feature="F-9", key="F-9.1", title="a"))
 
-    assert await tasks.task("udl", "F-9.1") == saved
+    assert await tasks.task("udl", "F-9.1") is None
 
 
 # ---------------------------------------------------------------------------------------------
@@ -404,6 +476,22 @@ async def test_a_claim_newer_than_the_one_stored_is_never_cleared(counters: Coun
 
     assert sorted(claim.last for claim in await counters.claims("udl", "F-")) == [5, 6]
     assert (await counters.latest("udl", "F-")) == six
+
+
+async def test_a_caller_that_loses_the_race_reads_again_and_gets_its_own_number(
+    records: FeatureRecords,
+) -> None:
+    # (Two callers read the same last number: both try to store the next one, and the database
+    # refuses one of them. It reads again, and the two numbers are distinct.)
+    racing = Racing(records.records)
+    counters = Counters(racing)
+
+    first = await counters.claim("udl", "F-")
+    racing.race_next = True
+    second = await counters.claim("udl", "F-")
+
+    assert (first, second) == (1, 3)  # (the racing caller's 2 was stored first)
+    assert sorted(claim.last for claim in await counters.claims("udl", "F-")) == [3]
 
 
 async def test_only_the_last_claim_is_kept(counters: Counters) -> None:

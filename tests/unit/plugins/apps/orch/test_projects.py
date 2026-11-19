@@ -183,11 +183,12 @@ def test_a_repos_branch_pattern_may_not_start_or_end_with_a_slash() -> None:
 # check that the shapes and the records say the same thing about the fields they share.)
 @pytest.mark.parametrize("model", [data.Project, data.Repo, data.Feature, data.Task])
 def test_a_shape_and_its_record_agree_on_every_field(model: type[BaseModel]) -> None:
+    # (The same fields, and the same type for each: the record is not looser than the shape.)
     record = record_model(model)
 
     assert set(record.model_fields) >= set(model.model_fields)
-    for name in model.model_fields:
-        assert name in record.model_fields
+    for name, field in model.model_fields.items():
+        assert record.model_fields[name].annotation == field.annotation, name
 
 
 def test_a_repos_example_says_where_its_checkouts_are() -> None:

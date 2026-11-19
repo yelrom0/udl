@@ -237,7 +237,7 @@ def test_a_cancelled_task_keeps_its_hold() -> None:
 def test_a_moved_task_says_who_took_it() -> None:
     task = task_in("queued", assignee="ernie-c")
 
-    moved = move(task, "moved", by=who("human"), note="to ernie-d")
+    moved = move(task, "moved", by=who("human"))
 
     assert (moved.state, moved.assignee, moved.updated_by) == ("moved", None, "human:claude")
 
@@ -290,11 +290,6 @@ def who(role: str, *, name: str = "claude") -> Principal:
 
 
 def people(principal: Principal) -> bool:
-    """Whether a caller is a person (the `human` role), as the table has it."""
-    return principal.kind == "human"
-
-
-def is_human(principal: Principal) -> bool:
     """Whether a caller is a person (the `human` role), as the table has it."""
     return principal.kind == "human"
 

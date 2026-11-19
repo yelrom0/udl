@@ -29,7 +29,7 @@ from pydantic import Field, JsonValue
 
 # Local Imports
 from udl.db.records import Name, Record, RecordQuery
-from udl.errors import DoesNotExist, DuplicateKey, NotAllowed
+from udl.errors import DatabaseError, DoesNotExist, DuplicateKey, NotAllowed
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.models import (
     OPEN,
@@ -273,12 +273,14 @@ class ProjectRecords:
         return sorted(await self._records.list(Project, RecordQuery()), key=lambda p: p.name)
 
     async def delete_project(self, name: str) -> bool:
-        """Delete the project called `name` and its repos. Returns whether there was one."""
+        """Delete the project called `name` and everything of it: its repos, features, tasks and
+        the counters its keys came from. Returns whether there was one."""
         project = await self.project(name)
         if project is None:
             return False
-        for repo in await self._records.list(Repo, RecordQuery(where={"project": name})):
-            await self._records.delete(Repo, repo.id)
+        for kind in (Repo, Feature, Task, Counter):
+            for record in await self._records.list(kind, RecordQuery(where={"project": name})):
+                await self._records.delete(kind, record.id)
         return await self._records.delete(Project, project.id)
 
 
@@ -377,9 +379,14 @@ class FeatureRecords:
         )
 
     async def delete_feature(self, project: str, key: str) -> bool:
-        """Delete the feature called `key` of `project`. Returns whether there was one."""
+        """Delete the feature called `key` of `project`, and its tasks with it. Returns whether
+        there was one."""
         feature = await self.feature(project, key)
-        return feature is not None and await self._records.delete(Feature, feature.id)
+        if feature is None:
+            return False
+        for task in await TaskRecords(self._records, self._projects).tasks(project, feature=key):
+            await self._records.delete(Task, task.id)
+        return await self._records.delete(Feature, feature.id)
 
 
 class TaskRecords:
@@ -398,9 +405,15 @@ class TaskRecords:
         """Store `task` (by its id, so storing one again replaces it). Raises DoesNotExist when
         its project is not there, DuplicateKey when the project already has a task of that key,
         and NotAllowed when it would set the task's state: a new task is `open`, and an existing
-        one's state changes only through `orch.transitions.move()` (the card's done-when)."""
+        one's state changes only through `orch.transitions.move()` (the card's done-when). A
+        task's feature must be there: a task always links back to one."""
         await self._projects.require(task.project)
-        stored = await self.task(task.project, task.key)
+        if (
+            await FeatureRecords(self._records, self._projects).feature(task.project, task.feature)
+            is None
+        ):
+            raise DoesNotExist(f"There is no feature {task.feature!r} in {task.project!r}")
+        stored = await self._records.get(Task, task.id)
         if stored is not None and stored.state != task.state:
             raise NotAllowed(
                 f"{task.key!r} would be saved in {task.state!r}, from {stored.state!r}",
@@ -549,7 +562,10 @@ class Counters:
                 continue  # (someone claimed that number first)
             await self.keep(project, prefix, saved)
             return saved.last
-        raise RuntimeError(f"Could not claim a {prefix} number in {project!r}: ten tries lost")
+        raise DatabaseError(
+            f"Could not claim a {prefix} number in {project!r}: ten tries lost",
+            hint="Another caller is claiming numbers as fast as this one: try again.",
+        )
 
     async def latest(self, project: str, prefix: str) -> Counter | None:
         """The last number claimed for `prefix` in `project`, or None when none has been."""

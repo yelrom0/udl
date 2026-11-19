@@ -15,7 +15,7 @@ it is given are the project's own text.
 # System Imports
 import string
 from enum import StrEnum
-from typing import Annotated, Final, Literal
+from typing import Annotated, Final, Literal, get_args
 
 # Package Imports
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
@@ -30,7 +30,15 @@ __all__ = [
     "DEFAULT_BRANCH_PATTERN",
     "DEFAULT_GATE",
     "DONE",
+    "IN_PROGRESS",
+    "MERGED",
+    "MOVED",
+    "OPEN",
+    "QUEUED",
+    "READY",
     "REF_MARKS",
+    "ROLE",
+    "STATE",
     "STATE_MARK",
     "BranchName",
     "BranchPattern",
@@ -113,29 +121,19 @@ class MergePolicy(StrEnum):
     AGENT = "agent"
 
 
-STATE = (
-    "open",
-    "queued",
-    "in_progress",
-    "blocked",
-    "ready",
-    "merged",
-    "done",
-    "moved",
-    "cancelled",
-)
-"""Every state a task is in (the Concepts table in planning.md)."""
-
-ROLE = ("assign", "start", "block", "ready", "merge", "review", "move", "cancel")
-"""What a caller is doing when it moves a task: one role per verb (26.3's table)."""
-
 type State = Literal[
     "open", "queued", "in_progress", "blocked", "ready", "merged", "done", "moved", "cancelled"
 ]
 """A task's state (the Concepts table in planning.md)."""
 
+STATE: Final[tuple[State, ...]] = get_args(State.__value__)
+"""Every state a task is in (read from `State`, so there is one list of them)."""
+
 type Role = Literal["assign", "start", "block", "ready", "merge", "review", "move", "cancel"]
 """What a caller is doing when it moves a task: one role per verb (26.3's table)."""
+
+ROLE: Final[tuple[Role, ...]] = get_args(Role.__value__)
+"""Every role, read from `Role` (one list of them)."""
 
 type TaskKind = Literal["build", "human", "review"]
 """What kind of work a task is (the card's build | human | review)."""
@@ -160,6 +158,9 @@ cancelled task."""
 
 OPEN: Final = "open"
 """A task nobody has taken: not assigned (the Concepts table's first state)."""
+
+IN_PROGRESS: Final = "in_progress"
+"""A task the agent is on."""
 
 QUEUED: Final = "queued"
 """A task in an agent's queue."""
@@ -394,9 +395,9 @@ class Task(_Model):
 
     project: Name
     """The project it belongs to."""
-    feature: str
+    feature: Key
     """The feature it is part of (its key: a task always links back)."""
-    key: str
+    key: Key
     """Its key within the project (`<feature key>.<n>`, or the key it was given)."""
     title: Title
     """What it is, in a line."""

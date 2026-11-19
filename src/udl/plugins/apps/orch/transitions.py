@@ -21,7 +21,9 @@ from typing import Final
 from udl.errors import NotAllowed
 from udl.plugins.apps.orch.models import (
     BLOCKED,
+    CANCELLED,
     DONE,
+    IN_PROGRESS,
     MERGED,
     MOVED,
     OPEN,
@@ -38,40 +40,40 @@ __all__ = ["TRANSITIONS", "allowed", "move", "roles"]
 TRANSITIONS: Final[dict[tuple[str, str], tuple[str, ...]]] = {
     # -- open: not assigned -------------------------------------------------------------------
     (OPEN, QUEUED): ("assign", "move", "human"),
-    (OPEN, "in_progress"): ("start", "human"),
+    (OPEN, IN_PROGRESS): ("start", "human"),
     (OPEN, BLOCKED): ("block", "human"),
-    (OPEN, "cancelled"): ("cancel", "human"),
+    (OPEN, CANCELLED): ("cancel", "human"),
     (OPEN, MOVED): ("move", "human"),
     # -- queued: in an agent's queue ----------------------------------------------------------
-    (QUEUED, "in_progress"): ("start", "human"),
+    (QUEUED, IN_PROGRESS): ("start", "human"),
     (QUEUED, OPEN): ("assign", "move", "human"),
     (QUEUED, BLOCKED): ("block", "human"),
-    (QUEUED, "cancelled"): ("cancel", "move", "human"),
+    (QUEUED, CANCELLED): ("cancel", "move", "human"),
     (QUEUED, MOVED): ("move", "human"),
     # -- in_progress: the agent is on it -----------------------------------------------------
-    ("in_progress", READY): ("ready", "human"),
-    ("in_progress", BLOCKED): ("block", "human"),
-    ("in_progress", QUEUED): ("assign", "move", "human"),
-    ("in_progress", "cancelled"): ("cancel", "move", "human"),
+    (IN_PROGRESS, READY): ("ready", "human"),
+    (IN_PROGRESS, BLOCKED): ("block", "human"),
+    (IN_PROGRESS, QUEUED): ("assign", "move", "human"),
+    (IN_PROGRESS, CANCELLED): ("cancel", "move", "human"),
     # -- blocked: only a human or a manager unblocks ------------------------------------------
-    (BLOCKED, "in_progress"): ("start", "block", "move", "human"),
+    (BLOCKED, IN_PROGRESS): ("start", "block", "move", "human"),
     (BLOCKED, QUEUED): ("assign", "move", "human"),
-    (BLOCKED, "cancelled"): ("cancel", "move", "human"),
+    (BLOCKED, CANCELLED): ("cancel", "move", "human"),
     # -- ready: PR green, waiting to be merged -------------------------------------------------
     (READY, MERGED): ("merge", "human"),
-    (READY, "in_progress"): ("ready", "move", "human"),  # (back to work: changes were asked for)
+    (READY, IN_PROGRESS): ("ready", "move", "human"),  # (back to work: changes were asked for)
     (READY, BLOCKED): ("block", "move", "human"),
-    (READY, "cancelled"): ("cancel", "move", "human"),
+    (READY, CANCELLED): ("cancel", "move", "human"),
     # -- merged: the GitHub watcher saw it -----------------------------------------------------
     (MERGED, DONE): ("review", "human"),
-    (MERGED, "in_progress"): ("move", "human"),  # (a stacked branch to rebase)
+    (MERGED, IN_PROGRESS): ("move", "human"),  # (a stacked branch to rebase)
     # -- done: reviewed (only a reviewer or a human) -------------------------------------------
-    (DONE, "in_progress"): ("move", "human"),
+    (DONE, IN_PROGRESS): ("move", "human"),
     # -- moved / cancelled: nothing moves on, but a human may undo -----------------------------
     (MOVED, QUEUED): ("move", "human"),
-    (MOVED, "cancelled"): ("cancel", "human"),
-    ("cancelled", OPEN): ("move", "human"),
-    ("cancelled", QUEUED): ("move", "human"),
+    (MOVED, CANCELLED): ("cancel", "human"),
+    (CANCELLED, OPEN): ("move", "human"),
+    (CANCELLED, QUEUED): ("move", "human"),
 }
 
 # (The states, as one place to read them from.)
@@ -103,7 +105,8 @@ def move(
     already there, when the table does not allow `by`'s role that move (naming the roles that
     may), and when an agent moves a task that is not its own (or one nobody has assigned). A
     person may move a task anywhere: the rules are for the agents. `note` is what a blocked task
-    waits on, or why a task was cancelled or moved."""
+    waits on (and what a move out of blocked clears); why a task was cancelled or moved is a
+    note (26.5), not this field."""
     if to not in _STATES:
         raise NotAllowed(
             f"{task.key!r} cannot move to {to!r}: it is not a state a task is in",
