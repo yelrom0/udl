@@ -4490,9 +4490,10 @@ timeout: 5m
     reconnect (`router.invalidate()`); a plain event only goes to the store (the page's own
     timeline), so a burst of events does not re-run every loader.
   - The dashboard's `Live` panel lists the runs since the page opened and the last five events.
-  - Tests: 13 Vitest tests of the connection with a fake `EventSource` and hand-driven timers (the
+  - Tests: 17 Vitest tests of the connection with a fake `EventSource` and hand-driven timers (the
     backoff and its cap, the jitter, the reset after an open, the reload only on a reconnect, the
-    500-event buffer, a run and a job by id, `lagged`, and stopping), plus the dashboard's panel.
+    500-event buffer, a run and a job by id, `lagged`, a download's stream ending with its job and
+    not with another job's, `stop()` emptying the store), plus the dashboard's panel.
   - e2e, in a real browser against a real `udl serve`: the page says it is live, and an event the
     test posts (`POST /events`) appears in the page's list without a reload (the card's done-when,
     with an event standing in for a CLI run: no action is configured in the e2e server).
@@ -4509,6 +4510,12 @@ timeout: 5m
       (signing out; a browser that never signed in) use an empty `storageState`.
     - **`download(id)` is the connection's, but no page calls it yet**: the download page that
       watches a job is Phase 19's. It is tested here, and 19.x's page gets it ready-made.
+    - **`download(id)` takes a job's id, and stops following it once that job has ended**
+      (`finished`, `failed`, `cancelled`, an event whose `id` is the job's): the server closes the
+      stream then, and reconnecting to it forever would be a request a second. `/downloads/{id}/events`
+      also takes a batch's id, and a batch's stream ends only once every job of the batch has ended,
+      so its events name the batch's jobs: the id check leaves such a stream alone, and a batch's page
+      counts its own jobs.
 
 **18.7 UI manifests and the `udl.ui` kind** · needs 18.3
 - Build: `udl/plugins/ui.py`.

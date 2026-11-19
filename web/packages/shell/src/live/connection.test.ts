@@ -295,6 +295,23 @@ describe("the live connection", () => {
 		expect(live.getState().jobs["job-1"]).toMatchObject({ name: "finished" });
 	});
 
+	it("keeps following a stream whose terminal event is another job's", () => {
+		// (udl's stream also takes a batch's id, and its events name the batch's jobs: one job's
+		// end is not the batch's, so the page goes on following it.)
+		const timers = fakeTimers();
+		const live500 = startLive({ source: FakeSource, timers });
+		FakeSource.made[0]?.open();
+		live500.download("batch-1");
+		const stream = FakeSource.made[1];
+		stream?.open();
+
+		stream?.send("finished", { id: "job-1" });
+		stream?.fail();
+		timers.fire();
+
+		expect(FakeSource.made).toHaveLength(3); // (the first, the batch's, and the one it reopened)
+	});
+
 	it("keeps following a download while its job is running", () => {
 		const timers = fakeTimers();
 		const live500 = startLive({ source: FakeSource, timers });

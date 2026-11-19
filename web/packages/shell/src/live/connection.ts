@@ -250,10 +250,12 @@ export function startLive(options: LiveOptions = {}): Live {
 			clear(); // (a signed-out page's events, runs and jobs are not the next session's)
 		},
 		download: (id: string) => {
+			// (`id` is a job's. udl's stream takes a batch's id too, and it ends only once every
+			// job of the batch has ended: a page that follows a batch counts its jobs itself.)
 			const path = `/downloads/${id}/events`;
 			connection.watch(path, JOB_TYPES, (name, data) => {
 				setJob(id, { name, at: now(), data });
-				if (JOB_ENDS.includes(name)) {
+				if (JOB_ENDS.includes(name) && idOf(data) === id) {
 					// (The job is over and the server closed the stream: reconnecting to it would
 					// be a request a second for a download that is finished.)
 					connection.stop(path);
