@@ -1,43 +1,52 @@
 """
---------------
+---------------
 - records.py -
---------------
+---------------
 
-The orchestrator's records: a Project (a body of work and its merge policy) and a Repo (a
-GitHub repository of a project). Each is a udl record (udl.db.records), so every database plugin
-stores it the same way, and the record contract round-trips its example.
+The orchestrator's records: a Project and a Repo (26.2), a Feature and a Task (26.3), and the
+Counter that hands out their keys. Links and notes are 26.4's and 26.5's. Each is a udl record
+(udl.db.records), so every database plugin stores it the same way, and the record contract
+round-trips its example.
 
 A Project is unique by its name; a Repo by its project and its name together (two projects may
 each have a repo called udl), and repos are also looked up by GitHub (`yelrom0/udl`), which is
-how a webhook's event finds its repo.
+how a webhook's event finds its repo. A Feature is unique by its project and key, a Task by its
+project and key (both as the card says).
 
-The fields are typed with the same aliases orch.models uses (udl.plugins.apps.orch.models), so
-what a shape refuses a record refuses too — one rule, in one place.
+The fields are typed with the same aliases orch.models uses, so what a shape refuses a record
+refuses too — one rule, in one place.
 
-ProjectRecords and RepoRecords are the typed way to read and write them: an app holds an
-AppRecords, and these sit over it (orch.plugin's service builds them), so nothing here knows
-about a database.
+ProjectRecords, RepoRecords, FeatureRecords, TaskRecords and Counters are the typed way to read
+and write them: an app holds an AppRecords, and these sit over it, so nothing here knows about
+a database.
 """
 
 # System Imports
 from typing import Self
 
 # Package Imports
-from pydantic import Field
+from pydantic import Field, JsonValue
 
 # Local Imports
 from udl.db.records import Name, Record, RecordQuery
-from udl.errors import DoesNotExist
+from udl.errors import DoesNotExist, DuplicateKey, NotAllowed
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.models import (
+    OPEN,
     BranchName,
     CheckedBranchPattern,
+    FeatureStatus,
     Gate,
     GitHubAccount,
     GitHubSlug,
     HostName,
+    Key,
     MergePolicy,
+    Principal,
     Promotion,
+    Spec,
+    State,
+    TaskKind,
     Title,
 )
 
@@ -96,7 +105,7 @@ class Repo(Record):
     gate: Gate = Field(default_factory=lambda: ["make", "check"])
     """The argv that is its gate, run before a push (e.g. ["make", "check"])."""
     checkouts: dict[HostName, str] = Field(default_factory=dict)
-    """Host name → the main checkout's path there (empty: udl does not know where it is yet)."""
+    """Host name → the main checkout's path there."""
     branch_pattern: CheckedBranchPattern = "{type}/{key}-{slug}"
     """How its task branches are named (23.1)."""
 
@@ -112,6 +121,122 @@ class Repo(Record):
             checkouts={"local": "~/Documents/code/udl"},
             branch_pattern="{type}/{key}-{slug}",
         )
+
+
+class Feature(Record):
+    """A feature: a goal with a spec, the top tier (udl's 26.3, or an imported 22)."""
+
+    kind = "orch_feature"
+    indexed = ("project", "key", "order")
+    unique = (("project", "key"),)
+
+    project: Name
+    """The project it belongs to."""
+    key: Key
+    """Its key within the project (`F-<n>`, or an imported key like `22`)."""
+    title: Title
+    """What it is, in a line."""
+    spec: Spec = ""
+    """Its spec, as markdown."""
+    status: FeatureStatus = "planned"
+    """Where it is: its own setting, or what its tasks make it (`FeatureRecords` keeps it in
+    step with them unless it is `parked`, which is what a person sets it to by hand)."""
+    order: int = 0
+    """Where it sits among its project's features."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            project="udl",
+            key="26",
+            title="Work tracking: projects, features, tasks, links",
+            spec="The plan's Phase 26, as its section reads.",
+            status="active",
+            order=26,
+        )
+
+
+class Task(Record):
+    """A task: one piece of a feature that one agent (or one human) does, usually one PR.
+
+    Its `state` is set only by `orch.transitions.move()`: no code path writes it directly."""
+
+    kind = "orch_task"
+    indexed = ("project", "feature", "key", "assignee", "position")
+    unique = (("project", "key"),)
+
+    project: Name
+    """The project it belongs to."""
+    feature: Key
+    """The feature it is part of (its key)."""
+    key: Key
+    """Its key within the project (`<feature key>.<n>`, or the key it was given)."""
+    title: Title
+    """What it is, in a line."""
+    spec: Spec = ""
+    """Its spec, as markdown (its card, when it was imported)."""
+    task_kind: TaskKind = "build"
+    """What kind of work it is: a build, a person's, or a review's. (Not `kind`: `kind` is the
+    record's own name.)"""
+    state: State = OPEN
+    """Where it is (the Concepts table); set only by move() (orch.transitions)."""
+    needs: list[str] = Field(default_factory=list)
+    """The tasks that must be done first, by key."""
+    repo: str | None = None
+    """The repo it is done in (a repo of its project), or None."""
+    assignee: str | None = None
+    """An agent's name, or `human:<name>`; None while it is nobody's."""
+    position: int | None = None
+    """Its place in its assignee's queue."""
+    hold: str | None = None
+    """Why it is held (built now, merged later), or None."""
+    blocked_on: str | None = None
+    """The question's key or free text it waits on, while it is blocked."""
+    branch: str | None = None
+    """The branch it is done on, once it has one."""
+    worktree: str | None = None
+    """The worktree it is done in, once the dispatcher has made one."""
+    updated_by: str = ""
+    """Who last moved it (a role, or an agent's name)."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            project="udl",
+            feature="26",
+            key="26.2",
+            title="Projects and repos",
+            spec="The plan's 26.2 card.",
+            state="merged",
+            needs=["26.1"],
+            repo="udl",
+            branch="feat/26.2-projects",
+            updated_by="ernie-c",
+        )
+
+
+class Counter(Record):
+    """One number a counter handed out: the compare-and-set claim of a key (`F-`, `Q-`, `A-`).
+
+    Each claim is a record of its own and its number is part of its unique key, so the
+    database's own uniqueness is the lock: two callers that read the same last number both try
+    to store the next one, and the one that loses is told (DuplicateKey) and reads again. Two
+    callers therefore never get the same number, also between udls on one database."""
+
+    kind = "orch_counter"
+    indexed = ("project", "prefix", "last")
+    unique = (("project", "prefix", "last"),)
+
+    project: Name
+    """The project the numbers belong to."""
+    prefix: str
+    """What is counted (`F-` for features, `<feature key>.` for a feature's tasks)."""
+    last: int = 0
+    """The number this claim handed out."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(project="udl", prefix="F-", last=26)
 
 
 class ProjectRecords:
@@ -192,3 +317,214 @@ class RepoRecords:
         """Delete the repo called `name` of `project`. Returns whether there was one."""
         repo = await self.repo(project, name)
         return repo is not None and await self._records.delete(Repo, repo.id)
+
+
+class FeatureRecords:
+    """Where orch keeps its features: looked up by project and key."""
+
+    def __init__(self, records: AppRecords, projects: ProjectRecords | None = None) -> None:
+        self._records = records
+        self._projects = projects if projects is not None else ProjectRecords(records)
+
+    @property
+    def records(self) -> AppRecords:
+        """The records the features are kept in (what a TaskRecords is made over too)."""
+        return self._records
+
+    async def save_feature(self, feature: Feature) -> Feature:
+        """Store `feature` (by its id, so storing one again replaces it). Raises DoesNotExist
+        when its project is not there, and DuplicateKey when the project already has a feature
+        of that key."""
+        await self._projects.require(feature.project)
+        return await self._records.save(feature)
+
+    async def feature(self, project: str, key: str) -> Feature | None:
+        """The feature called `key` of `project`, or None when there is none."""
+        found = await self._records.list(
+            Feature, RecordQuery(where={"project": project, "key": key})
+        )
+        return found[0] if found else None
+
+    async def features(self, project: str) -> list[Feature]:
+        """Every feature of `project`, in its order and then by key."""
+        found = await self._records.list(Feature, RecordQuery(where={"project": project}))
+        return sorted(found, key=lambda feature: (feature.order, feature.key))
+
+    async def create_feature(self, project: str, title: str, **fields: object) -> Feature:
+        """A feature of `project` with the next `F-` number of its counter as its key (unless
+        `fields` gives one), stored. Raises DoesNotExist when the project is not there."""
+        key = fields.pop("key", None)
+        claimed = (
+            key
+            if isinstance(key, str)
+            else f"F-{await Counters(self._records).claim(project, 'F-')}"
+        )
+        return await self.save_feature(
+            Feature(project=project, key=claimed, title=title, **fields)  # pyright: ignore[reportArgumentType]
+        )
+
+    async def delete_feature(self, project: str, key: str) -> bool:
+        """Delete the feature called `key` of `project`. Returns whether there was one."""
+        feature = await self.feature(project, key)
+        return feature is not None and await self._records.delete(Feature, feature.id)
+
+
+class TaskRecords:
+    """Where orch keeps its tasks: looked up by project, feature, key, state and assignee."""
+
+    def __init__(self, records: AppRecords, projects: ProjectRecords | None = None) -> None:
+        self._records = records
+        self._projects = projects if projects is not None else ProjectRecords(records)
+
+    @property
+    def records(self) -> AppRecords:
+        """The records the tasks are kept in."""
+        return self._records
+
+    async def save_task(self, task: Task) -> Task:
+        """Store `task` (by its id, so storing one again replaces it). Raises DoesNotExist when
+        its project is not there, DuplicateKey when the project already has a task of that key,
+        and NotAllowed when it would set the task's state: a new task is `open`, and an existing
+        one's state changes only through `orch.transitions.move()` (the card's done-when)."""
+        await self._projects.require(task.project)
+        stored = await self.task(task.project, task.key)
+        if stored is not None and stored.state != task.state:
+            raise NotAllowed(
+                f"{task.key!r} would be saved in {task.state!r}, from {stored.state!r}",
+                hint="A task's state changes through move() (orch.transitions), not a save.",
+            )
+        if stored is None and task.state != OPEN:
+            raise NotAllowed(
+                f"a new task cannot start in {task.state!r}",
+                hint="A task is saved open, and then moved.",
+            )
+        return await self._store(task)
+
+    async def move(self, task: Task, to: str, *, by: Principal, note: str = "") -> Task:
+        """`task` moved to `to` by `by` and stored: the one path that sets a task's state (the
+        table is orch.transitions', so what may move it is one rule in one place)."""
+        from udl.plugins.apps.orch.transitions import move
+
+        return await self._store(move(task, to, by=by, note=note))
+
+    async def _store(self, task: Task) -> Task:
+        """Store `task` as it is (a save's and a move's own path) and keep its feature's status
+        in step with its tasks."""
+        saved = await self._records.save(task)
+        await self._follow(saved)
+        return saved
+
+    async def _follow(self, task: Task) -> None:
+        """Keep `task`'s feature's status in step with its tasks: `active` once one is past
+        `open` (and not cancelled), `done` when all of them are done or cancelled, `planned`
+        while they are all open. A `parked` feature is what a person set by hand: left alone."""
+        feature = await FeatureRecords(self._records, self._projects).feature(
+            task.project, task.feature
+        )
+        if feature is None or feature.status == "parked":
+            return
+        tasks = await self.tasks(task.project, feature=task.feature)
+        states = {found.state for found in tasks}
+        if states and states <= {"done", "cancelled"}:
+            status: FeatureStatus = "done"
+        elif states - {OPEN, "cancelled"}:
+            status = "active"
+        else:
+            status = "planned"
+        if status != feature.status:
+            await self._records.save(feature.model_copy(update={"status": status}))
+
+    async def task(self, project: str, key: str) -> Task | None:
+        """The task called `key` of `project`, or None when there is none."""
+        found = await self._records.list(Task, RecordQuery(where={"project": project, "key": key}))
+        return found[0] if found else None
+
+    async def tasks(
+        self,
+        project: str,
+        *,
+        feature: str | None = None,
+        state: str | None = None,
+        assignee: str | None = None,
+    ) -> list[Task]:
+        """The tasks of `project` that match what is given, by key. (`state` is filtered here:
+        it is a state of the table, not a column a database indexes.)"""
+        where: dict[str, JsonValue] = {"project": project}
+        if feature is not None:
+            where["feature"] = feature
+        if assignee is not None:
+            where["assignee"] = assignee
+        found = await self._records.list(Task, RecordQuery(where=where))
+        if state is not None:
+            found = [task for task in found if task.state == state]
+        return sorted(found, key=lambda task: task.key)
+
+    async def create_task(self, project: str, feature: str, title: str, **fields: object) -> Task:
+        """A task of `feature` with the next `<feature key>.` number of its counter as its key
+        (unless `fields` gives one), stored. Raises DoesNotExist when the project is not there."""
+        key = fields.pop("key", None)
+        claimed = (
+            key
+            if isinstance(key, str)
+            else f"{feature}.{await Counters(self._records).claim(project, f'{feature}.')}"
+        )
+        return await self.save_task(
+            Task(project=project, feature=feature, key=claimed, title=title, **fields)  # pyright: ignore[reportArgumentType]
+        )
+
+    async def delete_task(self, project: str, key: str) -> bool:
+        """Delete the task called `key` of `project`. Returns whether there was one."""
+        task = await self.task(project, key)
+        return task is not None and await self._records.delete(Task, task.id)
+
+
+class Counters:
+    """The counters a project's keys come from (`F-`, `Q-`, `A-`, and a feature's tasks).
+
+    A number is claimed by compare-and-set: read the last one handed out, add one, and store it
+    as a claim of its own. The database's uniqueness is the lock, so a caller that loses the
+    race is told (DuplicateKey) and reads again."""
+
+    def __init__(self, records: AppRecords) -> None:
+        self._records = records
+
+    @property
+    def records(self) -> AppRecords:
+        """The records the counters are kept in."""
+        return self._records
+
+    async def claim(self, project: str, prefix: str) -> int:
+        """The next number for `prefix` in `project` (`F-` → 1, then 2). Raises DoesNotExist
+        when the project is not there.
+
+        The claim is a row, and only the last one is kept: once a number is stored the older
+        claims of that prefix go, so reading the last number is one row however long a project
+        has been counting. Two callers claiming at once still cannot get the same number: both
+        store the same `last`, and the database's uniqueness refuses one of them."""
+        await ProjectRecords(self._records).require(project)
+        for _ in range(10):  # (a caller that loses the race reads again, a few times)
+            latest = await self.latest(project, prefix)
+            nxt = Counter(
+                project=project, prefix=prefix, last=1 if latest is None else latest.last + 1
+            )
+            try:
+                saved = await self._records.save(nxt)
+            except DuplicateKey:
+                continue  # (someone claimed that number first)
+            for older in await self.claims(project, prefix):
+                if older.id != saved.id:
+                    await self._records.delete(Counter, older.id)
+            return saved.last
+        raise RuntimeError(f"Could not claim a {prefix} number in {project!r}: ten tries lost")
+
+    async def latest(self, project: str, prefix: str) -> Counter | None:
+        """The last number claimed for `prefix` in `project`, or None when none has been."""
+        found = await self.claims(project, prefix)
+        return max(found, key=lambda counter: counter.last) if found else None
+
+    async def claims(self, project: str, prefix: str) -> list[Counter]:
+        """The claims kept for `prefix` in `project` (the last one, and any a concurrent
+        caller has not cleared yet)."""
+        return await self._records.list(
+            Counter, RecordQuery(where={"project": project, "prefix": prefix})
+        )
