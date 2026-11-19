@@ -705,7 +705,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - `AgentSession`: `agent`, `task`, `ref: SessionRef`, `state: starting | running | idle | limited | failed | ended`, `turns`, `nudges`, `limited_until`, `tokens_in`, `tokens_out`, `cost`, `last_text`. `SessionEvent` (scope: history; retention from `[apps.orch] session_days`): the stream, for the live view and the transcript.
 - Tests first: `tests/unit/plugins/apps/orch/test_agents.py`: cycles, roles, derived status.
 - Done when: the record contract covers `Agent`, `AgentSession` and `SessionEvent`.
-- **Built (deepseek-b, 2026-11-19, PR #37):** `src/udl/plugins/apps/orch/agents.py` (the shapes: `Agent` with its
+- **Built (deepseek-b, 2026-11-19, PR #39):** `src/udl/plugins/apps/orch/agents.py` (the shapes: `Agent` with its
   `status()`, `AgentSession`, `AgentRole`, `AgentStatus`, `SessionState`, `ManagerPowers`, and `AnAgentEvent`, the
   runner's event union with its `kind` discriminator) and `orch/records.py` (`Agent` `orch_agent`, `AgentSession`
   `orch_agent_session` — runtime, never synced — and `SessionEvent` `orch_session_event` — runtime history, synced
@@ -723,6 +723,14 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
     `SessionEvent` `SyncRule.ENDED`, since a session belongs to the runtime that started it and only its transcript
     is history. `ManagerPowers` (27.8's) is defined here as the four bools, all off, because the `Agent` field
     needs the shape; 27.8 wires each power to its operations.
+  - **Review round (deepseek-b, 19 Nov 2026, PR #39):** the forest is now checked from above too — a manager that has
+    reports cannot be renamed or stop being a manager (`ConfigError`), and cannot be deleted (`InUse`, which is what
+    27.9's `orch_delete_agent` reports), so no report is ever left pointing at nothing. `SessionRecords.prune(before)`
+    (over a new `AppRecords.prune`) is the retention `session_days` names: 27.7's dispatcher calls it, and the
+    docstrings say so instead of claiming it already happens. `an_event` (dead code) is gone, the cycle check runs
+    before the manager lookup (so a chain that comes back says "reaches itself", not "is not a manager"), the second
+    `# Local Imports` header is gone, the limited-session test's name matches what it tests, and one test pins the
+    exact set of `Orch.record_kinds()`.
 
 **27.2 Agent tokens** · needs 27.1
 - Build:

@@ -41,7 +41,6 @@ from udl.db.models import JsonObject, utcnow
 from udl.db.records import Name
 from udl.plugins.apps.orch.models import HostName, Title
 from udl.plugins.runners.base import (
-    AgentEvent,
     RunnerFailed,
     RunnerLimited,
     SessionRef,
@@ -211,13 +210,3 @@ class AgentSession(_Model):
     """What it has cost, in USD, when its harness says (None: it does not charge per turn)."""
     last_text: str = ""
     """What it last said (the end of its last turn's answer)."""
-
-
-def an_event(event: AgentEvent) -> AnAgentEvent:
-    """`event` as a session event is stored (one of the kinds udl keeps, by its `kind`)."""
-    if not isinstance(
-        event,
-        (TextDelta, ToolStarted, ToolFinished, Usage, TurnEnded, RunnerLimited, RunnerFailed),
-    ):
-        raise TypeError(f"{type(event).__name__} is not an event udl keeps")
-    return event

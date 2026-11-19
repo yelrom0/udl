@@ -23,4 +23,5 @@ class OrchSettings(AppSettings):
     come with 27.7)."""
 
     session_days: PositiveInt = 30
-    """How many days a session's transcript (its SessionEvents) is kept."""
+    """How many days a session's transcript (its SessionEvents) is kept: what the dispatcher
+    (27.7) prunes with SessionRecords.prune()."""
