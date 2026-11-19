@@ -74,12 +74,13 @@ def fake_op(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, script: str | No
 def settings(
     *, vaults: list[str] | None = None, timeout: timedelta | None = None
 ) -> SecretsSettings:
-    """The [secrets] settings with 1Password on (and the vaults it may read)."""
+    """The [secrets] settings with 1Password on, and the vaults it may read (vault-a, unless the
+    test says which — `vaults=[]` is none)."""
     return SecretsSettings(
         store="memory",
         onepassword=OnePasswordSettings(
             enabled=True,
-            vaults=vaults or [],
+            vaults=["vault-a"] if vaults is None else vaults,
             timeout=timeout or timedelta(seconds=20),
         ),
     )
@@ -147,7 +148,7 @@ async def test_an_empty_field_is_an_empty_secret(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake_op(tmp_path, monkeypatch)
-    found = settings()
+    found = settings(vaults=["empty"])
 
     value = await resolver(found, await with_token(found)).resolve("empty/item/field")
 
@@ -166,6 +167,27 @@ async def test_a_vault_udl_may_not_read_is_refused_without_running_op(
     assert not (folder / "args").exists()  # (op was never run)
 
 
+async def test_with_no_vault_configured_no_vault_may_be_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (Vaults are allow-listed: nothing is read until one is named, and op is not run.)
+    folder = fake_op(tmp_path, monkeypatch)
+    found = settings(vaults=[])
+
+    with pytest.raises(ConfigError, match="vault udl may read"):
+        await resolver(found, await with_token(found)).resolve(REFERENCE)
+
+    assert not (folder / "args").exists()
+
+
+def test_only_the_vaults_the_settings_list_are_allowed() -> None:
+    listed = OnePasswordResolver(settings(vaults=["vault-a"]))
+
+    assert listed.allows("vault-a/item-1/field-1") is True
+    assert listed.allows("vault-b/item-1/field-1") is False
+    assert OnePasswordResolver(settings(vaults=[])).allows("vault-a/item-1/field-1") is False
+
+
 async def test_a_vault_the_account_names_is_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -181,7 +203,7 @@ async def test_op_s_refusal_is_a_secret_store_error_with_its_reason(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake_op(tmp_path, monkeypatch)
-    found = settings()
+    found = settings(vaults=["elsewhere"])
 
     with pytest.raises(SecretStoreError, match="not found") as raised:
         await resolver(found, await with_token(found)).resolve("elsewhere/item/field")
@@ -224,6 +246,19 @@ async def test_a_check_without_a_token_says_so_and_runs_nothing(
 
     assert health.ok is False
     assert health.problems == ["there is no service account token"]
+    assert not (folder / "args").exists()
+
+
+async def test_a_check_with_no_vault_allowed_says_so_and_runs_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = fake_op(tmp_path, monkeypatch)
+    found = settings(vaults=[])
+
+    health = await resolver(found, await with_token(found)).check()
+
+    assert (health.ok, health.vaults) == (False, [])
+    assert health.problems == ["no vault is allowed: add one to [secrets.onepassword] vaults"]
     assert not (folder / "args").exists()
 
 

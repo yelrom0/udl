@@ -340,7 +340,8 @@ class OnePasswordSettings(_Frozen):
 
     # Whether udl resolves op:// references (needs a service account token, and op).
     enabled: bool = False
-    # The vaults it may read: file-only, since it widens what udl reads.
+    # The vaults it may read (an allow-list: with none named, udl reads no vault): file-only,
+    # since it widens what udl reads.
     vaults: list[str] = Field(default_factory=list[str])
     # How long a resolved value is kept, so a page of secrets is one call to op.
     cache_ttl: Duration = timedelta(minutes=5)

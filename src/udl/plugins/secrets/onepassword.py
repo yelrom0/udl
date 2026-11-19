@@ -8,8 +8,9 @@ reference is `op://<vault>/<item>/<field>`, and the value is never written to di
 
 The service account's token is kept in udl's own store (at secrets/onepassword/token), given to
 `op` in the child's environment only and never in its argv. `op` reads only the vaults udl was
-allowed (`[secrets.onepassword] vaults`), and a reference to a vault outside that list is refused
-when the value is saved, so a reference that widens what udl reads never reaches the store.
+allowed (`[secrets.onepassword] vaults`, an allow-list: with none named, nothing is read), and a
+reference to a vault outside that list is refused when the value is saved, so a reference that
+widens what udl reads never reaches the store.
 """
 
 # System Imports
@@ -86,6 +87,10 @@ class OnePasswordResolver(SecretResolver):
 
     async def check(self) -> ResolverHealth:
         """Whether `op` works (a token, a sign-in) and which vaults it can read."""
+        if not self.table.vaults:
+            return ResolverHealth(
+                ok=False, problems=["no vault is allowed: add one to [secrets.onepassword] vaults"]
+            )
         token = await self._token()
         if token is None:
             return ResolverHealth(ok=False, problems=["there is no service account token"])
@@ -109,9 +114,9 @@ class OnePasswordResolver(SecretResolver):
     # -- what it may read ------------------------------------------------------------------------
 
     def allows(self, reference: str) -> bool:
-        """Whether `reference`'s vault is one udl was allowed (its `vaults`; empty means any)."""
-        allowed = list(self.table.vaults)
-        return not allowed or reference.partition("/")[0] in allowed
+        """Whether `reference`'s vault is one udl was allowed (its `vaults`): vaults are
+        allow-listed, so none is read until one is named."""
+        return reference.partition("/")[0] in self.table.vaults
 
     async def _token(self) -> SecretStr | None:
         """The service account's token, from udl's own store (None when there is none)."""
