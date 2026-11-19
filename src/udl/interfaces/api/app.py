@@ -38,7 +38,7 @@ from udl.automations.runtime import AutomationRuntime
 from udl.config import Settings
 from udl.core.operations import Caller, current_caller
 from udl.core.service import ServiceFactory, UDLService
-from udl.errors import ErrorCode, ErrorInfo, UDLError, Unauthorized
+from udl.errors import ErrorCode, ErrorInfo, NotAllowed, UDLError, Unauthorized
 from udl.integrations.accounts import CALLBACK_PATH
 from udl.interfaces.adapters import add_routes
 from udl.interfaces.api.routes import accounts, chains, downloads, events, sites, system
@@ -182,6 +182,11 @@ class KeyRequired:
             refused = JSONResponse(
                 e.to_info().model_dump(mode="json"), 401, {"WWW-Authenticate": API_KEY_HEADER}
             )
+            await refused(scope, receive, send)
+            return
+        except NotAllowed as e:
+            # (A write from another origin: answered here, as the API's own handler would.)
+            refused = JSONResponse(e.to_info().model_dump(mode="json"), 403)
             await refused(scope, receive, send)
             return
         await self.app(scope, receive, send)

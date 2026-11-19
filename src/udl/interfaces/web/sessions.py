@@ -65,7 +65,8 @@ class SessionStore:
         self._expires: dict[str, datetime] = {}
 
     def sign_in(self) -> str:
-        """A new token, for a browser that gave the key."""
+        """A new token, for a browser that gave the key (and the expired ones are swept)."""
+        self._sweep()
         token = secrets.token_urlsafe(32)  # (256 bits)
         self._expires[token] = self._now() + self.ttl
         return token
@@ -90,11 +91,19 @@ class SessionStore:
     @property
     def live(self) -> int:
         """How many sessions have not expired (the expired ones are dropped first)."""
+        self._sweep()
+        return len(self._expires)
+
+    def __len__(self) -> int:
+        """How many tokens it holds (the expired ones too, until something sweeps them)."""
+        return len(self._expires)
+
+    def _sweep(self) -> None:
+        """Drop the sessions that have expired (so a browser that never comes back is not kept)."""
         now = self._now()
         for token, expires in list(self._expires.items()):
             if expires <= now:
                 del self._expires[token]
-        return len(self._expires)
 
 
 class Attempts:

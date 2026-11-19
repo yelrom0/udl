@@ -10,6 +10,7 @@ whoever it is. The MCP server takes the key alone.
 """
 
 # System Imports
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 # Package Imports
@@ -20,7 +21,7 @@ from pydantic import SecretStr
 from support.api import client_for
 from support.interfaces import A, Harness
 from udl.config import APISettings, WebSettings
-from udl.interfaces.web.sessions import CSRF_HEADER, SESSION_COOKIE
+from udl.interfaces.web.sessions import CSRF_HEADER, SESSION_COOKIE, SessionStore
 
 KEY = "s3cret"
 
@@ -217,6 +218,44 @@ async def test_the_mcp_server_takes_the_key_and_not_the_cookie(tmp_path: Path) -
 
     assert by_cookie.status_code == 401
     assert by_key.status_code != 401
+
+
+async def test_the_mcp_server_refuses_a_write_from_another_origin(tmp_path: Path) -> None:
+    async with client_for(secured(tmp_path)) as client:
+        answer = await client.post(
+            "/mcp",
+            json={},
+            headers={
+                "X-API-Key": KEY,
+                "Origin": "https://evil.example",
+                "Accept": "application/json",
+            },
+        )
+        ours = await client.post(
+            "/mcp",
+            json={},
+            headers={
+                "X-API-Key": KEY,
+                "Origin": str(client.base_url).rstrip("/"),  # (this server's own origin)
+                "Accept": "application/json",
+            },
+        )
+
+    assert answer.status_code == 403
+    assert ours.status_code != 403
+
+
+async def test_an_expired_session_is_gone_after_the_next_sign_in(tmp_path: Path) -> None:
+    clock = [datetime(2026, 11, 19, 12, 0, tzinfo=UTC)]
+    store = SessionStore(timedelta(hours=1), now=lambda: clock[0])
+    gone = store.sign_in()
+    clock[0] += timedelta(hours=2)  # (the browser never comes back: nothing presents `gone`)
+
+    again = store.sign_in()
+
+    assert len(store) == 1  # (the expired one was swept when the next one signed in)
+    assert store.is_live(again)
+    assert not store.is_live(gone)
 
 
 async def test_a_delete_with_a_session_needs_the_csrf_header(tmp_path: Path) -> None:
