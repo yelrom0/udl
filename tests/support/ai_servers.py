@@ -6,7 +6,8 @@
 The fake AI server the provider contracts run against (an ASGI app, reached in-process):
 FakeOpenAI, which speaks OpenAI's API — /v1/models and /v1/chat/completions, with tools as
 functions, a tool call's arguments as a JSON string, SSE streaming up to [DONE], and
-response_format. 25.3's FakeOpenRouter will join it.
+response_format — and FakeOpenRouter, which speaks OpenRouter's: /models with a price per model,
+/key for the key's label and credit, and the same chats, priced.
 
 It holds what a test changes the way a service would: which models exist, what the next chat
 answers, a status to fail with, whether every call fails as a refused connection. Nothing here
@@ -167,7 +168,11 @@ class FakeOpenAI:
             return self._failed()
         if body.get("stream"):
             return StreamingResponse(self._stream(body), media_type="text/event-stream")
-        return JSONResponse(self.answer or self._answer(body))
+        return JSONResponse(self._priced(self.answer or self._answer(body)))
+
+    def _priced(self, answer: JsonObject) -> JsonObject:
+        """`answer` as this API sends it (a plain OpenAI answer says nothing of its price)."""
+        return answer
 
     def _failed(self) -> Response:
         """The failure a test asked for (its status, its message and its headers)."""
@@ -181,7 +186,7 @@ class FakeOpenAI:
     async def _stream(self, body: JsonObject) -> AsyncGenerator[bytes]:
         """A streamed answer: the pieces of text as `data:` chunks, then the tool calls (each in
         two pieces, as a provider sends them), then [DONE]."""
-        answer = self.answer or self._answer(body)
+        answer = self._priced(self.answer or self._answer(body))
         choices = _list(answer.get("choices"))
         [choice, *_] = choices or [{}]
         message = _object(choice.get("message"))
@@ -212,7 +217,10 @@ class FakeOpenAI:
         finish = None if self.no_finish else ("tool_calls" if calls else "stop")
         yield self._chunk({}, None, finish_reason=finish)
         # (What it used comes in a chunk of its own, after the finish, as OpenAI sends it.)
-        if body.get("stream_options") == {"include_usage": True}:
+        asked = body.get("stream_options") == {"include_usage": True} or body.get("usage") == {
+            "include": True
+        }
+        if asked:
             yield self._usage(answer.get("usage"))
         if self.garbled:
             yield b"data: {not json\n\n"
@@ -326,3 +334,121 @@ def _list(value: JsonValue) -> list[JsonObject]:
 def _pieces(text: str) -> list[str]:
     """`text` split into the pieces a streamed answer sends (words, with the space after)."""
     return re.findall(r"\S+\s*", text)
+
+
+# ---------------------------------------------------------------------------------------------
+# OpenRouter
+# ---------------------------------------------------------------------------------------------
+
+OPENROUTER_BASE: Final = "http://fake.ai/api/v1"
+"""Where the fake OpenRouter API lives (what an OpenRouter provider is pointed at)."""
+OPENROUTER_KEY: Final = "sk-or-v1-fake"
+"""The key the fake accepts."""
+
+
+@dataclass
+class FakeOpenRouter(FakeOpenAI):
+    """OpenRouter's API with state: its models and what each costs, the key's label, usage and
+    limit, and the same chats as OpenAI's — priced, and with what a chat used.
+
+    A model's price is per token, as OpenRouter gives it (a string of USD); a chat's `cost` is
+    what it cost, as OpenRouter says when `usage: {"include": true}` is asked for."""
+
+    prices: dict[str, tuple[str, str]] = field(
+        default_factory=lambda: {
+            "fake-1": ("0.0000015", "0.000003"),  # (USD per token: prompt, completion)
+            "fake-2": ("0", "0"),
+        }
+    )
+    """Each model's price per token, as OpenRouter gives it."""
+    contexts: dict[str, int] = field(default_factory=lambda: {"fake-1": 128_000, "fake-2": 8_192})
+    """Each model's context length."""
+    tool_models: tuple[str, ...] = ("fake-1",)
+    """The models that take tools (the others do not say so in `supported_parameters`)."""
+    label: str = "deepseek-b"
+    """The key's label, as OpenRouter names it."""
+    used: str = "1.25"
+    """How much of the key's limit is used, in USD."""
+    limit: str | None = "10"
+    """The key's limit, in USD (None: no limit)."""
+    cost: str = "0.00042"
+    """What a chat costs, as OpenRouter says."""
+    headers_seen: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
+    """The headers of every chat call made (what udl sent of itself)."""
+
+    def http(self) -> HttpClientFactory:
+        """udl's client factory, reaching this fake in-process (and nothing else)."""
+
+        @asynccontextmanager
+        async def factory(*, tool: str) -> AsyncGenerator[httpx.AsyncClient]:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(self.app()), base_url=OPENROUTER_BASE
+            ) as client:
+                yield client
+
+        return factory
+
+    def app(self) -> Starlette:
+        """The fake as an ASGI app (what http() mounts)."""
+        return Starlette(
+            routes=[
+                Route("/api/v1/models", self._models, methods=["GET"]),
+                Route("/api/v1/key", self._key, methods=["GET"]),
+                Route("/api/v1/chat/completions", self._chat, methods=["POST"]),
+            ]
+        )
+
+    async def _models(self, request: Request) -> Response:
+        if (refused := self._refused(request)) is not None:
+            return refused
+        if self.status is not None:
+            return self._failed()
+        listed: JsonObject = {
+            "data": [
+                {
+                    "id": name,
+                    "name": name,
+                    "context_length": self.contexts.get(name),
+                    "pricing": (
+                        {
+                            "prompt": self.prices[name][0],
+                            "completion": self.prices[name][1],
+                            "request": "0",
+                        }
+                        if name in self.prices
+                        else {}
+                    ),
+                    "supported_parameters": (
+                        ["tools", "temperature"] if name in self.tool_models else ["temperature"]
+                    ),
+                }
+                for name in self.models
+            ]
+        }
+        return JSONResponse(listed)
+
+    async def _key(self, request: Request) -> Response:
+        if (refused := self._refused(request)) is not None:
+            return refused
+        if self.status is not None:
+            return self._failed()
+        key: JsonObject = {
+            "data": {
+                "label": self.label,
+                "usage": self.used,
+                "limit": self.limit,
+                "is_free_tier": self.limit is None,
+            }
+        }
+        return JSONResponse(key)
+
+    async def _chat(self, request: Request) -> Response:
+        self.headers_seen.append({name.lower(): value for name, value in request.headers.items()})
+        return await super()._chat(request)
+
+    def _priced(self, answer: JsonObject) -> JsonObject:
+        """`answer` with what it cost, as OpenRouter says of a chat's usage."""
+        usage = answer.get("usage")
+        if isinstance(usage, dict):
+            answer["usage"] = {**usage, "cost": float(self.cost)}
+        return answer
