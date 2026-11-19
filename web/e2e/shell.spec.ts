@@ -27,8 +27,9 @@ test("an event shows up live", async ({ page }) => {
 	).toBeVisible();
 
 	const answer = await page.request.post("/events", {
-		// (A write with the session's cookie needs the CSRF header: 18.4's rule.)
-		headers: { "X-UDL-CSRF": "1" },
+		// (A write with the session's cookie needs the CSRF header and the page's own origin:
+		// 18.4's rules, and Playwright's request is not the page.)
+		headers: { "X-UDL-CSRF": "1", Origin: new URL(page.url()).origin },
 		data: { type: "custom.hello", data: { subject: "The page is watching" } },
 	});
 
