@@ -242,7 +242,6 @@ class ClaudeCode(AgentRunner[ClaudeCodeOptions]):
                             yield event
         except (ToolUnavailable, PluginFailed) as failure:
             ended = TurnEnded(reason=TurnReason.ERROR, text=str(failure))
-
         if session.id in self._stopped:
             yield TurnEnded(reason=TurnReason.STOPPED, text="The session was stopped.")
             return
