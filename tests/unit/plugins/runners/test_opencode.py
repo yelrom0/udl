@@ -22,7 +22,7 @@ from pathlib import Path
 import anyio
 import httpx
 import pytest
-from pydantic import BaseModel, ConfigDict, SecretStr
+from pydantic import BaseModel, ConfigDict, SecretStr, TypeAdapter
 
 # Local Imports
 from support.clock import T0, FakeClock
@@ -74,18 +74,26 @@ class _Document(BaseModel):
     paths: dict[str, object]
 
 
+class _Rule(BaseModel):
+    """One rule of the session's ruleset, as OpenCode reads it."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    action: str = "*"
+    resource: str = "*"
+    effect: str = "ask"
+
+
 def _decide(rules: object, action: str, resource: str) -> str:
     """What OpenCode decides for a request: the last rule whose action and resource match, with
     `*` matching anything (and everything, if no rule matches, is asked)."""
-    said: list[dict[str, object]] = [rule for rule in rules if isinstance(rule, dict)]  # type: ignore[misc]
     effect = "ask"
-    for rule in said:
-        wanted, allowed = str(rule["action"]), str(rule["resource"])
-        if wanted not in (action, "*"):
+    for rule in TypeAdapter(list[_Rule]).validate_python(rules or []):
+        if rule.action not in (action, "*"):
             continue
-        pattern = re.escape(allowed).replace(r"\*", ".*")
+        pattern = re.escape(rule.resource).replace(r"\*", ".*")
         if re.fullmatch(pattern, resource):
-            effect = str(rule["effect"])
+            effect = rule.effect
     return effect
 
 
@@ -267,6 +275,18 @@ async def test_a_model_variant_is_named_as_the_api_names_it(service: FakeOpenCod
         "providerID": "openrouter",
         "id": "deepseek/deepseek-v4.1-flash",
         "variant": "fast",
+    }
+
+
+async def test_a_model_with_no_provider_keeps_its_variant(service: FakeOpenCode) -> None:
+    # (A bare name is sent as both provider and id — the service says whether it has it — and the
+    # variant after the `#` is kept with it, or the model would be asked for in the wrong shape.)
+    await _runner(service, FakeShell()).start(SessionSpec(cwd="/w", model="gpt-5#high"))
+
+    assert _sent(service, "/api/session")["model"] == {
+        "providerID": "gpt-5",
+        "id": "gpt-5",
+        "variant": "high",
     }
 
 
@@ -467,6 +487,39 @@ async def test_a_turn_that_is_silent_for_a_while_is_not_given_up_on(service: Fak
     runner = _runner(service, FakeShell())
     session = await runner.start(SPEC)
     service.silent_reads = 5  # (five subscriptions that say nothing, then the turn)
+
+    events = await _turn(runner, session)
+
+    assert events[-1] == TurnEnded(reason=TurnReason.DONE)
+    assert [event for event in events if isinstance(event, TextDelta)] == [TextDelta(text="Hello!")]
+
+
+async def test_a_stream_that_drops_before_the_turn_says_it_started_still_ends_it(
+    service: FakeOpenCode,
+) -> None:
+    # (The stream is volatile: the turn can start and end inside a gap, so its `started` event
+    # never arrives. The session's own time says it went idle after this turn's prompt, so the
+    # turn still ends with its outcome instead of running until it is given up on.)
+    service.omit_started = True
+    service.ends_before_served = True  # (it ended on the service, while the read was away)
+    service.cut_after = 1
+    runner = _runner(service, FakeShell())
+    session = await runner.start(SPEC)
+
+    events = await _turn(runner, session)
+
+    assert events[-1] == TurnEnded(reason=TurnReason.DONE)
+
+
+async def test_silence_between_a_turn_s_events_does_not_count_against_it(
+    service: FakeOpenCode,
+) -> None:
+    # (Only a read that says nothing counts against the turn, and a turn that says something
+    # starts the count again: two 28-read silences either side of a part are still one turn.)
+    service.parts = 3
+    service.gap = 28  # (just under `_DROPS`, twice: without the reset the turn is given up on)
+    runner = _runner(service, FakeShell())
+    session = await runner.start(SPEC)
 
     events = await _turn(runner, session)
 

@@ -54,10 +54,13 @@ async def test_opencode_answers_one_prompt(monkeypatch: pytest.MonkeyPatch) -> N
     models = await runner.models()
     if not models:
         pytest.skip("opencode has no model signed in here")
-    # (The card asks for an OpenRouter model; a host with none signed in runs its first one.)
+    # (The card asks for an OpenRouter model, so a host with none signed in is a skip that says so
+    # rather than a turn on whatever it happens to have.)
     chosen = os.environ.get("OPENCODE_SMOKE_MODEL") or next(
-        (one.id for one in models if one.id.startswith("openrouter")), models[0].id
+        (one.id for one in models if one.id.startswith("openrouter")), ""
     )
+    if not chosen:
+        pytest.skip("no OpenRouter model is signed in here; set OPENCODE_SMOKE_MODEL")
     session = await runner.start(
         SessionSpec(
             cwd=str(where),

@@ -147,6 +147,15 @@ class _Models(BaseModel):
     data: list[_ModelInfo] = Field(default_factory=lambda: list[_ModelInfo]())
 
 
+class _When(BaseModel):
+    """`Session.Info`'s `time`: when the session was made, touched and last went idle."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    idle: float | None = None
+    """When its last turn ended (None: no turn has finished on it yet)."""
+
+
 class _Session(BaseModel):
     """`Session.Info`, as far as udl reads it."""
 
@@ -156,6 +165,7 @@ class _Session(BaseModel):
     cost: float = 0.0
     outcome: str | None = None
     """How its last turn ended (`succeeded`, `failed`, `interrupted`, or None while it runs)."""
+    time: _When = Field(default_factory=_When)
 
 
 class _Created(BaseModel):
@@ -434,6 +444,7 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
         for this one) and the stream brings nothing, the session says how it ended. Silence alone
         does not end a turn that is still sending events, however long it runs."""
         idle = 0
+        was_idle: float | None = None  # (when the session was last idle before this turn)
         started = False
         prompted = False
         streamed: set[str] = set()
@@ -446,6 +457,8 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
                     self._running[session.id] = answer
                     try:
                         if not prompted:
+                            before = await self._get(api, f"/api/session/{session.id}", _Created)
+                            was_idle = before.data.time.idle
                             await self._call(
                                 api,
                                 "POST",
@@ -473,7 +486,9 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
                 log.debug("opencode's events for %s dropped: %s", session.id, failure)
             if session.id in self._stopped:
                 return
-            if started and (ended := await self._outcome(api, session)) is not None:
+            # (The session is asked after every read, not only after a drop: the stream is
+            # volatile, so a turn can start and end inside a gap and never say either.)
+            if (ended := await self._outcome(api, session, was_idle, started)) is not None:
                 yield ended
                 return
             idle += 1
@@ -483,11 +498,25 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
                 )
             await asyncio.sleep(0)  # (a yield between tries is enough: the reads time out)
 
-    async def _outcome(self, api: httpx.AsyncClient, session: SessionRef) -> TurnEnded | None:
-        """How the session's last turn ended, if it has (None: it is still running)."""
+    async def _outcome(
+        self,
+        api: httpx.AsyncClient,
+        session: SessionRef,
+        was_idle: float | None,
+        started: bool,
+    ) -> TurnEnded | None:
+        """How this turn ended, if it has (None: it is still running).
+
+        The session's `outcome` is its **last** turn's. It is this turn's when the stream said this
+        turn started, or when the session has gone idle since this turn's prompt — the stream is
+        volatile, so neither is guaranteed on its own.
+        """
         said = await self._get(api, f"/api/session/{session.id}", _Created)
         if said.data.outcome is None:
             return None
+        idle = said.data.time.idle
+        if not started and (idle is None or (was_idle is not None and idle <= was_idle)):
+            return None  # (the previous turn's ending, still: this one has not finished)
         return {
             "succeeded": TurnEnded(reason=TurnReason.DONE),
             "interrupted": TurnEnded(reason=TurnReason.STOPPED, text="The turn was interrupted."),

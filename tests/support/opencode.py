@@ -122,7 +122,9 @@ class FakeShell(HostShell):
         if argv[0] == "sh" and "agents" in argv[-1]:
             if self.writes_fail:
                 return ProcessResult(returncode=1, stdout="", stderr="no permission")
-            name = _AGENT_FILE.search(argv[-1]).group(1)  # type: ignore[union-attr]
+            found = _AGENT_FILE.search(argv[-1])
+            assert found is not None, "the shell command names the agent file"
+            name = found.group(1)
             self.files[name] = (stdin or b"").decode()
             return ProcessResult(returncode=0, stdout="", stderr="")
         if argv[0] == "sh":
@@ -201,6 +203,8 @@ class FakeOpenCode:
     """The events appended so far."""
     seq: int = 0
     """The last sequence number written."""
+    ticks: int = 0
+    """How many clock readings it has made (the session's `time` values)."""
     turns: int = 0
     """How many prompts it has been sent."""
     interrupted: bool = False
@@ -215,6 +219,15 @@ class FakeOpenCode:
     """How many subscriptions say nothing before the events are served."""
     keep_log: bool = False
     """Whether the event stream replays what it already sent (the service does not)."""
+    parts: int = 1
+    """How many reads one turn's events are served over (1: one read)."""
+    gap: int = 0
+    """How many silent reads sit between those parts (a turn that pauses to think)."""
+    omit_started: bool = False
+    """Whether the turn's `session.execution.started` is left out (a stream that dropped early)."""
+    ends_before_served: bool = False
+    """Whether the turn ends on the service at once (False: when its events have been served), as a
+    turn that finished while a dropped read was not looking."""
     report_outcome: bool = True
     """Whether `GET /api/session/{id}` says how the last turn ended."""
     record_into: list[dict[str, str]] | None = None
@@ -318,6 +331,11 @@ class FakeOpenCode:
             }
         )
 
+    def _tick(self) -> int:
+        """A millisecond that always moves on (a real clock can repeat within one turn)."""
+        self.ticks += 1
+        return 1_700_000_000_000 + self.ticks
+
     async def _create(self, request: Request) -> Response:
         if not self._allowed(request):
             return JSONResponse({"message": "unauthorized"}, status_code=401)
@@ -333,6 +351,7 @@ class FakeOpenCode:
             "metadata": body.get("metadata"),
             "cost": 0.0,
             "tokens": {"input": 0, "output": 0},
+            "time": {"created": self._tick(), "updated": self._tick()},
         }
         return JSONResponse({"data": self.sessions[identifier]})
 
@@ -368,10 +387,18 @@ class FakeOpenCode:
             return JSONResponse({"message": "no"}, status_code=self.prompt_status)
         self.turns += 1
         written = self._turn_events()
+        if self.omit_started:
+            written = [one for one in written if one["type"] != "session.execution.started"]
         # (The outcome is published when the stream has said everything, as a real one is: a turn
         # that is still being read has no outcome yet.)
         self.sessions[identifier]["outcome"] = None
         self.pending_outcome = _outcome_of(written) if self.report_outcome else None
+        if self.ends_before_served:
+            self.sessions[identifier]["outcome"] = self.pending_outcome
+            when = self.sessions[identifier].get("time")
+            if isinstance(when, dict):
+                when["idle"] = when["updated"] = self._tick()
+            self.pending_outcome = None
         for event in written:
             self.seq += 1
             written = json.loads(json.dumps(event))
@@ -471,6 +498,12 @@ class FakeOpenCode:
         waiting = [] if silent else list(self.log)
         if not self.keep_log and not silent:
             self.log = []
+        if self.parts > 1 and waiting:
+            size = -(-len(waiting) // self.parts)  # (a ceiling division: the parts are even)
+            self.log = waiting[size:] + self.log
+            waiting = waiting[:size]
+            self.parts -= 1
+            self.silent_reads += self.gap  # (the gap sits between the parts)
 
         async def lines() -> AsyncGenerator[bytes]:
             # (The test transport runs the app to its end before the runner can send the prompt, so
@@ -482,11 +515,16 @@ class FakeOpenCode:
                     return  # (a dropped connection)
                 yield _sse(said)
             yield _sse({"type": "log.synced", "aggregateID": "ses", "seq": self.seq})
-            if (outcome := self.pending_outcome) is not None:
+            # (A turn has no outcome until its events have all been served: a stream that says
+            # nothing yet leaves it running.)
+            if (outcome := self.pending_outcome) is not None and waiting and self.parts <= 1:
                 self.pending_outcome = None
                 for identifier in self.sessions:
                     if self.sessions[identifier].get("outcome") is None:
                         self.sessions[identifier]["outcome"] = outcome
+                        when = self.sessions[identifier].get("time")
+                        if isinstance(when, dict):
+                            when["idle"] = when["updated"] = self._tick()
             if self.variables.get("FAKE_HARNESS_SLOW"):
                 await asyncio.sleep(_SLOW)  # (a turn that runs until it is interrupted)
 

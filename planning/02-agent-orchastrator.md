@@ -535,7 +535,8 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
     prompt — `TextDelta("Hello there, friend.")`, `Usage(input 2828, output 9, $0.0003305932)`,
     `TurnEnded(done)`. (The free ERNIE models were out of their daily quota: `provider.rate-limit`,
     which the runner reads as a `RunnerLimited`.) **On thevault is still to do:** `opencode` is not
-    installed there (checked over SSH, 2026-11-20), so the smoke test cannot run until it is.
+    installed there (checked over SSH, 2026-11-20), so the card's second run needs the user to
+    install it — installing software on another machine is not the agent's call.
 - **Built (deepseek-a, 2026-11-19/20, PR #TBD):** the `opencode` runner.
   - `udl/plugins/runners/opencode.py`: `OpenCode` (name `opencode`, published under `udl.runners`),
     `OpenCodeOptions` (`cli`, `models`, `agent`, `task`, `title`, `directory`) and `OpenCodeSessions`
@@ -556,8 +557,12 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
     answers only `log.synced`, while the same turn's events carry `durable.{aggregateID,seq}` on
     `/api/event`. That makes `/api/event` the source and the session's own `outcome`
     (`GET /api/session/{id}`) the backstop: a stream that drops is opened again, and one that
-    brings nothing asks the session how the turn ended — but only once **this** turn has started
-    (`session.execution.started`), so a second turn never takes the first one's `succeeded`. A
+    brings nothing asks the session how the turn ended — after **every** read, not only after a
+    drop, because a turn can start and end inside a gap. The outcome is the last turn's, so it is
+    taken only when **this** turn is known to have run: `session.execution.started` was read, or
+    the session's `time.idle` (snapshotted before the prompt) has moved on. Neither alone is
+    enough — the stream is volatile, so `started` can be lost, and `outcome` can be the previous
+    turn's. A
     turn that keeps sending events is never ended by silence, however long it runs (30 reads with
     nothing at all, an hour, is a turn given up on). A drop can lose text — the stream is
     volatile — but never the end of the turn. `session.text.delta` streams a `TextDelta`, and
@@ -586,10 +591,11 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
     serves), `tests/fixtures/opencode/events-2.1.2.json` (one real turn's events, exact payloads), `tests/support/opencode.py` (`FakeOpenCode`, an ASGI app of those calls with Basic auth,
     a log a test can cut, pending permissions, and the contract's slow/limited turns through
     `FAKE_HARNESS_SLOW`/`FAKE_HARNESS_LIMITED`; `FakeShell`, its shell), the contract's fourth case,
-    52 unit tests and `tests/smoke/test_opencode.py` (opt-in, `make smoke`). The smoke test runs one
+    54 unit tests and `tests/smoke/test_opencode.py` (opt-in, `make smoke`). The smoke test runs one
     real turn in the directory the suite was started from (OpenCode's service is per directory) on
     the first OpenRouter model the host has, or `OPENCODE_SMOKE_MODEL`; a model whose free daily
-    quota is spent is a skip that says so. **It passes here** with
+    quota is spent is a skip that says so, and so is a host with no OpenRouter model at all.
+    **It passes here** with
     `OPENCODE_SMOKE_MODEL=openrouter-ds-a/deepseek-v4.1-flash-1017-instant` (the free ERNIE models
     were out of quota). A test reads the real-turn fixture and asserts the `TextDelta` / `Usage` /
     `TurnEnded` it becomes. A test checks that every path the runner calls is a path in the
