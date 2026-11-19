@@ -39,7 +39,7 @@ from udl.config import FetchSettings
 from udl.core.urls import URL, site_key
 from udl.fetch.browser import PlaywrightTab, browser_user_agent
 from udl.fetch.challenges import detect
-from udl.fetch.ladder import Via, page_of
+from udl.fetch.ladder import Snapshot, Via, page_of
 from udl.fetch.models import Passed, WaitingSite
 from udl.plugins.downloaders.base import CancelToken
 from udl.plugins.downloaders.browser import chromium
@@ -57,12 +57,65 @@ class Person(Protocol):
     async def attend(self, tab: Page) -> None: ...
 
 
+class _Shown(Protocol):
+    """What the window asks of a tab's page (Playwright's Page is one)."""
+
+    @property
+    def url(self) -> str: ...
+
+    def is_closed(self) -> bool: ...
+
+    async def evaluate(self, expression: str) -> object: ...
+
+
+class _Watched(Protocol):
+    """What the window asks of the tab udl watches (a PlaywrightTab)."""
+
+    def quiet_for(self, delay: timedelta) -> bool: ...
+
+    def inflight(self) -> list[str]: ...
+
+    async def look(self) -> Snapshot: ...
+
+
+async def not_passed_because(page: _Shown, tab: _Watched, site: str) -> str | None:
+    """Why `site`'s tab doesn't show the site's own page past its check, or None when it does:
+    on the site, its network quiet, loaded, and neither a check nor an error."""
+    if page.is_closed():
+        return "its tab was closed"
+    try:
+        on_site = site_key(page.url) == site
+    except ValueError:  # (about:blank, an error page)
+        on_site = False
+    if not on_site:
+        return f"its tab is on {page.url}, not the site"
+    if not tab.quiet_for(QUIET):
+        busy = tab.inflight()
+        quiet = f"a request ended under {QUIET.total_seconds():g} s ago"
+        return f"its network is busy ({', '.join(busy[:3]) or quiet})"
+    try:
+        state = await page.evaluate("() => document.readyState")
+        if state != "complete":
+            return f"its page is still loading ({state})"
+        seen = await tab.look()
+    except PlaywrightError:  # (navigating)
+        return "its page is navigating"
+    text = seen.body.decode("utf-8", "replace")
+    if (detection := detect(seen.status, seen.headers, text, seen.url)) is not None:
+        return f"its page is still the check ({detection.kind})"
+    if seen.status >= 400:
+        return f"its page answers {seen.status}"
+    return None
+
+
 @dataclass
 class _SiteTab:
     waiting: WaitingSite
     page: Page
     tab: PlaywrightTab
     passed: bool = False
+    # Why its last look found it not passed: what the window says when it ends with it left.
+    left_because: str = "it was never looked at"
 
 
 @dataclass
@@ -163,6 +216,9 @@ class ChallengeWindow:
                     ", ".join(site for site, tab in self._tabs.items() if tab.passed) or "none",
                     ", ".join(site for site, tab in self._tabs.items() if not tab.passed) or "none",
                 )
+                for site, tab in self._tabs.items():
+                    if not tab.passed:
+                        log.debug("%s was left: %s", site, tab.left_because)
                 self._done = True
                 self._context = None
                 self._tabs.clear()
@@ -194,23 +250,12 @@ class ChallengeWindow:
                 await self._listing_page.set_content(self._listing.html())
 
     async def _has_passed(self, site_tab: _SiteTab) -> bool:
-        page = site_tab.page
-        if page.is_closed():
-            return False
-        try:
-            on_site = site_key(page.url) == site_tab.waiting.site
-        except ValueError:  # (about:blank, an error page)
-            return False
-        if not on_site or not site_tab.tab.quiet_for(QUIET):
-            return False
-        try:
-            if await page.evaluate("() => document.readyState") != "complete":
-                return False
-            seen = await site_tab.tab.look()
-        except PlaywrightError:  # (navigating)
-            return False
-        text = seen.body.decode("utf-8", "replace")
-        return seen.status < 400 and detect(seen.status, seen.headers, text, seen.url) is None
+        """Whether the site's tab shows its page, past the check. Why not, when it doesn't, is
+        kept for the line the window ends with (a run that left a site then says why)."""
+        reason = await not_passed_because(site_tab.page, site_tab.tab, site_tab.waiting.site)
+        if reason is not None:
+            site_tab.left_because = reason
+        return reason is None
 
     async def _read(self, site_tab: _SiteTab, passed: Passed) -> None:
         seen = await site_tab.tab.look()
