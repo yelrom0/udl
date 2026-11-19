@@ -268,7 +268,21 @@ class ProviderProcess:
         Raises ProviderUnavailable when it does not answer (with what it printed)."""
         for _ in range(max(1, math.ceil(self.options.start_timeout.total_seconds() / POLL))):
             if await self._healthy():
-                return
+                process = self._process
+                if process is None:
+                    return
+                # (It has to be the program udl started that answers: one that exited while
+                # something else answers on its port has not started at all. So give it POLL
+                # seconds to die, which costs a start half a second and finds the dead ones.)
+                exiting = asyncio.ensure_future(process.wait())
+                await asyncio.wait({exiting}, timeout=POLL)
+                if not exiting.done():
+                    exiting.cancel()
+                    await asyncio.gather(exiting, return_exceptions=True)
+                    return
+                await asyncio.gather(exiting, return_exceptions=True)
+                await self._drained()
+                raise self._exited(process)
             await self._poll()
         await self._drained()
         raise ProviderUnavailable(
@@ -295,19 +309,21 @@ class ProviderProcess:
             await asyncio.sleep(0)
             return
         exiting = asyncio.ensure_future(process.wait())
-        looked = asyncio.ensure_future(self.provider.health())
-        await asyncio.wait({exiting, looked}, timeout=POLL)
-        for waiter in (exiting, looked):
-            if not waiter.done():
-                waiter.cancel()
-        await asyncio.gather(exiting, looked, return_exceptions=True)
+        await asyncio.wait({exiting}, timeout=POLL)
+        if not exiting.done():
+            exiting.cancel()
+        await asyncio.gather(exiting, return_exceptions=True)
         if exiting.done() and not exiting.cancelled():
             await self._drained()
-            raise ProviderUnavailable(
-                f"The {self.provider.name} provider's program exited (code "
-                f"{exiting.result()}) before it answered",
-                hint=_hint(self),
-            )
+            raise self._exited(process)
+
+    def _exited(self, process: asyncio.subprocess.Process) -> ProviderUnavailable:
+        """What a program that exited before it answered is."""
+        return ProviderUnavailable(
+            f"The {self.provider.name} provider's program exited (code {process.returncode}) "
+            "before it answered",
+            hint=_hint(self),
+        )
 
     def _drain(self, process: asyncio.subprocess.Process) -> None:
         """Keep the last LOG_TAIL characters of the program's output, in the background."""
@@ -387,20 +403,7 @@ def _shown(argv: Sequence[str]) -> list[str]:
 
 def _redacted(text: str) -> str:
     """`text` with the value of anything that looks like `name=value` or `--name value` hidden."""
-    shown: list[str] = []
-    skip = False
-    for word in text.split():
-        if skip:
-            shown.append("***")
-            skip = False
-            continue
-        name, sep, _ = word.partition("=")
-        if name.lower() in _SECRET_FLAGS:
-            shown.append(f"{name}=***" if sep else word)
-            skip = not sep
-            continue
-        shown.append(word)
-    return " ".join(shown)
+    return " ".join(_shown(text.split()))
 
 
 class ProcessPool:

@@ -320,6 +320,21 @@ async def test_it_streams_a_tool_call_that_arrives_in_pieces() -> None:
     assert chunks[-1].done_reason is DoneReason.TOOL_CALLS
 
 
+async def test_a_models_answer_that_is_not_json_is_a_provider_that_cannot_be_read() -> None:
+    # (A url missing /v1 lands on a web page, which answers 200 with HTML.)
+    fake = FakeOpenAI(status=200, text="<html><body>a web page</body></html>")
+
+    with pytest.raises(ProviderUnavailable, match="did not answer with JSON"):
+        await provider(fake).models()
+
+
+async def test_a_chat_answer_that_is_not_json_is_a_provider_that_cannot_be_read() -> None:
+    fake = FakeOpenAI(status=200, text="<html><body>a web page</body></html>")
+
+    with pytest.raises(ProviderUnavailable, match="did not answer with JSON"):
+        await provider(fake).chat(chat())
+
+
 async def test_it_reads_what_the_provider_says_of_a_refusal() -> None:
     fake = FakeOpenAI(status=500, detail="the model is loading")
 
@@ -591,6 +606,22 @@ async def test_an_answer_without_usage_has_none() -> None:
     response = await provider(fake).chat(chat())
 
     assert response.usage is None
+
+
+async def test_a_stream_reads_what_it_used_from_the_chunk_after_the_finish() -> None:
+    # (OpenAI sends usage in a trailing chunk with no choices, after the finish_reason one.)
+    fake = FakeOpenAI(answer=_answer("hi"))
+
+    chunks = [chunk async for chunk in provider(fake).stream(chat())]
+
+    last = fake.streamed[-1]
+    assert (last["choices"], _at(last, "usage")) == (
+        [],
+        {"prompt_tokens": 11, "completion_tokens": 3, "total_tokens": 14},
+    )
+    assert len([chunk for chunk in chunks if chunk.done_reason is not None]) == 1
+    assert chunks[-1].usage is not None
+    assert chunks[-1].usage.total_tokens == 14
 
 
 async def test_a_stream_asks_what_the_answer_used() -> None:

@@ -203,7 +203,7 @@ class OpenAICompatibleProvider(AIProvider[OpenAIOptions]):
             response = await client.get(self._url("/models"), headers=self._headers())
         if response.status_code >= 400:
             raise self._error(response)
-        answer = _ModelList.model_validate(_OBJECT.validate_json(response.content))
+        answer = self._parsed(response, _ModelList)
         return [ModelInfo(name=model.id) for model in answer.data if model.id]
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
@@ -218,7 +218,7 @@ class OpenAICompatibleProvider(AIProvider[OpenAIOptions]):
             )
         if response.status_code >= 400:
             raise self._error(response)
-        answer = _ChatAnswer.model_validate(_OBJECT.validate_json(response.content))
+        answer = self._parsed(response, _ChatAnswer)
         [choice, *_] = answer.choices or [_Choice()]
         delta = choice.message or choice.delta or _Delta()
         return ChatResponse(
@@ -251,7 +251,7 @@ class OpenAICompatibleProvider(AIProvider[OpenAIOptions]):
                 raise self._error(response)
             calls: dict[int, _ToolCall] = {}
             usage: Usage | None = None
-            ended = False
+            done: DoneReason | None = None
             async for line in response.aiter_lines():
                 try:
                     chunk = _chunk(line)
@@ -265,28 +265,36 @@ class OpenAICompatibleProvider(AIProvider[OpenAIOptions]):
                     if line.strip() == _DONE:
                         break
                     continue  # (anything else: a comment, or an empty line)
-                [choice, *_] = chunk.choices or [_Choice()]
+                if chunk.usage is not None:
+                    usage = _usage(chunk.usage)
+                if not chunk.choices:
+                    continue  # (the trailing chunk that says what the answer used)
+                [choice, *_] = chunk.choices
                 delta = choice.delta or choice.message or _Delta()
                 for call in delta.tool_calls:
                     calls[call.index] = _merge(calls.get(call.index), call)
-                if chunk.usage is not None:
-                    usage = _usage(chunk.usage)
                 if delta.content:
                     yield ChatChunk(content=delta.content)
                 if choice.finish_reason is not None:
-                    yield ChatChunk(
-                        tool_calls=self._calls(list(calls.values())),
-                        done_reason=_reason(choice.finish_reason),
-                        usage=usage,
-                    )
-                    ended = True
-            if not ended:
-                # (A stream that ends without saying why: its calls are still complete.)
-                yield ChatChunk(
-                    tool_calls=self._calls(list(calls.values())),
-                    done_reason=DoneReason.STOP,
-                    usage=usage,
-                )
+                    done = _reason(choice.finish_reason)
+            # (One chunk ends the answer, at [DONE] or when the stream stops: it carries the calls
+            # and what the answer used, which OpenAI sends after the finish_reason chunk.)
+            yield ChatChunk(
+                tool_calls=self._calls(list(calls.values())),
+                done_reason=done or DoneReason.STOP,
+                usage=usage,
+            )
+
+    def _parsed[M: BaseModel](self, response: httpx.Response, model: type[M]) -> M:
+        """`response`'s body as `model`, or a ProviderUnavailable when it is not the JSON the API
+        answers with (a url missing /v1 lands on a web page, which answers 200 with HTML)."""
+        try:
+            return model.model_validate(_OBJECT.validate_json(response.content))
+        except ValidationError as e:
+            raise ProviderUnavailable(
+                f"The {self.name} provider at {self.options.url} did not answer with JSON",
+                hint="Its answer was not the API's (a url missing /v1 may land on a web page).",
+            ) from e
 
     def check(self) -> None:
         """Raise what is wrong with its options, before they are saved: a program udl may not

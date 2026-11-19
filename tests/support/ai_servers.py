@@ -210,7 +210,10 @@ class FakeOpenAI:
             yield self._chunk({}, first)
             yield self._chunk({}, second)
         finish = None if self.no_finish else ("tool_calls" if calls else "stop")
-        yield self._chunk({}, None, finish_reason=finish, usage=answer.get("usage"))
+        yield self._chunk({}, None, finish_reason=finish)
+        # (What it used comes in a chunk of its own, after the finish, as OpenAI sends it.)
+        if body.get("stream_options") == {"include_usage": True}:
+            yield self._usage(answer.get("usage"))
         if self.garbled:
             yield b"data: {not json\n\n"
         yield b"data: [DONE]\n\n"
@@ -221,7 +224,6 @@ class FakeOpenAI:
         call: JsonObject | None,
         *,
         finish_reason: str | None = None,
-        usage: JsonValue | None = None,
     ) -> bytes:
         """One `data:` line of a streamed answer."""
         sent: JsonObject = {"tool_calls": [call]} if call is not None else delta
@@ -231,6 +233,18 @@ class FakeOpenAI:
             "object": "chat.completion.chunk",
             "model": "fake-1",
             "choices": [choice],
+            "usage": None,
+        }
+        self.streamed.append(chunk)
+        return f"data: {json.dumps(chunk)}\n\n".encode()
+
+    def _usage(self, usage: JsonValue | None) -> bytes:
+        """The trailing `data:` line that says what the answer used (no choices, as OpenAI's)."""
+        chunk: JsonObject = {
+            "id": "chat-1",
+            "object": "chat.completion.chunk",
+            "model": "fake-1",
+            "choices": [],
             "usage": usage,
         }
         self.streamed.append(chunk)

@@ -201,6 +201,14 @@ class Tiny(OpenAICompatibleProvider):
         return ProviderHealth(ok=response.status_code < 400)
 
 
+class Answered(Tiny):
+    """A provider whose url another server already answers: udl's own program is not the one
+    that says it is well."""
+
+    async def health(self) -> ProviderHealth:
+        return ProviderHealth(ok=True)
+
+
 def pool(script: Path, *, allowed: tuple[str, ...] = ()) -> ProcessPool:
     """A pool whose scripts_dir is the folder the tiny server is in."""
     found = ProcessPool(scripts_dir=script.parent, allowed=allowed)
@@ -361,6 +369,23 @@ async def test_a_program_that_never_answers_is_given_up_on(sleeper: Path) -> Non
     assert not process.running
 
 
+async def test_a_program_that_exits_while_another_server_answers_is_not_ready(
+    tmp_path: Path,
+) -> None:
+    # (Something answers on its port, but not the program udl started: it exited, so say so.)
+    program = _program(tmp_path, "gone.py", "#!/usr/bin/env python3\nimport sys\nsys.exit(1)\n")
+    clock: Clock = SystemClock()
+    provider = Answered(
+        options(program, start_timeout=timedelta(seconds=5)), clock=clock, pool=pool(program)
+    )
+    process = started(provider)
+
+    with pytest.raises(ProviderUnavailable, match="exited"):
+        await process.ensure()
+
+    assert not process.running
+
+
 async def test_a_program_that_prints_something_says_why_it_did_not_start(
     tmp_path: Path,
 ) -> None:
@@ -402,6 +427,23 @@ async def test_it_is_stopped_once_it_has_been_idle_long_enough(script: Path) -> 
 
     assert not process.running
     assert process.pid is None
+
+
+async def test_it_is_stopped_at_the_first_look_past_the_idle_timeout(script: Path) -> None:
+    # (The keeper pauses for what is left of idle_timeout, so a use halfway through does not buy
+    # it another full one: stopped at 20 + 30, not at 20 + 60.)
+    clock = FakeClock()
+    provider = Tiny(
+        options(script, idle_timeout=timedelta(seconds=30)), clock=clock, pool=pool(script)
+    )
+    process = started(provider)
+    await process.ensure()
+
+    await clock.advance(timedelta(seconds=20))
+    process.used()  # (a request, halfway through the idle timeout)
+    await clock.advance(timedelta(seconds=31))
+
+    assert not process.running
 
 
 async def test_a_use_keeps_it_up(script: Path) -> None:
