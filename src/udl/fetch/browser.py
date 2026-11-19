@@ -25,10 +25,10 @@ from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
-from typing import Final
+from typing import Final, Protocol
 
 # Package Imports
-from playwright.async_api import BrowserContext, Page, Request, Response
+from playwright.async_api import BrowserContext, Frame, Page, Request, Response
 from playwright.async_api import Error as PlaywrightError
 
 # Local Imports
@@ -72,6 +72,64 @@ async def browser_user_agent() -> str:
     return _agent
 
 
+class _Sent(Protocol):
+    """What Traffic asks of a request (Playwright's Request is one)."""
+
+    @property
+    def method(self) -> str: ...
+
+    @property
+    def url(self) -> str: ...
+
+    def is_navigation_request(self) -> bool: ...
+
+
+class Traffic:
+    """A tab's network as udl counts it: the requests in flight, and when it last moved.
+
+    A new document drops what the old one left in flight. Playwright doesn't always say a request
+    ended when its page navigated away from it (a check's `fetch()` of its clearance, then
+    `location.reload()`), and a request counted for ever kept the tab from ever being quiet: the
+    window then never saw the check passed. A commit is a new document when the main frame asked
+    for one since the last commit; a same-document navigation (pushState, replaceState, a
+    fragment) asks for none, so it drops nothing."""
+
+    def __init__(self, clock: Clock) -> None:
+        self._clock = clock
+        self._inflight: set[_Sent] = set()
+        self._active_at = clock.now()
+        # The main frame's newest document request since its last commit, if it asked for one.
+        self._document: _Sent | None = None
+
+    def started(self, request: _Sent, *, document: bool = False) -> None:
+        """A request began; `document`: it is the main frame's request for a new document."""
+        self._inflight.add(request)
+        if document:
+            self._document = request
+        self._active_at = self._clock.now()
+
+    def ended(self, request: _Sent) -> None:
+        self._inflight.discard(request)
+        self._active_at = self._clock.now()
+
+    def navigated(self, *, main: bool = True) -> None:
+        """A frame committed (`main`: the main frame). When the main frame commits the document
+        it asked for, only that document's own request may still be loading: the old document's
+        requests, its iframes' among them, can no longer end."""
+        if main and self._document is not None:
+            self._inflight = {request for request in self._inflight if request is self._document}
+            self._document = None
+        self._active_at = self._clock.now()
+
+    def quiet_for(self, delay: timedelta) -> bool:
+        """Whether nothing is in flight, and nothing has moved for `delay`."""
+        return not self._inflight and self._clock.now() - self._active_at >= delay
+
+    def inflight(self) -> list[str]:
+        """The requests in flight, as `METHOD url`, sorted (by method, then url)."""
+        return sorted(f"{request.method} {request.url}" for request in self._inflight)
+
+
 class PlaywrightTab:
     """A tab: its page, the document it shows (the main frame's last navigation) and its
     network's comings and goings."""
@@ -81,29 +139,29 @@ class PlaywrightTab:
         self._timeout = timeout
         self._clock = clock
         self._document: Response | None = None
-        self._inflight: set[Request] = set()
-        self._active_at = clock.now()
+        self._traffic = Traffic(clock)
         page.on("request", self._started)
-        page.on("requestfinished", self._ended)
-        page.on("requestfailed", self._ended)
+        page.on("requestfinished", self._traffic.ended)
+        page.on("requestfailed", self._traffic.ended)
+        page.on("framenavigated", self._navigated)
         page.on("response", self._responded)
 
     def _started(self, request: Request) -> None:
-        self._inflight.add(request)
-        self._active_at = self._clock.now()
+        # (A navigation request always has its frame; another one may not, a service worker's.)
+        main = request.is_navigation_request() and request.frame == self._page.main_frame
+        self._traffic.started(request, document=main)
 
-    def _ended(self, request: Request) -> None:
-        self._inflight.discard(request)
-        self._active_at = self._clock.now()
+    def _navigated(self, frame: Frame) -> None:
+        self._traffic.navigated(main=frame == self._page.main_frame)
 
     def quiet_for(self, delay: timedelta) -> bool:
         """Whether the tab's network has been quiet for `delay`."""
-        return not self._inflight and self._clock.now() - self._active_at >= delay
+        return self._traffic.quiet_for(delay)
 
     def inflight(self) -> list[str]:
         """The requests the tab has started and not seen end, as `METHOD url`, sorted (by method,
         then url)."""
-        return sorted(f"{request.method} {request.url}" for request in self._inflight)
+        return self._traffic.inflight()
 
     def _responded(self, response: Response) -> None:
         if response.request.is_navigation_request() and response.frame == self._page.main_frame:
@@ -150,10 +208,10 @@ class PlaywrightTab:
             return True
         deadline = self._clock.now() + self._timeout
         while self._clock.now() < deadline:
-            if not self._inflight and self._clock.now() - self._active_at >= QUIET:
+            if self._traffic.quiet_for(QUIET):
                 with contextlib.suppress(PlaywrightError):
                     await self._page.wait_for_load_state("load", timeout=1000)
-                    if not self._inflight and self._clock.now() - self._active_at >= QUIET:
+                    if self._traffic.quiet_for(QUIET):
                         return True
             await self._clock.sleep(_STEP)
         return True
