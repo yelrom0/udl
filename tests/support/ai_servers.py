@@ -378,6 +378,7 @@ class FakeOpenRouter(FakeOpenAI):
     """What is left of the limit now, in USD, when the key resets (None: it does not say)."""
     cost: str = "0.00042"
     """What a chat costs, as OpenRouter says."""
+
     def http(self) -> HttpClientFactory:
         """udl's client factory, reaching this fake in-process (and nothing else)."""
 

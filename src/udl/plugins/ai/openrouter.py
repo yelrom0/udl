@@ -17,7 +17,7 @@ NotAllowed ("out of credit"), and a 429 is RateLimited with its Retry-After.
 """
 
 # System Imports
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import ClassVar, Final
 
 # Package Imports
@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 from udl.db.models import JsonObject
 from udl.errors import UDLError
 from udl.plugins.ai.base import ChatRequest, ModelInfo, ModelPricing, ProviderHealth
-from udl.plugins.ai.openai import OpenAICompatibleProvider, OpenAIOptions
+from udl.plugins.ai.openai import OpenAICompatibleProvider, OpenAIOptions, as_money
 
 DEFAULT_URL: Final = "https://openrouter.ai/api/v1"
 """Where OpenRouter is."""
@@ -69,12 +69,20 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         if response.status_code >= 400:
             return ProviderHealth(ok=False, problems=[self._error(response).message])
         key = self._parsed(response, _Key).data
-        used = _money(key.usage)
-        left = _money(key.limit)
-        detail = f"{key.label}: used {used} USD" if used is not None else key.label
-        credit = None if left is None else left - (used or Decimal(0))
-        if left is not None:
-            detail = f"{key.label}: used {used} of {left} USD ({credit} left)"
+        used, limit = as_money(key.usage), as_money(key.limit)
+        # (A key with limit_reset spends up to its limit each period: usage is all-time, so what
+        # is left is OpenRouter's own limit_remaining, and limit - usage only when it says none.)
+        credit = as_money(key.limit_remaining)
+        if credit is None and limit is not None:
+            credit = limit - (used or Decimal(0))
+        if used is None and limit is None:
+            detail = key.label
+        elif used is None:
+            detail = f"{key.label}: {limit} USD limit ({credit} left)"
+        elif limit is None:
+            detail = f"{key.label}: used {used} USD"
+        else:
+            detail = f"{key.label}: used {used} of {limit} USD ({credit} left)"
         return ProviderHealth(ok=True, detail=detail, credit_left=credit)
 
     async def models(self) -> list[ModelInfo]:
@@ -118,6 +126,7 @@ class _KeyInfo(BaseModel):
     label: str = ""
     usage: JsonValue = None
     limit: JsonValue = None
+    limit_remaining: JsonValue = None
 
 
 class _Key(BaseModel):
@@ -156,22 +165,14 @@ class _Models(BaseModel):
     data: list[_ModelEntry] = Field(default_factory=list[_ModelEntry])
 
 
-def _money(given: JsonValue) -> Decimal | None:
-    """`given` as USD (OpenRouter gives a number or a string), or None when it is neither."""
-    if given is None:
-        return None
-    try:
-        return Decimal(str(given))
-    except InvalidOperation:
-        return None
-
-
 def _pricing(given: _Pricing | None) -> ModelPricing | None:
-    """What a model costs per million tokens, from OpenRouter's per-token prices (None: it gave
-    no price udl can read)."""
+    """What a model costs per million tokens, from OpenRouter's per-token prices.
+
+    None when it gave no price udl can read: a variable-priced router (`openrouter/auto`) is
+    listed at "-1", and a price that is not a finite number is no price either."""
     if given is None:
         return None
-    prompt, completion = _money(given.prompt), _money(given.completion)
-    if prompt is None or completion is None:
+    prompt, completion = as_money(given.prompt), as_money(given.completion)
+    if prompt is None or completion is None or prompt < 0 or completion < 0:
         return None
     return ModelPricing(prompt=prompt * _MILLION, completion=completion * _MILLION)

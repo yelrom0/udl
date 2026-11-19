@@ -565,16 +565,17 @@ def _usage(given: _Usage | None) -> Usage | None:
         prompt_tokens=given.prompt_tokens,
         completion_tokens=given.completion_tokens,
         total_tokens=given.total_tokens,
-        cost=_cost(given.cost),
+        cost=as_money(given.cost),
     )
 
 
-def _cost(given: JsonValue) -> Decimal | None:
-    """What a chat cost, in USD, as the provider gave it (None: it said nothing, or something
-    that is not a number)."""
-    if given is None:
+def as_money(given: JsonValue) -> Decimal | None:
+    """`given` as USD — a number or a string of one, as a provider gives a price or a cost — or
+    None when it is neither a number nor finite (a price of "NaN" is no price)."""
+    if given is None or isinstance(given, bool):
         return None
     try:
-        return Decimal(str(given))
+        money = Decimal(str(given))
     except InvalidOperation:
         return None
+    return money if money.is_finite() else None

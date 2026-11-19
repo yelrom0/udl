@@ -302,6 +302,13 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   cost). `ModelInfo.pricing` (`ModelPricing`, USD per million), `Usage.cost` and `ProviderHealth.credit_left` are new, all
   optional. **The Done-when's `udl ai models` is 17.9's CLI (and `list_ai_models` its operation), not built yet:** the prices are
   proven through `models()` against the fake here, and the smoke test proves them against the real API.
+  **Review round (deepseek-b, 19 Nov 2026, PR #36):** what is left on a key that resets is OpenRouter's own
+  `limit_remaining` (`limit - usage` only when it says none, since `usage` is all-time); a key with a limit and no
+  usage says its limit rather than "used None"; a variable-priced router (`"-1"`) and a non-finite price
+  (`"NaN"`, `"Infinity"`) are no price, so one odd model does not lose the list; `as_money` (in `openai.py`) is the
+  one helper both providers parse a price or cost with; `FakeOpenRouter` prices a copy of the answer, never a test's
+  own; and every request — `/key` and `/models` too, not only a chat — is tested for its `HTTP-Referer` and
+  `X-Title`. The new tests came first, in their own commit (`8f2b87a`).
 
 **25.4 Fake GitHub, typed client** · needs nothing
 - Build:

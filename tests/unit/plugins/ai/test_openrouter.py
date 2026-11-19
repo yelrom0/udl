@@ -123,7 +123,7 @@ async def test_a_variable_priced_model_has_no_price() -> None:
 async def test_a_price_that_is_not_a_number_is_no_price() -> None:
     # (NaN and Infinity parse as Decimals, and Pydantic then refuses them: one odd model must
     # not lose the whole list.)
-    fake = FakeOpenRouter(prices={"fake-1": ("NaN", "Infinity")})
+    fake = FakeOpenRouter(prices={"fake-1": ("NaN", "Infinity"), "fake-2": ("0", "0")})
 
     found = {model.name: model for model in await provider(fake).models()}
 
