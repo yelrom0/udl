@@ -7,6 +7,9 @@ OpenCode, through the runner, on this machine: one real turn, so a change to the
 caught. It is a smoke test (it costs a turn, and it needs `opencode` installed, its service running
 and a model signed in), so it never runs by default: `make smoke` (or `uv run pytest -m network`)
 runs it.
+
+OpenCode's service is per directory (`opencode service status` answers only where it was started),
+so the turn runs in the directory the suite was started from, with every shell command denied.
 """
 
 # System Imports
@@ -22,10 +25,20 @@ from udl.plugins.runners.base import AgentEvent, SessionSpec, TextDelta, TurnEnd
 from udl.plugins.runners.opencode import OpenCode, OpenCodeOptions
 
 
-async def test_opencode_answers_one_prompt(tmp_path: Path) -> None:
+async def test_opencode_answers_one_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    # (The suite points the XDG dirs at a temporary home, so nothing a test does touches the real
+    # user's; this one talks to the service the real user started, so it reads the real config.)
+    for var, sub in {
+        "XDG_CONFIG_HOME": ".config",
+        "XDG_DATA_HOME": ".local/share",
+        "XDG_STATE_HOME": ".local/state",
+        "XDG_CACHE_HOME": ".cache",
+    }.items():
+        monkeypatch.setenv(var, str(Path.home() / sub))
+    where = Path.cwd()
     runner = OpenCode(
         OpenCodeOptions(),
-        shell=LocalShell(Host.local(str(tmp_path))),
+        shell=LocalShell(Host.local(str(where))),
         clock=SystemClock(),
     )
     health = await runner.health()
@@ -39,10 +52,10 @@ async def test_opencode_answers_one_prompt(tmp_path: Path) -> None:
 
     session = await runner.start(
         SessionSpec(
-            cwd=str(tmp_path),
+            cwd=str(where),
             model=models[0].id,
-            instructions="Answer in one short word.",
-            deny=["git push *"],
+            instructions="Answer in one short word. Use no tools.",
+            deny=["*"],
         )
     )
     events: list[AgentEvent] = [event async for event in runner.send(session, "Say hello.")]

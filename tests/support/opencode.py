@@ -22,6 +22,7 @@ session's list), and reads what the runner sent (`calls`).
 import asyncio
 import base64
 import json
+import re
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext, suppress
 from dataclasses import dataclass, field
@@ -84,6 +85,9 @@ _SLOW: float = 0.1
 ASGI transport answers when the app's stream ends, so a slow read is a wait, not an endless one)."""
 
 
+_AGENT_FILE = re.compile(r"agents/([^/\"]+)\.md")
+
+
 class FakeShell(HostShell):
     """A host's shell: `service status` and `service.json` as a test scripts them, and a URL."""
 
@@ -94,6 +98,10 @@ class FakeShell(HostShell):
         self.status = status
         self.service = service if service is not None else json.dumps({"password": PASSWORD})
         self.runs: list[list[str]] = []
+        self.files: dict[str, str] = {}
+        """The files written through the shell (an agent file, by its name)."""
+        self.writes_fail = False
+        """Whether writing a file fails."""
 
     async def run(
         self,
@@ -111,6 +119,12 @@ class FakeShell(HostShell):
             return ProcessResult(returncode=0, stdout=f"{self.status}\n", stderr="")
         if argv[-1] == "--version":
             return ProcessResult(returncode=0, stdout="2.1.2\n", stderr="")
+        if argv[0] == "sh" and "agents" in argv[-1]:
+            if self.writes_fail:
+                return ProcessResult(returncode=1, stdout="", stderr="no permission")
+            name = _AGENT_FILE.search(argv[-1]).group(1)  # type: ignore[union-attr]
+            self.files[name] = (stdin or b"").decode()
+            return ProcessResult(returncode=0, stdout="", stderr="")
         if argv[0] == "sh":
             return ProcessResult(returncode=0, stdout=self.service, stderr="")
         return ProcessResult(returncode=0, stdout="", stderr="")
@@ -177,8 +191,10 @@ class FakeOpenCode:
     """Whether every read drops (False: only the first, then the log is whole again)."""
     calls: list[tuple[str, str, object]] = field(default_factory=list[tuple[str, str, object]])
     """Every call: (method, path, body)."""
-    replies: list[tuple[str, str, str]] = field(default_factory=list[tuple[str, str, str]])
-    """Every permission reply: (session id, request id, decision)."""
+    replies: list[tuple[str, str, str, str]] = field(
+        default_factory=list[tuple[str, str, str, str]]
+    )
+    """Every permission reply: (session id, request id, decision, message)."""
     sessions: dict[str, dict[str, object]] = field(default_factory=dict[str, dict[str, object]])
     """The sessions created, by id."""
     log: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
@@ -193,6 +209,16 @@ class FakeOpenCode:
     """The permissions waiting for an answer (what `GET /api/session/{id}/permission` lists)."""
     variables: dict[str, str] = field(default_factory=dict[str, str])
     """The environment sessions were given (`PUT /api/session/{id}/environment`)."""
+    pending_outcome: str | None = None
+    """How the turn whose events the stream is serving ended (published with its last event)."""
+    keep_log: bool = False
+    """Whether the event stream replays what it already sent (the service does not)."""
+    report_outcome: bool = True
+    """Whether `GET /api/session/{id}` says how the last turn ended."""
+    record_into: list[dict[str, str]] | None = None
+    """Where the environment a session is given is recorded (None: nowhere)."""
+    prompt_status: int = 200
+    """What `POST /api/session/{id}/prompt` answers (200: the input is admitted)."""
     permission_list_fails: bool = False
     """Whether `GET /api/session/{id}/permission` fails (a service that is having a bad day)."""
     log_status: int = 200
@@ -203,6 +229,7 @@ class FakeOpenCode:
     def __post_init__(self) -> None:
         self.app = Starlette(
             routes=[
+                Route("/api/event", self._events, methods=["GET"]),
                 Route("/api/info", self._info, methods=["GET"]),
                 Route("/api/model", self._models, methods=["GET"]),
                 Route("/api/session", self._create, methods=["POST"]),
@@ -325,6 +352,8 @@ class FakeOpenCode:
         # (A test that sends nothing udl reads sets no environment.)
         with suppress(ValidationError):
             self.variables |= _Environment.model_validate(body).variables
+            if self.record_into is not None:  # (what reached the harness, for the contract)
+                self.record_into.append(dict(_Environment.model_validate(body).variables))
         return Response(status_code=204)
 
     async def _prompt(self, request: Request) -> Response:
@@ -333,8 +362,15 @@ class FakeOpenCode:
         identifier = request.path_params["session_id"]
         body = await request.json()
         self.calls.append(("POST", f"/api/session/{identifier}/prompt", body))
+        if self.prompt_status != 200:
+            return JSONResponse({"message": "no"}, status_code=self.prompt_status)
         self.turns += 1
-        for event in self._turn_events():
+        written = self._turn_events()
+        # (The outcome is published when the stream has said everything, as a real one is: a turn
+        # that is still being read has no outcome yet.)
+        self.sessions[identifier]["outcome"] = None
+        self.pending_outcome = _outcome_of(written) if self.report_outcome else None
+        for event in written:
             self.seq += 1
             written = json.loads(json.dumps(event))
             if "durable" in written:
@@ -406,7 +442,9 @@ class FakeOpenCode:
         self.calls.append(
             ("POST", f"/api/session/{identifier}/permission/{request_id}/reply", body)
         )
-        self.replies.append((identifier, request_id, str(body.get("decision"))))
+        self.replies.append(
+            (identifier, request_id, str(body.get("decision")), str(body.get("message")))
+        )
         self.pending = [said for said in self.pending if said.get("id") != request_id]
         return Response(status_code=204)
 
@@ -416,6 +454,36 @@ class FakeOpenCode:
         server = request.path_params["server"]
         self.calls.append(("PUT", f"/api/experimental/mcp/{server}", await request.json()))
         return Response(status_code=204)
+
+    async def _events(self, request: Request) -> Response:
+        """The service's own event stream (`/api/event`): every session's events as they happen,
+        which is what a turn is followed on (the session log, in 2.1.2, replays nothing)."""
+        if not self._allowed(request):
+            return JSONResponse({"message": "unauthorized"}, status_code=401)
+        self.calls.append(("GET", "/api/event", dict(request.query_params)))
+        if self.log_status != 200:
+            return Response(status_code=self.log_status)
+        waiting = list(self.log)
+        if not self.keep_log:
+            self.log = []
+
+        async def lines() -> AsyncGenerator[bytes]:
+            for sent, said in enumerate(waiting):
+                if self.cut_after is not None and sent >= self.cut_after:
+                    if not self.cut_always:
+                        self.cut_after = None  # (only the first read drops)
+                    return  # (a dropped connection)
+                yield _sse(said)
+            yield _sse({"type": "log.synced", "aggregateID": "ses", "seq": self.seq})
+            if (outcome := self.pending_outcome) is not None:
+                self.pending_outcome = None
+                for identifier in self.sessions:
+                    if self.sessions[identifier].get("outcome") is None:
+                        self.sessions[identifier]["outcome"] = outcome
+            if self.variables.get("FAKE_HARNESS_SLOW"):
+                await asyncio.sleep(_SLOW)  # (a turn that runs until it is interrupted)
+
+        return StreamingResponse(lines(), media_type="text/event-stream")
 
     async def _read_log(self, request: Request) -> Response:
         if not self._allowed(request):
@@ -446,6 +514,16 @@ class FakeOpenCode:
     def _next(self) -> int:
         self.seq += 1
         return self.seq
+
+
+def _outcome_of(written: list[dict[str, object]]) -> str | None:
+    """How a turn ended, as `GET /api/session/{id}` reports it (None: it is still running)."""
+    ends = {
+        "session.execution.succeeded": "succeeded",
+        "session.execution.failed": "failed",
+        "session.execution.interrupted": "interrupted",
+    }
+    return next((ends[str(event["type"])] for event in written if str(event["type"]) in ends), None)
 
 
 def _seq(event: dict[str, object]) -> int:

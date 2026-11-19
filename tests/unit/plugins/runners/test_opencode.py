@@ -12,7 +12,8 @@ MCP token in the session's environment and in no config file, and no password in
 # System Imports
 import asyncio
 import json
-from collections.abc import Sequence
+import re
+from collections.abc import AsyncIterator, Sequence
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -26,7 +27,8 @@ from pydantic import BaseModel, ConfigDict, SecretStr
 # Local Imports
 from support.clock import T0, FakeClock
 from support.opencode import PASSWORD, FakeOpenCode, FakeShell, event
-from udl.errors import NotAllowed, ToolUnavailable
+from udl.errors import NotAllowed, PluginFailed, ToolUnavailable
+from udl.plugins.runners import opencode
 from udl.plugins.runners.base import (
     AgentEvent,
     McpEndpoint,
@@ -40,7 +42,12 @@ from udl.plugins.runners.base import (
     TurnReason,
     Usage,
 )
-from udl.plugins.runners.opencode import OpenCode, OpenCodeOptions, OpenCodeSessions
+from udl.plugins.runners.opencode import (
+    OpenCode,
+    OpenCodeOptions,
+    OpenCodeSessions,
+    _Event,  # pyright: ignore[reportPrivateUsage]
+)
 from udl.process import ProcessResult
 
 
@@ -65,6 +72,21 @@ class _Document(BaseModel):
     """The OpenAPI document OpenCode serves, as far as its paths go."""
 
     paths: dict[str, object]
+
+
+def _decide(rules: object, action: str, resource: str) -> str:
+    """What OpenCode decides for a request: the last rule whose action and resource match, with
+    `*` matching anything (and everything, if no rule matches, is asked)."""
+    said: list[dict[str, object]] = [rule for rule in rules if isinstance(rule, dict)]  # type: ignore[misc]
+    effect = "ask"
+    for rule in said:
+        wanted, allowed = str(rule["action"]), str(rule["resource"])
+        if wanted not in (action, "*"):
+            continue
+        pattern = re.escape(allowed).replace(r"\*", ".*")
+        if re.fullmatch(pattern, resource):
+            effect = str(rule["effect"])
+    return effect
 
 
 def _sent(service: FakeOpenCode, path: str) -> dict[str, object]:
@@ -197,11 +219,11 @@ async def test_a_session_is_created_with_the_ruleset_the_location_and_the_model(
             {"action": "*", "resource": "*", "effect": "allow"},
             {"action": "shell", "resource": "git push *", "effect": "deny"},
             {"action": "external_directory", "resource": "*", "effect": "deny"},
-            {"action": "edit", "resource": "/w/*", "effect": "allow"},
             {"action": "edit", "resource": "*", "effect": "deny"},
+            {"action": "edit", "resource": "/w/*", "effect": "allow"},
             {"action": "question", "resource": "*", "effect": "deny"},
         ],
-        "metadata": {"udl": {"agent": "udl-worker", "task": "25.9"}},
+        "metadata": {"udl": {"agent": "udl-worker"}},
     }
 
 
@@ -215,15 +237,25 @@ async def test_the_ruleset_allows_the_worktree_and_forbids_what_udl_does(
         SessionSpec(cwd="/w/one", deny=["git push *", "rm *"])
     )
 
-    assert _sent(service, "/api/session")["permissions"] == [
+    rules = _sent(service, "/api/session")["permissions"]
+    assert rules == [
         {"action": "*", "resource": "*", "effect": "allow"},
         {"action": "shell", "resource": "git push *", "effect": "deny"},
         {"action": "shell", "resource": "rm *", "effect": "deny"},
         {"action": "external_directory", "resource": "*", "effect": "deny"},
-        {"action": "edit", "resource": "/w/one/*", "effect": "allow"},
         {"action": "edit", "resource": "*", "effect": "deny"},
+        {"action": "edit", "resource": "/w/one/*", "effect": "allow"},
         {"action": "question", "resource": "*", "effect": "deny"},
     ]
+    # (What the service makes of them: last match wins, and `*` crosses `/`.)
+    assert _decide(rules, "edit", "/w/one/src/x.py") == "allow"
+    assert _decide(rules, "edit", "/w/other/x.py") == "deny"
+    assert _decide(rules, "edit", "/w/one") == "deny"  # (a path, not a folder's contents)
+    assert _decide(rules, "shell", "git push origin main") == "deny"
+    assert _decide(rules, "shell", "git status") == "allow"
+    assert _decide(rules, "external_directory", "/etc") == "deny"
+    assert _decide(rules, "question", "*") == "deny"
+    assert _decide(rules, "read", "x.py") == "allow"
 
 
 async def test_a_model_variant_is_named_as_the_api_names_it(service: FakeOpenCode) -> None:
@@ -281,16 +313,14 @@ async def test_the_spec_s_environment_and_secrets_go_to_the_session_s_own(
         env={"UDL_TASK": "26.3"},
         secret_env={"UDL_AGENT_TOKEN": SecretStr("s3cret")},
     )
-    sessions = OpenCodeSessions()
 
-    await _runner(service, FakeShell(), sessions=sessions).start(spec)
+    await _runner(service, FakeShell()).start(spec)
 
     environment = next(call for call in service.calls if call[1].endswith("/environment"))
     assert environment[2] == {"variables": {"UDL_TASK": "26.3", "UDL_AGENT_TOKEN": "s3cret"}}
     assert "s3cret" not in json.dumps(
         [call for call in service.calls if call[1].endswith("/session")]
     )
-    assert sessions.secret_envs == [{"UDL_AGENT_TOKEN": "s3cret"}]
 
 
 async def test_a_spec_with_no_environment_sets_none(service: FakeOpenCode) -> None:
@@ -308,8 +338,21 @@ async def test_another_runner_resumes_a_session_by_id(service: FakeOpenCode) -> 
     events = await _turn(_runner(service, FakeShell(), sessions=sessions), session, "again")
 
     assert events[-1] == TurnEnded(reason=TurnReason.DONE)
-    reads = [call for call in service.calls if call[1].endswith("/log")]
-    assert [read[2] for read in reads] == [{"after": 0}, {"after": 3}]
+    # (The session store carries what the first runner knew: its spec, and the last sequence.)
+    assert sessions.specs[session.id] == SPEC
+    assert sessions.seq[session.id] == service.seq
+
+
+def _real_turn() -> list[dict[str, object]]:
+    """One real turn's events, as OpenCode 2.1.2 sent them (a run on 2026-11-20, committed)."""
+    fixture = Path(__file__).resolve().parents[3] / "fixtures" / "opencode" / "events-2.1.2.json"
+    said: list[dict[str, object]] = json.loads(fixture.read_text(encoding="utf-8"))
+    turn = [item for item in said if item["type"] != "server.connected"]
+    for item in turn:  # (the fixture is one real session's; the fake's is `ses_1`)
+        data = item.get("data")
+        if isinstance(data, dict) and "sessionID" in data:
+            data["sessionID"] = "ses_1"
+    return turn
 
 
 def _document() -> dict[str, object]:
@@ -361,47 +404,68 @@ async def test_a_turn_is_a_prompt_and_the_log_from_the_sequence_udl_stored(
     ]
 
 
-async def test_the_second_turn_resumes_from_the_sequence_the_first_stored(
+async def test_each_turn_is_followed_on_the_service_s_own_event_stream(
     service: FakeOpenCode, shell: FakeShell
 ) -> None:
-    runner = _runner(service, shell)
+    sessions = OpenCodeSessions()
+    runner = _runner(service, shell, sessions=sessions)
     session = await runner.start(SPEC)
     await _turn(runner, session)
-
     await _turn(runner, session, "again")
 
-    reads = [call for call in service.calls if call[1].endswith("/log")]
-    assert [read[2] for read in reads] == [{"after": 0}, {"after": 3}]
+    # (The session log replays nothing in 2.1.2, so a turn is followed on `/api/event`, once per
+    # turn; the sequence the events carry is kept, for 27.x's audit.)
+    reads = [call for call in service.calls if call[1] == "/api/event"]
+    assert len(reads) == 2
+    assert sessions.seq[session.id] == service.seq
 
 
-async def test_a_dropped_log_resumes_with_nothing_lost_or_repeated(
+async def test_a_dropped_stream_is_opened_again_and_the_turn_still_ends(
     service: FakeOpenCode, shell: FakeShell
 ) -> None:
     runner = _runner(service, shell)
     session = await runner.start(SPEC)
-    service.cut_after = 1  # (the first read drops after one event)
+    service.cut_after = 1  # (the first subscription drops after one event)
+    service.keep_log = True  # (so the second one can bring what the first did not)
 
     events = await _turn(runner, session)
 
+    # (The stream is volatile, so a drop can lose what it had not said; the turn's end comes from
+    # the session itself, so it never hangs, and the reopened stream brings the rest.)
     assert [event for event in events if isinstance(event, TextDelta)] == [TextDelta(text="Hello!")]
     assert events[-1] == TurnEnded(reason=TurnReason.DONE)
-    reads = [call for call in service.calls if call[1].endswith("/log")]
-    assert [read[2] for read in reads] == [{"after": 0}, {"after": 1}]
+    reads = [call for call in service.calls if call[1] == "/api/event"]
+    assert len(reads) == 2
 
 
-async def test_a_log_that_keeps_dropping_fails_the_turn(service: FakeOpenCode) -> None:
-    service.cut_after = 0  # (every read drops before its first event)
+async def test_a_stream_that_keeps_dropping_still_ends_the_turn_as_the_session_says(
+    service: FakeOpenCode,
+) -> None:
+    service.cut_after = 0  # (every subscription drops before its first event)
     service.cut_always = True
     runner = _runner(service, FakeShell())
     session = await runner.start(SPEC)
 
     events = await _turn(runner, session)
 
+    assert events == [TurnEnded(reason=TurnReason.DONE)]
+
+
+async def test_a_stream_that_keeps_dropping_with_no_outcome_fails_the_turn(
+    service: FakeOpenCode,
+) -> None:
+    service.cut_after = 0
+    service.cut_always = True
+    runner = _runner(service, FakeShell())
+    session = await runner.start(SPEC)
+    service.report_outcome = False  # (it never says how a turn ended)
+
+    events = await _turn(runner, session)
+
     assert len(events) == 1
-    ended = events[0]
-    assert isinstance(ended, TurnEnded)
-    assert ended.reason is TurnReason.ERROR
-    assert "keeps dropping" in (ended.text or "")
+    assert isinstance(events[0], TurnEnded)
+    assert events[0].reason is TurnReason.ERROR
+    assert "keep dropping" in (events[0].text or "")
 
 
 async def test_a_permission_asked_is_refused(service: FakeOpenCode) -> None:
@@ -411,9 +475,129 @@ async def test_a_permission_asked_is_refused(service: FakeOpenCode) -> None:
 
     events = await _turn(runner, session)
 
-    assert service.replies == [("ses_1", "per_1", "reject")]
+    assert service.replies == [("ses_1", "per_1", "reject", "Not allowed here: ask with orch_ask.")]
     assert service.pending == []
     assert events[-1] == TurnEnded(reason=TurnReason.DONE)
+
+
+async def test_a_real_turn_s_events_are_read_as_the_card_says(service: FakeOpenCode) -> None:
+    """The events OpenCode 2.1.2 really sends for one turn (committed as a fixture, captured on a
+    real run): its text streams as deltas, its usage is read, and the turn ends once."""
+    service.log = _real_turn()
+    service.turn()  # (the fixture is the whole turn)
+    runner = _runner(service, FakeShell())
+    session = await runner.start(SPEC)
+
+    events = await _turn(runner, session)
+
+    assert events == [
+        TextDelta(text="Hello there, friend."),
+        Usage(
+            input_tokens=118,
+            output_tokens=9,
+            cost=Decimal("0.00007404488"),
+        ),
+        TurnEnded(reason=TurnReason.DONE),
+    ]
+
+
+async def test_the_spec_s_instructions_become_the_agent_it_runs_as(service: FakeOpenCode) -> None:
+    shell = FakeShell()
+    await _runner(service, shell).start(
+        SessionSpec(cwd="/w", instructions="You are udl's worker. Do the task.")
+    )
+
+    [name] = list(shell.files)
+    assert name.startswith("udl-")
+    assert len(name) == len("udl-") + 12
+    assert shell.files[name] == "---\nmode: primary\n---\n\nYou are udl's worker. Do the task.\n"
+    assert _sent(service, "/api/session")["agent"] == name
+
+
+async def test_two_briefs_never_share_an_agent_file(service: FakeOpenCode) -> None:
+    shell = FakeShell()
+    runner = _runner(service, shell)
+
+    await runner.start(SessionSpec(cwd="/w", instructions="one"))
+    await runner.start(SessionSpec(cwd="/w", instructions="two"))
+
+    assert len(shell.files) == 2
+
+
+async def test_a_brief_that_cannot_be_written_is_not_run(service: FakeOpenCode) -> None:
+    shell = FakeShell()
+    shell.writes_fail = True
+
+    with pytest.raises(PluginFailed, match="agent file"):
+        await _runner(service, shell).start(SessionSpec(cwd="/w", instructions="a brief"))
+
+    assert service.calls == []  # (no session was created)
+
+
+async def test_a_spec_with_no_brief_uses_the_options_agent(service: FakeOpenCode) -> None:
+    shell = FakeShell()
+
+    await _runner(service, shell).start(SessionSpec(cwd="/w"))
+
+    assert shell.files == {}
+    assert _sent(service, "/api/session")["agent"] is None
+
+
+async def test_a_prompt_the_service_refuses_ends_the_turn(service: FakeOpenCode) -> None:
+    runner = _runner(service, FakeShell())
+    session = await runner.start(SPEC)
+    service.prompt_status = 500
+
+    events = await _turn(runner, session)
+
+    assert len(events) == 1
+    assert isinstance(events[0], TurnEnded)
+    assert events[0].reason is TurnReason.ERROR
+    assert "500" in events[0].text
+
+
+async def test_a_service_that_is_not_running_ends_the_turn(service: FakeOpenCode) -> None:
+    sessions = OpenCodeSessions(specs={"ses_1": SPEC})
+    runner = _runner(service, FakeShell(status="stopped"), sessions=sessions)
+    session = SessionRef(runner="opencode", id="ses_1", cwd="/w", host="local")
+
+    events = await _turn(runner, session)
+
+    assert events == [
+        TurnEnded(
+            reason=TurnReason.ERROR,
+            text="opencode's service is not running (stopped): `opencode service start` starts it.",
+        )
+    ]
+
+
+async def test_a_stream_read_that_errors_does_not_fail_the_turn(
+    service: FakeOpenCode, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service.turn(
+        event("session.text.ended", 0, {"text": "one"}),
+        event("session.execution.succeeded", 0, {}),
+    )
+    runner = _runner(service, FakeShell())
+    session = await runner.start(SPEC)
+    real = opencode._sse  # pyright: ignore[reportPrivateUsage]
+    reads = {"n": 0}
+
+    async def flaky(answer: httpx.Response) -> AsyncIterator[_Event]:
+        reads["n"] += 1
+        if reads["n"] == 1:  # (as `stop` closing the stream under a read, or a timeout, does)
+            raise httpx.ReadError("the stream closed")
+        async for said in real(answer):
+            yield said
+
+    monkeypatch.setattr(opencode, "_sse", flaky)
+
+    events = await _turn(runner, session)
+
+    # (The subscription that errored had already taken the events with it; the session says how
+    # the turn ended, and the turn never hangs.)
+    assert events == [TurnEnded(reason=TurnReason.DONE)]
+    assert reads["n"] == 1
 
 
 async def test_a_permission_of_another_session_is_left_alone(service: FakeOpenCode) -> None:

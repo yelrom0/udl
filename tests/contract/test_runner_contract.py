@@ -136,7 +136,10 @@ def _opencode_case() -> Case:
     service = FakeOpenCode()
     shell = RecordingShell(FakeShell())
     store = Sessions()
-    sessions = OpenCodeSessions(specs=store.specs, seq=store.seq, secret_envs=store.secret_envs)
+    sessions = OpenCodeSessions(specs=store.specs, seq=store.seq)
+    # (The secrets reach the service over HTTP, not the shell: the fake records them where the
+    # contract looks for what reached the harness.)
+    service.record_into = store.secret_envs
 
     def build(given: RecordingShell, _: Sessions) -> AnAgentRunner:
         return OpenCode(

@@ -1,0 +1,149 @@
+[
+  {
+    "id": "evt_1f46f38e7001xieNAMAJoBqY5A",
+    "type": "server.connected",
+    "data": {}
+  },
+  {
+    "id": "evt_1f46f40bb001Vek8AlVPSPB5tK",
+    "created": 1795102294203,
+    "type": "session.inbox.enqueued",
+    "location": { "directory": "/tmp/opencode" },
+    "data": {
+      "inboxID": "msg_1f46f40ba001lsTqStJRLRHcMU",
+      "sessionID": "ses_e0b90c71dffecX4yHQApk0f6k2",
+      "item": {
+        "type": "user",
+        "payload": { "text": "Say hello in three words." },
+        "delivery": "queue"
+      }
+    },
+    "durable": { "aggregateID": "ses_e0b90c71dffecX4yHQApk0f6k2", "seq": 1, "version": 1 }
+  },
+  {
+    "id": "evt_1f46f40c5001pgMRKXDJLoKaNE",
+    "created": 1795102294213,
+    "type": "session.execution.started",
+    "data": { "sessionID": "ses_e0b90c71dffecX4yHQApk0f6k2" },
+    "durable": { "aggregateID": "ses_e0b90c71dffecX4yHQApk0f6k2", "seq": 2, "version": 1 }
+  },
+  {
+    "id": "evt_1f46f40c90016SdXeaX0oSEm6e",
+    "created": 1795102294217,
+    "type": "session.inbox.delivered",
+    "location": { "directory": "/tmp/opencode" },
+    "data": {
+      "sessionID": "ses_e0b90c71dffecX4yHQApk0f6k2",
+      "inboxID": "msg_1f46f40ba001lsTqStJRLRHcMU"
+    },
+    "durable": { "aggregateID": "ses_e0b90c71dffecX4yHQApk0f6k2", "seq": 4, "version": 1 }
+  },
+  {
+    "id": "evt_1f46f44cc001O1pdZKbPjl531z",
+    "created": 1795102295244,
+    "type": "session.step.started",
+    "location": { "directory": "/tmp/opencode" },
+    "data": {
+      "sessionID": "ses_e0b90c71dffecX4yHQApk0f6k2",
+      "agent": "build",
+      "model": {
+        "id": "deepseek-v4.1-flash-1017-instant",
+        "providerID": "openrouter-ds-a",
+        "variant": "default"
+      },
+      "assistantMessageID": "msg_1f46f40cc001GqGWzA4x7O9e2R",
+      "started": 1795102294280
+    },
+    "durable": { "aggregateID": "ses_e0b90c71dffecX4yHQApk0f6k2", "seq": 5, "version": 1 }
+  },
+  {
+    "id": "evt_1f46f44df001ypy8kKgtNBGbDO",
+    "created": 1795102295263,
+    "type": "session.text.started",
+    "location": { "directory": "/tmp/opencode" },
+    "data": {
+      "sessionID": "ses_e0b90c71dffecX4yHQApk0f6k2",
+      "assistantMessageID": "msg_1f46f40cc001GqGWzA4x7O9e2R",
+      "ordinal": 0
+    },
+    "durable": { "aggregateID": "ses_e0b90c71dffecX4yHQApk0f6k2", "seq": 6, "version": 1 }
+  },
+  {
+    "id": "evt_1f46f450d001vDfJnKWOrPqhDc",
+    "created": 1795102295309,
+    "type": "session.text.delta",
+    "location": { "directory": "/tmp/opencode" },
+    "data": {
+      "sessionID": "ses_e0b90c71dffecX4yHQApk0f6k2",
+      "assistantMessageID": "msg_1f46f40cc001GqGWzA4x7O9e2R",
+      "ordinal": 0,
+      "delta": "Hello there, friend."
+    }
+  },
+  {
+    "id": "evt_1f46f450d00216TuBovYBhCL2C",
+    "created": 1795102295309,
+    "type": "session.text.ended",
+    "location": { "directory": "/tmp/opencode" },
+    "data": {
+      "sessionID": "ses_e0b90c71dffecX4yHQApk0f6k2",
+      "assistantMessageID": "msg_1f46f40cc001GqGWzA4x7O9e2R",
+      "ordinal": 0,
+      "text": "Hello there, friend."
+    },
+    "durable": { "aggregateID": "ses_e0b90c71dffecX4yHQApk0f6k2", "seq": 7, "version": 1 }
+  },
+  {
+    "id": "evt_1f46f450e001FMCn8ttW2IVJCs",
+    "created": 1795102295310,
+    "type": "session.step.streamed",
+    "location": { "directory": "/tmp/opencode" },
+    "data": {
+      "sessionID": "ses_e0b90c71dffecX4yHQApk0f6k2",
+      "assistantMessageID": "msg_1f46f40cc001GqGWzA4x7O9e2R"
+    },
+    "durable": { "aggregateID": "ses_e0b90c71dffecX4yHQApk0f6k2", "seq": 8, "version": 1 }
+  },
+  {
+    "id": "evt_1f46f450f001Scx8vtUfG1N0BQ",
+    "created": 1795102295311,
+    "type": "session.step.ended",
+    "location": { "directory": "/tmp/opencode" },
+    "data": {
+      "sessionID": "ses_e0b90c71dffecX4yHQApk0f6k2",
+      "assistantMessageID": "msg_1f46f40cc001GqGWzA4x7O9e2R",
+      "finish": "stop",
+      "rawFinish": "stop",
+      "cost": 0.00007404488,
+      "tokens": {
+        "input": 118,
+        "output": 9,
+        "reasoning": 0,
+        "cache": { "read": 20352, "write": 0 }
+      }
+    },
+    "durable": { "aggregateID": "ses_e0b90c71dffecX4yHQApk0f6k2", "seq": 9, "version": 1 }
+  },
+  {
+    "id": "evt_1f46f45100019keZcefEpg8pG6",
+    "created": 1795102295312,
+    "type": "session.usage.updated",
+    "data": {
+      "sessionID": "ses_e0b90c71dffecX4yHQApk0f6k2",
+      "cost": 0.00007404488,
+      "tokens": {
+        "input": 118,
+        "output": 9,
+        "reasoning": 0,
+        "cache": { "read": 20352, "write": 0 }
+      }
+    }
+  },
+  {
+    "id": "evt_1f46f4510002n6uLldnorENuyj",
+    "created": 1795102295312,
+    "type": "session.execution.succeeded",
+    "data": { "sessionID": "ses_e0b90c71dffecX4yHQApk0f6k2" },
+    "durable": { "aggregateID": "ses_e0b90c71dffecX4yHQApk0f6k2", "seq": 10, "version": 1 }
+  }
+]

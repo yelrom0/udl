@@ -11,10 +11,12 @@ URL (or `stopped`), and its password is in the host's `~/.config/opencode/servic
 read through the shell on every connect, and the port is reached through the shell's `forward()` —
 this machine's own for a local host, an SSH tunnel for another.
 
-A turn is one prompt (`POST /api/session/{id}/prompt`, `delivery: queue`), then the session's
-durable log (`GET /api/experimental/session/{id}/log?after=<seq>&follow=true`), resumed from the
-last sequence number udl stored, so a dropped connection loses nothing and repeats nothing. Its
-events become AgentEvents; `session.execution.succeeded`/`failed`/`interrupted` ends the turn, and
+A turn is one prompt (`POST /api/session/{id}/prompt`, `delivery: queue`), then OpenCode's event
+stream (`GET /api/event`, filtered to the session). That stream is the volatile one: the session's
+own durable log replays nothing in 2.1.2 (a read of it says only `log.synced`), so the session's
+`outcome` is the backstop — a stream that drops is opened again, and one that brings nothing three
+times asks the session how its turn ended. Its events become AgentEvents;
+`session.execution.succeeded`/`failed`/`interrupted` ends the turn, and
 a failure that says the account is out of quota (a 429, or a wait it names) is a `RunnerLimited`
 first and then the turn's `TurnEnded(limited)`.
 
@@ -30,6 +32,7 @@ argv.
 
 # System Imports
 import asyncio
+import hashlib
 import json
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping, MutableMapping
@@ -37,7 +40,7 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import timedelta
 from decimal import Decimal
-from typing import ClassVar
+from typing import ClassVar, Final
 from urllib.parse import urlparse
 
 # Package Imports
@@ -75,9 +78,25 @@ _MCP: str = "udl"
 _TOKEN: str = "UDL_AGENT_TOKEN"  # noqa: S105 - (a variable's name, not a secret)
 """The environment variable the MCP config's header reads the token from."""
 _SECONDS: float = 30.0
+"""How long a call waits for the service (the log's own read is longer: a turn can be silent)."""
+_EVENTS: Final = "/api/event"
+"""The service's event stream: every session's events, as they happen."""
+_LOG_SECONDS: float = 120.0
+"""How long a read of the event stream waits for an event before it is a dropped connection."""
+_LOG_TIMEOUT: Final = httpx.Timeout(
+    connect=_SECONDS, read=_LOG_SECONDS, write=_SECONDS, pool=_SECONDS
+)
 """How long one call may take before it is a failure."""
 _DROPS: int = 3
-"""How many reads of a session's log in a row may bring nothing new before the turn fails."""
+"""How many reads of the event stream in a row may bring nothing before the turn is given up."""
+_AGENT: Final = "udl"
+"""The prefix of the agent files udl writes on a host."""
+_WRITE_AGENT: Final = (
+    'mkdir -p "$HOME/.config/opencode/agents" && cat > "$HOME/.config/opencode/agents/{name}.md"'
+)
+"""Write an agent file on the host, its text on the command's stdin (in no argv)."""
+_REFUSAL: Final = "Not allowed here: ask with orch_ask."
+"""What a refused permission says (so the agent learns the way to ask, not to retry)."""
 _PERMISSIONS: timedelta = timedelta(milliseconds=500)
 """How often a running turn looks for a permission asked (they are not in the durable log)."""
 
@@ -93,8 +112,10 @@ class OpenCodeOptions(RunnerOptions):
     """The OpenCode agent a session names (`udl-<role>`, written by 25.11)."""
     title: str = "udl"
     """The title a session is created with."""
+    task: str | None = None
+    """The udl task the session works on (None: not said), for its `metadata.udl`."""
     directory: str | None = None
-    """The location `GET /api/model` and the MCP server are added for (None: the session's cwd)."""
+    """The location `GET /api/model` is listed for (None: the session's cwd)."""
 
 
 class _Info(BaseModel):
@@ -132,6 +153,8 @@ class _Session(BaseModel):
 
     id: str
     cost: float = 0.0
+    outcome: str | None = None
+    """How its last turn ended (`succeeded`, `failed`, `interrupted`, or None while it runs)."""
 
 
 class _Created(BaseModel):
@@ -152,7 +175,7 @@ class _Tokens(BaseModel):
 
 
 class _Event(BaseModel):
-    """One item of the session's log: its type, its sequence number, and what it says."""
+    """One item of the event stream: its type, its durable sequence, and what it says."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -224,9 +247,7 @@ class OpenCodeSessions:
     specs: MutableMapping[str, SessionSpec] = field(default_factory=dict[str, SessionSpec])
     """What each session was started with, by id."""
     seq: MutableMapping[str, int] = field(default_factory=dict[str, int])
-    """The last log sequence number udl read, by session id."""
-    secret_envs: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
-    """The environments sessions were given (a secret never in a file, kept to resume)."""
+    """The last durable sequence number udl read, by session id."""
 
 
 class OpenCode(AgentRunner[OpenCodeOptions]):
@@ -296,6 +317,10 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
     # -- a session --------------------------------------------------------------------------
 
     async def start(self, spec: SessionSpec) -> SessionRef:
+        agent = await self._agent(spec)
+        metadata: dict[str, object] = {"agent": agent}
+        if self.options.task is not None:
+            metadata["task"] = self.options.task
         async with self._api() as api:
             created = await self._post(
                 api,
@@ -304,10 +329,10 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
                 {
                     "title": self.options.title,
                     "model": _model_ref(spec.model),
-                    "agent": self.options.agent,
+                    "agent": agent,
                     "location": {"directory": spec.cwd},
                     "permissions": _ruleset(spec.cwd, spec.deny),
-                    "metadata": {"udl": {"agent": self.options.agent, "task": self.options.title}},
+                    "metadata": {"udl": metadata},
                 },
             )
             session = SessionRef(
@@ -325,11 +350,24 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
                 )
         self._sessions.specs[session.id] = spec
         self._sessions.seq[session.id] = 0
-        if spec.secret_env:
-            self._sessions.secret_envs.append(
-                {name: secret.get_secret_value() for name, secret in spec.secret_env.items()}
-            )
         return session
+
+    async def _agent(self, spec: SessionSpec) -> str | None:
+        """The OpenCode agent a session runs as: the one the options name, or — when the spec
+        brings its brief — one written to the host's own `~/.config/opencode/agents/` (named after
+        the brief's hash, so two sessions with different briefs never share one)."""
+        if not spec.instructions:
+            return self.options.agent
+        name = f"{_AGENT}-{hashlib.sha256(spec.instructions.encode()).hexdigest()[:12]}"
+        written = await self.shell.run(
+            ["sh", "-c", _WRITE_AGENT.format(name=name)],
+            stdin=f"---\nmode: primary\n---\n\n{spec.instructions}\n".encode(),
+        )
+        if written.returncode != 0:
+            raise PluginFailed(
+                f"opencode's agent file cannot be written: {written.stderr.strip()[:200]}"
+            )
+        return name
 
     def _variables(self, spec: SessionSpec) -> dict[str, str]:
         """The session's environment: the spec's own, its secrets, and udl's MCP token. They are
@@ -354,85 +392,116 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
         if session.id in self._stopped:
             yield TurnEnded(reason=TurnReason.STOPPED, text="The session was stopped.")
             return
-        async with self._api() as api:
-            await self._call(
-                api,
-                "POST",
-                f"/api/session/{session.id}/prompt",
-                json={"text": prompt, "delivery": "queue", "metadata": {"udl": True}},
-            )
-            watching = asyncio.create_task(self._watch_permissions(api, session))
-            ended: TurnEnded | None = None
-            try:
-                async for event in self._follow(api, session):
-                    if isinstance(event, TurnEnded):
-                        ended = event
-                        break
-                    yield event
-            except PluginFailed as failure:
-                # (A log udl cannot read, or a service that stopped answering, ends the turn.)
-                ended = TurnEnded(reason=TurnReason.ERROR, text=str(failure))
-            finally:
-                watching.cancel()
-                with suppress(asyncio.CancelledError):
-                    await watching
-                # (A turn that ended before the watcher's first look still refuses what it asked.)
-                await self._refuse_pending(api, session)
+        ended: TurnEnded | None = None
+        try:
+            async with self._api() as api:
+                await self._call(
+                    api,
+                    "POST",
+                    f"/api/session/{session.id}/prompt",
+                    json={"text": prompt, "delivery": "queue", "metadata": {"udl": True}},
+                )
+                watching = asyncio.create_task(self._watch_permissions(api, session))
+                try:
+                    async for event in self._follow(api, session):
+                        if isinstance(event, TurnEnded):
+                            ended = event
+                            break
+                        yield event
+                finally:
+                    watching.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await watching
+                    # (A turn that ended before the watcher's first look still refuses what it
+                    # asked.)
+                    await self._refuse_pending(api, session)
+        except (ToolUnavailable, PluginFailed) as failure:
+            # (The service cannot be reached, the prompt is refused, or the stream cannot be read:
+            # the turn ends, and it never raises out of `send`.)
+            ended = TurnEnded(reason=TurnReason.ERROR, text=str(failure))
         if session.id in self._stopped:
             yield TurnEnded(reason=TurnReason.STOPPED, text="The session was stopped.")
             return
         yield ended or TurnEnded(reason=TurnReason.ERROR, text="The turn ended without saying how.")
 
-    # -- the log ----------------------------------------------------------------------------
+    # -- the events -------------------------------------------------------------------------
 
     async def _follow(
         self, api: httpx.AsyncClient, session: SessionRef
     ) -> AsyncIterator[AgentEvent]:
-        """The session's log from the last sequence udl stored, as events, until the turn ends.
+        """The service's event stream, as the session's own events, until the turn ends.
 
-        A connection that drops is opened again from the sequence udl stored: nothing is lost and
-        nothing is said twice. Three reads in a row that bring nothing new is a failure."""
-        path = f"/api/experimental/session/{session.id}/log"
+        The stream is OpenCode's volatile one (`/api/event`): its session log, in 2.1.2, replays
+        nothing (a read of it says only `log.synced`), so a turn is followed here and the session's
+        own `outcome` is the backstop — a stream that drops is opened again, and when it brings
+        nothing three times the session says how its turn ended. Nothing is said twice: text
+        streamed as deltas is not repeated by the message's own `ended`."""
         idle = 0
+        streamed: set[str] = set()
         while True:
-            before = self._sessions.seq.get(session.id, 0)
-            params = {"after": str(before), "follow": "true"}
-            async with api.stream("GET", path, params=params) as answer:
-                if answer.status_code != 200:
-                    await answer.aread()
-                    raise PluginFailed(f"opencode's log said {answer.status_code}")
-                self._running[session.id] = answer
-                try:
-                    async for said in _sse(answer):
-                        self._sessions.seq[session.id] = _sequence(
-                            said, self._sessions.seq.get(session.id, 0)
-                        )
-                        for event in await self._events(api, session, said):
-                            yield event
-                            if isinstance(event, TurnEnded):
-                                return
-                finally:
-                    self._running.pop(session.id, None)
+            try:
+                async with api.stream("GET", _EVENTS, timeout=_LOG_TIMEOUT) as answer:
+                    if answer.status_code != 200:
+                        await answer.aread()
+                        raise PluginFailed(f"opencode's events said {answer.status_code}")
+                    self._running[session.id] = answer
+                    try:
+                        async for said in _sse(answer):
+                            if _session_of(said) != session.id:
+                                continue  # (one stream, every session on the host)
+                            self._sessions.seq[session.id] = _sequence(
+                                said, self._sessions.seq.get(session.id, 0)
+                            )
+                            for event in await self._events(said, streamed):
+                                yield event
+                                if isinstance(event, TurnEnded):
+                                    return
+                    finally:
+                        self._running.pop(session.id, None)
+            except httpx.HTTPError as failure:
+                # (A read that timed out, or a stream `stop` closed under it, is a dropped read.)
+                log.debug("opencode's events for %s dropped: %s", session.id, failure)
             if session.id in self._stopped:
                 return
-            idle = 0 if self._sessions.seq.get(session.id, 0) > before else idle + 1
+            if (ended := await self._outcome(api, session)) is not None:
+                yield ended
+                return
+            idle += 1
             if idle >= _DROPS:
                 raise PluginFailed(
-                    f"opencode's log for {session.id} keeps dropping without an answer."
+                    f"opencode's events for {session.id} keep dropping without an answer."
                 )
+            await asyncio.sleep(0)  # (three tries at most: a yield is enough between them)
 
-    async def _events(
-        self, api: httpx.AsyncClient, session: SessionRef, said: _Event
-    ) -> list[AgentEvent]:
-        """What one item of the log is (nothing, when udl does not read it)."""
+    async def _outcome(self, api: httpx.AsyncClient, session: SessionRef) -> TurnEnded | None:
+        """How the session's last turn ended, if it has (None: it is still running)."""
+        said = await self._get(api, f"/api/session/{session.id}", _Created)
+        if said.data.outcome is None:
+            return None
+        return {
+            "succeeded": TurnEnded(reason=TurnReason.DONE),
+            "interrupted": TurnEnded(reason=TurnReason.STOPPED, text="The turn was interrupted."),
+        }.get(
+            said.data.outcome,
+            TurnEnded(reason=TurnReason.ERROR, text=f"The turn {said.data.outcome}."),
+        )
+
+    async def _events(self, said: _Event, streamed: set[str]) -> list[AgentEvent]:
+        """What one event is (nothing, when udl does not read it)."""
         data = said.data
+        if said.type == "session.text.delta":
+            message = _text(data.get("assistantMessageID")) or ""
+            streamed.add(message)
+            return [TextDelta(text=_text(data.get("delta")) or "")]
         if said.type == "session.text.ended":
+            if (_text(data.get("assistantMessageID")) or "") in streamed:
+                return []  # (its deltas already said it)
             return [TextDelta(text=_text(data.get("text")) or "")]
         if said.type == "session.tool.called":
             return [ToolStarted(name=_tool(data), summary=_summary(data.get("input")))]
         if said.type in ("session.tool.success", "session.tool.failed"):
             return [ToolFinished(name=_tool(data), ok=said.type == "session.tool.success")]
-        if said.type == "session.usage.recorded":
+        if said.type in ("session.usage.recorded", "session.usage.updated"):
             tokens = _tokens(data.get("tokens"))
             return [
                 Usage(
@@ -483,25 +552,20 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
             return
         for request in listed.data:
             with suppress(PluginFailed):  # (it may have been answered or dropped meanwhile)
-                await self._refuse_asking(
-                    api, session, _text(request.get("id")), _text(request.get("message"))
-                )
+                await self._refuse_asking(api, session, _text(request.get("id")))
 
     async def _refuse_asking(
-        self,
-        api: httpx.AsyncClient,
-        session: SessionRef,
-        request_id: str | None,
-        message: str | None,
+        self, api: httpx.AsyncClient, session: SessionRef, request_id: str | None
     ) -> None:
-        """Refuse a permission the session's ruleset did not answer (it asked, so it is refused)."""
+        """Refuse a permission the session's ruleset did not answer (it asked, so it is refused),
+        and say where an agent does ask: udl's own `orch_ask`."""
         if request_id is None:
             return
         await self._call(
             api,
             "POST",
             f"/api/session/{session.id}/permission/{request_id}/reply",
-            json={"decision": "reject", "message": message or "udl does not allow this."},
+            json={"decision": "reject", "message": _REFUSAL},
         )
 
     # -- the connection ---------------------------------------------------------------------
@@ -552,7 +616,8 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
             ) from failure
 
     async def _add_mcp(self, api: httpx.AsyncClient, spec: SessionSpec) -> None:
-        """Add udl's MCP server to the location, its token read from the session's environment."""
+        """Add udl's MCP server to the session's own location (`spec.cwd`), its token read from
+        the session's environment."""
         if spec.mcp is None:
             return
         await self._call(
@@ -619,7 +684,7 @@ def _parse[T: BaseModel](model: type[T], body: str) -> T:
 
 
 async def _sse(answer: httpx.Response) -> AsyncIterator[_Event]:
-    """A server-sent event stream's events, one at a time (its data, as the log says it)."""
+    """A server-sent event stream's events, one at a time (its data, as the service says it)."""
     async for line in answer.aiter_lines():
         if not line.startswith("data:"):
             continue
@@ -629,15 +694,20 @@ async def _sse(answer: httpx.Response) -> AsyncIterator[_Event]:
         try:
             event = _Event.model_validate_json(said)
         except ValidationError:
-            log.debug("opencode said a log item udl cannot read: %r", said[:200])
+            log.debug("opencode said an event udl cannot read: %r", said[:200])
             continue
         if event.type == "log.synced":
             continue
         yield event
 
 
+def _session_of(event: _Event) -> str | None:
+    """Which session an event is about (None: it is not about one)."""
+    return _text(event.data.get("sessionID"))
+
+
 def _sequence(event: _Event, after: int) -> int:
-    """The sequence number to resume from, after reading `event`."""
+    """The sequence number udl has read up to, after reading `event`."""
     durable = event.durable
     if durable is not None and isinstance(seq := durable.get("seq"), int):
         return max(after, seq)
@@ -653,21 +723,23 @@ def _ruleset(cwd: str, deny: list[str]) -> list[dict[str, str]]:
     return [
         *rules,
         {"action": "external_directory", "resource": "*", "effect": "deny"},
-        {"action": "edit", "resource": f"{cwd}/*", "effect": "allow"},
         {"action": "edit", "resource": "*", "effect": "deny"},
+        {"action": "edit", "resource": f"{cwd}/*", "effect": "allow"},
         {"action": "question", "resource": "*", "effect": "deny"},
     ]
 
 
 def _model_ref(model: str | None) -> dict[str, str] | None:
-    """A model as the API names one (`provider/id#variant` in the CLI)."""
+    """A model as the API names one (`provider/id#variant` in the CLI).
+
+    A name with no provider is sent as both (`gpt-5` → provider `gpt-5`, id `gpt-5`): the service
+    answers with what it has, and a wrong guess fails there rather than here. The variant is kept
+    either way."""
     if not model:
         return None
     said, _, variant = model.partition("#")
     provider, _, identifier = said.partition("/")
-    if not identifier:
-        return {"providerID": provider, "id": said}
-    ref = {"providerID": provider, "id": identifier}
+    ref = {"providerID": provider, "id": identifier or said}
     if variant:
         ref["variant"] = variant
     return ref

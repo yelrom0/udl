@@ -531,6 +531,10 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - `tests/support/runners.py`: `FakeOpenCode`, an ASGI app serving those calls with the same shapes (validated against the committed OpenAPI document), Basic auth, and a log that a test can cut and resume.
 - Tests first: the contract over `FakeOpenCode`; `tests/unit/plugins/runners/test_opencode.py`: the ruleset built from a `deny` list; the log resumed from the stored sequence after a dropped connection, with no event lost or repeated; a `permission.asked` rejected; the password in no log line.
 - Done when: an opt-in smoke test runs one prompt on an OpenRouter model (ERNIE or DeepSeek) through OpenRouter, here and on thevault.
+  - **The real run, here (2026-11-20):** `openrouter-ds-a/deepseek-v4.1-flash-1017-instant`, one
+    prompt — `TextDelta("Hello there, friend.")`, `Usage(input 2828, output 9, $0.0003305932)`,
+    `TurnEnded(done)`. (The free ERNIE models were out of their daily quota: `provider.rate-limit`,
+    which the runner reads as a `RunnerLimited`.) On thevault is still to do.
 - **Built (deepseek-a, 2026-11-19/20, PR #TBD):** the `opencode` runner.
   - `udl/plugins/runners/opencode.py`: `OpenCode` (name `opencode`, published under `udl.runners`),
     `OpenCodeOptions` (`cli`, `models`, `agent`, `title`, `directory`) and `OpenCodeSessions` (a
@@ -549,7 +553,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
     session store kept: a dropped connection loses nothing and repeats nothing (three reads in a row
     with nothing new fail the turn instead of spinning). `session.text.*` are `TextDelta`s,
     `session.tool.*` are `ToolStarted`/`ToolFinished` (the tool's name is in the provider's own
-    blob), `session.usage.recorded` is a `Usage`, and `session.execution.succeeded` / `.interrupted` /
+    blob), `session.usage.recorded` / `.updated` are a `Usage`, and `session.execution.succeeded` / `.interrupted` /
     `.failed` end the turn (done / stopped / error). A failure that says the account is out of
     quota — `status: 429`, or a `retryAfterMs` — is a `RunnerLimited(until)` and then
     `TurnEnded(limited)`. A `PluginFailed` mid-turn (a log udl cannot read) is `TurnEnded(error)`,
@@ -562,12 +566,19 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
     `permission.*` events, checked against the committed OpenAPI document), so while a turn runs its
     pending requests are read (`GET /api/session/{id}/permission`) and each is answered `reject` —
     and once more when the turn ends, so a fast turn's request is not left hanging.
+  - **The brief and the secrets.** `SessionSpec.instructions` is written to the host's own agent file
+    (`~/.config/opencode/agents/udl-<sha256[0:12]>.md`, through the shell with the text on stdin, so
+    it is in no argv) and the session runs as that agent — the card's "pass the brief as the agent's
+    instructions", as OpenCode's own agent file. `secret_env` is sent at session start
+    (`PUT /api/session/{id}/environment`) and **not** kept in the runner's store: it is in the
+    service's memory, and a runner made later resumes by id without it.
   - **Fixtures and tests:** `tests/fixtures/opencode/openapi-2.1.2.json` (the document the service
-    serves), `tests/support/opencode.py` (`FakeOpenCode`, an ASGI app of those calls with Basic auth,
+    serves), `tests/fixtures/opencode/events-2.1.2.json` (one real turn's events, exact payloads), `tests/support/opencode.py` (`FakeOpenCode`, an ASGI app of those calls with Basic auth,
     a log a test can cut, pending permissions, and the contract's slow/limited turns through
     `FAKE_HARNESS_SLOW`/`FAKE_HARNESS_LIMITED`; `FakeShell`, its shell), the contract's fourth case,
-    40 unit tests (97 % of the module) and `tests/smoke/test_opencode.py` (opt-in, `make smoke`; it
-    skips here because this machine's opencode service is stopped). A test checks that every path
+    49 unit tests and `tests/smoke/test_opencode.py` (opt-in, `make smoke`; it skips here because
+    this machine's opencode service is stopped). A test reads the real-turn fixture and asserts the
+    `TextDelta` / `Usage` / `TurnEnded` it becomes. A test checks that every path
     the runner calls is a path in the committed document. `docs/plugins.md` gains the runner row in
     the contract-suite table.
 
