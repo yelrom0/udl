@@ -254,9 +254,9 @@ async def test_an_app_s_service_runs_until_it_is_told_to_stop(case: Case) -> Non
         assert case.events.published
         assert case.records.kept
     else:
-        # (An app that overrides no hook has no service of its own: its serve() is the base
-        # one, which returns at once.)
-        assert case.app.serve.__func__ is AppPlugin.serve  # pyright: ignore[reportUnknownMemberType]
+        # (orch's service is a wait on ctx.stop: nothing runs until the dispatcher (27's), and
+        # the await above ending is what shows stopping ends it.)
+        assert isinstance(case.app, Orch)
 
 
 async def test_an_app_s_service_stops_where_it_waits(case: Case) -> None:

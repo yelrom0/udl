@@ -84,6 +84,8 @@ _UDL_KINDS: Final = (
     "udl.integrations.watchers",
     "udl.automations.runs",
     "udl.automations.schedules",
+    # (An app's records: udl's own work tracking, kept like any other record.)
+    "udl.plugins.apps.orch.records",
     "udl.fetch.ladder",
     "udl.fetch.models",
     "udl.hosts.shell",

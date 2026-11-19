@@ -11,7 +11,6 @@ what each of them refuses. Stored, they are udl records (orch.records).
 
 # System Imports
 from pathlib import Path
-from typing import Any
 
 # Package Imports
 import pytest
@@ -92,9 +91,9 @@ def test_a_project_names_its_review_bot_and_the_rules_agents_get() -> None:
 # ---------------------------------------------------------------------------------------------
 
 
-def repo(**fields: Any) -> RepoData:
+def repo(**fields: object) -> RepoData:
     """A repo of udl, with `fields` replacing what is set (its identity included)."""
-    given: dict[str, Any] = {
+    given: dict[str, object] = {
         "project": "udl",
         "name": "udl",
         "github": "yelrom0/udl",
@@ -465,17 +464,47 @@ def test_a_repos_branch_pattern_with_an_empty_part_is_refused() -> None:
 
 
 def test_a_repos_branch_pattern_with_at_braces_is_refused() -> None:
-    with pytest.raises(ValidationError, match="starting with @"):
+    with pytest.raises(ValidationError, match=r"starting with \. or @"):
         RepoRecord.model_validate(repo(branch_pattern="{type}/@{key}-{slug}").model_dump())
     with pytest.raises(ValidationError, match="no empty part"):
         RepoRecord.model_validate(repo(branch_pattern="{type}//{key}-{slug}").model_dump())
 
 
+def test_a_repos_branch_pattern_may_not_have_a_hidden_part() -> None:
+    with pytest.raises(ValidationError, match=r"starting with \. or @"):
+        RepoRecord.model_validate(repo(branch_pattern="{type}/x/.hidden-{key}").model_dump())
+
+
+def test_a_repos_branch_pattern_may_not_have_two_dots_in_a_part() -> None:
+    with pytest.raises(ValidationError, match=r"with \.\. in it"):
+        RepoRecord.model_validate(repo(branch_pattern="{type}/{key}..{slug}").model_dump())
+
+
+def test_a_repos_branch_pattern_may_have_a_part_that_only_starts_like_a_lock() -> None:
+    found = repo(branch_pattern="{type}/x.lock-{key}-{slug}")
+
+    assert found.branch(type="feat", key="26.2", slug="projects") == "feat/x.lock-26.2-projects"
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    ["{type}/{key}.v2-{slug}", "{type}/a.{key}.{slug}", "{type}/{key}@x-{slug}"],
+)
+def test_a_repos_branch_pattern_may_have_text_after_a_part(pattern: str) -> None:
+    found = repo(branch_pattern=pattern)
+
+    assert found.branch(type="feat", key="26.2", slug="projects")
+
+
 def test_a_projects_promotion_branches_are_all_different() -> None:
     with pytest.raises(ValidationError, match="twice"):
         ProjectData(name="liively", title="Liively", promotion=["rc", "rc"])
+    with pytest.raises(ValidationError, match="twice"):
+        ProjectRecord(name="liively", title="Liively", promotion=["rc", "rc"])
 
 
 def test_a_projects_title_is_not_empty() -> None:
     with pytest.raises(ValidationError):
         ProjectData(name="x", title="")
+    with pytest.raises(ValidationError):
+        ProjectRecord(name="x", title="")
