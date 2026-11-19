@@ -101,7 +101,8 @@ class PlaywrightTab:
         return not self._inflight and self._clock.now() - self._active_at >= delay
 
     def inflight(self) -> list[str]:
-        """The requests the tab has started and not seen end, as `METHOD url`, in order."""
+        """The requests the tab has started and not seen end, as `METHOD url`, sorted (by method,
+        then url)."""
         return sorted(f"{request.method} {request.url}" for request in self._inflight)
 
     def _responded(self, response: Response) -> None:

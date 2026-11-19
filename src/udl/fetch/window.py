@@ -91,7 +91,8 @@ async def not_passed_because(page: _Shown, tab: _Watched, site: str) -> str | No
         return f"its tab is on {page.url}, not the site"
     if not tab.quiet_for(QUIET):
         busy = tab.inflight()
-        return f"its network is busy ({', '.join(busy[:3]) or 'a request ended under 2 s ago'})"
+        quiet = f"a request ended under {QUIET.total_seconds():g} s ago"
+        return f"its network is busy ({', '.join(busy[:3]) or quiet})"
     try:
         state = await page.evaluate("() => document.readyState")
         if state != "complete":
