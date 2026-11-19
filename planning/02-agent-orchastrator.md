@@ -405,8 +405,9 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
       with its own `kind: Literal[...]`, so a discriminated parse is still one `Field` away.
     - **A `RunnerLimited`/`RunnerFailed` is followed by the turn's `TurnEnded`**, which is always
       the last event: `base.py`'s docstring and the two classes say so, and the contract asserts it.
-    - **`login()` is async**, unlike the card's `def login(self) -> Interaction`: the shell's
-      `interact()` is awaitable, so a synchronous signature could not be implemented.
+    - **`login()` is `async def`**, unlike the card's `def login(self) -> Interaction`, because
+      `HostShell.interact()` returns `Awaitable[Interaction]` (25.6), which a synchronous signature
+      could not implement.
     - **`RunnerLimited`/`RunnerFailed` are events in the stream, not exceptions**: a turn ends with
       one of them rather than raising into the reader, so an orch turn (26.x) reads a reason
       whatever happened. `TurnEnded.reason` keeps `done|stopped|error|limited` as the card has it.
