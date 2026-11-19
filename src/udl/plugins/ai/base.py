@@ -24,7 +24,7 @@ tests/contract/test_ai_provider_contract.py is the behaviour every provider must
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from enum import StrEnum
-from typing import Annotated, Any, ClassVar, Self
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Self
 
 # Package Imports
 from pydantic import (
@@ -45,6 +45,9 @@ from udl.errors import ConfigError, PluginError, ProviderUnavailable
 from udl.http import HttpClientFactory
 from udl.plugins.requirements import Requirement
 from udl.plugins.secrets.base import SecretField
+
+if TYPE_CHECKING:
+    from udl.plugins.ai.process import ProcessPool
 
 # Any provider: a provider of any options, as the registry holds them. (Not
 # AIProvider[ProviderOptions]: O is invariant — a provider is made with its own options model and
@@ -108,6 +111,9 @@ class ToolCall(_Model):
     """The tool to run (one of the request's tools)."""
     arguments: JsonObject = Field(default_factory=dict)
     """What to run it with."""
+    arguments_error: str | None = None
+    """Why the provider could not read its arguments (the raw text), when it could not: the call
+    is then not run, and this goes back to the model as the tool's answer."""
 
 
 class ChatMessage(_Model):
@@ -274,13 +280,23 @@ class AIProvider[O: ProviderOptions](ABC):
     # for a provider that says so, and no other.
     supports_pull: ClassVar[bool] = False
 
-    def __init__(self, options: O, *, http: HttpClientFactory, clock: Clock) -> None:
+    def __init__(
+        self,
+        options: O,
+        *,
+        http: HttpClientFactory,
+        clock: Clock,
+        processes: ProcessPool | None = None,
+    ) -> None:
         self.options = options
         """Its options, as its options_model has them."""
         self.http = http
         """What makes its HTTP clients (udl's, or a test's fake servers')."""
         self.clock = clock
         """The clock (udl.clock.Clock): nothing here calls datetime.now() or asyncio.sleep()."""
+        self.processes = processes
+        """Where the programs of a provider that udl starts are kept (udl.plugins.ai.process's
+        ProcessPool), or None to use the one this udl shares."""
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self.name}>"
@@ -298,6 +314,12 @@ class AIProvider[O: ProviderOptions](ABC):
                 "(the API's schema gives their types).",
             ) from e
         return found  # pyright: ignore[reportReturnType] - (its options_model is an O)
+
+    def check(self) -> None:
+        """Raise what is wrong with its options, before they are saved (17.9's set_ai_provider
+        calls it): a URL it cannot use, or a program udl may not start. The default checks
+        nothing."""
+        return
 
     @abstractmethod
     async def health(self) -> ProviderHealth:
