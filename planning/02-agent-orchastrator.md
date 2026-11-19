@@ -430,7 +430,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - Flags were checked against Claude Code 2.1.306 here; confirm them against `claude --help` on the build machine and record any change in the phase's decisions.
 - Tests first: the contract over `fake_harness.py` speaking stream-json; `tests/unit/plugins/runners/test_claude_code.py`: the argv for a first and a later turn, the deny list in the settings file, the token only in the MCP config file.
 - Done when: an opt-in smoke test has `claude` answer one prompt in a temp directory through the runner.
-- **Built (deepseek-a, 2026-11-19, PR #27):** the runner, and the smoke test run against the CLI here.
+- **Built (deepseek-a, 2026-11-18, PR #27):** the runner, and the smoke test run against the CLI here.
   - `udl/plugins/runners/claude_code.py`: `ClaudeCode` (name `claude-code`, `requires` `claude`),
     published under `udl.runners`. `ClaudeCodeOptions`: `cli` (the program and arguments before the
     turn's own, so a test points it at `fake_harness.py`), `models` (`opus`, `sonnet`, `haiku`),
@@ -449,12 +449,17 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
     (`ToolFinished`, ok unless `is_error`), the result (`Usage`, then `TurnEnded`: done, error, or
     limited). A line udl does not know — a `rate_limit_event`, something new — is skipped, never fatal;
     a line it cannot parse is logged at debug. A limit is a result whose subtype or text says so, and
-    `RunnerLimited.until` is the ISO time its text gives (None when it gives none or an unreadable one).
+    `RunnerLimited.until` is the time its text gives — the `…|<epoch second>` form the CLI prints, or
+    an ISO time (None when it gives none or an unreadable one).
+  - `ClaudeCode(..., sessions=...)` takes the mapping it keeps its sessions in: one a service holds
+    means a session outlives the runner object, and a runner made later resumes it by id.
   - `health()`: `--version` and `auth status` (`loggedIn`, `email` shown and never logged,
     `subscriptionType`); udl never opens Claude Code's own credential files.
   - `stop()` cancels the turn's pull task, which ends the process (the shell closes it when its
     generator ends) and the turn ends as `TurnEnded(stopped)`.
-  - Tests: the runner contract over `fake_harness.py` as well as `fake` and `command`; 33 unit tests
+  - Tests: the runner contract's `claude-code` case, its CLI pointed at `fake_harness.py`, so the
+    whole of it runs (the resumed session, the mid-turn `stop()`, the `RunnerLimited` with its
+    `until`, the secret in no argv); 35 unit tests
     (the argv of a first and a later turn, a bare spec, the two files and the exclude, the token,
     every stream shape, a real 2.1.306 result line with nested usage, limits with and without a
     readable reset time, health's answers, a stopped turn, a turn nobody reads to the end, a process
