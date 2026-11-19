@@ -9,7 +9,37 @@
  */
 
 import { describe, expect, it } from "vitest";
+import type { UIManifest } from "./index";
 import { defineUIPlugin, version } from "./index";
+
+describe("a plugin's manifest", () => {
+	it("is the whole manifest, not only what it contributes", () => {
+		// (A bundle's manifest.json names itself and says which SDK it is for: `UIManifest` is
+		// that, and `Contributions` — its `contributes` block — is not a manifest.)
+		const manifest: UIManifest = {
+			name: "gmail-ui",
+			version: "1.0.0",
+			sdk: "^1.0",
+			entry: "index.js",
+			contributes: { nav: [] },
+		};
+
+		expect(manifest.name).toBe("gmail-ui");
+
+		// @ts-expect-error — a `contributes` block is not a manifest: a manifest names itself.
+		const contributions: UIManifest = { nav: [] };
+
+		expect(contributions).toBeDefined();
+	});
+
+	it("is called UIManifest: there is no other name for it", () => {
+		// @ts-expect-error — `Manifest` is not exported: a `contributes` block is not a manifest,
+		// and the manifest's type is `UIManifest`.
+		type Manifest = import("./index").Manifest;
+
+		expect(true).toBe(true);
+	});
+});
 
 describe("a UI plugin's spec", () => {
 	it("is what defineUIPlugin was given", () => {

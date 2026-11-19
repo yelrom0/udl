@@ -11,8 +11,6 @@
  * and a plugin built with anything else (or plain DOM) writes a `Mount` itself.
  */
 
-import type { Contributions } from "./manifest";
-
 export type { Contributions, NavItem, UIManifest, Widget } from "./manifest";
 
 /** The SDK's version: what a manifest's `sdk` range (`^MAJOR.MINOR`) is checked against. */
@@ -170,6 +168,3 @@ export type UIPluginSpec = {
 export function defineUIPlugin<const S extends UIPluginSpec>(spec: S): S {
 	return spec;
 }
-
-/** A plugin's manifest, as the shell reads it (what the entry is checked against). */
-export type Manifest = Contributions;
