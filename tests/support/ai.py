@@ -1,5 +1,5 @@
 """
------------
+---------
 - ai.py -
 -----------
 
@@ -13,11 +13,16 @@ a call to go on with), else with a line of text; a script or a responder replace
 """
 
 # System Imports
+import json
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 
+# Package Imports
+from pydantic import JsonValue
+
 # Local Imports
 from udl.clock import Clock, SystemClock
+from udl.db.models import JsonObject
 from udl.errors import ProviderUnavailable
 from udl.http import HttpClientFactory, api_client
 from udl.plugins.ai.base import (
@@ -126,7 +131,9 @@ class FakeAI(AIProvider[FakeProviderOptions]):
         )
 
     async def pull(self, model: str) -> AsyncIterator[PullProgress]:
-        """Pull `model`: two steps, ending with it there."""
+        """Pull `model`: two steps, ending with it there. Raises ProviderUnavailable when it is
+        down."""
+        self._refuse_when_down()
         self.pulled.append(model)
         yield PullProgress(status="pulling manifest", total=100, completed=0)
         yield PullProgress(status=f"pulled {model}", total=100, completed=100)
@@ -142,8 +149,14 @@ class FakeAI(AIProvider[FakeProviderOptions]):
 
 
 def _default_reply(request: ChatRequest) -> ChatResponse:
-    """What the fake answers when nothing is scripted: a call of the first tool it is offered,
-    with arguments that fit the schema above, else a line of text."""
+    """What the fake answers when nothing is scripted: JSON that fits the schema it was given,
+    a call of the first tool it is offered, or a line of text."""
+    if request.format is not None:
+        return ChatResponse(
+            message=ChatMessage(role=ChatRole.ASSISTANT, content=json.dumps(_fits(request.format))),
+            done_reason=DoneReason.STOP,
+            usage=_USAGE,
+        )
     if request.tools:
         [tool, *_] = request.tools
         return ChatResponse(
@@ -159,6 +172,33 @@ def _default_reply(request: ChatRequest) -> ChatResponse:
         done_reason=DoneReason.STOP,
         usage=_USAGE,
     )
+
+
+def _fits(schema: JsonObject) -> JsonObject:
+    """An object that fits `schema`: each property it names, with a value of the JSON type it
+    asks for (the fake's line for a string, and an empty one for the rest)."""
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return {}
+    return {name: _value(spec) for name, spec in properties.items()}
+
+
+def _value(spec: JsonValue) -> JsonValue:
+    """A value of the JSON type `spec` asks for."""
+    if not isinstance(spec, dict):
+        return DEFAULT_ANSWER
+    kind = spec.get("type")
+    if kind == "integer":
+        return 0
+    if kind == "number":
+        return 0.0
+    if kind == "boolean":
+        return False
+    if kind == "array":
+        return []
+    if kind == "object":
+        return {}
+    return DEFAULT_ANSWER
 
 
 def _pieces(text: str) -> list[str]:

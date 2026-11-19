@@ -198,6 +198,7 @@ from udl.plugins.downloaders.base import Cookie, ProbeContext, ProbeResult
 from udl.plugins.integrations.base import AccountHealth
 from udl.plugins.registry import (
     ACTIONS,
+    AI,
     APPS,
     DATABASES,
     DOWNLOADERS,
@@ -1039,6 +1040,8 @@ class UDLService:
             missing = unmet(())
         elif info.kind == RUNNERS.group:
             missing = unmet(self.registry.get(RUNNERS, info.name).requires)
+        elif info.kind == AI.group:
+            missing = unmet(self.registry.get(AI, info.name).requires)
         else:  # a database
             missing = unmet(self.registry.get(DATABASES, info.name).requires)
         return PluginStatus.model_validate(

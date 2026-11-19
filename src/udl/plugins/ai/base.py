@@ -1,5 +1,5 @@
 """
-------------
+-----------
 - base.py -
 ------------
 
@@ -145,13 +145,13 @@ class ChatRequest(_Model):
 
     model: str
     """The model to answer with (the provider's own name for it)."""
-    messages: list[ChatMessage]
+    messages: Annotated[list[ChatMessage], Field(min_length=1)]
     """The messages so far, oldest first."""
     tools: list[ToolSpec] = Field(default_factory=list[ToolSpec])
     """The tools it may call (none: it can only answer)."""
-    temperature: float | None = None
+    temperature: Annotated[float, Field(ge=0, le=2)] | None = None
     """How much it may vary its answer (the provider's default when None)."""
-    max_tokens: int | None = None
+    max_tokens: Annotated[PositiveInt, Field(le=1_000_000)] | None = None
     """How many tokens it may write at most (the provider's default when None)."""
     format: JsonObject | None = None
     """A JSON Schema the answer must fit (structured output), when one is asked for."""

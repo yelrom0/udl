@@ -14,6 +14,7 @@ ProviderUnavailable naming its URL; and pulling a model reports progress where t
 """
 
 # System Imports
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -183,18 +184,19 @@ async def test_a_streamed_answer_is_the_same_as_a_whole_one(case: Case) -> None:
     assert [call for chunk in chunks for call in chunk.tool_calls] == whole.message.tool_calls
 
 
-async def test_a_chat_that_asks_for_a_json_schema_is_answered(case: Case) -> None:
-    request = _chat(case).model_copy(
-        update={
-            "format": {"type": "object", "properties": {"summary": {"type": "string"}}},
-            "temperature": 0.5,
-            "max_tokens": 64,
-        }
-    )
+async def test_a_chat_that_asks_for_a_json_schema_is_answered_with_that_json(case: Case) -> None:
+    schema = {
+        "type": "object",
+        "properties": {"summary": {"type": "string"}},
+        "required": ["summary"],
+    }
+    request = _chat(case).model_copy(update={"format": schema})
 
     response = await case.provider.chat(request)
 
-    assert response.message.role is ChatRole.ASSISTANT
+    answer = json.loads(response.message.content)  # (it is JSON, not prose)
+    assert isinstance(answer, dict)
+    assert set(schema["required"]) <= answer.keys()
 
 
 async def test_a_provider_pulls_a_model_where_it_can(case: Case) -> None:

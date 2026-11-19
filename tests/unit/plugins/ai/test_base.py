@@ -1,5 +1,5 @@
 """
---------------
+----------------
 - test_base.py -
 --------------
 
@@ -9,12 +9,15 @@ the call it answers), the AIProviderConnection record, and what a provider that 
 the three abstract methods gets: one streamed chunk, and no pulling.
 """
 
+# System Imports
+import json
+
 # Package Imports
 import pytest
 from pydantic import SecretStr, ValidationError
 
 # Local Imports
-from support.ai import DEFAULT_URL, FakeAI, FakeProviderOptions
+from support.ai import DEFAULT_ANSWER, DEFAULT_URL, FakeAI, FakeProviderOptions
 from support.clock import FakeClock
 from udl.config import SecretsSettings
 from udl.db.records import record_kind, record_kinds
@@ -179,6 +182,28 @@ def test_a_request_defaults_to_no_tools_and_no_limits() -> None:
     assert request.format is None
 
 
+def test_a_request_takes_the_limits_a_provider_understands() -> None:
+    request = chat_request(temperature=0, max_tokens=1)
+
+    assert (request.temperature, request.max_tokens) == (0, 1)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"messages": []},
+        {"temperature": -0.5},
+        {"temperature": 2.5},
+        {"max_tokens": 0},
+        {"max_tokens": 2_000_000},
+    ],
+    ids=["no-messages", "temperature-below", "temperature-above", "no-tokens", "too-many-tokens"],
+)
+def test_a_request_refuses_what_a_provider_cannot_be_asked(fields: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        chat_request(**fields)
+
+
 def test_an_answer_says_why_it_ended() -> None:
     response = ChatResponse(
         message=ChatMessage(role=ChatRole.ASSISTANT, content="Hi"),
@@ -203,6 +228,46 @@ def test_a_pull_says_how_far_it_has_got() -> None:
 
     assert (halfway.completed, halfway.total) == (50, 100)
     assert PullProgress(status="done").completed is None
+
+
+# ---------------------------------------------------------------------------------------------
+# The fake provider
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_the_fake_answers_json_that_fits_the_schema_it_is_given() -> None:
+    provider = FakeAI(FakeProviderOptions(), clock=FakeClock())
+    request = chat_request(
+        format={
+            "type": "object",
+            "properties": {"summary": {"type": "string"}, "n": {"type": "integer"}},
+        }
+    )
+
+    response = await provider.chat(request)
+
+    assert json.loads(response.message.content) == {"summary": DEFAULT_ANSWER, "n": 0}
+    assert provider.requests == [request]  # (it keeps what it was asked)
+
+
+async def test_the_fake_refuses_to_pull_when_it_is_down() -> None:
+    provider = FakeAI(
+        FakeProviderOptions(url="http://127.0.0.1:9/v1", down=True), clock=FakeClock()
+    )
+
+    with pytest.raises(ProviderUnavailable):
+        async for _ in provider.pull("fake-1"):
+            pass
+
+
+async def test_the_fake_streams_its_answer_a_piece_at_a_time() -> None:
+    provider = FakeAI(FakeProviderOptions(), clock=FakeClock())
+
+    chunks = [chunk async for chunk in provider.stream(chat_request())]
+
+    assert [chunk.content for chunk in chunks[:-1]] == ["Hello ", "from ", "the ", "fake"]
+    assert chunks[-1].content == ""
+    assert chunks[-1].done_reason is DoneReason.STOP
 
 
 # ---------------------------------------------------------------------------------------------

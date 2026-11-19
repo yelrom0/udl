@@ -3853,6 +3853,10 @@ the wizard. Examples for `docs/automations.md`:
   - `ProviderUnavailable` lives in `udl.errors` with every other `UDLError` (so `error_from_info` can rebuild it and
     `test_errors.py` sees it) and is re-exported from `udl.plugins.ai.base`, which the card's bullet list implies but
     does not say.
+  - `UDLService._plugin()` (what `list_plugins` reports) gained an `AI` branch: its chain ended in "else: a database",
+    so a registered provider was looked up among the database plugins and failed the whole listing. An AI provider has
+    no `settings_model` — its options belong to a connection (`AIProviderConnection`), not to the plugin — so
+    `plugin_settings` never sees one.
   - `command` and `idle_timeout` are **not** on `ProviderOptions`: they belong to a provider that can be started
     (17.3 adds `ProcessOptions`), so a provider that cannot — ollama, a system service — never accepts a `command` it
     would ignore.
