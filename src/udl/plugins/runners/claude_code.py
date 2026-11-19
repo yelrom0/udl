@@ -18,6 +18,9 @@ Its stream's JSON lines become AgentEvents (what it said, the tools it ran, what
 and how it ended); a line udl does not know is skipped, never fatal. A usage-limit result becomes
 RunnerLimited with the reset time when the CLI gives one.
 
+Its sessions may be kept outside the runner (`sessions`, a mapping a service holds), so one
+outlives the runner object and a runner made later resumes it by id.
+
 `health()` reads `claude --version` and `claude auth status`. udl never opens Claude Code's own
 credential files (O-C3): the account is what the CLI says, and it is never logged.
 """
@@ -28,7 +31,7 @@ import contextlib
 import json
 import logging
 import re
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, MutableMapping
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import ClassVar
@@ -72,6 +75,9 @@ _RESET: re.Pattern[str] = re.compile(
     re.IGNORECASE,
 )
 """How a limit's result says when the quota is back (an ISO time, when it says one)."""
+
+_EPOCH: re.Pattern[str] = re.compile(r"\|\s*(\d{10})\s*$")
+"""The other way it says it: the text, then `|<epoch second>` (what the CLI prints)."""
 
 
 class ClaudeCodeOptions(RunnerOptions):
@@ -147,9 +153,16 @@ class ClaudeCode(AgentRunner[ClaudeCodeOptions]):
     options_model: ClassVar[type[RunnerOptions]] = ClaudeCodeOptions
     requires: ClassVar[tuple[Requirement, ...]] = (Requirement.binary("claude"),)
 
-    def __init__(self, options: ClaudeCodeOptions, *, shell: HostShell, clock: Clock) -> None:
+    def __init__(
+        self,
+        options: ClaudeCodeOptions,
+        *,
+        shell: HostShell,
+        clock: Clock,
+        sessions: MutableMapping[str, SessionSpec] | None = None,
+    ) -> None:
         super().__init__(options, shell=shell, clock=clock)
-        self._sessions: dict[str, SessionSpec] = {}
+        self._sessions: MutableMapping[str, SessionSpec] = sessions if sessions is not None else {}
         self._sent: set[str] = set()
         self._stopped: set[str] = set()
         self._pulls: dict[str, asyncio.Task[None]] = {}
@@ -388,6 +401,8 @@ def _is_limited(subtype: str, text: str) -> bool:
 
 def _reset(text: str) -> datetime | None:
     """When a limit's result says the quota is back, if it says."""
+    if (epoch := _EPOCH.search(text)) is not None:
+        return datetime.fromtimestamp(int(epoch.group(1)), tz=UTC)
     if (found := _RESET.search(text)) is None:
         return None
     said = found.group(1).replace(" ", "T").replace("Z", "+00:00")

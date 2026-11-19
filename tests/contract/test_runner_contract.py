@@ -42,6 +42,7 @@ from udl.plugins.runners.base import (
     TurnEnded,
     TurnReason,
 )
+from udl.plugins.runners.claude_code import ClaudeCode, ClaudeCodeOptions
 from udl.plugins.runners.command import (
     CommandOutput,
     CommandRunner,
@@ -106,6 +107,20 @@ def _fake(shell: RecordingShell, store: Sessions) -> AnAgentRunner:
     )
 
 
+HARNESS = Path(__file__).resolve().parents[1] / "support" / "fake_harness.py"
+"""The fake harness, as the CLI a claude-code runner runs (it answers as `claude` does)."""
+
+CLAUDE = ClaudeCodeOptions(cli=[sys.executable, str(HARNESS)])
+
+
+def _claude(shell: RecordingShell, store: Sessions) -> AnAgentRunner:
+    return ClaudeCode(CLAUDE, shell=shell, clock=FakeClock(), sessions=store.specs)
+
+
+def _claude_case() -> Case:
+    return _case(ClaudeCode, CLAUDE, _claude)
+
+
 def _command_case() -> Case:
     return _case(CommandRunner, COMMAND, _command)
 
@@ -115,6 +130,7 @@ def _fake_case() -> Case:
 
 
 CASES: dict[str, Callable[[], Case]] = {
+    "claude-code": _claude_case,
     "command": _command_case,
     "fake": _fake_case,
 }

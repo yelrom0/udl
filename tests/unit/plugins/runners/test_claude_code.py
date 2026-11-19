@@ -16,7 +16,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import ClassVar
 
@@ -465,6 +465,51 @@ async def test_a_limit_that_says_no_reset_time_has_none(spec: SessionSpec) -> No
     [limited] = [event for event in events if isinstance(event, RunnerLimited)]
     assert limited.until is None
     assert limited.message == "out of quota"
+
+
+async def test_a_limit_whose_result_ends_with_an_epoch_says_when_it_lifts(
+    spec: SessionSpec,
+) -> None:
+    # (What the CLI says when it is out of quota: the text, then `|<epoch second>`.)
+    shell = FakeShell(
+        _stream(
+            _result(
+                subtype="error_limit_reached",
+                is_error=True,
+                result="Claude AI usage limit reached|1800000000",
+            )
+        )
+    )
+    runner = _runner(shell)
+    session = await runner.start(spec)
+
+    events = await _turn(runner, session, "go")
+
+    [limited] = [event for event in events if isinstance(event, RunnerLimited)]
+    assert limited.until == datetime(2027, 1, 15, 8, 0, tzinfo=UTC)
+
+
+async def test_a_second_runner_resumes_the_sessions_it_is_given(spec: SessionSpec) -> None:
+    sessions: dict[str, SessionSpec] = {}
+    first = ClaudeCode(
+        ClaudeCodeOptions(),
+        shell=FakeShell(_stream(_result())),
+        clock=FakeClock(),
+        sessions=sessions,
+    )
+    session = await first.start(spec)
+
+    second = ClaudeCode(
+        ClaudeCodeOptions(),
+        shell=FakeShell(_stream(_result(result="again"))),
+        clock=FakeClock(),
+        sessions=sessions,
+    )
+    events = await _turn(second, session, "go")
+
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.DONE
+    assert events[-1].text == "again"
 
 
 async def test_a_limit_whose_time_cannot_be_read_has_none(spec: SessionSpec) -> None:
