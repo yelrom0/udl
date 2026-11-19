@@ -79,6 +79,30 @@ def test_an_expired_session_is_forgotten() -> None:
     assert store.live == 0
 
 
+def test_an_expired_session_is_gone_after_the_next_sign_in() -> None:
+    clock = Clock()
+    store = SessionStore(timedelta(hours=1), now=clock)
+    gone = store.sign_in()
+    clock.advance(timedelta(hours=2))  # (the browser never comes back: nothing presents `gone`)
+
+    again = store.sign_in()
+
+    assert len(store) == 1  # (the expired one was swept when the next one signed in)
+    assert store.is_live(again)
+    assert not store.is_live(gone)
+
+
+def test_a_client_that_has_gone_quiet_is_forgotten() -> None:
+    clock = Clock()
+    attempts = Attempts(limit=3, window=timedelta(minutes=1), now=clock)
+    attempts.record("10.0.0.1")
+    clock.advance(timedelta(minutes=2))  # (it never comes back)
+
+    attempts.record("10.0.0.2")  # (another client tries, and the quiet one is swept)
+
+    assert len(attempts) == 1
+
+
 def test_signing_out_an_unknown_token_is_harmless() -> None:
     store = SessionStore(timedelta(hours=1))
 

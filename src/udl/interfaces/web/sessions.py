@@ -126,8 +126,20 @@ class Attempts:
         return len(self._recent(client)) < self.limit
 
     def record(self, client: str) -> None:
-        """Count a try by `client`."""
+        """Count a try by `client` (and forget the clients that have gone quiet)."""
+        self._sweep()
         self._tries[client] = [*self._recent(client), self._now()]
+
+    def __len__(self) -> int:
+        """How many clients it holds a try for (the quiet ones too, until something sweeps them)."""
+        return len(self._tries)
+
+    def _sweep(self) -> None:
+        """Drop every client whose newest try is older than the window (they may try again)."""
+        since = self._now() - self.window
+        for client, tries in list(self._tries.items()):
+            if not [at for at in tries if at > since]:
+                del self._tries[client]
 
     def _recent(self, client: str) -> list[datetime]:
         since = self._now() - self.window
