@@ -4506,6 +4506,21 @@
         "title": "Op",
         "type": "string"
       },
+      "OrchSettings": {
+        "additionalProperties": false,
+        "description": "The [orch] table: what the orchestrator's agents may do on this machine.",
+        "properties": {
+          "allowed_commands": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Commands",
+            "type": "array"
+          }
+        },
+        "title": "OrchSettings",
+        "type": "object"
+      },
       "PageFormat": {
         "description": "What a page is given as.",
         "enum": [
@@ -6737,6 +6752,9 @@
             "exclusiveMinimum": 0.0,
             "title": "Max Per Site",
             "type": "integer"
+          },
+          "orch": {
+            "$ref": "#/components/schemas/OrchSettings"
           },
           "plugin_dirs": {
             "items": {

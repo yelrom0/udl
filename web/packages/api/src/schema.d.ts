@@ -3748,6 +3748,14 @@ export interface components {
          */
         Op: "truthy" | "eq" | "ne" | "contains" | "startswith" | "endswith" | "matches" | "in" | "exists" | "lt" | "le" | "gt" | "ge";
         /**
+         * OrchSettings
+         * @description The [orch] table: what the orchestrator's agents may do on this machine.
+         */
+        OrchSettings: {
+            /** Allowed Commands */
+            allowed_commands?: string[];
+        };
+        /**
          * PageFormat
          * @description What a page is given as.
          * @enum {string}
@@ -4977,6 +4985,7 @@ export interface components {
              * @default 2
              */
             max_per_site: number;
+            orch?: components["schemas"]["OrchSettings"];
             /** Plugin Dirs */
             plugin_dirs?: components["schemas"]["ExpandedPath"][];
             /** Probe Order */
