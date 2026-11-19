@@ -68,7 +68,7 @@ function fakeTimers(): Timers & { waits: number[]; fire: () => void } {
 		after: (run, ms) => {
 			waiting.push({ run, ms });
 			waits.push(ms);
-			return 0 as unknown as ReturnType<typeof setTimeout>;
+			return 0;
 		},
 		cancel: () => {},
 		fire: () => {
@@ -129,7 +129,7 @@ describe("the live connection", () => {
 		const timers: Timers = {
 			after: (_run, ms) => {
 				waits.push(ms);
-				return 0 as unknown as ReturnType<typeof setTimeout>;
+				return 0;
 			},
 			cancel: () => {},
 		};
@@ -148,7 +148,7 @@ describe("the live connection", () => {
 		const timers: Timers = {
 			after: (_run, ms) => {
 				waits.push(ms);
-				return 0 as unknown as ReturnType<typeof setTimeout>;
+				return 0;
 			},
 			cancel: () => {},
 		};

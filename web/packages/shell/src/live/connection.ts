@@ -33,15 +33,18 @@ export const EVENT_TYPES = ["event", "run", "lagged"] as const;
 /** A download's job events that end it: its stream is over, so the page stops following it. */
 export const JOB_ENDS: readonly string[] = ["finished", "failed", "cancelled"];
 
+/** What a timer hands back (the window's own: a number, so a test's fake can make one). */
+export type TimerHandle = number;
+
 /** The clocks the connection waits on (a test's own, so the backoff is not a wait). */
 export interface Timers {
-	readonly after: (run: () => void, ms: number) => ReturnType<typeof setTimeout>;
-	readonly cancel: (timer: ReturnType<typeof setTimeout>) => void;
+	readonly after: (run: () => void, ms: number) => TimerHandle;
+	readonly cancel: (timer: TimerHandle) => void;
 }
 
 export const REAL_TIMERS: Timers = {
-	after: (run, ms) => setTimeout(run, ms),
-	cancel: (timer) => clearTimeout(timer),
+	after: (run, ms) => window.setTimeout(run, ms),
+	cancel: (timer) => window.clearTimeout(timer),
 };
 
 /** What the connection needs of an `EventSource` (the browser's, or a test's own). */
@@ -77,7 +80,7 @@ interface Stream {
 	readonly names: readonly string[];
 	readonly received: (name: string, data: unknown) => void;
 	source: Source | null;
-	timer: ReturnType<typeof setTimeout> | null;
+	timer: TimerHandle | null;
 	/** How many times in a row this stream failed to open (0: it is up). */
 	attempt: number;
 	/** Whether it was ever up: a second open is a reconnect, and the page reloads. */
