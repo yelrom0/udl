@@ -19,8 +19,8 @@ import asyncio
 import sys
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from typing import Final
 from pathlib import Path
+from typing import Final
 
 # Package Imports
 import httpx

@@ -81,6 +81,7 @@ def host(name: str) -> Host:
 async def hosts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Hosts]:
     """A started service with `local` and `thevault`, each answering through a script."""
     shells = {name: ScriptedShell(host(name)) for name in HOSTS}
+
     def shell_for(found: Host) -> ScriptedShell:
         return shells[found.name]
 
