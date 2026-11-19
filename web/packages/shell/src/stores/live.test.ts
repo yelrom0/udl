@@ -23,14 +23,14 @@ describe("the live store", () => {
 
 	it("keeps the newest events, and drops the oldest when it is full", () => {
 		for (let id = 1; id <= LIMIT + 5; id++) {
-			pushEvent({ id, type: "download.finished", at: "2026-11-19T12:00:00Z", data: null });
+			pushEvent({ name: "event", at: "2026-11-19T12:00:00Z", data: { n: id } });
 		}
 
 		const { events } = live.getState();
 
 		expect(events).toHaveLength(LIMIT);
-		expect(events[0]?.id).toBe(6);
-		expect(events.at(-1)?.id).toBe(LIMIT + 5);
+		expect(events[0]?.data).toEqual({ n: 6 });
+		expect(events.at(-1)?.data).toEqual({ n: LIMIT + 5 });
 	});
 
 	it("keeps a run and a job by id, replacing what it had", () => {
@@ -44,7 +44,7 @@ describe("the live store", () => {
 
 	it("forgets everything a connection brought in", () => {
 		setConnection("live");
-		pushEvent({ id: 1, type: "x", at: "2026-11-19T12:00:00Z", data: null });
+		pushEvent({ name: "x", at: "2026-11-19T12:00:00Z", data: null });
 		setRun("run-1", {});
 
 		clear();

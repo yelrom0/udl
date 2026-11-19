@@ -3,6 +3,12 @@ import { expect, type Page } from "@playwright/test";
 /** The API key `tests/support/e2e.py` gives the server (its `API_KEY`). */
 export const API_KEY = "e2e-key";
 
+/** Where `auth.setup.ts` puts the signed-in browser's cookie. */
+export const SIGNED_IN = "playwright/.auth/user.json";
+
+/** No session at all (a browser that has not signed in). */
+export const SIGNED_OUT = { cookies: [], origins: [] };
+
 /** Sign in the way a user does: the key, on the login page, which answers with a session. */
 export async function signIn(page: Page): Promise<void> {
 	await page.goto("/ui/login");

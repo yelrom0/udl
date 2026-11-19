@@ -12,6 +12,7 @@
 			"!**/coverage",
 			"!**/test-results",
 			"!**/playwright-report",
+			"!**/playwright/.auth",
 			"!pnpm-lock.yaml",
 			"!packages/api/openapi.json",
 			"!packages/api/src/schema.d.ts",

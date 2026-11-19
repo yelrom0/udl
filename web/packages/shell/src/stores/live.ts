@@ -1,7 +1,7 @@
 /**
- * Live data: the page's one connection to udl's event stream (18.6 opens it), the events it
- * has brought in (a bounded buffer, oldest out), and the runs and download jobs it keeps
- * current by id.
+ * Live data: what the page's connection to udl's event stream has brought in — the events
+ * (a bounded buffer, oldest out), the runs and download jobs it keeps current by id, and
+ * where the connection is (18.6's `live/connection.ts` fills it).
  */
 
 import { useStore } from "zustand";
@@ -10,21 +10,20 @@ import { createStore } from "zustand/vanilla";
 /** Where the stream is: `offline` before it opens, `connecting` between tries, `live` on it. */
 export type Connection = "offline" | "connecting" | "live";
 
-/** An event from the stream, as udl sends it. */
+/** An event from a stream: its name (`event`, `run`, or a download's job event), when the page
+ * got it, and what udl sent. */
 export interface LiveEvent {
-	readonly id: number;
-	readonly type: string;
+	readonly name: string;
 	readonly at: string;
 	readonly data: unknown;
 }
 
 /** How many events the page keeps (a timeline, not the log). */
-export const LIMIT = 200;
+export const LIMIT = 500;
 
 export interface LiveState {
 	connection: Connection;
 	events: readonly LiveEvent[];
-	// (What a run or a download job is doing now, by id: 18.6 and 19 fill these.)
 	runs: Readonly<Record<string, unknown>>;
 	jobs: Readonly<Record<string, unknown>>;
 }

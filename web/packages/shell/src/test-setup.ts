@@ -77,3 +77,41 @@ export function stopFakingMatchMedia(): void {
 	vi.unstubAllGlobals();
 	system = undefined;
 }
+
+/**
+ * What jsdom does not have either: `EventSource`. The page's own connection tests hand their
+ * own in; a page test that does not care gets this one, which opens nothing and sends nothing.
+ */
+export class QuietEventSource extends EventTarget {
+	static readonly CONNECTING = 0 as const;
+	static readonly OPEN = 1 as const;
+	static readonly CLOSED = 2 as const;
+
+	readonly url: string;
+	readonly withCredentials = false;
+	readonly CONNECTING = 0 as const;
+	readonly OPEN = 1 as const;
+	readonly CLOSED = 2 as const;
+	readyState: number = QuietEventSource.CONNECTING;
+	onerror: ((this: EventSource, event: Event) => unknown) | null = null;
+	onmessage: ((this: EventSource, event: MessageEvent) => unknown) | null = null;
+	onopen: ((this: EventSource, event: Event) => unknown) | null = null;
+
+	constructor(url: string | URL) {
+		super();
+		this.url = String(url);
+	}
+
+	close(): void {
+		this.readyState = QuietEventSource.CLOSED;
+	}
+}
+
+// (`defineProperty`, not `vi.stubGlobal`: a test that unsets the globals it stubbed keeps this.
+// And jsdom's `EventSource` type is not one a small class can satisfy — its listeners are
+// `MessageEvent` ones — so this is the page's own, given to the global the page reads.)
+Object.defineProperty(globalThis, "EventSource", {
+	value: globalThis.EventSource ?? QuietEventSource,
+	configurable: true,
+	writable: true,
+});

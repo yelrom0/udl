@@ -2,6 +2,7 @@ import { createServer } from "node:net";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "@playwright/test";
+import { SIGNED_IN } from "./e2e/helpers";
 
 // The repo root, wherever this file is: `web/` sits in it.
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -38,8 +39,18 @@ export default defineConfig({
 		browserName: "chromium",
 	},
 	projects: [
-		{ name: "light", use: { colorScheme: "light" } },
-		{ name: "dark", use: { colorScheme: "dark" } },
+		// (One sign-in for the run, in a browser of its own: `auth.setup.ts`.)
+		{ name: "setup", testMatch: /auth\.setup\.ts/ },
+		{
+			name: "light",
+			use: { colorScheme: "light", storageState: SIGNED_IN },
+			dependencies: ["setup"],
+		},
+		{
+			name: "dark",
+			use: { colorScheme: "dark", storageState: SIGNED_IN },
+			dependencies: ["setup"],
+		},
 	],
 	webServer: {
 		// (The venv's Python, not `uv run`: Playwright's webServer stops it with SIGTERM, and

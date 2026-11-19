@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { signIn } from "./helpers";
+import { SIGNED_OUT, signIn } from "./helpers";
 
 // The nav's every item, in both themes (the config's two projects), down to a phone's width:
 // the page each one names is reachable, and the theme can be switched and is remembered.
@@ -21,7 +21,7 @@ const PAGES = [
 ];
 
 test("every page of the nav is reachable", async ({ page }) => {
-	await signIn(page);
+	await page.goto("/ui/");
 
 	for (const { label, heading } of PAGES) {
 		await page.getByRole("link", { name: label, exact: true }).first().click();
@@ -31,7 +31,7 @@ test("every page of the nav is reachable", async ({ page }) => {
 
 test("the nav is reachable at a phone's width", async ({ page }) => {
 	await page.setViewportSize({ width: 390, height: 844 });
-	await signIn(page);
+	await page.goto("/ui/");
 
 	// (The nav is behind the menu button until it is opened.)
 	await page.getByRole("button", { name: "Menu" }).click();
@@ -47,7 +47,7 @@ test("the nav is reachable at a phone's width", async ({ page }) => {
 });
 
 test("the theme is switched, and stays switched", async ({ page }) => {
-	await signIn(page);
+	await page.goto("/ui/");
 
 	await page.getByRole("combobox", { name: "Theme" }).selectOption("dark");
 	await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
@@ -61,21 +61,30 @@ test("the theme is switched, and stays switched", async ({ page }) => {
 	await expect(page.getByRole("combobox", { name: "Theme" })).toHaveValue("light");
 });
 
-test("signing out goes back to the login page, and the API asks again", async ({ page }) => {
-	await signIn(page);
+// (Its own session, since signing out drops the one it uses.)
+test.describe("a browser that signs in itself", () => {
+	test.use({ storageState: SIGNED_OUT });
 
-	await page.getByRole("button", { name: "Sign out" }).click();
+	test("signing out goes back to the login page, and the API asks again", async ({ page }) => {
+		await signIn(page);
 
-	await expect(page.getByRole("heading", { level: 1, name: "udl" })).toBeVisible();
-	await expect(page.getByLabel("API key")).toBeVisible();
-	await expect(page.getByRole("button", { name: "Sign out" })).toHaveCount(0);
+		await page.getByRole("button", { name: "Sign out" }).click();
 
-	const answer = await page.request.get("/sites");
-	expect(answer.status()).toBe(401);
+		await expect(page.getByRole("heading", { level: 1, name: "udl" })).toBeVisible();
+		await expect(page.getByLabel("API key")).toBeVisible();
+		await expect(page.getByRole("button", { name: "Sign out" })).toHaveCount(0);
+
+		const answer = await page.request.get("/sites");
+		expect(answer.status()).toBe(401);
+	});
 });
 
-test("a page that is not signed in goes to the login page", async ({ page }) => {
-	await page.goto("/ui/downloads");
+test.describe("a browser that has not signed in", () => {
+	test.use({ storageState: SIGNED_OUT });
 
-	await expect(page.getByLabel("API key")).toBeVisible();
+	test("a page that is not signed in goes to the login page", async ({ page }) => {
+		await page.goto("/ui/downloads");
+
+		await expect(page.getByLabel("API key")).toBeVisible();
+	});
 });

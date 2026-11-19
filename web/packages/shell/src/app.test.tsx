@@ -1,12 +1,12 @@
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NAV } from "./routes/__root";
 import { routeTree } from "./routeTree.gen";
-import { setConnection } from "./stores/live";
+import { clear, pushEvent, setRun } from "./stores/live";
 import { setPlugins } from "./stores/plugins";
 import { session } from "./stores/session";
-import { startFakingMatchMedia, stopFakingMatchMedia } from "./test-setup";
+import { QuietEventSource, startFakingMatchMedia, stopFakingMatchMedia } from "./test-setup";
 
 /** An answer as `fetch` gives one: a status and a JSON body. */
 function answer(status: number, body: unknown): Response {
@@ -57,6 +57,7 @@ function draw(path: string) {
 beforeEach(() => {
 	startFakingMatchMedia();
 	session.setState({ state: "unknown" });
+	clear();
 	localStorage.clear();
 });
 
@@ -245,9 +246,23 @@ describe("the shell", () => {
 		expect(screen.getByText(/The page "inbox" this plugin brings/)).toBeTruthy();
 	});
 
-	it("says the connection is live when it is", async () => {
+	it("says where the live connection is: connecting until its stream opens", async () => {
 		udl();
-		setConnection("live");
+		draw("/ui/downloads");
+
+		expect(await screen.findByText("connecting")).toBeTruthy();
+	});
+
+	it("says live once udl's stream is open", async () => {
+		/** A stream that is accepted at once (udl's, as the page sees it). */
+		class Opening extends QuietEventSource {
+			constructor(url: string | URL) {
+				super(url);
+				queueMicrotask(() => this.dispatchEvent(new Event("open")));
+			}
+		}
+		vi.stubGlobal("EventSource", Opening);
+		udl();
 		draw("/ui/downloads");
 
 		expect(await screen.findByText("live")).toBeTruthy();
@@ -293,6 +308,31 @@ describe("the shell", () => {
 			"textContent",
 			"TypeError: the network is down",
 		);
+	});
+
+	it("shows the runs and events udl sends while the page is open", async () => {
+		udl();
+		draw("/ui/");
+		await screen.findByRole("heading", { level: 1, name: "Dashboard" });
+
+		act(() => {
+			setRun("run-1", { id: "run-1", status: "succeeded", summary: "Saved 3 files" });
+			pushEvent({
+				name: "event",
+				at: new Date().toISOString(),
+				data: { id: "e-1", type: "download.finished", subject: "A download finished" },
+			});
+		});
+
+		expect(await screen.findByText(/Saved 3 files/)).toBeTruthy();
+		expect(screen.getByText(/A download finished/)).toBeTruthy();
+	});
+
+	it("says so when no run has started since the page opened", async () => {
+		udl();
+		draw("/ui/");
+
+		expect(await screen.findByText("No run has started since the page opened.")).toBeTruthy();
 	});
 
 	it("says the dashboard has nothing yet", async () => {
