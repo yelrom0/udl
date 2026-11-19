@@ -28,6 +28,7 @@ from udl.core.jobs import InstanceLock
 from udl.core.service import UDLService
 from udl.db.manager import DBManager
 from udl.http import HttpClientFactory
+from udl.plugins.secrets.base import SecretStore
 from udl.plugins.secrets.memory import MemorySecretStore
 
 A = "https://example.com/a"
@@ -62,7 +63,7 @@ class Harness:
         self.clock = clock  # (the services' and the databases', else the system's)
         self.db: DBManager = databases(self.settings, self.registry, clock=clock)
         # (One store for every service, as the user's keyring is.)
-        self.secrets = MemorySecretStore(self.settings.secrets)
+        self.secrets: SecretStore = MemorySecretStore(self.settings.secrets)
         self.cookies = StaticCookies()
         self.http: HttpClientFactory | None = None  # (the services' HTTP clients, else udl's)
         self.person: FakePerson | None = None  # (who passes checks, in a headless window)

@@ -76,6 +76,9 @@ async def test_every_tool_is_an_operation_and_documented_as_one(client: Client) 
     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
 
     for name, op in operations().items():
+        if not op.hints.mcp:
+            assert name not in tools  # (an operation no agent is given has no tool)
+            continue
         tool = tools[name]
         assert tool.description == op.description
         properties = tool.input_schema.get("properties", {})

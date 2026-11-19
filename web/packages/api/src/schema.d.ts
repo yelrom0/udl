@@ -1161,6 +1161,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Show where udl keeps its secrets (the store, and whether it can be used here) and what
+         * @description Show where udl keeps its secrets (the store, and whether it can be used here) and what
+         *     reads the ones it does not keep: each resolver, whether udl uses it, what it can read and
+         *     what is wrong with it. Never a value.
+         */
+        get: operations["get_secrets_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/secrets/onepassword": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Keep 1Password's service account token in udl's own store (never in a log line), so
+         * @description Keep 1Password's service account token in udl's own store (never in a log line), so
+         *     `op` can read the secrets udl does not keep, and say whether it works now.
+         */
+        put: operations["set_onepassword_token"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sites": {
         parameters: {
             query?: never;
@@ -3742,6 +3785,24 @@ export interface components {
             not: components["schemas"]["Filter-Output"];
         };
         /**
+         * OnePasswordSettings
+         * @description The [secrets.onepassword] table: whether udl reads secrets from 1Password, which vaults it
+         *     may read, and how long a resolved value is kept.
+         */
+        OnePasswordSettings: {
+            /** @default PT5M */
+            cache_ttl: components["schemas"]["Duration-Output"];
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /** @default PT20S */
+            timeout: components["schemas"]["Duration-Output"];
+            /** Vaults */
+            vaults?: string[];
+        };
+        /**
          * Op
          * @description What a condition asks of a field.
          * @enum {string}
@@ -4214,6 +4275,37 @@ export interface components {
              * @description The Actions runs asked for again.
              */
             runs: number[];
+        };
+        /**
+         * ResolverStatus
+         * @description One resolver: whether udl reads references through it, and what checking it found.
+         */
+        ResolverStatus: {
+            /**
+             * Enabled
+             * @description Whether udl reads references through it (its settings table says so).
+             */
+            enabled: boolean;
+            /**
+             * Name
+             * @description Its scheme (op), which its references start with.
+             */
+            name: string;
+            /**
+             * Ok
+             * @description Whether it works (None when udl does not read through it, so nothing was checked).
+             */
+            ok?: boolean | null;
+            /**
+             * Problems
+             * @description What is wrong with it (a tool that is missing, a sign-in that is needed).
+             */
+            problems?: string[];
+            /**
+             * Vaults
+             * @description What it can read, by name (never what is in it).
+             */
+            vaults?: string[];
         };
         /** RetryFetchRequestBody */
         RetryFetchRequestBody: {
@@ -4738,11 +4830,33 @@ export interface components {
              * @default udl
              */
             keyring_service: string;
+            onepassword?: components["schemas"]["OnePasswordSettings"];
             /**
              * Store
              * @default auto
              */
             store: string;
+        };
+        /**
+         * SecretsStatus
+         * @description Where udl keeps its secrets, and what reads the ones it does not keep.
+         */
+        SecretsStatus: {
+            /**
+             * Resolvers
+             * @description What reads the secrets udl does not keep, and what checking each found.
+             */
+            resolvers?: components["schemas"]["ResolverStatus"][];
+            /**
+             * Store
+             * @description The store [secrets] store names (keyring, file, memory, or auto's answer).
+             */
+            store: string;
+            /**
+             * Unavailable
+             * @description Why the store cannot keep secrets on this machine (None: it can).
+             */
+            unavailable?: string | null;
         };
         /**
          * SelectStep
@@ -4931,6 +5045,18 @@ export interface components {
             source_filter?: components["schemas"]["JsonObject"] | null;
             /** @description At most how often its actions run (e.g. 10 per 1h); the rest are skipped. */
             throttle?: components["schemas"]["Throttle-Input"] | null;
+        };
+        /**
+         * SetToken
+         * @description 1Password's service account token, which `op` is given (never udl's own reads).
+         */
+        SetToken: {
+            /**
+             * Token
+             * Format: password
+             * @description The token (asked for hidden, kept in udl's own store, never in a log line).
+             */
+            token: string;
         };
         /**
          * SettingSource
@@ -10003,6 +10129,149 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EventInfo"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    get_secrets_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecretsStatus"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    set_onepassword_token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetToken"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecretsStatus"];
                 };
             };
             /** @description Bad Request */

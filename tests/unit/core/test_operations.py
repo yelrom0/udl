@@ -139,6 +139,10 @@ def test_every_operation_says_whether_it_is_admin() -> None:
         "set_host": True,
         "delete_host": True,
         "check_host": False,
+        # The secrets': reading what there is is not admin; keeping 1Password's service account
+        # token is (an agent never gets it: it has no MCP tool).
+        "get_secrets_status": False,
+        "set_onepassword_token": True,
     }
 
 
