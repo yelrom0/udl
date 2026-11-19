@@ -5,9 +5,12 @@
 
 Orch's settings: its `[apps.orch]` table, as every app has one (udl.plugins.apps.base).
 
-There is nothing to set yet — the gate's timeout and the dispatcher's knobs are Phase 27's —
-so this is the settings an app gets when it has none of its own.
+A session's transcript is kept for `session_days` (30 unless a config says otherwise); the
+gate's timeout and the dispatcher's other knobs come with 27.7.
 """
+
+# Package Imports
+from pydantic import PositiveInt
 
 # Local Imports
 from udl.plugins.apps.base import AppSettings
@@ -16,4 +19,8 @@ __all__ = ["OrchSettings"]
 
 
 class OrchSettings(AppSettings):
-    """Orch's settings: nothing yet (Phase 27 adds the dispatcher's)."""
+    """Orch's settings: how long a session's transcript is kept (the dispatcher's other knobs
+    come with 27.7)."""
+
+    session_days: PositiveInt = 30
+    """How many days a session's transcript (its SessionEvents) is kept."""
