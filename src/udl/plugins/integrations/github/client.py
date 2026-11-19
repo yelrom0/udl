@@ -496,10 +496,13 @@ class GitHubClient:
                 answer, response = await self._ask("GET", url, params=params)
             if etag is None:
                 etag = response.headers.get("ETag")
-            items.extend(read(answer, path))
+            found = read(answer, path)
+            items.extend(found)
             nxt = self._next(response, url)
             if nxt is None:
-                return items, etag, page > 0
+                # (A last page that is full is one item away from paging: the item that starts
+                # the next page leaves this one as it was.)
+                return items, etag, page > 0 or len(found) >= PAGE_SIZE
             url, params = nxt
         log.warning("%s: stopped after %d pages", path, self.max_pages)
         return items, etag, True

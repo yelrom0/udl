@@ -38,6 +38,7 @@ from udl.errors import (
 from udl.plugins.downloaders.errors import httpx_error
 from udl.plugins.integrations.github.client import (
     DEFAULT_API_URL,
+    PAGE_SIZE,
     GitHubClient,
     new_client,
     rate_limit_of,
@@ -352,6 +353,25 @@ async def test_a_long_list_is_read_whole_when_a_later_page_changed(
     assert (
         len([call for call in gh.calls if call.startswith("GET /repos/acme/widgets/issues/7")]) == 2
     )
+
+
+async def test_a_list_that_fills_a_page_is_read_whole_too(
+    client: GitHubClient, gh: FakeGitHub
+) -> None:
+    """A list of exactly one page's worth is one item away from paging: page one is full, and the
+    item that starts page two leaves page one as it was."""
+    gh.page_size = PAGE_SIZE
+    for index in range(PAGE_SIZE):
+        gh.comment(f"note {index}")
+    found, etag, paged = await client.comments_if_changed(REPO, 7)
+
+    assert (len(found or []), paged) == (PAGE_SIZE, True)
+
+    gh.comment("the one after")
+    changed, _, _ = await client.comments_if_changed(REPO, 7, etag=etag, paged=paged)
+
+    assert changed is not None
+    assert len(changed) == PAGE_SIZE + 1
 
 
 async def test_a_list_of_one_page_is_a_304(client: GitHubClient, gh: FakeGitHub) -> None:
