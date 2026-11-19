@@ -10,6 +10,7 @@ hanging; and fake_harness.py answers `--version`, `auth status` and a turn as th
 """
 
 # System Imports
+import asyncio
 import json
 import subprocess
 import sys
@@ -21,7 +22,7 @@ import pytest
 
 # Local Imports
 from support.clock import FakeClock
-from support.runners import FakeRunner, FakeRunnerOptions, count_sites
+from support.runners import FakeRunner, FakeRunnerOptions, Sessions, count_sites, wait_for_stop
 from udl.core.models import SiteList
 from udl.db.models import SiteQuery
 from udl.hosts.shell import Host, LocalShell
@@ -38,6 +39,10 @@ from udl.plugins.runners.base import (
 
 HARNESS = Path(__file__).resolve().parents[3] / "support" / "fake_harness.py"
 """The fake harness's file (a real runner's tests point their binary at it)."""
+
+
+async def _all(events: AsyncIterator[AgentEvent]) -> list[AgentEvent]:
+    return [event async for event in events]
 
 
 @pytest.fixture
@@ -117,6 +122,29 @@ async def test_a_session_outlives_the_runner_that_started_it(runner: FakeRunner)
     assert isinstance(events[-1], TurnEnded)
     assert events[-1].reason is TurnReason.DONE
     assert other.sessions == {session.id: SessionSpec(cwd="/w")}
+
+
+async def test_stopping_one_session_lets_only_its_own_waiting_turn_go() -> None:
+    runner = FakeRunner(
+        FakeRunnerOptions(),
+        shell=LocalShell(Host.local("/w")),
+        clock=FakeClock(),
+        script={"wait": wait_for_stop},
+        store=Sessions(),
+    )
+    first = await runner.start(SessionSpec(cwd="/w"))
+    second = await runner.start(SessionSpec(cwd="/w"))
+    reading = asyncio.create_task(_all(runner.send(second, "wait")))
+    await asyncio.sleep(0.05)  # (let the turn start)
+
+    await runner.stop(first)
+    await asyncio.sleep(0.05)
+    assert not reading.done()  # (the first session's stop is not the second's)
+
+    await runner.stop(second)
+    events = await reading
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.STOPPED
 
 
 async def test_a_session_it_never_started_ends_with_an_error(runner: FakeRunner) -> None:

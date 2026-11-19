@@ -78,14 +78,19 @@ def _fake(shell: RecordingShell, store: Sessions) -> AnAgentRunner:
     )
 
 
-CASES: dict[str, Case] = {
-    "fake": _case(FakeRunner, FakeRunnerOptions(), _fake),
+def _fake_case() -> Case:
+    return _case(FakeRunner, FakeRunnerOptions(), _fake)
+
+
+CASES: dict[str, Callable[[], Case]] = {
+    "fake": _fake_case,
 }
+"""Each plugin's case, made for each test (no two tests share a shell or a session store)."""
 
 
 @pytest.fixture(params=sorted(CASES))
 def case(request: pytest.FixtureRequest) -> Case:
-    return CASES[request.param]
+    return CASES[request.param]()
 
 
 @pytest.fixture
