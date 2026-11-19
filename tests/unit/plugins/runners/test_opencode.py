@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, SecretStr, TypeAdapter
 
 # Local Imports
 from support.clock import T0, FakeClock
-from support.opencode import PASSWORD, BusyHost, FakeOpenCode, FakeShell, event
+from support.opencode import PASSWORD, BusyHost, FakeOpenCode, FakeShell, as_sequence, event
 from udl.errors import NotAllowed, PluginFailed, ToolUnavailable
 from udl.plugins.runners import opencode
 from udl.plugins.runners.base import (
@@ -547,6 +547,23 @@ async def test_silence_between_a_turn_s_events_does_not_count_against_it(
 
     assert events[-1] == TurnEnded(reason=TurnReason.DONE)
     assert [event for event in events if isinstance(event, TextDelta)] == [TextDelta(text="Hello!")]
+
+
+async def test_a_stale_outcome_is_not_taken_for_this_turn(service: FakeOpenCode) -> None:
+    # (The service does not clear `outcome` as a new turn starts, so the second turn's first read
+    # sees the first turn's `succeeded`: only the session's `time.idle` moving on makes it this
+    # turn's, and here it has not.)
+    service.keep_outcome = True
+    runner = _runner(service, FakeShell())
+    session = await runner.start(SPEC)
+    await _turn(runner, session)  # (the first turn ends, and says so)
+
+    service.script = as_sequence([])  # (the second turn's events are lost: it says nothing)
+    events = await _turn(runner, session)
+
+    assert len(events) == 1
+    assert isinstance(events[0], TurnEnded)
+    assert events[0].reason is TurnReason.ERROR
 
 
 async def test_a_second_turn_never_takes_the_first_turn_s_outcome(service: FakeOpenCode) -> None:

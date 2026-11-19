@@ -229,6 +229,9 @@ class FakeOpenCode:
     ends_before_served: bool = False
     """Whether the turn ends on the service at once (False: when its events have been served), as a
     turn that finished while a dropped read was not looking."""
+    keep_outcome: bool = False
+    """Whether a prompt leaves the previous turn's `outcome` in place (the service does not clear it
+    as a new turn starts), so a test can tell a stale outcome from this turn's."""
     report_outcome: bool = True
     """Whether `GET /api/session/{id}` says how the last turn ended."""
     record_into: list[dict[str, str]] | None = None
@@ -392,7 +395,8 @@ class FakeOpenCode:
             written = [one for one in written if one["type"] != "session.execution.started"]
         # (The outcome is published when the stream has said everything, as a real one is: a turn
         # that is still being read has no outcome yet.)
-        self.sessions[identifier]["outcome"] = None
+        if not self.keep_outcome:
+            self.sessions[identifier]["outcome"] = None
         self.pending_outcome = _outcome_of(written) if self.report_outcome else None
         if self.ends_before_served:
             self.sessions[identifier]["outcome"] = self.pending_outcome
