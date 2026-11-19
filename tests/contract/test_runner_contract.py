@@ -42,7 +42,7 @@ from udl.plugins.runners.base import (
     TurnEnded,
     TurnReason,
 )
-from udl.plugins.runners.command import CommandRunner, CommandRunnerOptions
+from udl.plugins.runners.command import CommandOutput, CommandRunner, CommandRunnerOptions
 
 type Build = Callable[[RecordingShell, Sessions], AnAgentRunner]
 """A runner of a plugin class, made with a shell and a session store."""
@@ -73,12 +73,14 @@ def _case(plugin: type[AnAgentRunner], options: RunnerOptions, build: Build) -> 
 HARNESS = Path(__file__).resolve().parents[1] / "support" / "fake_harness.py"
 """The fake harness, as a command a command runner runs (it answers as the harnesses do)."""
 
-COMMAND = CommandRunnerOptions(argv=[sys.executable, str(HARNESS)])
+COMMAND = CommandRunnerOptions(argv=[sys.executable, str(HARNESS)], output=CommandOutput.JSONL)
 """A command runner's harness: the fake one, so its slow, limited and failing turns are the same."""
 
 
-def _command(shell: RecordingShell, _: Sessions) -> AnAgentRunner:
-    return CommandRunner(COMMAND, shell=shell, clock=FakeClock(), allowed=(sys.executable,))
+def _command(shell: RecordingShell, store: Sessions) -> AnAgentRunner:
+    return CommandRunner(
+        COMMAND, shell=shell, clock=FakeClock(), allowed=(sys.executable,), sessions=store.specs
+    )
 
 
 def _fake(shell: RecordingShell, store: Sessions) -> AnAgentRunner:

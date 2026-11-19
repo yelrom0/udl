@@ -464,7 +464,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
 - Build: `udl/plugins/runners/command.py`: any CLI as a runner. Options: `argv` (a template with `{model}`, `{session}`, `{cwd}`; the prompt on stdin), `resume_argv`, `output: text | jsonl`. `argv[0]` must be listed in `[orch] allowed_commands` (file-only), as 17.3's provider commands are. Output lines are `TextDelta`s; exit 0 is `TurnEnded(done)`.
 - Tests first: the contract over a tiny script.
 - Done when: `echo`-like and failing commands both end a turn correctly.
-- **Built (deepseek-a, 2026-11-19, PR #25):** the `command` runner.
+- **Built (deepseek-a, 2026-11-18, PR #25):** the `command` runner.
   - `udl/plugins/runners/command.py`: `CommandRunner` (name `command`, published under `udl.runners`
     in pyproject, so `udl plugins list` shows it). `CommandRunnerOptions`: `argv` (the template),
     `resume_argv` (a later turn's, when it differs), `output: text | jsonl`, `models`.
@@ -474,17 +474,23 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - The prompt goes on stdin, the spec's `env` and `secret_env` go to the program (a secret never in
     an argv), and the session's cwd is where it runs. Its output lines are `TextDelta`s; with
     `output = "jsonl"` a line that is a JSON object is read for its `text`, and one that is not is
-    said as it is (never fatal). Exit 0 ends the turn as `TurnEnded(done)`; anything else ends it as
-    `TurnEnded(error)` with what the program said; `stop()` cancels the run, and the turn ends as
-    `TurnEnded(stopped)`.
+    said as it is (never fatal), while a line that says the account is limited (`limited`, with
+    `resets_at`) ends the turn as `TurnEnded(limited)` after the `RunnerLimited` that says when it
+    lifts. Exit 0 ends the turn as `TurnEnded(done)`; anything else ends it as `TurnEnded(error)`
+    with what the program said; `stop()` cancels the run, and the turn ends as `TurnEnded(stopped)`.
+  - `CommandRunner(..., sessions=...)` takes the mapping it keeps its sessions in: one a service
+    holds means a session outlives the runner object, and a runner made later resumes it by id (the
+    contract's resume case, which every runner has to pass).
   - `[orch] allowed_commands` (`OrchSettings`, file-only, as `[ai] allowed_commands` is): a program
     not in it is refused by `start()` (`NotAllowed`) and `health()` says why, without running it.
     The runner takes the list when it is made (`CommandRunner(..., allowed=...)`), since 26.x builds
     runners from the settings.
-  - Tests: the runner contract now runs over `command` as well as `fake`; 15 unit tests (stdin, the
-    template, `resume_argv`, jsonl and unreadable lines, a failing command, a stopped turn, the
-    refusal, the health, models, an empty line); `[orch] allowed_commands` in the config's tests.
-    `udl/plugins/runners` at 100 %.
+  - Tests: the runner contract now runs over `command` as well as `fake` — all 11 of its cases,
+    including the resumed session, the mid-turn `stop()`, the `RunnerLimited` with its `until` and
+    the secret that reaches the program and is in no argv; 17 unit tests (stdin, the template,
+    `resume_argv`, jsonl and unreadable lines, a limit line, a second runner resuming, a failing
+    command, a stopped turn, the refusal, the health, models, an empty line); `[orch]
+    allowed_commands` in the config's tests. `udl/plugins/runners` at 100 %.
   - Decision: **a turn is read with `run()`, not `stream()`** — the shell's `stream()` gives no exit
     code, and the card makes exit 0 the turn's outcome. So a command's turn arrives when it ends
     rather than line by line; live output needs a `stream()` that says how the program ended (a

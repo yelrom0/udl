@@ -8,7 +8,12 @@ CommandRunner: any CLI as a harness (the `command` runner). Its argv is a templa
 one) is what a later turn runs. Its output is one line at a time: plain text, or one JSON object a
 line (`output: jsonl`), whose `text` is what the model said (a line udl cannot read is said as it
 is, never fatal). Exit 0 ends the turn as done; anything else ends it as an error with what the
-program said on stderr.
+program said on stderr. A jsonl line saying the account is limited (`limited`, with `resets_at`)
+ends the turn as limited, with the RunnerLimited that says when it lifts.
+
+Its sessions may be kept outside the runner (`sessions`, a mapping a service holds): a session then
+outlives the runner object, as a harness's does, and another runner given the same mapping resumes
+it by id.
 
 A program may only be started when its name is in `[orch] allowed_commands` (set in the config
 file only, as an AI provider's command is): the list is given to the runner when it is made, and a
@@ -18,7 +23,8 @@ program that is not in it is refused (NotAllowed) rather than run.
 # System Imports
 import logging
 import shlex
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, MutableMapping, Sequence
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import ClassVar
 from uuid import uuid4
@@ -35,6 +41,7 @@ from udl.plugins.runners.base import (
     AgentEvent,
     AgentRunner,
     RunnerHealth,
+    RunnerLimited,
     RunnerModel,
     RunnerOptions,
     SessionRef,
@@ -58,11 +65,15 @@ class CommandOutput(StrEnum):
 
 
 class _Said(BaseModel):
-    """One line of a jsonl program's output, as far as udl reads it: its `text`."""
+    """One line of a jsonl program's output, as far as udl reads it: its `text`, and whether it
+    says the account is limited (and until when)."""
 
     model_config = ConfigDict(extra="ignore")
 
     text: str | None = None
+    result: str | None = None
+    limited: bool = False
+    resets_at: int | None = None
 
 
 class CommandRunnerOptions(RunnerOptions):
@@ -93,10 +104,11 @@ class CommandRunner(AgentRunner[CommandRunnerOptions]):
         shell: HostShell,
         clock: Clock,
         allowed: Sequence[str] = (),
+        sessions: MutableMapping[str, SessionSpec] | None = None,
     ) -> None:
         super().__init__(options, shell=shell, clock=clock)
         self._allowed = frozenset(allowed)
-        self._sessions: dict[str, SessionSpec] = {}
+        self._sessions: MutableMapping[str, SessionSpec] = sessions if sessions is not None else {}
         self._sent: set[str] = set()
         self._stopped: set[str] = set()
         self._cancels: dict[str, CancelToken] = {}
@@ -174,11 +186,16 @@ class CommandRunner(AgentRunner[CommandRunnerOptions]):
         finally:
             self._cancels.pop(session.id, None)
         self._sent.add(session.id)
-        for line in result.stdout.splitlines():
+        lines = result.stdout.splitlines()
+        for line in lines:
+            if (limited := self._limited(line)) is not None:
+                yield limited
+                yield TurnEnded(reason=TurnReason.LIMITED, text=limited.message)
+                return
             if (event := self._event(line)) is not None:
                 yield event
-        lines = result.stdout.strip().splitlines()
-        yield TurnEnded(reason=TurnReason.DONE, text=lines[-1] if lines else "")
+        last = [line for line in lines if line.strip()]
+        yield TurnEnded(reason=TurnReason.DONE, text=last[-1] if last else "")
 
     def _argv(self, session: SessionRef, spec: SessionSpec, *, first: bool) -> list[str]:
         """The program and its arguments, with the template filled in.
@@ -194,6 +211,23 @@ class CommandRunner(AgentRunner[CommandRunnerOptions]):
                 part = part.replace(name, value)
             filled.append(part)
         return filled
+
+    def _limited(self, line: str) -> RunnerLimited | None:
+        """What a line says about the account's limit, when it says the turn cannot go on."""
+        if self.options.output is not CommandOutput.JSONL or not line.strip():
+            return None
+        try:
+            said = _Said.model_validate_json(line)
+        except ValidationError:  # (a line that is not a JSON object says nothing about a limit)
+            return None
+        if not said.limited:
+            return None
+        until = (
+            datetime.fromtimestamp(said.resets_at, tz=UTC) if said.resets_at is not None else None
+        )
+        return RunnerLimited(
+            until=until, message=said.result or said.text or "The account is limited."
+        )
 
     def _event(self, line: str) -> AgentEvent | None:
         """What a line of the program's output is, or None when it is empty."""

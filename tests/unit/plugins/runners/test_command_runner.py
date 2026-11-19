@@ -13,6 +13,7 @@ its turn as stopped.
 # System Imports
 import asyncio
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Package Imports
@@ -24,6 +25,7 @@ from udl.errors import NotAllowed
 from udl.hosts.shell import Host, LocalShell
 from udl.plugins.runners.base import (
     AgentEvent,
+    RunnerLimited,
     SessionRef,
     SessionSpec,
     TextDelta,
@@ -46,7 +48,13 @@ def cwd(tmp_path: Path) -> str:
     return str(tmp_path)
 
 
-def _runner(cwd: str, *argv: str, allowed: bool = True, **options: object) -> CommandRunner:
+def _runner(
+    cwd: str,
+    *argv: str,
+    allowed: bool = True,
+    sessions: dict[str, SessionSpec] | None = None,
+    **options: object,
+) -> CommandRunner:
     program = sys.executable
     return CommandRunner(
         CommandRunnerOptions(
@@ -56,6 +64,7 @@ def _runner(cwd: str, *argv: str, allowed: bool = True, **options: object) -> Co
         shell=LocalShell(Host.local(cwd)),
         clock=FakeClock(),
         allowed=(program,) if allowed else (),
+        sessions=sessions,
     )
 
 
@@ -132,6 +141,38 @@ async def test_jsonl_output_is_read_as_one_object_a_line(cwd: str) -> None:
 
     assert events[0] == TextDelta(text="from json")
     assert events[1] == TextDelta(text="not json")  # (a line it cannot read is said, not fatal)
+
+
+async def test_a_limit_line_says_when_it_lifts_and_ends_the_turn_as_limited(cwd: str) -> None:
+    runner = _runner(
+        cwd,
+        "import json; print(json.dumps({'limited': True, 'resets_at': 1800000000,"
+        " 'result': 'Your limit resets at 1800000000|1800000000.'}))",
+        output=CommandOutput.JSONL,
+    )
+    session = await runner.start(_session(cwd))
+
+    events = await _turn(runner, session, "")
+
+    [said] = [event for event in events if isinstance(event, RunnerLimited)]
+    assert said.until == datetime(2027, 1, 15, 8, 0, tzinfo=UTC)
+    assert "resets at 1800000000" in said.message
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.LIMITED
+    assert sum(isinstance(event, TurnEnded) for event in events) == 1
+
+
+async def test_a_second_runner_resumes_the_sessions_it_is_given(cwd: str) -> None:
+    sessions: dict[str, SessionSpec] = {}
+    first = _runner(cwd, "print('first')", sessions=sessions)
+    session = await first.start(_session(cwd))
+
+    second = _runner(cwd, "print('second')", sessions=sessions)
+    events = await _turn(second, session, "")
+
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.DONE
+    assert events[-1].text == "second"
 
 
 async def test_a_failing_command_ends_the_turn_as_an_error_with_what_it_said(cwd: str) -> None:
