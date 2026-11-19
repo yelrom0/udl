@@ -30,6 +30,7 @@ from datetime import timedelta
 from typing import Final
 
 # Package Imports
+import httpx
 from pydantic import BaseModel, Field, ValidationError
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -578,6 +579,48 @@ def _seq(event: dict[str, object]) -> int:
     except ValidationError:
         return 0
     return said.durable.seq if said.durable is not None else 0
+
+
+class _Live(httpx.AsyncByteStream):
+    """A body that stays open, saying what a test gave it (the ASGI transport cannot stream live:
+    it runs the app to its end before the runner can send the prompt)."""
+
+    def __init__(self, said: Sequence[dict[str, object]]) -> None:
+        self._said = list(said)
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        while True:
+            for one in self._said:
+                yield _sse(one)
+            await asyncio.sleep(0.01)
+
+
+class BusyHost(httpx.AsyncBaseTransport):
+    """The fake's service, but with an event stream that stays open and says another session's
+    events forever — a busy host, whose stream never times out while this turn's events are gone.
+    Everything else goes to the fake's own ASGI app."""
+
+    def __init__(self, service: FakeOpenCode) -> None:
+        self._service = service
+        self._inner = httpx.ASGITransport(app=service.app)
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/event":
+            self._service.calls.append(("GET", "/api/event", dict(request.url.params)))
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=_Live(
+                    [
+                        {
+                            "type": "session.tool.started",
+                            "durable": {"aggregateID": "ses_other", "seq": 1},
+                            "data": {"sessionID": "ses_other", "callID": "call"},
+                        }
+                    ]
+                ),
+            )
+        return await self._inner.handle_async_request(request)
 
 
 def _sse(item: dict[str, object]) -> bytes:

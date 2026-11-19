@@ -87,6 +87,9 @@ _LOG_TIMEOUT: Final = httpx.Timeout(
     connect=_SECONDS, read=_LOG_SECONDS, write=_SECONDS, pool=_SECONDS
 )
 """How long one call may take before it is a failure."""
+_ASK_EVERY: Final = timedelta(seconds=5)
+"""How long another session's events may go by before this turn asks how it ended (a busy host's
+stream never times out, so a drop is not the only moment to ask)."""
 _DROPS: int = 30
 """How many reads of the event stream in a row may bring nothing before the turn is given up (each
 waits `_LOG_SECONDS`, so this is an hour of silence from a session that says nothing at all)."""
@@ -445,7 +448,7 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
         does not end a turn that is still sending events, however long it runs."""
         idle = 0
         was_idle: float | None = None  # (when the session was last idle before this turn)
-        started = False
+        asked = self.clock.now()  # (when the session was last asked how the turn ended)
         prompted = False
         streamed: set[str] = set()
         while True:
@@ -472,9 +475,18 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
                             prompted = True
                         async for said in _sse(answer):
                             if _session_of(said) != session.id:
-                                continue  # (one stream, every session on the host)
+                                # (One stream, every session on the host: a busy one never times
+                                # out, so the session is asked on a timer too, not only on a drop.)
+                                if (now := self.clock.now()) - asked >= _ASK_EVERY:
+                                    asked = now
+                                    if (
+                                        ended := await self._outcome(api, session, was_idle)
+                                    ) is not None:
+                                        yield ended
+                                        return
+                                continue
                             idle = 0  # (progress: only a stream that says nothing runs out)
-                            started = started or said.type == "session.execution.started"
+                            asked = self.clock.now()
                             for event in await self._events(said, streamed):
                                 yield event
                                 if isinstance(event, TurnEnded):
@@ -488,7 +500,8 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
                 return
             # (The session is asked after every read, not only after a drop: the stream is
             # volatile, so a turn can start and end inside a gap and never say either.)
-            if (ended := await self._outcome(api, session, was_idle, started)) is not None:
+            asked = self.clock.now()
+            if (ended := await self._outcome(api, session, was_idle)) is not None:
                 yield ended
                 return
             idle += 1
@@ -499,23 +512,19 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
             await asyncio.sleep(0)  # (a yield between tries is enough: the reads time out)
 
     async def _outcome(
-        self,
-        api: httpx.AsyncClient,
-        session: SessionRef,
-        was_idle: float | None,
-        started: bool,
+        self, api: httpx.AsyncClient, session: SessionRef, was_idle: float | None
     ) -> TurnEnded | None:
         """How this turn ended, if it has (None: it is still running).
 
-        The session's `outcome` is its **last** turn's. It is this turn's when the stream said this
-        turn started, or when the session has gone idle since this turn's prompt — the stream is
-        volatile, so neither is guaranteed on its own.
+        The session's `outcome` is its **last** turn's, so it is only this turn's when the session
+        has gone idle since this turn's prompt: a stream event that says this turn started is
+        volatile, and the service may not clear `outcome` as a new turn starts.
         """
         said = await self._get(api, f"/api/session/{session.id}", _Created)
         if said.data.outcome is None:
             return None
         idle = said.data.time.idle
-        if not started and (idle is None or (was_idle is not None and idle <= was_idle)):
+        if idle is None or (was_idle is not None and idle <= was_idle):
             return None  # (the previous turn's ending, still: this one has not finished)
         return {
             "succeeded": TurnEnded(reason=TurnReason.DONE),

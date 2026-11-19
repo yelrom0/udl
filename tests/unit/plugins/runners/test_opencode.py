@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, SecretStr, TypeAdapter
 
 # Local Imports
 from support.clock import T0, FakeClock
-from support.opencode import PASSWORD, FakeOpenCode, FakeShell, event
+from support.opencode import PASSWORD, BusyHost, FakeOpenCode, FakeShell, event
 from udl.errors import NotAllowed, PluginFailed, ToolUnavailable
 from udl.plugins.runners import opencode
 from udl.plugins.runners.base import (
@@ -509,6 +509,28 @@ async def test_a_stream_that_drops_before_the_turn_says_it_started_still_ends_it
     events = await _turn(runner, session)
 
     assert events[-1] == TurnEnded(reason=TurnReason.DONE)
+
+
+async def test_a_busy_host_does_not_keep_a_finished_turn_waiting(
+    service: FakeOpenCode, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (The stream is one for the whole host: another session's events keep it from ever timing
+    # out, so a turn whose own events are gone must still ask the session how it ended.)
+    monkeypatch.setattr(opencode, "_ASK_EVERY", timedelta(0))
+    service.ends_before_served = True
+    service.omit_started = True
+    runner = OpenCode(
+        OpenCodeOptions(),
+        shell=FakeShell(),
+        clock=FakeClock(),
+        transport=BusyHost(service),
+    )
+    session = await runner.start(SPEC)
+
+    with anyio.fail_after(10):  # (without the timer it never ends: the read never runs out)
+        events = await _turn(runner, session)
+
+    assert events == [TurnEnded(reason=TurnReason.DONE)]
 
 
 async def test_silence_between_a_turn_s_events_does_not_count_against_it(

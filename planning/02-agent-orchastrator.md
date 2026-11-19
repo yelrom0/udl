@@ -557,12 +557,12 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
     answers only `log.synced`, while the same turn's events carry `durable.{aggregateID,seq}` on
     `/api/event`. That makes `/api/event` the source and the session's own `outcome`
     (`GET /api/session/{id}`) the backstop: a stream that drops is opened again, and one that
-    brings nothing asks the session how the turn ended — after **every** read, not only after a
-    drop, because a turn can start and end inside a gap. The outcome is the last turn's, so it is
-    taken only when **this** turn is known to have run: `session.execution.started` was read, or
-    the session's `time.idle` (snapshotted before the prompt) has moved on. Neither alone is
-    enough — the stream is volatile, so `started` can be lost, and `outcome` can be the previous
-    turn's. A
+    brings nothing asks the session how the turn ended — after **every** read, and every
+    `_ASK_EVERY` (5 s) of *other* sessions' events, because a busy host's stream never times out
+    while this turn's own events are gone. The session's `outcome` is its **last** turn's, so it
+    is taken only when the session's `time.idle` (snapshotted before the prompt) has moved on:
+    `session.execution.started` is not used as a shortcut, since the service does not clear
+    `outcome` as a new turn starts and the event itself is volatile. A
     turn that keeps sending events is never ended by silence, however long it runs (30 reads with
     nothing at all, an hour, is a turn given up on). A drop can lose text — the stream is
     volatile — but never the end of the turn. `session.text.delta` streams a `TextDelta`, and
@@ -591,7 +591,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
     serves), `tests/fixtures/opencode/events-2.1.2.json` (one real turn's events, exact payloads), `tests/support/opencode.py` (`FakeOpenCode`, an ASGI app of those calls with Basic auth,
     a log a test can cut, pending permissions, and the contract's slow/limited turns through
     `FAKE_HARNESS_SLOW`/`FAKE_HARNESS_LIMITED`; `FakeShell`, its shell), the contract's fourth case,
-    54 unit tests and `tests/smoke/test_opencode.py` (opt-in, `make smoke`). The smoke test runs one
+    55 unit tests and `tests/smoke/test_opencode.py` (opt-in, `make smoke`). The smoke test runs one
     real turn in the directory the suite was started from (OpenCode's service is per directory) on
     the first OpenRouter model the host has, or `OPENCODE_SMOKE_MODEL`; a model whose free daily
     quota is spent is a skip that says so, and so is a host with no OpenRouter model at all.
