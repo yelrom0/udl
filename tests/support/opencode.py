@@ -524,12 +524,13 @@ class FakeOpenCode:
             # nothing yet leaves it running.)
             if (outcome := self.pending_outcome) is not None and waiting and self.parts <= 1:
                 self.pending_outcome = None
+                # (This turn's own outcome replaces the previous one, even where a test asked the
+                # prompt to leave it: a later turn that ends says how *it* ended.)
                 for identifier in self.sessions:
-                    if self.sessions[identifier].get("outcome") is None:
-                        self.sessions[identifier]["outcome"] = outcome
-                        when = self.sessions[identifier].get("time")
-                        if isinstance(when, dict):
-                            when["idle"] = when["updated"] = self._tick()
+                    self.sessions[identifier]["outcome"] = outcome
+                    when = self.sessions[identifier].get("time")
+                    if isinstance(when, dict):
+                        when["idle"] = when["updated"] = self._tick()
             if self.variables.get("FAKE_HARNESS_SLOW"):
                 await asyncio.sleep(_SLOW)  # (a turn that runs until it is interrupted)
 

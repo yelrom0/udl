@@ -566,6 +566,24 @@ async def test_a_stale_outcome_is_not_taken_for_this_turn(service: FakeOpenCode)
     assert events[0].reason is TurnReason.ERROR
 
 
+async def test_a_later_turn_s_own_outcome_replaces_the_stale_one(service: FakeOpenCode) -> None:
+    # (The other side of the gate: the second turn's own events are gone, but the service has
+    # replaced the first turn's `succeeded` with this turn's `failed`, so it ends as an error.)
+    service.keep_outcome = True
+    runner = _runner(service, FakeShell())
+    session = await runner.start(SPEC)
+    await _turn(runner, session)
+    service.script = as_sequence(
+        [event("session.execution.failed", 1, {"sessionID": "ses", "error": {"type": "Boom"}})]
+    )
+
+    events = await _turn(runner, session, "again")
+
+    assert len(events) == 1
+    assert isinstance(events[0], TurnEnded)
+    assert events[0].reason is TurnReason.ERROR
+
+
 async def test_a_second_turn_never_takes_the_first_turn_s_outcome(service: FakeOpenCode) -> None:
     runner = _runner(service, FakeShell())
     session = await runner.start(SPEC)
