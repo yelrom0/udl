@@ -228,10 +228,7 @@ class ClaudeCode(AgentRunner[ClaudeCodeOptions]):
         if session.id in self._stopped:
             yield TurnEnded(reason=TurnReason.STOPPED, text="The session was stopped.")
             return
-        # (Marked before the turn runs: a turn closed early has still started the CLI's session,
-        # so the next one must resume it, not give `--session-id` an id already in use.)
         first = session.id not in self._sessions.sent
-        self._sessions.sent.add(session.id)
         ended: TurnEnded | None = None
         try:
             async for chunk in self._chunks(session, prompt, spec, first=first):
@@ -270,7 +267,13 @@ class ClaudeCode(AgentRunner[ClaudeCodeOptions]):
         async def pull() -> None:
             try:
                 async for chunk in turn:
+                    # (Marked once the process is really started — a real shell starts it on the
+                    # first `__anext__`, inside here: a turn closed early has still created the
+                    # CLI's session, so the next one resumes it, but one that never started
+                    # created nothing, so the next turn starts it.)
+                    self._sessions.sent.add(session.id)
                     await queue.put(chunk)
+                self._sessions.sent.add(session.id)  # (it ended cleanly: the process did run)
             except asyncio.CancelledError:
                 raise
             except Exception as failure:  # noqa: BLE001 - (a process that could not start, or broke)

@@ -451,19 +451,23 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
     a line it cannot parse is logged at debug. A limit is a result whose subtype or text says so, and
     `RunnerLimited.until` is the time its text gives — the `…|<epoch second>` form the CLI prints, or
     an ISO time (None when it gives none or an unreadable one).
-  - `ClaudeCode(..., sessions=...)` takes the mapping it keeps its sessions in: one a service holds
-    means a session outlives the runner object, and a runner made later resumes it by id.
+  - `ClaudeCode(..., sessions=...)` takes a `ClaudeSessions` (its specs and the ids that have had a
+    turn): one a service holds means a session outlives the runner object, and a runner made later
+    resumes it with `--resume` rather than starting it again. A bare mapping still works, but it
+    shares the specs alone (each runner object keeps its own first-turn state). The id is marked
+    once the process has started, so a turn whose process never started is started again, not
+    resumed.
   - `health()`: `--version` and `auth status` (`loggedIn`, `email` shown and never logged,
     `subscriptionType`); udl never opens Claude Code's own credential files.
   - `stop()` cancels the turn's pull task, which ends the process (the shell closes it when its
     generator ends) and the turn ends as `TurnEnded(stopped)`.
   - Tests: the runner contract's `claude-code` case, its CLI pointed at `fake_harness.py`, so the
     whole of it runs (the resumed session, the mid-turn `stop()`, the `RunnerLimited` with its
-    `until`, the secret in no argv); 35 unit tests
+    `until`, the secret in no argv); 38 unit tests
     (the argv of a first and a later turn, a bare spec, the two files and the exclude, the token,
     every stream shape, a real 2.1.306 result line with nested usage, limits with and without a
     readable reset time, health's answers, a stopped turn, a turn nobody reads to the end, a process
-    that cannot start); `udl/plugins/runners` at 100 %. `tests/smoke/test_claude_code.py` (opt-in,
+    that cannot start, a session resumed by a second runner); `udl/plugins/runners` at 100 %. `tests/smoke/test_claude_code.py` (opt-in,
     `-m network`): a real `claude` answers one prompt in a temp directory — run here, it passes.
   - Flags were confirmed against Claude Code 2.1.306 on this machine (`--session-id`, `--resume`,
     `--append-system-prompt-file`, `--mcp-config`, `--strict-mcp-config`, `--settings`,

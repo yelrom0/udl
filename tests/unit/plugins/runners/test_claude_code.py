@@ -106,6 +106,16 @@ class FakeShell:
         return nullcontext(f"http://127.0.0.1:{port}")
 
 
+class _BrokenShell(FakeShell):
+    """A shell whose process cannot be started at all (the program is not on the host).
+
+    (Like the real ones, `stream()` is an async generator: it raises on the first `__anext__`.)"""
+
+    async def stream(self, *args: object, **kwargs: object) -> AsyncIterator[bytes]:
+        raise ToolUnavailable("claude is not on this host")
+        yield b""
+
+
 def _stream(*lines: object) -> list[bytes]:
     """What `claude` prints: one JSON object a line, as bytes."""
     return [(json.dumps(line) + "\n").encode() for line in lines]
@@ -532,6 +542,28 @@ async def test_a_second_runner_resumes_the_session_rather_than_starting_it_again
     resumed = shell.streams[-1][0]
     assert "--resume" in resumed
     assert "--session-id" not in resumed
+
+
+async def test_a_turn_whose_process_never_started_starts_the_session_again(
+    spec: SessionSpec,
+) -> None:
+    sessions = ClaudeSessions()
+    broken = ClaudeCode(
+        ClaudeCodeOptions(),
+        shell=_BrokenShell(),  # (the host cannot start it: no session exists at the CLI)
+        clock=FakeClock(),
+        sessions=sessions,
+    )
+    session = await broken.start(spec)
+    failed = await _turn(broken, session, "go")
+
+    shell = FakeShell(_stream(_result()))
+    later = ClaudeCode(ClaudeCodeOptions(), shell=shell, clock=FakeClock(), sessions=sessions)
+    await _turn(later, session, "again")
+
+    assert isinstance(failed[-1], TurnEnded)
+    assert failed[-1].reason is TurnReason.ERROR
+    assert "--session-id" in shell.streams[-1][0]  # (not `--resume`: it never ran)
 
 
 async def test_a_turn_closed_early_still_resumes_next_time(spec: SessionSpec) -> None:
