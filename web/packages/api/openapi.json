@@ -4486,6 +4486,34 @@
         "title": "Not",
         "type": "object"
       },
+      "OnePasswordSettings": {
+        "additionalProperties": false,
+        "description": "The [secrets.onepassword] table: whether udl reads secrets from 1Password, which vaults it\nmay read, and how long a resolved value is kept.",
+        "properties": {
+          "cache_ttl": {
+            "$ref": "#/components/schemas/Duration-Output",
+            "default": "PT5M"
+          },
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "timeout": {
+            "$ref": "#/components/schemas/Duration-Output",
+            "default": "PT20S"
+          },
+          "vaults": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Vaults",
+            "type": "array"
+          }
+        },
+        "title": "OnePasswordSettings",
+        "type": "object"
+      },
       "Op": {
         "description": "What a condition asks of a field.",
         "enum": [
@@ -5314,6 +5342,56 @@
           "checks"
         ],
         "title": "Rerun",
+        "type": "object"
+      },
+      "ResolverStatus": {
+        "additionalProperties": false,
+        "description": "One resolver: whether udl reads references through it, and what checking it found.",
+        "properties": {
+          "enabled": {
+            "description": "Whether udl reads references through it (its settings table says so).",
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Its scheme (op), which its references start with.",
+            "title": "Name",
+            "type": "string"
+          },
+          "ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whether it works (None when udl does not read through it, so nothing was checked).",
+            "title": "Ok"
+          },
+          "problems": {
+            "description": "What is wrong with it (a tool that is missing, a sign-in that is needed).",
+            "items": {
+              "type": "string"
+            },
+            "title": "Problems",
+            "type": "array"
+          },
+          "vaults": {
+            "description": "What it can read, by name (never what is in it).",
+            "items": {
+              "type": "string"
+            },
+            "title": "Vaults",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "enabled"
+        ],
+        "title": "ResolverStatus",
         "type": "object"
       },
       "RetryFetchRequestBody": {
@@ -6328,6 +6406,9 @@
             "title": "Keyring Service",
             "type": "string"
           },
+          "onepassword": {
+            "$ref": "#/components/schemas/OnePasswordSettings"
+          },
           "store": {
             "default": "auto",
             "minLength": 1,
@@ -6336,6 +6417,42 @@
           }
         },
         "title": "SecretsSettings",
+        "type": "object"
+      },
+      "SecretsStatus": {
+        "additionalProperties": false,
+        "description": "Where udl keeps its secrets, and what reads the ones it does not keep.",
+        "properties": {
+          "resolvers": {
+            "description": "What reads the secrets udl does not keep, and what checking each found.",
+            "items": {
+              "$ref": "#/components/schemas/ResolverStatus"
+            },
+            "title": "Resolvers",
+            "type": "array"
+          },
+          "store": {
+            "description": "The store [secrets] store names (keyring, file, memory, or auto's answer).",
+            "title": "Store",
+            "type": "string"
+          },
+          "unavailable": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the store cannot keep secrets on this machine (None: it can).",
+            "title": "Unavailable"
+          }
+        },
+        "required": [
+          "store"
+        ],
+        "title": "SecretsStatus",
         "type": "object"
       },
       "SelectStep": {
@@ -6663,6 +6780,25 @@
           "actions"
         ],
         "title": "SetSubscriptionRequestBody",
+        "type": "object"
+      },
+      "SetToken": {
+        "additionalProperties": false,
+        "description": "1Password's service account token, which `op` is given (never udl's own reads).",
+        "properties": {
+          "token": {
+            "description": "The token (asked for hidden, kept in udl's own store, never in a log line).",
+            "format": "password",
+            "minLength": 1,
+            "title": "Token",
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "SetToken",
         "type": "object"
       },
       "SettingSource": {
@@ -14230,6 +14366,180 @@
           }
         ],
         "summary": "Fire a schedule now, by hand (its schedule.fired says manual): the actions it runs",
+        "tags": [
+          "udl"
+        ]
+      }
+    },
+    "/secrets": {
+      "get": {
+        "description": "Show where udl keeps its secrets (the store, and whether it can be used here) and what\nreads the ones it does not keep: each resolver, whether udl uses it, what it can read and\nwhat is wrong with it. Never a value.",
+        "operationId": "get_secrets_status",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretsStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Show where udl keeps its secrets (the store, and whether it can be used here) and what",
+        "tags": [
+          "udl"
+        ]
+      }
+    },
+    "/secrets/onepassword": {
+      "put": {
+        "description": "Keep 1Password's service account token in udl's own store (never in a log line), so\n`op` can read the secrets udl does not keep, and say whether it works now.",
+        "operationId": "set_onepassword_token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetToken"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretsStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Keep 1Password's service account token in udl's own store (never in a log line), so",
         "tags": [
           "udl"
         ]
