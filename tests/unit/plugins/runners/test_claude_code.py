@@ -42,7 +42,7 @@ from udl.plugins.runners.base import (
     TurnReason,
     Usage,
 )
-from udl.plugins.runners.claude_code import ClaudeCode, ClaudeCodeOptions
+from udl.plugins.runners.claude_code import ClaudeCode, ClaudeCodeOptions, ClaudeSessions
 from udl.process import CancelToken, ProcessResult
 
 
@@ -510,6 +510,48 @@ async def test_a_second_runner_resumes_the_sessions_it_is_given(spec: SessionSpe
     assert isinstance(events[-1], TurnEnded)
     assert events[-1].reason is TurnReason.DONE
     assert events[-1].text == "again"
+
+
+async def test_a_second_runner_resumes_the_session_rather_than_starting_it_again(
+    spec: SessionSpec,
+) -> None:
+    sessions = ClaudeSessions()
+    first = ClaudeCode(
+        ClaudeCodeOptions(),
+        shell=FakeShell(_stream(_result())),
+        clock=FakeClock(),
+        sessions=sessions,
+    )
+    session = await first.start(spec)
+    await _turn(first, session, "go")
+
+    shell = FakeShell(_stream(_result(result="again")))
+    second = ClaudeCode(ClaudeCodeOptions(), shell=shell, clock=FakeClock(), sessions=sessions)
+    await _turn(second, session, "again")
+
+    resumed = shell.streams[-1][0]
+    assert "--resume" in resumed
+    assert "--session-id" not in resumed
+
+
+async def test_a_turn_closed_early_still_resumes_next_time(spec: SessionSpec) -> None:
+    sessions = ClaudeSessions()
+    runner = ClaudeCode(
+        ClaudeCodeOptions(),
+        shell=FakeShell(_stream(_result())),
+        clock=FakeClock(),
+        sessions=sessions,
+    )
+    session = await runner.start(spec)
+    turn = runner.send(session, "go")
+    await turn.__anext__()  # (the turn is closed before its end)
+    await turn.aclose()
+
+    shell = FakeShell(_stream(_result(result="again")))
+    later = ClaudeCode(ClaudeCodeOptions(), shell=shell, clock=FakeClock(), sessions=sessions)
+    await _turn(later, session, "again")
+
+    assert "--resume" in shell.streams[-1][0]
 
 
 async def test_a_limit_whose_time_cannot_be_read_has_none(spec: SessionSpec) -> None:

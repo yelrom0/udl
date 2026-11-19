@@ -18,8 +18,9 @@ Its stream's JSON lines become AgentEvents (what it said, the tools it ran, what
 and how it ended); a line udl does not know is skipped, never fatal. A usage-limit result becomes
 RunnerLimited with the reset time when the CLI gives one.
 
-Its sessions may be kept outside the runner (`sessions`, a mapping a service holds), so one
-outlives the runner object and a runner made later resumes it by id.
+Its sessions may be kept outside the runner (`ClaudeSessions`): a session then outlives the runner
+object, and a runner made later resumes it by id (`--resume`) rather than starting it again — the
+store says it has had a turn, so the id is the CLI's already.
 
 `health()` reads `claude --version` and `claude auth status`. udl never opens Claude Code's own
 credential files (O-C3): the account is what the CLI says, and it is never logged.
@@ -32,6 +33,7 @@ import json
 import logging
 import re
 from collections.abc import AsyncGenerator, AsyncIterator, MutableMapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import ClassVar
@@ -64,7 +66,7 @@ from udl.plugins.runners.base import (
 
 log = logging.getLogger(__name__)
 
-__all__ = ["ClaudeCode", "ClaudeCodeOptions"]
+__all__ = ["ClaudeCode", "ClaudeCodeOptions", "ClaudeSessions"]
 
 _FOLDER: str = ".udl"
 """Where a session's files go, in its worktree (git-ignored through info/exclude)."""
@@ -78,6 +80,16 @@ _RESET: re.Pattern[str] = re.compile(
 
 _EPOCH: re.Pattern[str] = re.compile(r"\|\s*(\d{10})\s*$")
 """The other way it says it: the text, then `|<epoch second>` (what the CLI prints)."""
+
+
+@dataclass
+class ClaudeSessions:
+    """A claude-code runner's sessions, outside any runner object (a service may hold one)."""
+
+    specs: MutableMapping[str, SessionSpec] = field(default_factory=dict[str, SessionSpec])
+    """What each session was started with, by id."""
+    sent: set[str] = field(default_factory=set[str])
+    """The sessions that have had a turn (the CLI's session exists: the next turn resumes it)."""
 
 
 class ClaudeCodeOptions(RunnerOptions):
@@ -159,11 +171,16 @@ class ClaudeCode(AgentRunner[ClaudeCodeOptions]):
         *,
         shell: HostShell,
         clock: Clock,
-        sessions: MutableMapping[str, SessionSpec] | None = None,
+        sessions: ClaudeSessions | MutableMapping[str, SessionSpec] | None = None,
     ) -> None:
         super().__init__(options, shell=shell, clock=clock)
-        self._sessions: MutableMapping[str, SessionSpec] = sessions if sessions is not None else {}
-        self._sent: set[str] = set()
+        # (A bare mapping is the specs alone: it says nothing of first turns, so each runner
+        # object keeps its own — give it a `ClaudeSessions` for a session to outlive the object.)
+        self._sessions = (
+            sessions
+            if isinstance(sessions, ClaudeSessions)
+            else ClaudeSessions(specs=sessions if sessions is not None else {})
+        )
         self._stopped: set[str] = set()
         self._pulls: dict[str, asyncio.Task[None]] = {}
         self._tools: dict[str, str] = {}
@@ -183,7 +200,7 @@ class ClaudeCode(AgentRunner[ClaudeCodeOptions]):
         session = SessionRef(
             runner=self.name, id=str(uuid4()), cwd=spec.cwd, host=self.shell.host.name
         )
-        self._sessions[session.id] = spec
+        self._sessions.specs[session.id] = spec
         folder = f"{spec.cwd}/{_FOLDER}"
         if spec.instructions is not None:
             await self._write(f"{folder}/system-prompt.md", spec.instructions)
@@ -204,16 +221,20 @@ class ClaudeCode(AgentRunner[ClaudeCodeOptions]):
                 await pull
 
     async def send(self, session: SessionRef, prompt: str) -> AsyncGenerator[AgentEvent]:
-        spec = self._sessions.get(session.id)
+        spec = self._sessions.specs.get(session.id)
         if spec is None:
             yield TurnEnded(reason=TurnReason.ERROR, text=f"No session {session.id!r}.")
             return
         if session.id in self._stopped:
             yield TurnEnded(reason=TurnReason.STOPPED, text="The session was stopped.")
             return
+        # (Marked before the turn runs: a turn closed early has still started the CLI's session,
+        # so the next one must resume it, not give `--session-id` an id already in use.)
+        first = session.id not in self._sessions.sent
+        self._sessions.sent.add(session.id)
         ended: TurnEnded | None = None
         try:
-            async for chunk in self._chunks(session, prompt, spec):
+            async for chunk in self._chunks(session, prompt, spec, first=first):
                 for line in chunk.decode(errors="replace").splitlines():
                     if not line.strip():
                         continue
@@ -224,21 +245,21 @@ class ClaudeCode(AgentRunner[ClaudeCodeOptions]):
                             yield event
         except (ToolUnavailable, PluginFailed) as failure:
             ended = TurnEnded(reason=TurnReason.ERROR, text=str(failure))
-        self._sent.add(session.id)
+
         if session.id in self._stopped:
             yield TurnEnded(reason=TurnReason.STOPPED, text="The session was stopped.")
             return
         yield ended or TurnEnded(reason=TurnReason.ERROR, text="The turn ended without saying how.")
 
     async def _chunks(
-        self, session: SessionRef, prompt: str, spec: SessionSpec
+        self, session: SessionRef, prompt: str, spec: SessionSpec, *, first: bool
     ) -> AsyncIterator[bytes]:
         """What the turn's process prints, as it prints it.
 
         (Pulled by a task of its own, so stop() can cancel it: closing a generator that is being
         read cannot, and the shell closes the process when its generator ends.)"""
         turn = self.shell.stream(
-            self._argv(session, spec),
+            self._argv(session, spec, first=first),
             cwd=session.cwd,
             env=spec.env,
             secret_env={name: value.get_secret_value() for name, value in spec.secret_env.items()},
@@ -271,15 +292,13 @@ class ClaudeCode(AgentRunner[ClaudeCodeOptions]):
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
 
-    def _argv(self, session: SessionRef, spec: SessionSpec) -> list[str]:
+    def _argv(self, session: SessionRef, spec: SessionSpec, *, first: bool) -> list[str]:
         """The one process a turn is."""
         folder = f"{spec.cwd}/{_FOLDER}"
         argv = [*self.options.cli, "-p", "--output-format", "stream-json", "--verbose"]
         argv += ["--model", spec.model] if spec.model else []
         argv += ["--permission-mode", self.options.permission_mode]
-        argv += (
-            ["--resume", session.id] if session.id in self._sent else ["--session-id", session.id]
-        )
+        argv += ["--session-id", session.id] if first else ["--resume", session.id]
         argv += ["--settings", f"{folder}/settings.json"]
         if spec.instructions is not None:
             argv += ["--append-system-prompt-file", f"{folder}/system-prompt.md"]

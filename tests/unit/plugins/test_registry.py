@@ -281,7 +281,9 @@ def test_the_runners_kind_is_a_kind_and_finds_a_runner_in_a_plugin_dir(tmp_path:
     assert RUNNERS in PLUGIN_KINDS
     assert RUNNERS.group == "udl.runners"
     # (udl's own runners are found too: the test's is the one it wrote.)
-    assert ("udl.runners", "harness") in {(info.kind, info.name) for info in registry.plugins()}
+    builtin = {(info.kind, info.name) for info in registry.plugins()}
+    assert ("udl.runners", "harness") in builtin
+    assert ("udl.runners", "claude-code") in builtin  # (published like every built-in)
 
 
 def test_a_missing_plugin_dir_is_skipped(tmp_path: Path) -> None:
