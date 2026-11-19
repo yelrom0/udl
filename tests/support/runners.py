@@ -93,6 +93,8 @@ class Sessions:
     """One per session, set when it is stopped: a turn that waits on it is let go."""
     secret_envs: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
     """The secret environment each session was started with (what reached the harness)."""
+    seq: dict[str, int] = field(default_factory=dict[str, int])
+    """The log sequence each session was read up to (a harness with a durable log has one)."""
 
     def gate(self, session: SessionRef) -> asyncio.Event:
         """The gate a session's waiting turn holds on to (made on first use)."""

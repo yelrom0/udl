@@ -367,6 +367,7 @@ suite and watching it fail:
 | site | `tests/contract/test_site_contract.py` | `CASES`, with URLs on the sites it handles |
 | downloader | `tests/contract/test_downloader_contract.py` | `CASES`, with the fixture site's pages it handles |
 | database | `tests/contract/test_database_contract.py` | `CONNECTIONS`, with the URL of a fresh, empty database |
+| runner | `tests/contract/test_runner_contract.py` | `CASES`, with its shell and its harness (or service) |
 
 The downloader suite runs against a local fixture site (`tests/support/fixture_site.py`), never
 the internet. The PostgreSQL and MongoDB plugins get a server from fixtures in

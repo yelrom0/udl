@@ -531,6 +531,79 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - `tests/support/runners.py`: `FakeOpenCode`, an ASGI app serving those calls with the same shapes (validated against the committed OpenAPI document), Basic auth, and a log that a test can cut and resume.
 - Tests first: the contract over `FakeOpenCode`; `tests/unit/plugins/runners/test_opencode.py`: the ruleset built from a `deny` list; the log resumed from the stored sequence after a dropped connection, with no event lost or repeated; a `permission.asked` rejected; the password in no log line.
 - Done when: an opt-in smoke test runs one prompt on an OpenRouter model (ERNIE or DeepSeek) through OpenRouter, here and on thevault.
+  - **The real run, here (2026-11-20):** `openrouter-ds-a/deepseek-v4.1-flash-1017-instant`, one
+    prompt — `TextDelta("Hello there, friend.")`, `Usage(input 2828, output 9, $0.0003305932)`,
+    `TurnEnded(done)`. (The free ERNIE models were out of their daily quota: `provider.rate-limit`,
+    which the runner reads as a `RunnerLimited`.) **The thevault run is Claude's, at review**
+    (2026-11-20): `opencode` is installed there at `~/.local/bin/opencode` — non-interactive SSH
+    just has no `~/.local/bin` on `PATH` — and the supervisor runs the smoke test himself rather
+    than having an agent SSH there.
+- **Built (deepseek-a, 2026-11-19/20, PR #40):** the `opencode` runner.
+  - `udl/plugins/runners/opencode.py`: `OpenCode` (name `opencode`, published under `udl.runners`),
+    `OpenCodeOptions` (`cli`, `models`, `agent`, `task`, `title`, `directory`) and `OpenCodeSessions`
+    (a session's spec, kept outside the runner so a runner made later resumes by id).
+  - **The service, as the card says:** `opencode service status` and `~/.config/opencode/service.json`
+    read through the `HostShell` on every connect, Basic auth (a Bearer header is refused), the port
+    through `shell.forward()`. Health is `GET /api/info`; a service that is stopped, a `service.json`
+    that cannot be read and a missing program are each a `RunnerHealth` problem, not an exception.
+  - **A session:** `POST /api/session` with the ruleset, the location, the model (V2's
+    `{providerID, id, variant?}`), the agent and `metadata.udl`. udl's MCP server is added with the
+    token as `{env:UDL_AGENT_TOKEN}`; the token, the spec's `env` and its `secret_env` go to
+    `PUT /api/session/{id}/environment`, so none is in a file or an argv.
+  - **A turn — a correction to the card's plan, from the real run.** The stream is subscribed
+    (`GET /api/event`, filtered to the session) **before** `POST /api/session/{id}/prompt`
+    (`delivery: queue`) is sent: the stream has no replay, so a prompt sent first loses a fast
+    turn's own events. The card's durable log (`/api/experimental/session/{id}/log`) **replays
+    nothing in 2.1.2** — a real turn read with `after=0`, `after=1`, `after=12` and no `after`
+    answers only `log.synced`, while the same turn's events carry `durable.{aggregateID,seq}` on
+    `/api/event`. That makes `/api/event` the source and the session's own `outcome`
+    (`GET /api/session/{id}`) the backstop: a stream that drops is opened again, and one that
+    brings nothing asks the session how the turn ended — after **every** read, and every
+    `_ASK_EVERY` (5 s) of *other* sessions' events, because a busy host's stream never times out
+    while this turn's own events are gone. The session's `outcome` is its **last** turn's, so it
+    is taken only when the session's `time.idle` (snapshotted before the prompt) has moved on:
+    `session.execution.started` is not used as a shortcut, since the service does not clear
+    `outcome` as a new turn starts and the event itself is volatile — a test keeps the previous
+    `succeeded` in place for a turn that says nothing, and the turn is not ended by it; another
+    leaves `failed` behind for a turn that succeeded with its events off the stream, and that turn
+    ends as done — only the session's own outcome says so. A
+    turn that keeps sending events is never ended by silence, however long it runs (30 reads with
+    nothing at all, an hour, is a turn given up on). A drop can lose text — the stream is
+    volatile — but never the end of the turn. `session.text.delta` streams a `TextDelta`, and
+    `session.text.ended` is not repeated when its deltas were read;
+    `session.tool.*` are `ToolStarted`/`ToolFinished` (the tool's name is in the provider's own
+    blob), `session.usage.recorded` / `.updated` are a `Usage`, and `session.execution.succeeded` /
+    `.interrupted` / `.failed` end the turn (done / stopped / error). A failure that says the account is out of
+    quota — `status: 429`, or a `retryAfterMs` — is a `RunnerLimited(until)` and then
+    `TurnEnded(limited)`. A `PluginFailed` mid-turn (a stream udl cannot read) is `TurnEnded(error)`,
+    never an exception out of `send`.
+  - **Permissions — a correction to the card's plan.** The session's rules use V2's action names
+    (`shell`, `edit`, `external_directory`, `question`); `tool.use` is a *policy's* action (25.11's
+    hard stops), not a session rule's, so the ruleset is `*/* allow`, then a `shell` deny per
+    `SessionSpec.deny`, then `external_directory * deny`, `edit <cwd>/* allow`, `edit * deny` and
+    `question * deny` (last match wins). A permission is **not in the durable log** (the log has no
+    `permission.*` events, checked against the committed OpenAPI document), so while a turn runs its
+    pending requests are read (`GET /api/session/{id}/permission`) and each is answered `reject` —
+    and once more when the turn ends, so a fast turn's request is not left hanging.
+  - **The brief and the secrets.** `SessionSpec.instructions` is written to the host's own agent file
+    (`~/.config/opencode/agents/udl-<sha256[0:12]>.md`, through the shell with the text on stdin, so
+    it is in no argv) and the session runs as that agent — the card's "pass the brief as the agent's
+    instructions", as OpenCode's own agent file. `secret_env` is sent at session start
+    (`PUT /api/session/{id}/environment`) and **not** kept in the runner's store: it is in the
+    service's memory, and a runner made later resumes by id without it.
+  - **Fixtures and tests:** `tests/fixtures/opencode/openapi-2.1.2.json` (the document the service
+    serves), `tests/fixtures/opencode/events-2.1.2.json` (one real turn's events, exact payloads), `tests/support/opencode.py` (`FakeOpenCode`, an ASGI app of those calls with Basic auth,
+    a log a test can cut, pending permissions, and the contract's slow/limited turns through
+    `FAKE_HARNESS_SLOW`/`FAKE_HARNESS_LIMITED`; `FakeShell`, its shell), the contract's fourth case,
+    57 unit tests and `tests/smoke/test_opencode.py` (opt-in, `make smoke`). The smoke test runs one
+    real turn in the directory the suite was started from (OpenCode's service is per directory) on
+    the first OpenRouter model the host has, or `OPENCODE_SMOKE_MODEL`; a model whose free daily
+    quota is spent is a skip that says so, and so is a host with no OpenRouter model at all.
+    **It passes here** with
+    `OPENCODE_SMOKE_MODEL=openrouter-ds-a/deepseek-v4.1-flash-1017-instant` (the free ERNIE models
+    were out of quota). A test reads the real-turn fixture and asserts the `TextDelta` / `Usage` /
+    `TurnEnded` it becomes. A test checks that every path the runner calls is a path in the
+    committed document. `docs/plugins.md` gains the runner row in the contract-suite table.
 
 **25.10 `command`** · needs 25.7
 - Build: `udl/plugins/runners/command.py`: any CLI as a runner. Options: `argv` (a template with `{model}`, `{session}`, `{cwd}`; the prompt on stdin), `resume_argv`, `output: text | jsonl`. `argv[0]` must be listed in `[orch] allowed_commands` (file-only), as 17.3's provider commands are. Output lines are `TextDelta`s; exit 0 is `TurnEnded(done)`.
