@@ -27,6 +27,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationErro
 
 # Local Imports
 from udl.errors import ConfigError, DoesNotExist, NotAllowed, PluginError, ToolUnavailable
+from udl.hosts.shell import DEFAULT_TIMEOUT
 from udl.plugins.registry import RUNNERS
 from udl.plugins.runners.base import AnAgentRunner, LoginByHand, RunnerHealth, RunnerModel
 
@@ -261,8 +262,11 @@ becomes a problem in its own row, never the end of the listing."""
 
 
 def _why(failure: Exception) -> str:
-    """What to say about something that could not be asked: a timeout has no message of its own."""
-    return str(failure) or "it did not answer in time"
+    """What to say about something that could not be asked: a shell's timeout carries no message
+    of its own, so it is named with the time it was given (and an empty message says so)."""
+    if isinstance(failure, TimeoutError):
+        return f"it did not answer in {DEFAULT_TIMEOUT.total_seconds():.0f}s"
+    return str(failure) or "it failed without saying why"
 
 
 class Harnesses:

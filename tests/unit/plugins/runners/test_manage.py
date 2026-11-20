@@ -343,7 +343,7 @@ async def test_a_harness_that_never_answers_keeps_its_row(hosts: Hosts) -> None:
 
     [claude] = [item for item in listed.items if item.runner == "claude-code"]
     assert claude.health.installed is False
-    assert any("did not answer in time" in problem for problem in claude.health.problems)
+    assert any("did not answer in 30s" in problem for problem in claude.health.problems)
     assert any(item.runner == "command" for item in listed.items)
 
 
