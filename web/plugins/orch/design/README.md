@@ -18,7 +18,7 @@ and `dark` themes: every colour it uses (Stitch's roles, Tailwind's palettes, he
 expression over daisyUI's CSS variables (`--color-base-100`, `--color-primary`…), and the page was
 rendered in Chromium with `data-theme="light"` and `data-theme="dark"`. **A dark screen is its light
 screen's layout with daisyUI's dark tokens, nothing else.** Those renders, and the re-themed HTML,
-replaced Stitch's own, so the Stitch project shows the same pictures as this folder.
+replaced Stitch's own, so the Stitch project shows the same pictures as this folder. The whole rule, every mapping and the steps to redo a screen are in [RETHEME.md](RETHEME.md).
 
 ## Reading them
 
