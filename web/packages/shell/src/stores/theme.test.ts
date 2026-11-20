@@ -154,6 +154,25 @@ describe("the theme store", () => {
 		expect(document.documentElement.dataset.theme).toBe("light");
 	});
 
+	it("tells the page's listeners when the system flips it, so what follows the page follows", () => {
+		systemIs(false);
+		setTheme("system");
+		const stop = followSystem();
+		const notified = vi.fn();
+		const unsubscribe = theme.subscribe(notified);
+
+		// (The choice is still "system", so the store's value does not change — but the page did,
+		// and a plugin's wrapper, and `ctx.theme.onChange`, are told by the store.)
+		systemIs(true);
+
+		expect(document.documentElement.dataset.theme).toBe("dark");
+		expect(notified).toHaveBeenCalled();
+		expect(theme.getState().current).toBe("system");
+
+		stop();
+		unsubscribe();
+	});
+
 	it("says what the page is showing, which is the system's while that is the choice", () => {
 		setTheme("dark");
 		expect(shownTheme()).toBe("dark");
