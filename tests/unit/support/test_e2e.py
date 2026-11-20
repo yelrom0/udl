@@ -92,9 +92,24 @@ def test_the_config_is_what_the_server_reads(tmp_path: Path) -> None:
     assert "[web]\nenabled = true" in text
     # (A key, so a browser test signs in as a user does; 18.4's session is what the UI uses.)
     assert 'api_key = "e2e-key"' in text
-    assert f'ui_plugin_dirs = ["{E2E_UI_PLUGINS}"]' in text
+    assert f'ui_plugin_dirs = ["{E2E_UI_PLUGINS}"' in text
     assert (E2E_UI_PLUGINS / "hello" / "manifest.json").is_file()
     assert (E2E_UI_PLUGINS / "boom" / "manifest.json").is_file()
+
+
+def test_the_example_plugin_is_served_when_it_is_built(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (18.10's proof: `make web` builds it, so `make e2e` serves it; a run that has not built it
+    # serves the hand-written bundles alone rather than failing.)
+    built = tmp_path / "dist"
+    (built / "shadcn").mkdir(parents=True)
+    monkeypatch.setattr("support.e2e.SHADCN_EXAMPLE", built)
+
+    assert f'"{built}"' in write_config(tmp_path, port=9124).read_text()
+
+    monkeypatch.setattr("support.e2e.SHADCN_EXAMPLE", tmp_path / "not-built")
+    assert f'"{built}"' not in write_config(tmp_path, port=9124).read_text()
 
 
 def test_the_server_runs_without_the_callers_settings(
