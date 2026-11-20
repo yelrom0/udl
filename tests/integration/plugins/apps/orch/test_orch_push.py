@@ -355,7 +355,7 @@ async def test_a_stacked_task_s_pull_says_what_it_merges_after(
         shell=await service.hosts.shell("local"),
         tasks=tasks,
     )
-    (Path(found.path) / "work.txt").write_text("on top\n")  # noqa: ASYNC240
+    (Path(found.path) / "work.txt").write_text("on top\n")
     git("add", "work.txt", cwd=Path(found.path))
     git("commit", "-m", "feat: on top", cwd=Path(found.path))
 
