@@ -22,13 +22,7 @@ from udl.config import APISettings, Settings
 from udl.core.operations import Caller, current_caller
 from udl.core.paths import check_output_dir
 from udl.errors import NotAllowed, Unauthorized
-from udl.interfaces.security import (
-    OWNER,
-    Principal,
-    PrincipalKind,
-    authenticate,
-    hash_token,
-)
+from udl.interfaces.security import OWNER, Principal, PrincipalKind, authenticate
 
 
 def roots(*paths: Path) -> Settings:
@@ -178,7 +172,10 @@ async def test_an_agents_token_is_not_the_api_key() -> None:
         await authenticate(keyed("s3cret"), "s3cret-not", Book())
 
 
-def test_a_token_is_hashed_the_same_way_every_time() -> None:
+def test_an_agents_token_is_hashed_the_way_the_book_does_it() -> None:
+    """(orch's AgentToken keeps the SHA-256, so the same token is looked up by the same hash.)"""
+    from udl.plugins.apps.orch.records import hash_token
+
     digest = hash_token(TOKEN)
 
     assert digest == hash_token(TOKEN)

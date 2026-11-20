@@ -852,7 +852,8 @@ class AgentRecords:
         return sorted(found, key=lambda one: one.name)
 
     async def delete_agent(self, name: str) -> bool:
-        """Delete the agent called `name`, and its sessions and their events. Returns whether
+        """Delete the agent called `name`, its sessions and their events, and the tokens it
+        called udl with (so they stop working at once, whatever name comes next). Returns whether
         there was one. Raises InUse while it is another agent's manager: deleting it would
         leave its reports pointing at a name that is not there (they are moved, or its
         manager's, first)."""
@@ -870,6 +871,7 @@ class AgentRecords:
             ):
                 await self._records.delete(SessionEvent, event.id)
             await self._records.delete(AgentSession, session.id)
+        await self.tokens.delete_for(name)
         return await self._records.delete(Agent, agent.id)
 
     async def _check_hierarchy(self, agent: Agent) -> None:

@@ -441,12 +441,15 @@ def _role_bound(method: OperationMethod, name: str, hints: OperationHints) -> Op
     """`method`, refusing an agent any operation its role does not allow. The table is orch's
     (27.2); this is the only thing that reads it for a call. It is the decorator's own wrapper
     (so a service's method is bound once, and `UDLService.download` is the guarded method), and
-    UDLService.call checks too, before it validates a request."""
+    UDLService.call checks too, before it validates a request.
+
+    Whatever else the method takes (an operation may have keyword-only parameters of its own,
+    such as download's on_event) is passed through untouched."""
     if getattr(method, "_udl_role_bound", False):
         return method
 
     @functools.wraps(method)
-    async def refuse(service: UDLService, request: BaseModel, **extra: Any) -> BaseModel:
+    async def refuse(service: UDLService, request: BaseModel, **extra: object) -> BaseModel:
         from udl.interfaces.security import current_principal
 
         who = current_principal.get()

@@ -14,7 +14,6 @@ current_caller, and udl.core.service holds an agent to its role's operations.
 """
 
 # System Imports
-import hashlib
 import hmac
 from contextvars import ContextVar
 from enum import StrEnum
@@ -72,12 +71,6 @@ class AgentTokens(Protocol):
     async def principal_for(self, token: str) -> Principal | None:
         """The agent whose token this is, or None when no token of udl's is it."""
         ...
-
-
-def hash_token(token: str) -> str:
-    """The SHA-256 of a token (hex): what an AgentToken record keeps, so the token itself is
-    only ever in the secret store and in the answer that issued it."""
-    return hashlib.sha256(token.encode()).hexdigest()
 
 
 async def authenticate(

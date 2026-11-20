@@ -19,7 +19,7 @@ import pytest
 from support.engine import databases, registry, settings
 from support.interfaces import Harness
 from udl.errors import DoesNotExist, NotAllowed
-from udl.interfaces.security import Principal, PrincipalKind
+from udl.interfaces.security import AGENT_PREFIX, Principal, PrincipalKind
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.agents import AgentRole
 from udl.plugins.apps.orch.records import (
@@ -33,7 +33,6 @@ from udl.plugins.apps.orch.records import (
 )
 from udl.plugins.apps.orch.tokens import (
     ROLE_OPERATIONS,
-    TOKEN_PREFIX,
     OrchTokens,
     allowed,
     issue_token,
@@ -179,7 +178,7 @@ async def test_issuing_one_through_a_service_is_kept_in_the_secret_store(
 
         token = await issue_token(service, "fake-a")
 
-        assert token.startswith(TOKEN_PREFIX)
+        assert token.startswith(AGENT_PREFIX)
         kept = await service.secrets.get(_ref("fake-a"))
         assert kept is not None
         assert kept.get_secret_value() == token
@@ -260,3 +259,22 @@ def test_an_agent_calling_what_it_may_not_is_refused_with_its_role() -> None:
 
     with pytest.raises(NotAllowed, match="implementer"):
         refused(who, "orch_set_task", admin=True)
+
+
+async def test_deleting_an_agent_revokes_its_token(
+    agents: AgentRecords, records: AppRecords
+) -> None:
+    """A token outlives no agent: delete the agent and its token is gone, so a new agent of the
+    same name does not inherit the old one's key."""
+    await an_agent(agents, "fake-a", AgentRole.IMPLEMENTER)
+    await agents.tokens.issue("fake-a", TOKEN)
+
+    assert await agents.delete_agent("fake-a") is True
+
+    assert await OrchTokens(records).principal_for(TOKEN) is None
+
+
+async def test_deleting_an_agent_that_had_no_token_is_fine(agents: AgentRecords) -> None:
+    await an_agent(agents, "fake-a", AgentRole.IMPLEMENTER)
+
+    assert await agents.delete_agent("fake-a") is True

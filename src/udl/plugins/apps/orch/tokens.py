@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict, SecretStr
 # Local Imports
 from udl.db.records import Name
 from udl.errors import DoesNotExist, NotAllowed
-from udl.interfaces.security import Principal, PrincipalKind
+from udl.interfaces.security import AGENT_PREFIX, Principal, PrincipalKind
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.agents import AgentRole
 from udl.plugins.apps.orch.records import (
@@ -42,8 +42,8 @@ if TYPE_CHECKING:
     from udl.core.service import UDLService
 
 __all__ = [
+    "AGENT_PREFIX",
     "ROLE_OPERATIONS",
-    "TOKEN_PREFIX",
     "IssueTokenRequest",
     "IssueTokenResponse",
     "OrchTokens",
@@ -52,9 +52,6 @@ __all__ = [
     "refused",
     "tokens_for",
 ]
-
-TOKEN_PREFIX: Final = "udl_agent_"  # noqa: S105 - (its shape, not a key)
-"""What an agent's token starts with, so a key of udl's own is never taken for one."""
 
 _SECRET_PATH: Final = "apps/orch/agents"  # noqa: S105 - (a path, not a key)
 """Where an agent's token is kept in udl's secret store (under its name)."""
@@ -177,7 +174,7 @@ async def issue_token(service: UDLService, agent: str) -> str:
     found = await agents.agent(agent)
     if found is None:
         raise DoesNotExist(f"There is no agent called {agent!r}")
-    token = f"{TOKEN_PREFIX}{secrets.token_urlsafe(32)}"
+    token = f"{AGENT_PREFIX}{secrets.token_urlsafe(32)}"
     await agents.tokens.issue(found.name, token)
     await service.secrets.set(secret_ref(found.name), SecretStr(token))
     return token

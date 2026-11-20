@@ -39,12 +39,14 @@ from pydantic import (
     WithJsonSchema,
 )
 from pydantic.fields import FieldInfo
+from starlette.requests import Request
 
 # Local Imports
 from udl.core.models import DownloadRequest, JobEvent
 from udl.core.operations import Caller, Operation, OperationRegistry, current_caller
 from udl.core.service import UDLService
 from udl.errors import UDLError
+from udl.interfaces.security import API_KEY_HEADER, AgentTokens
 
 DEFAULT_WAIT: Final = 120.0
 """Seconds the download tool waits for its downloads, unless the agent says otherwise."""
@@ -132,6 +134,38 @@ def _annotations(op: Operation) -> ToolAnnotations:
     )
 
 
+async def _as_caller(ctx: Context, service: UDLService) -> None:
+    """Bind who the message's own request is — its API key, or an agent's token — so a call is
+    never made as whoever opened the session it belongs to.
+
+    A session is opened by one request and then serves every call on it, which may come from
+    another token; the caller is therefore read from each message's own request, not from the
+    session's. A transport that names no request (stdio, a test's in-process server) leaves
+    whatever the caller of the server already set."""
+    try:
+        request = ctx.request_context.request
+    except ValueError:  # (no request: a stdio server, where the caller is the one who started it)
+        return
+    if not isinstance(request, Request):
+        return
+    from udl.interfaces.security import authenticate, current_principal
+
+    principal = await authenticate(
+        service.settings,
+        request.headers.get(API_KEY_HEADER),
+        _tokens(service),
+    )
+    current_principal.set(principal)
+
+
+def _tokens(service: UDLService) -> AgentTokens | None:
+    """The book of agent tokens (orch's), so an agent's own token may call the tools its role
+    allows."""
+    from udl.plugins.apps.orch.tokens import tokens_for
+
+    return tokens_for(service)
+
+
 def _tool[Q: BaseModel](
     op: Operation,
     request: type[Q],
@@ -144,6 +178,7 @@ def _tool[Q: BaseModel](
     async def tool(ctx: Context, **arguments: Any) -> BaseModel:
         called = current_caller.set(Caller.MCP)
         try:
+            await _as_caller(ctx, service())
             return await run(service(), request.model_validate(arguments), ctx)
         except UDLError as e:
             raise ToolError(_described(e)) from e

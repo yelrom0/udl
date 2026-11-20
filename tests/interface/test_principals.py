@@ -187,6 +187,19 @@ async def test_the_mcp_server_lets_an_agent_call_what_its_role_allows(
     assert "structuredContent" in allowed["result"]
 
 
+async def test_a_call_on_someone_elses_session_is_its_own_callers(
+    keyed: Harness, token: str
+) -> None:
+    """A session is opened by one request and then serves every call on it, which may come with
+    another token: each call is its own caller's, not the one that opened the session."""
+    async with held(client_for(keyed)) as client:
+        session = await mcp_session(client, API_KEY)  # (the owner opens it)
+        refused = await mcp_call(client, token, session, CONFIG, {})
+
+    assert refused["result"]["isError"] is True
+    assert "implementer" in refused["result"]["content"][0]["text"]
+
+
 async def test_the_mcp_server_does_not_know_a_token_it_was_not_given(
     keyed: Harness, token: str
 ) -> None:
