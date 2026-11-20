@@ -955,7 +955,10 @@ class Readiness(_Model):
     waited: float = 0.0
     """How long the answer waited for GitHub's checks and the review bot, in seconds (0: it did
     not: `orch_pr_status` without `wait`, 27.5)."""
-    """The review bot's items that are not fixed, for the task's note."""
+    pending: list[str] = Field(default_factory=list[str])
+    """The blockers that are only a matter of time (the checks still running, the review bot not
+    done with this head, GitHub not knowing yet): what a wait can change, and the rest of
+    `blockers` cannot (27.5)."""
 
 
 class ReadinessRequest(_Model):

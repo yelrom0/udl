@@ -4028,9 +4028,10 @@ export interface components {
             repo: string;
             /**
              * Title
-             * @description Its title.
+             * @description Its title (none: the head branch's name when one is opened, and left as it is when the
+             *     pull is already open).
              */
-            title: string;
+            title?: string | null;
         };
         /**
          * GithubRerunChecksRequest
@@ -5295,6 +5296,13 @@ export interface components {
              * @description The review bot's items it still lists as open (empty: nothing).
              */
             open_items?: components["schemas"]["ReviewItem"][];
+            /**
+             * Pending
+             * @description The blockers that are only a matter of time (the checks still running, the review bot not
+             *     done with this head, GitHub not knowing yet): what a wait can change, and the rest of
+             *     `blockers` cannot (27.5).
+             */
+            pending?: string[];
             /**
              * Ready
              * @description Whether it may be merged now.

@@ -112,9 +112,11 @@ async def test_prepare_reuses_the_worktree_a_task_already_has(
 async def test_prepare_branches_off_the_task_it_is_stacked_on(
     repo: Repo, host: Host, task: Task, home: Path
 ) -> None:
+    """(Off `origin/<branch>`, which the fetch brings in: the needed task's worktree is on
+    another host, and a checkout here has no local branch of it to offer.)"""
     stacked = Task(project="udl", feature="F-1", key="F-1.2", title="It goes on top")
-
     await prepare(task, repo=repo, host=host, shell=shell_for(host))
+    git("push", "origin", "feat/F-1.1-the-worktree-a-task-is-done-in", cwd=home / "checkout")
 
     found = await prepare(
         stacked,
@@ -126,6 +128,9 @@ async def test_prepare_branches_off_the_task_it_is_stacked_on(
 
     assert found.base == "feat/F-1.1-the-worktree-a-task-is-done-in"
     assert found.branch == "feat/F-1.2-it-goes-on-top"
+    assert git("rev-parse", "HEAD", cwd=Path(found.path)) == git(
+        "rev-parse", "feat/F-1.1-the-worktree-a-task-is-done-in", cwd=home / "origin.git"
+    )
 
 
 async def test_a_repo_udl_does_not_know_where_it_is_is_refused(

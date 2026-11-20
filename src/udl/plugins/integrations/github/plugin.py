@@ -360,8 +360,9 @@ class OpenPullRequest(_Model):
     """The repository (owner/name), one of the account's."""
     head: str
     """The branch to merge from (a branch of the repository, or owner:branch)."""
-    title: str
-    """Its title."""
+    title: str | None = None
+    """Its title (none: the head branch's name when one is opened, and left as it is when the
+    pull is already open)."""
     base: str | None = None
     """The branch to merge into (none: the repository's default branch)."""
     body: str | None = None
@@ -745,7 +746,7 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
                 repo,
                 head=head,
                 base=base,
-                title=request.title,
+                title=request.title or head,
                 body=request.body,
                 draft=request.draft,
             )

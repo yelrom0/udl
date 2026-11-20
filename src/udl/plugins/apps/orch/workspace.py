@@ -13,11 +13,13 @@ remade: an agent's uncommitted work is never thrown away by asking where it work
 """
 
 # System Imports
-import time
+import asyncio
+import contextlib
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import Final, Protocol
+from typing import Final, Protocol, runtime_checkable
+from uuid import uuid4
 
 # Package Imports
 from pydantic import BaseModel, ConfigDict
@@ -26,16 +28,34 @@ from pydantic import BaseModel, ConfigDict
 from udl.clock import Clock, pause
 from udl.core.service import UDLService
 from udl.db.manager import DBManager
-from udl.errors import ConfigError, NotAllowed, PluginFailed
+from udl.errors import ConfigError, NotAllowed, PluginFailed, ToolUnavailable
 from udl.hosts import Host, HostName, HostShell
 from udl.interfaces.security import current_principal
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.links import pull_ref
-from udl.plugins.apps.orch.models import GateRun, OwnerKind, PushResult, render_branch
+from udl.plugins.apps.orch.models import (
+    MERGED,
+    GateRun,
+    OwnerKind,
+    PushResult,
+    render_branch,
+)
 from udl.plugins.apps.orch.records import LinkRecords, Task, TaskRecords
 from udl.process import ProcessResult
 
 __all__ = ["GateLane", "Worktree", "prepare", "push", "remove"]
+
+GATE_MARGIN: Final = timedelta(minutes=10)
+"""How long a gate's lane lease outlasts the gate itself, so a lane never runs out while the
+gate it holds for is still running (it is renewed as well: this is the first lease's ttl)."""
+
+
+@runtime_checkable
+class PullLike(Protocol):
+    """What a pull has to be for a push (the github integration's `PullInfo`, or a fake's): where
+    it is on github.com."""
+
+    html_url: str
 
 
 class RepoLike(Protocol):
@@ -137,9 +157,10 @@ async def remove(found: Worktree, *, repo: RepoLike, shell: HostShell) -> None:
 
 
 def _off(stacked_on: str | None, base: str) -> str:
-    """What a new branch is made off: `origin/<base>` for the repo's own, the branch itself for a
-    stacked task's (it is a local branch, not one origin has)."""
-    return stacked_on or f"origin/{base}"
+    """What a new branch is made off: `origin/<base>` for the repo's own, `origin/<branch>` for a
+    stacked task's (the fetch just brought it in, and another host's checkout has no local
+    branch to offer)."""
+    return f"origin/{stacked_on}" if stacked_on else f"origin/{base}"
 
 
 async def _git(shell: HostShell, args: list[str], *, within: timedelta = GIT) -> str:
@@ -207,6 +228,12 @@ class GateLane:
         """The lease it takes (what a stuck gate's lane is, when it is looked for)."""
         return self._name
 
+    @property
+    def holder(self) -> str:
+        """Who holds it (unique to this lane: two lanes of one name are two different runs, so
+        neither may be taken for the other)."""
+        return self._holder
+
     async def take(self) -> None:
         """Wait until this lane is the holder's (however long the gate before it runs)."""
         while await self._db.claim_lease(self._name, self._holder, self._ttl) is None:
@@ -216,13 +243,26 @@ class GateLane:
         """Give the lane back (nothing when it is not the holder's any more)."""
         await self._db.release_lease(self._name, self._holder)
 
+    async def _renew(self) -> None:
+        """Keep the lane while a gate runs: a gate may take longer than the lease's ttl, and a
+        lane whose lease ran out is a lane another gate can take (27.5)."""
+        every = self._ttl / 3
+        while True:
+            await pause(self._clock, every)
+            await self._db.claim_lease(self._name, self._holder, self._ttl)
+
     @asynccontextmanager
     async def held(self) -> AsyncGenerator[None]:
-        """The lane, for as long as the block runs: given back however it ends."""
+        """The lane, for as long as the block runs: renewed while it runs, and given back
+        however it ends."""
         await self.take()
+        keeping = asyncio.create_task(self._renew())
         try:
             yield
         finally:
+            keeping.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await keeping
             await self.release()
 
 
@@ -234,17 +274,21 @@ async def push(
     shell: HostShell,
     service: UDLService,
     records: AppRecords,
-    title: str,
-    body: str,
+    title: str | None,
+    body: str | None,
     within: timedelta,
 ) -> PushResult:
     """Push `task`'s work: its branch to origin, then its pull request (27.5).
 
-    Nothing uncommitted (else NotAllowed with `git status`'s summary), rebased on the base when
-    that has moved, the repo's gate run in its host's lane (one at a time, 27.5), and on a pass
-    `git push --force-with-lease`, then `github_open_pull` and a `pull` link on the task. A gate
-    that fails, a rebase that conflicts or a push git refuses is NotAllowed: nothing is pushed,
-    and the agent is told why."""
+    Nothing uncommitted (else NotAllowed with `git status`'s summary), rebased on what it is
+    built on when that has moved, the repo's gate run in its host's lane (one at a time, 27.5),
+    and on a pass `git push --force-with-lease=<branch>:<the sha we saw>` (so a branch someone
+    else moved is refused, not overwritten), then `github_open_pull` and a `pull` link on the
+    task. A gate that fails, a rebase that conflicts or a push git refuses is NotAllowed:
+    nothing is pushed, and the agent is told why.
+
+    `title` and `body` are the pull's, and None leaves them as they are on a second push: what a
+    person wrote in the description is not a push's to wipe."""
     if not task.worktree or not task.branch:
         raise NotAllowed(
             f"{task.key!r} has no worktree yet",
@@ -258,36 +302,44 @@ async def push(
             hint=_summary(dirty),
         )
     await _git(shell, ["-C", path, "fetch", "origin"])
-    base = f"origin/{repo.base_branch}"
-    if not await _contains(shell, path, base):
-        await _rebase(shell, path, base, key=task.key)
-    lane = GateLane(service.db, host=host.name, holder=task.assignee or "udl", clock=service.clock)
-    started = time.monotonic()
+    onto = await _built_on(task, repo=repo, records=records)
+    if not await _contains(shell, path, onto):
+        await _rebase(shell, path, onto, key=task.key)
+    seen = await _sha_of(shell, path, f"origin/{branch}")
+    lane = GateLane(
+        service.db,
+        host=host.name,
+        holder=f"{task.assignee or 'owner'}:{task.key}:{uuid4().hex[:8]}",
+        clock=service.clock,
+        ttl=within + GATE_MARGIN,
+    )
+    started = service.clock.now()
     async with lane.held():
-        gate = await _gate(shell, repo.gate, path, within=within)
+        gate = await _gate(shell, repo.gate, path, within=within, key=task.key)
     ran = GateRun(
         exit_code=gate.returncode,
-        output=_last(gate.stderr or gate.stdout),
-        seconds=round(time.monotonic() - started, 1),
+        output=_last("\n".join(one for one in (gate.stdout, gate.stderr) if one)),
+        seconds=round((service.clock.now() - started).total_seconds(), 1),
     )
     if gate.returncode != 0:
         raise NotAllowed(
             f"the gate failed with exit code {gate.returncode}",
             hint=ran.output or None,
         )
-    await _git(shell, ["-C", path, "push", "--force-with-lease", "origin", branch])
+    await _git(shell, ["-C", path, "push", *_lease(branch, seen), "origin", branch])
+    first = not await _has_pull(task, records=records)
     pull = await _as_udl(
         service,
         "github_open_pull",
         {
             "repo": repo.github,
             "head": branch,
-            "title": title or task.title,
+            "title": title or (task.title if first else None),
             "base": repo.base_branch,
-            "body": await _body(task, body, records=records),
+            "body": await _body(task, body, records=records) if body or first else None,
         },
     )
-    url = str(getattr(pull, "html_url", "") or "")
+    url = pull.html_url if isinstance(pull, PullLike) else ""
     if url:
         await LinkRecords(records).add(
             project=task.project,
@@ -300,6 +352,41 @@ async def push(
     return PushResult(project=task.project, key=task.key, branch=branch, gate=ran, pull=url)
 
 
+def _lease(branch: str, seen: str) -> list[str]:
+    """`--force-with-lease` for `branch`, pinned to the sha the remote had when we looked: a
+    fetch just before the push would otherwise update the ref the plain form compares against,
+    and it would protect nothing (27.5)."""
+    return [f"--force-with-lease={branch}:{seen}"] if seen else []
+
+
+async def _built_on(task: Task, *, repo: RepoLike, records: AppRecords) -> str:
+    """What the task's branch is built on: the pull of the task it is stacked on, while that
+    pull is open (its branch is still there), else the repo's base branch on origin."""
+    base = f"origin/{repo.base_branch}"
+    if not task.needs:
+        return base
+    links = LinkRecords(records)
+    tasks = TaskRecords(records)
+    for key in task.needs:
+        needed = await tasks.task(task.project, key)
+        pulls = [
+            link.url
+            for link in await links.for_owner(task.project, OwnerKind.TASK, key)
+            if link.link_kind == "pull"
+        ]
+        if needed is None or needed.state == MERGED or not pulls:
+            continue
+        if needed.branch:
+            return f"origin/{needed.branch}"
+    return base
+
+
+async def _has_pull(task: Task, *, records: AppRecords) -> bool:
+    """Whether the task already has a pull (so a push updates it, rather than opening one)."""
+    links = await LinkRecords(records).for_owner(task.project, OwnerKind.TASK, task.key)
+    return any(link.link_kind == "pull" for link in links)
+
+
 async def _as_udl(service: UDLService, name: str, request: dict[str, object]) -> BaseModel:
     """Call an operation as udl itself, not as the agent whose push it is: opening the pull is
     udl's, on the agent's behalf (an agent may not call it itself)."""
@@ -310,10 +397,11 @@ async def _as_udl(service: UDLService, name: str, request: dict[str, object]) ->
         current_principal.reset(token)
 
 
-async def _body(task: Task, body: str, *, records: AppRecords) -> str:
-    """What the pull says: `body`, then the task it is for, and what it merges after when it is
-    stacked on another task's pull."""
-    lines = [body.strip(), "", f"Task: `{task.key}`"] if body.strip() else [f"Task: `{task.key}`"]
+async def _body(task: Task, body: str | None, *, records: AppRecords) -> str:
+    """What the pull says: `body` (when there is one), then the task it is for, and what it
+    merges after when it is stacked on another task's pull."""
+    text = (body or "").strip()
+    lines = [text, "", f"Task: `{task.key}`"] if text else [f"Task: `{task.key}`"]
     lines += await _merge_after(task, records=records)
     return "\n".join(lines)
 
@@ -365,12 +453,30 @@ async def _rebase(shell: HostShell, path: str, onto: str, *, key: str) -> None:
 
 
 async def _gate(
-    shell: HostShell, gate: list[str], path: str, *, within: timedelta
+    shell: HostShell, gate: list[str], path: str, *, within: timedelta, key: str
 ) -> ProcessResult:
-    """Run the repo's gate in the worktree, and answer how it ended (a failing gate is an answer,
-    not an error: its output is what the agent is told)."""
+    """Run the repo's gate in the worktree, and answer how it ended: a failing gate is an
+    answer, not an error (its exit code and the end of its output are what the agent is told),
+    and one that runs past its time or is not installed is NotAllowed with what happened."""
     try:
-        return await shell.run(gate, cwd=path, within=within)
+        return await shell.run(gate, cwd=path, within=within, check=False)
+    except TimeoutError as slow:
+        raise NotAllowed(
+            f"the gate ran past the {within} it gets",
+            hint="Run it yourself, and fix what hangs, or raise [apps.orch] gate_minutes.",
+        ) from slow
+    except ToolUnavailable as missing:
+        raise NotAllowed(
+            f"the gate is not installed here: {missing.message}",
+            hint="Install it on the host that runs the gate.",
+        ) from missing
     except PluginFailed as failed:
-        # (`HostShell.run` raises for a non-zero exit; the code and output are what a push says.)
-        return ProcessResult(returncode=1, stdout="", stderr=failed.hint or failed.message)
+        # (An ssh that could not reach the host: the gate never ran.)
+        raise NotAllowed(f"the gate did not run: {failed.message}", hint=failed.hint) from failed
+
+
+async def _sha_of(shell: HostShell, path: str, ref: str) -> str:
+    """The commit `ref` points at, or "" when there is no such ref (a branch not pushed yet)."""
+    if not await _succeeds(shell, ["-C", path, "rev-parse", "--verify", f"{ref}^{{commit}}"]):
+        return ""
+    return await _git(shell, ["-C", path, "rev-parse", ref], within=GIT_QUIET)

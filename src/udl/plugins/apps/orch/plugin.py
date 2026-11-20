@@ -731,7 +731,7 @@ class Orch(AppPlugin[OrchSettings]):
             found = await self._assess(task, pull, project)
             waited = round((self.clock.now() - started).total_seconds(), 1)
             spent = self.clock.now() - started >= limit
-            if not request.wait or found.ready or spent or not _not_yet(found.blockers):
+            if not request.wait or found.ready or spent or not _not_yet(found):
                 return found.model_copy(update={"waited": waited})
             await self.clock.sleep(timedelta(seconds=self.settings.poll_seconds))
 
@@ -774,8 +774,8 @@ class Orch(AppPlugin[OrchSettings]):
             shell=await hosts.shell(host.name),
             service=service,
             records=self.records,
-            title=request.title or task.title,
-            body=request.body or "",
+            title=request.title,
+            body=request.body,
             within=timedelta(minutes=self.settings.gate_minutes),
         )
 
@@ -823,20 +823,10 @@ class Orch(AppPlugin[OrchSettings]):
         return TaskQueue(project=project, agent=agent, tasks=[_entry(task) for task in found])
 
 
-_NOT_YET: Final = (
-    "its checks are still running",
-    "has not commented on it",
-    "is not about",
-    "GitHub has not worked out",
-)
-"""The blockers that waiting can change: the checks, the bot's comment on this head, and GitHub
-working out whether it merges."""
-
-
-def _not_yet(blockers: list[str]) -> bool:
-    """Whether every one of `blockers` is a thing that may still change (so a wait is worth
-    it)."""
-    return bool(blockers) and all(any(word in one for word in _NOT_YET) for one in blockers)
+def _not_yet(found: Readiness) -> bool:
+    """Whether everything still in the way is only a matter of time — the checks running, the
+    bot not done with this head, GitHub not knowing yet — so a wait is worth it (27.5)."""
+    return bool(found.blockers) and len(found.pending) == len(found.blockers)
 
 
 def _action(found: stored.HumanAction) -> Action:

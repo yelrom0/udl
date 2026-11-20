@@ -28,7 +28,7 @@ from udl.errors import NotAllowed
 from udl.hosts import Host
 from udl.interfaces.security import Principal, PrincipalKind, current_principal
 from udl.plugins.apps.base import AppPlugin, AppRecords, AppSettings
-from udl.plugins.apps.orch.models import IN_PROGRESS, OwnerKind
+from udl.plugins.apps.orch.models import IN_PROGRESS, OwnerKind, PushResult
 from udl.plugins.apps.orch.models import Principal as Who
 from udl.plugins.apps.orch.plugin import Orch
 from udl.plugins.apps.orch.records import (
@@ -61,13 +61,13 @@ def git(*args: str, cwd: Path) -> str:
 
 
 class OpenPull(BaseModel):
-    """What `github_open_pull` is asked (the parts a push gives it)."""
+    """What `github_open_pull` is asked (the parts a push gives it; None: leave it as it is)."""
 
     repo: str
     head: str
-    title: str
-    base: str
-    body: str
+    title: str | None = None
+    base: str | None = None
+    body: str | None = None
 
 
 class FakePull(BaseModel):
@@ -215,9 +215,19 @@ async def worktree(service: UDLService) -> Path:
     return path
 
 
-async def pushed(service: UDLService, **request: Any) -> Any:
+async def pushed(service: UDLService, **request: Any) -> PushResult:
     """`orch_push`, as the agent calls it."""
-    return await service.call("orch_push", request)
+    found = await service.call("orch_push", request)
+    assert isinstance(found, PushResult)
+    return found
+
+
+async def set_gate(service: UDLService, gate: list[str]) -> None:
+    """Make the repo's gate `gate` (what a push runs)."""
+    repos = RepoRecords(AppRecords(service.db))
+    repo = await repos.repo("udl", "udl")
+    assert repo is not None
+    await repos.save_repo(repo.model_copy(update={"gate": gate}))
 
 
 # ---------------------------------------------------------------------------------------------
@@ -254,13 +264,9 @@ async def test_an_agent_that_is_not_the_task_s_assignee_is_refused(
 async def test_a_failing_gate_pushes_nothing(
     service: UDLService, worktree: Path, home: Path, as_agent: None
 ) -> None:
-    await RepoRecords(AppRecords(service.db)).save_repo(
-        (await RepoRecords(AppRecords(service.db)).repo("udl", "udl")).model_copy(  # type: ignore[union-attr]
-            update={"gate": ["sh", "no-such-gate.sh"]}
-        )
-    )
+    await set_gate(service, ["sh", "no-such-gate.sh"])
 
-    with pytest.raises(NotAllowed, match="the gate failed"):
+    with pytest.raises(NotAllowed, match="the gate failed with exit code 127"):
         await pushed(service, key="F-1.1", title="It")
 
     assert (
@@ -270,6 +276,23 @@ async def test_a_failing_gate_pushes_nothing(
     app = await service.apps.get("github")
     assert isinstance(app, FakeGitHub)
     assert app.opened == []
+
+
+async def test_a_long_failing_gate_says_its_code_and_the_end_of_its_output(
+    service: UDLService, worktree: Path, home: Path, as_agent: None
+) -> None:
+    """(The card's "the last 200 lines": the start of a suite's noise is not what a failure is
+    read from.)"""
+    script = home / "gate.sh"
+    script.write_text('i=0\nwhile [ $i -lt 300 ]; do echo "line $i"; i=$((i+1)); done\nexit 4\n')
+    await set_gate(service, ["sh", str(script)])
+
+    with pytest.raises(NotAllowed, match="exit code 4") as refused:
+        await pushed(service, key="F-1.1", title="It")
+
+    hint = refused.value.hint or ""
+    assert "line 299" in hint
+    assert "line 0" not in hint
 
 
 # ---------------------------------------------------------------------------------------------
@@ -380,6 +403,25 @@ async def test_a_second_push_updates_the_same_pull(
     app = await service.apps.get("github")
     assert isinstance(app, FakeGitHub)
     assert [one["title"] for one in app.opened] == ["It", "It, again"]
+
+
+async def test_a_second_push_with_no_body_leaves_the_description(
+    service: UDLService, worktree: Path, as_agent: None
+) -> None:
+    """(What a person wrote in the pull's description is not a push's to wipe.)"""
+    await pushed(service, key="F-1.1", title="It", body="Why it is done this way.")
+    (worktree / "work.txt").write_text("the work, again\n")
+    git("commit", "-am", "fix: the work again", cwd=worktree)
+
+    await pushed(service, key="F-1.1")
+
+    app = await service.apps.get("github")
+    assert isinstance(app, FakeGitHub)
+    assert [one["body"] for one in app.opened] == [
+        "Why it is done this way.\n\nTask: `F-1.1`",
+        None,
+    ]
+    assert [one["title"] for one in app.opened] == ["It", None]
 
 
 async def test_the_branch_is_rebased_when_the_base_moved(

@@ -201,6 +201,19 @@ async def test_both_shells_fail_when_the_program_fails(both: list[tuple[str, Hos
             await shell.run(_python("import sys; sys.exit(3)"))
 
 
+async def test_both_shells_give_a_failure_back_when_it_is_not_an_error(
+    both: list[tuple[str, HostShell]],
+) -> None:
+    """(A repo's gate is read, not raised on: its exit code and its output come back, 27.5.)"""
+    for name, shell in both:
+        result = await shell.run(
+            _python("import sys; print('the gate says no'); sys.exit(3)"), check=False
+        )
+
+        assert result.returncode == 3, name
+        assert "the gate says no" in result.stdout, name
+
+
 async def test_both_shells_stop_a_program_that_runs_too_long(
     both: list[tuple[str, HostShell]],
 ) -> None:

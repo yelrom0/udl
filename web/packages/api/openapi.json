@@ -3960,15 +3960,21 @@
             "type": "string"
           },
           "title": {
-            "description": "Its title.",
-            "title": "Title",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its title (none: the head branch's name when one is opened, and left as it is when the\npull is already open).",
+            "title": "Title"
           }
         },
         "required": [
           "repo",
-          "head",
-          "title"
+          "head"
         ],
         "title": "GithubOpenPullRequest",
         "type": "object"
@@ -6242,6 +6248,14 @@
               "$ref": "#/components/schemas/ReviewItem"
             },
             "title": "Open Items",
+            "type": "array"
+          },
+          "pending": {
+            "description": "The blockers that are only a matter of time (the checks still running, the review bot not\ndone with this head, GitHub not knowing yet): what a wait can change, and the rest of\n`blockers` cannot (27.5).",
+            "items": {
+              "type": "string"
+            },
+            "title": "Pending",
             "type": "array"
           },
           "ready": {

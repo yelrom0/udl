@@ -96,6 +96,59 @@ async def test_a_lane_whose_holder_died_is_taken_after_its_lease_expires(
     ) is not None
 
 
+async def test_a_gate_longer_than_its_lease_keeps_the_lane(service: UDLService) -> None:
+    """(A `make check` of 8½ minutes outlasts a 5-minute lease: the lane renews it, so a second
+    agent's gate cannot start on the same host, 27.5.)"""
+    slow = GateLane(
+        service.db,
+        host="local",
+        holder="deepseek-a:1",
+        clock=SystemClock(),
+        ttl=timedelta(milliseconds=150),
+    )
+    other = GateLane(
+        service.db,
+        host="local",
+        holder="deepseek-b:1",
+        clock=SystemClock(),
+        ttl=timedelta(minutes=1),
+    )
+    order: list[str] = []
+
+    async def one(lane: GateLane, name: str, how_long: float) -> None:
+        async with lane.held():
+            order.append(f"{name} in")
+            await asyncio.sleep(how_long)
+            order.append(f"{name} out")
+
+    async with asyncio.timeout(5):
+        await asyncio.gather(one(slow, "slow", 0.9), one(other, "other", 0.05))
+
+    assert order == ["slow in", "slow out", "other in", "other out"]
+
+
+async def test_two_lanes_of_one_holder_name_are_two_lanes(service: UDLService) -> None:
+    """(A push is its own run: two of them, even by one agent or by udl for the owner, do not
+    take each other's lease for granted.)"""
+    first = GateLane(service.db, host="local", holder="udl:1", clock=SystemClock())
+    second = GateLane(service.db, host="local", holder="udl:2", clock=SystemClock())
+    order: list[str] = []
+
+    async def one(lane: GateLane, name: str) -> None:
+        async with lane.held():
+            order.append(f"{name} in")
+            await asyncio.sleep(0.05)
+            order.append(f"{name} out")
+
+    async with asyncio.timeout(5):
+        await asyncio.gather(one(first, "a"), one(second, "b"))
+
+    assert order in (
+        ["a in", "a out", "b in", "b out"],
+        ["b in", "b out", "a in", "a out"],
+    )
+
+
 async def test_the_lane_is_released_when_the_gate_fails(service: UDLService) -> None:
     lane = GateLane(service.db, host="local", holder="deepseek-a", clock=SystemClock())
 
