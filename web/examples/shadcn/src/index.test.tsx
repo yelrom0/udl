@@ -3,13 +3,15 @@
  * contributions draw. (shadcn's own components are its library's, so they are not counted here.)
  */
 
+import type { JsonValue } from "@udl/ui-sdk";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import manifest from "../manifest.json";
 import { Gallery } from "./gallery";
 import plugin from "./index";
 import { Panel } from "./panel";
+import { ResultView } from "./resultView";
 
 let target: HTMLDivElement | null = null;
 
@@ -25,6 +27,7 @@ function draw(element: React.ReactElement): HTMLDivElement {
 afterEach(() => {
 	target?.remove();
 	target = null;
+	vi.restoreAllMocks();
 });
 
 describe("the shadcn example", () => {
@@ -33,6 +36,7 @@ describe("the shadcn example", () => {
 		expect(Object.keys(plugin.widgets ?? {})).toEqual(
 			manifest.contributes.widgets.map((widget) => widget.id),
 		);
+		expect(Object.keys(plugin.resultViews ?? {})).toEqual(manifest.contributes.resultViews);
 	});
 
 	it("draws its page, with shadcn's card and buttons", () => {
@@ -41,6 +45,88 @@ describe("the shadcn example", () => {
 		expect(drawn.textContent).toContain("shadcn/ui, in a udl UI plugin");
 		expect(drawn.querySelector("[data-testid='shadcn-card']")).not.toBeNull();
 		expect(drawn.querySelector("[data-testid='shadcn-button']")?.textContent).toBe("Default");
+	});
+
+	it("draws a list's result with its own card, not udl's table", () => {
+		const drawn = draw(
+			<ResultView
+				operation={{
+					name: "fake_list_things",
+					title: "List the things",
+					summary: "",
+					view: "list",
+					hints: {},
+				}}
+				value={{
+					items: [{ account: "fake:work", item: { id: "t1", text: "The first thing" } }],
+				}}
+			/>,
+		);
+
+		expect(drawn.textContent).toContain("Drawn by shadcn/ui, not by udl.");
+		expect(drawn.textContent).toContain("The first thing");
+		expect(drawn.querySelector("[data-testid='shadcn-list']")).not.toBeNull();
+	});
+
+	it("draws a thing from each account, even when the two have the same id", () => {
+		// (The fake gives every account the same things, `t1` and `t2`: keyed by id alone, the
+		// second account's would collide with the first's and React would say so.)
+		const said = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const drawn = draw(
+			<ResultView
+				operation={{
+					name: "fake_list_things",
+					title: "List the things",
+					summary: "",
+					view: "list",
+					hints: {},
+				}}
+				value={{
+					items: [
+						{ account: "fake:work", item: { id: "t1", text: "The first thing" } },
+						{ account: "fake:home", item: { id: "t1", text: "The first thing" } },
+					],
+				}}
+			/>,
+		);
+
+		expect(drawn.querySelectorAll("li")).toHaveLength(2);
+		const collisions = said.mock.calls.filter((call) => String(call[0]).includes("same key"));
+		expect(collisions).toHaveLength(0);
+	});
+
+	it("draws no thing it cannot read", () => {
+		const operation = {
+			name: "fake_list_things",
+			title: "List the things",
+			summary: "",
+			view: "list" as const,
+			hints: {},
+		};
+		const values: JsonValue[] = [
+			// (Not an answer at all, and an answer whose items are not a list.)
+			null,
+			{ items: "nope" },
+			// (Items that are not objects, an item that is not one, one with no text, a bare thing.)
+			{
+				items: [
+					null,
+					"x",
+					{ item: "x" },
+					{ account: "fake:work", item: "x" },
+					{ account: "fake:work", item: null },
+					{ account: "fake:work", item: { id: 1, text: "x" } },
+					{ item: { id: "t2" } },
+					{ id: "t3" },
+				],
+			},
+		];
+
+		for (const value of values) {
+			const drawn = draw(<ResultView operation={operation} value={value} />);
+
+			expect(drawn.querySelectorAll("li")).toHaveLength(0);
+		}
 	});
 
 	it("draws its widget, with the slot it was given", () => {
