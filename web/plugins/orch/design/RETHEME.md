@@ -127,5 +127,14 @@ Stitch writes Material colour roles. `x at N %` is `color-mix(in oklab, x N%, tr
   `base-100` by `(1 − lightness) / 0.9` (white is `base-100`).
 - **A light tint** (lightness over 0.82): the daisyUI colour of the nearest hue (`error` 350°, `warning` 43°, `success` 160°, `accent` 174°, `info` 197°, `primary` 248°, `secondary` 328°), into
   `base-100` by `max(6 %, (1 − lightness) × 140 %)`.
-- **Anything else is kept:** a saturated colour is a status colour, and daisyUI's status colours are
-  the same in both themes.
+- **A dark saturated colour** (lightness under 0.5: text, a border or a dot), by where it is:
+  - text or a border on the page or on a tint: the nearest hue's daisyUI colour into `base-content`, by
+    `30 % + 120 % × lightness` (40–90 %), as Tailwind's 700–950 shades are, so it reads in both themes;
+  - text in a class list or `style` whose background is a solid status colour (`bg-[#00D390]`,
+    `background-color: #00D390`…), and a dark background itself (a dot on a badge): that status
+    colour's `-content` (`success-content`…), which is the same in both themes, as daisyUI's badges are;
+  - a `hover:` or `focus:` colour: kept (no picture shows it).
+- **Anything else is kept:** a saturated colour that isn't dark is a status colour, and daisyUI's status
+  colours are the same in both themes.
+- Every value put into an arbitrary class gets Tailwind's `color:` type hint (`text-[color:…]`), since
+  Tailwind 3 can't tell that `color-mix(…)` is a colour.
