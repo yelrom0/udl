@@ -65,6 +65,18 @@ describe("the theme store", () => {
 		expect(document.documentElement.dataset.theme).toBe(systemTheme());
 	});
 
+	it("puts the theme on the page before it tells anyone", () => {
+		// (A listener reads the page's tokens — a plugin's wrapper is given them — so it must see
+		// the new theme's, not the one being left.)
+		const seen: (string | undefined)[] = [];
+		const stop = theme.subscribe(() => seen.push(document.documentElement.dataset.theme));
+
+		setTheme("dark");
+		stop();
+
+		expect(seen).toEqual(["dark"]);
+	});
+
 	it("ignores a choice that is not a theme", () => {
 		expect(isTheme("dark")).toBe(true);
 		expect(isTheme("chartreuse")).toBe(false);

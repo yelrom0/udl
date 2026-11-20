@@ -47,13 +47,15 @@ export const theme = createStore<{ current: Theme }>(() => ({ current: initial()
 
 /** Set the chosen theme (persisting it), or move back to following the system. */
 export function setTheme(current: Theme): void {
+	// (The page first, then the listeners: one of them reads the theme's tokens off the page,
+	// and must read the new theme's.)
+	applyTheme(current);
 	theme.setState({ current });
 	try {
 		localStorage.setItem(KEY, JSON.stringify(current));
 	} catch {
 		// (Private mode: the choice lasts this visit.)
 	}
-	applyTheme(current);
 }
 
 /** The chosen theme, as a hook. */
