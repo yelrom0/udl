@@ -505,28 +505,18 @@ def test_a_sentence_punctuation_is_not_part_of_the_url() -> None:
     assert [link.url for link in found] == ["https://github.com/yelrom0/udl/pull/33"]
 
 
-@pytest.mark.parametrize(
-    "words",
-    [
-        {"state": "closed!"},
-        {"checks": "ok"},
-        {"review": "fine"},
-        {"state": "merged", "checks": "pass", "review": "approved"},
-    ],
-)
+@pytest.mark.parametrize("words", [{"state": "closed!"}, {"checks": "ok"}, {"review": "fine"}])
 def test_a_pull_s_words_are_the_ones_a_link_keeps(words: dict[str, str]) -> None:
     # (Three words, each one of a few: a word outside them is refused when the link is stored,
     # not kept as a string that reads as nothing.)
-    if words.get("state") == "merged":
-        assert PullState(**words).model_dump() == {
-            "state": "merged",
-            "head_sha": "",
-            "checks": "pass",
-            "review": "approved",
-        }
-    else:
-        with pytest.raises(ValidationError):
-            PullState(**words)
+    with pytest.raises(ValidationError):
+        PullState.model_validate(words)
+
+
+def test_a_pull_s_state_is_the_word_it_has() -> None:
+    state = PullState(state="merged", checks="pass", review="approved")
+
+    assert (state.state, state.checks, state.review) == ("merged", "pass", "approved")
 
 
 # ---------------------------------------------------------------------------------------------
