@@ -146,7 +146,17 @@ class Dispatcher:
 
     async def run(self) -> None:
         """Dispatch to every enabled agent until `stop` is set. A loop that ends on its own ends
-        that agent's dispatching; the others carry on."""
+        that agent's dispatching; the others carry on.
+
+        On a server with no `api.api_key` nothing is dispatched at all: without one every request
+        is the owner's, so a session's token would limit nothing and an agent would have every
+        operation (27.2's rule, which this keeps)."""
+        if self._service.settings.api.api_key is None:
+            log.warning(
+                "no api.api_key: no agent session is started (its token would limit nothing)"
+            )
+            await self._stop.wait()
+            return
         agents = [one for one in await stored.AgentRecords(self._records).agents() if one.enabled]
         if not agents:
             await self._stop.wait()

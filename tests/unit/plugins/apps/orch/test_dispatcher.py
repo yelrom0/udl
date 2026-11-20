@@ -267,7 +267,10 @@ def clean() -> Iterator[None]:
 @pytest.fixture
 async def service(tmp_path: Path) -> AsyncIterator[UDLService]:
     """A service with a project (with rules), its feature, an agent, and one queued task."""
-    async with UDLService(settings(tmp_path), registry=orch_registry()) as running:
+    async with UDLService(
+        settings(tmp_path, api=APISettings(api_key=SecretStr("test-key"))),
+        registry=orch_registry(),
+    ) as running:
         SERVICE.append(running)
         records = AppRecords(running.db)
         await ProjectRecords(records).save_project(
@@ -656,3 +659,35 @@ async def test_a_session_with_a_hub_url_is_given_udl_and_its_own_token(
         assert spec.mcp.url == "http://127.0.0.1:8080/mcp"
         assert spec.mcp.token is not None
         assert spec.mcp.token.get_secret_value().startswith("udl_agent_")
+
+
+async def test_a_server_with_no_api_key_starts_no_session(tmp_path: Path) -> None:
+    """(27.2's rule, which 27.7 must keep: without `api.api_key` every request is the owner's, so
+    a session's token would limit nothing — udl starts no agent at all.)"""
+    async with UDLService(settings(tmp_path), registry=orch_registry()) as running:
+        SERVICE.append(running)
+        records = AppRecords(running.db)
+        await ProjectRecords(records).save_project(Project(name="udl", title="udl"))
+        await FeatureRecords(records).save_feature(Feature(project="udl", key="F-1", title="It"))
+        await AgentRecords(records).save_agent(
+            Agent(name=AGENT, title=AGENT, runner="fake", host="local")
+        )
+        tasks = TaskRecords(records)
+        task = Task(project="udl", feature="F-1", key="F-1.1", title="It 1", assignee=AGENT)
+        await tasks.save_task(task)
+        await tasks.move(task, QUEUED, by=Principal(kind="system", role="assign"))
+
+        found, _ = await dispatcher(running, clock=FakeClock())
+        running_task = asyncio.ensure_future(found.run())
+        try:
+            for _ in range(20):
+                await asyncio.sleep(0)
+        finally:
+            running_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await running_task
+
+        assert STORE.specs == {}
+        assert PROMPTS == []
+        every = await tasks_of(running)
+        assert every["F-1.1"].state == QUEUED
