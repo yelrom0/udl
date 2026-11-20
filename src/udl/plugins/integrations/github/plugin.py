@@ -224,10 +224,18 @@ class CheckInfo(_Model):
     """Where it is: queued, in_progress or completed."""
     conclusion: str | None = None
     """What it concluded, once it has (success, failure, neutral, skipped...)."""
+    started_at: AwareDatetime | None = None
+    """When it started (None: GitHub did not say). The earliest of a head's checks is when its
+    push was: what a review bot's comment without a sha is compared against (27.6)."""
 
     @classmethod
     def of(cls, run: GhCheckRun) -> CheckInfo:
-        return cls(name=run.name, status=run.status, conclusion=run.conclusion)
+        return cls(
+            name=run.name,
+            status=run.status,
+            conclusion=run.conclusion,
+            started_at=run.started_at,
+        )
 
 
 class CommentInfo(_Model):

@@ -112,9 +112,10 @@ __all__ = ["EventEmission", "Orch", "OrchContext", "Stopping", "Subscription"]
 
 log = logging.getLogger(__name__)
 
-_UDL: Final = Principal(kind="human", name="udl")
-"""(Who udl is when it moves a task itself: a person, since the table lets only one move a task to
-`ready` or `merged`.)"""
+_UDL: Final = Principal(kind="system", role="ready")
+"""(Who udl is when it moves a task itself: the system, in the role `ready` — not a person, who may
+move a task anywhere, so an `open` or `blocked` task would be marked ready with its reason
+cleared. The table allows `ready` from `in_progress` only.)"""
 
 
 class Subscription(Protocol):

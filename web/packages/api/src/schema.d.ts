@@ -2577,6 +2577,12 @@ export interface components {
              */
             name: string;
             /**
+             * Started At
+             * @description When it started (None: GitHub did not say). The earliest of a head's checks is when its
+             *     push was: what a review bot's comment without a sha is compared against (27.6).
+             */
+            started_at?: string | null;
+            /**
              * Status
              * @description Where it is: queued, in_progress or completed.
              */

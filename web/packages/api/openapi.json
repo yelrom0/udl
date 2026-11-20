@@ -1295,6 +1295,19 @@
             "title": "Name",
             "type": "string"
           },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When it started (None: GitHub did not say). The earliest of a head's checks is when its\npush was: what a review bot's comment without a sha is compared against (27.6).",
+            "title": "Started At"
+          },
           "status": {
             "description": "Where it is: queued, in_progress or completed.",
             "title": "Status",

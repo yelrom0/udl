@@ -177,6 +177,51 @@ def test_a_comment_with_no_verdict_has_no_assessment() -> None:
 
 
 # ---------------------------------------------------------------------------------------------
+# A comment whose table is not the first one, and a row that mentions a status word
+# ---------------------------------------------------------------------------------------------
+
+
+def test_a_table_below_a_row_that_says_status_is_not_read_again() -> None:
+    """(27.6's review: `pr-status` in a row's text matched the word "status", so the rows below it
+    were read a second time, doubling the items.)"""
+    body = """## Follow-up review: it (#7), after dc1fd19
+
+| # | Item | Status |
+|---|------|--------|
+| 1 | The `pr-status` line in a row | FIXED |
+| 2 | Something else | FIXED |
+
+| Task | What |
+|------|------|
+| 27.6 | Readiness |
+"""
+
+    verdict = parse_review(body)
+
+    assert [(item.number, item.status) for item in verdict.items] == [
+        ("1", ReviewStatus.FIXED),
+        ("2", ReviewStatus.FIXED),
+    ]
+
+
+def test_the_table_is_the_first_one_the_comment_has() -> None:
+    body = """## Review
+
+| What | Why |
+|------|-----|
+| a | b |
+
+| # | Item | Status |
+|---|------|--------|
+| 1 | It | OPEN |
+"""
+
+    verdict = parse_review(body)
+
+    assert [(item.number, item.status) for item in verdict.items] == [("1", ReviewStatus.OPEN)]
+
+
+# ---------------------------------------------------------------------------------------------
 # for_head: the bot's comment must be about this head
 # ---------------------------------------------------------------------------------------------
 
@@ -200,6 +245,30 @@ def test_a_first_review_written_before_the_head_commit_is_not_for_it() -> None:
         verdict, comment, _pull(committed_at=datetime(2026, 11, 20, 11, tzinfo=UTC))
     )
     assert for_head(verdict, comment, _pull(committed_at=datetime(2026, 11, 20, 9, tzinfo=UTC)))
+
+
+def test_a_first_review_written_before_the_push_is_not_for_it() -> None:
+    """(27.6's review: the commit's time is not the push's — a harness gates for minutes before
+    it pushes, so a comment written in that window reviewed the head before this one.)"""
+    written = datetime(2026, 11, 20, 9, 30, tzinfo=UTC)
+    comment = Comment(author=BOT, body=_review("first-review.md"), created_at=written)
+    verdict = parse_review(comment.body)
+    # (Committed at 9:00, pushed at 9:55: a comment at 9:30 is for what was there before it.)
+    pushed = _pull(
+        committed_at=datetime(2026, 11, 20, 9, 0, tzinfo=UTC),
+        checks=[
+            Check(
+                name="check",
+                status="completed",
+                conclusion="success",
+                started_at=datetime(2026, 11, 20, 9, 55, tzinfo=UTC),
+            )
+        ],
+    )
+    assert not for_head(verdict, comment, pushed)
+
+    # (With no check to say when it was pushed, the commit's own time stands: 9:30 is after it.)
+    assert for_head(verdict, comment, _pull(committed_at=datetime(2026, 11, 20, 9, 0, tzinfo=UTC)))
 
 
 def test_a_first_review_with_no_commit_time_is_not_for_it() -> None:

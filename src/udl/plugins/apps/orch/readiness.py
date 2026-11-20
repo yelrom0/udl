@@ -125,6 +125,7 @@ class Check(BaseModel):
     name: str = ""
     status: str = ""
     conclusion: str | None = None
+    started_at: AwareDatetime | None = None
 
 
 class Comment(BaseModel):
@@ -180,13 +181,26 @@ def for_head(verdict: ReviewVerdict, comment: Comment, pull: Pull) -> bool:
     """Whether the bot's comment is about the pull's head commit.
 
     A follow-up names the commit it reviewed, so it must be this head (or a short sha of it).
-    One that names none was written after the head's commit — otherwise it reviewed what was
+    One that names none was written after the head was pushed — otherwise it reviewed what was
     there before it."""
     if verdict.reviewed_sha is not None:
         return bool(pull.head_sha) and pull.head_sha.startswith(verdict.reviewed_sha)
-    if comment.created_at is None or pull.head_committed_at is None:
+    if comment.created_at is None:
         return False
-    return comment.created_at > pull.head_committed_at
+    pushed = _pushed_at(pull)
+    if pushed is None:
+        return False
+    return comment.created_at > pushed
+
+
+def _pushed_at(pull: Pull) -> AwareDatetime | None:
+    """When the pull's head was pushed: when its earliest check started (a push is what starts
+    them), or when the commit was committed when no check says.
+
+    The commit's own time is not the push's: a harness runs its gates first and pushes minutes
+    later, so a comment written in that window reviewed what was there before, not this head."""
+    started = [check.started_at for check in pull.checks if check.started_at is not None]
+    return min(started) if started else pull.head_committed_at
 
 
 def readiness(
@@ -317,29 +331,48 @@ def _reviewed_sha(lines: list[str]) -> str | None:
 
 
 def _table_items(lines: list[str]) -> list[ReviewItem]:
-    """The items of a status table (`| # | Item | Status |`), if the comment has one."""
-    items: list[ReviewItem] = []
-    for at, line in enumerate(lines):
-        if not line.strip().startswith("|") or not re.search(r"\bstatus\b", line, re.IGNORECASE):
-            continue
-        header = _cells(line)
+    """The items of the comment's first status table (`| # | Item | Status |`), if it has one.
+
+    A table is read once: a row that happens to say "status" (`` `pr-status` ``) is a row, not
+    another table (27.6's review)."""
+    for header, rows in _tables(lines):
         column = next(
             (index for index, cell in enumerate(header) if cell.strip("* ").lower() == "status"),
-            len(header) - 1,
+            None,
         )
-        for row in lines[at + 1 :]:
-            if not row.strip().startswith("|"):
-                break
-            cells = _cells(row)
-            if not cells or all(set(cell) <= set("-: ") for cell in cells):
-                continue
+        if column is None:
+            continue
+        items: list[ReviewItem] = []
+        for cells in rows:
             if column >= len(cells):
                 continue
             text = " | ".join(cell for index, cell in enumerate(cells) if index not in (0, column))
             items.append(
                 ReviewItem(number=cells[0], text=text.strip(), status=_status(cells[column]))
             )
-    return items
+        return items
+    return []
+
+
+def _tables(lines: list[str]) -> list[tuple[list[str], list[list[str]]]]:
+    """Each markdown table in the comment: its header's cells, and its rows' cells (a row that is
+    all dashes and colons is the header's rule, not a row)."""
+    found: list[tuple[list[str], list[list[str]]]] = []
+    at = 0
+    while at < len(lines):
+        if not lines[at].strip().startswith("|"):
+            at += 1
+            continue
+        header = _cells(lines[at])
+        rows: list[list[str]] = []
+        at += 1
+        while at < len(lines) and lines[at].strip().startswith("|"):
+            cells = _cells(lines[at])
+            if cells and not all(set(cell) <= set("-: ") for cell in cells):
+                rows.append(cells)
+            at += 1
+        found.append((header, rows))
+    return found
 
 
 def _cells(line: str) -> list[str]:

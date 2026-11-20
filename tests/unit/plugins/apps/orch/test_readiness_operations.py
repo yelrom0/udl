@@ -28,7 +28,9 @@ from udl.core.service import UDLService
 from udl.errors import DoesNotExist, NotAllowed
 from udl.plugins.apps.base import AppPlugin, AppRecords, AppSettings
 from udl.plugins.apps.orch.models import (
+    IN_PROGRESS,
     OwnerKind,
+    Principal,
     Readiness,
     ReadinessRequest,
     ReadyRequest,
@@ -151,9 +153,11 @@ async def service(tmp_path: Path) -> AsyncIterator[UDLService]:
             Project(name="udl", title="udl", review_bot="claude[bot]")
         )
         await FeatureRecords(records).save_feature(Feature(project="udl", key="F-1", title="It"))
-        await TaskRecords(records).save_task(
-            Task(project="udl", feature="F-1", key="F-1.1", title="It")
-        )
+        tasks = TaskRecords(records)
+        await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.1", title="It"))
+        started = await tasks.task("udl", "F-1.1")
+        assert started is not None
+        await tasks.move(started, IN_PROGRESS, by=Principal(kind="system", role="start"))
         await LinkRecords(records).add(
             project="udl", owner_kind=OwnerKind.TASK, owner="F-1.1", kind="pull", url=PULL
         )
@@ -213,7 +217,7 @@ async def test_a_task_that_waits_on_an_unmerged_one_is_not_ready(service: UDLSer
     found = await readiness_of(service, key="F-1.2")
 
     assert not found.ready
-    assert found.blockers == ["it waits on F-1.1, which is open"]
+    assert found.blockers == ["it waits on F-1.1, which is in_progress"]
 
 
 async def test_ready_moves_the_task_writes_the_note_and_publishes_the_event(
@@ -255,7 +259,7 @@ async def test_ready_refuses_with_what_stops_it_and_writes_nothing(service: UDLS
     records = AppRecords(service.db)
     task = await TaskRecords(records).task("udl", "F-1.1")
     assert task is not None
-    assert task.state == "open"
+    assert task.state == "in_progress"
     assert await NoteRecords(records).notes(OwnerKind.TASK, task.id) == []
 
 
@@ -280,6 +284,28 @@ async def test_a_held_task_is_not_ready(service: UDLService) -> None:
     assert not found.ready
     assert found.held
     assert found.blockers == ["it is on hold: merge after 27.1"]
+
+
+async def test_a_task_that_is_not_in_progress_cannot_be_made_ready(service: UDLService) -> None:
+    """(27.6's review: a person may move a task anywhere, so udl acting as one would have moved
+    an `open` task to `ready` and cleared a `blocked` one's reason. It acts as the system, in the
+    role `ready`, which the table allows from `in_progress` only.)"""
+    tasks = TaskRecords(AppRecords(service.db))
+    await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.2", title="Not started"))
+    await LinkRecords(AppRecords(service.db)).add(
+        project="udl",
+        owner_kind=OwnerKind.TASK,
+        owner="F-1.2",
+        kind="pull",
+        url="https://github.com/yelrom0/udl/pull/8",
+    )
+
+    with pytest.raises(NotAllowed, match="cannot move from 'open' to 'ready'"):
+        await service.call("orch_ready", {"key": "F-1.2"})
+
+    still = await tasks.task("udl", "F-1.2")
+    assert still is not None
+    assert still.state == "open"
 
 
 async def test_a_task_that_is_not_there_is_said(service: UDLService) -> None:

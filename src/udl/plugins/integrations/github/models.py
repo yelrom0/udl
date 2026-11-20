@@ -163,6 +163,8 @@ class GhCheckRun(GhModel):
     not concluded)."""
     html_url: str = ""
     """Its page on github.com."""
+    started_at: AwareDatetime | None = None
+    """When it started (None: GitHub did not say)."""
     completed_at: AwareDatetime | None = None
     """When it concluded (None: it has not)."""
 
