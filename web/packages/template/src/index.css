@@ -1,0 +1,12 @@
+/* (Tailwind 4 and daisyUI, for this plugin's own bundle: the shell adopts this stylesheet into
+   the plugin's shadow root. daisyUI's palette reaches the root as the shell's tokens on the
+   wrapper — they are `@property ... inherits: false`, so the shell copies them there — and
+   `data-theme` on the wrapper is the theme the page is showing.) */
+@import "tailwindcss" source(none);
+@source "./";
+
+@plugin "daisyui" {
+	themes:
+		light --default,
+		dark --prefersdark;
+}

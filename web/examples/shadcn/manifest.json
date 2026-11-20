@@ -1,0 +1,13 @@
+{
+	"name": "shadcn",
+	"version": "0.1.0",
+	"sdk": "^1.0",
+	"entry": "index.js",
+	"styles": ["index.css"],
+	"isolation": "shadow",
+	"contributes": {
+		"nav": [{ "title": "shadcn/ui", "route": "gallery" }],
+		"routes": ["gallery"],
+		"widgets": [{ "slot": "dashboard", "id": "shadcn-card" }]
+	}
+}

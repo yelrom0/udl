@@ -28,6 +28,7 @@ htmlcov/
 web/node_modules/
 web/**/node_modules/
 web/packages/*/dist/
+web/examples/*/dist/
 web/playwright-report/
 web/test-results/
 web/playwright/.cache/
@@ -39,3 +40,4 @@ src/udl/plugins/integrations/*/ui/*.map
 
 # Test coverage and TypeScript build output
 web/packages/*/coverage/
+web/examples/*/coverage/

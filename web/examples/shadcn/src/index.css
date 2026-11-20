@@ -1,0 +1,57 @@
+/* (Tailwind 4, scanning this plugin's own files and no others: the shell's CSS is its own.) */
+@import "tailwindcss" source(none);
+@source "./";
+
+/* (The theme switch is the shell's `data-theme` on the plugin's wrapper, not the system's.) */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* (shadcn's tokens, mapped onto daisyUI's: the shell puts the theme's `--color-*` on the
+   wrapper it draws the plugin into (`:host > *`, since `:root` matches nothing in a shadow
+   root), so the plugin follows the shell's theme and its two palettes without a copy of its
+   own.) */
+:host > * {
+	--radius: 0.625rem;
+	--background: var(--color-base-100);
+	--foreground: var(--color-base-content);
+	--card: var(--color-base-100);
+	--card-foreground: var(--color-base-content);
+	--popover: var(--color-base-100);
+	--popover-foreground: var(--color-base-content);
+	--primary: var(--color-primary);
+	--primary-foreground: var(--color-primary-content);
+	--secondary: var(--color-base-200);
+	--secondary-foreground: var(--color-base-content);
+	--muted: var(--color-base-200);
+	--muted-foreground: var(--color-base-content);
+	--accent: var(--color-accent);
+	--accent-foreground: var(--color-accent-content);
+	--destructive: var(--color-error);
+	--border: var(--color-base-300);
+	--input: var(--color-base-300);
+	--ring: var(--color-primary);
+}
+
+@theme inline {
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--color-card: var(--card);
+	--color-card-foreground: var(--card-foreground);
+	--color-popover: var(--popover);
+	--color-popover-foreground: var(--popover-foreground);
+	--color-primary: var(--primary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-destructive: var(--destructive);
+	--color-border: var(--border);
+	--color-input: var(--input);
+	--color-ring: var(--ring);
+	--radius-sm: calc(var(--radius) - 4px);
+	--radius-md: calc(var(--radius) - 2px);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) + 4px);
+}

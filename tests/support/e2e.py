@@ -51,6 +51,8 @@ ROOT: Final[Path] = Path(__file__).resolve().parents[2]
 E2E_PLUGINS: Final[Path] = Path(__file__).resolve().parent / "e2e_plugins"
 # The UI plugins the shell loads in the e2e run: a working one and one that throws (18.9).
 E2E_UI_PLUGINS: Final[Path] = Path(__file__).resolve().parent / "e2e_ui_plugins"
+# 18.10's proof: the shadcn/ui example plugin, as `make web` builds it (a folder of bundles).
+SHADCN_EXAMPLE: Final[Path] = ROOT / "web" / "examples" / "shadcn" / "dist"
 # How long a test server gets to answer before it is called broken (a loaded machine is slow).
 READY_TIMEOUT: Final[float] = 30
 # How long the server runs on its own before it stops itself, so a test that leaves it behind
@@ -86,7 +88,7 @@ api_key = "{key}"
 
 [web]
 enabled = true
-ui_plugin_dirs = ["{ui}"]
+ui_plugin_dirs = {ui}
 
 [automations]
 enabled = false
@@ -99,13 +101,15 @@ def write_config(root: Path, port: int) -> Path:
     browser is what most of the e2e tests are), from the build `make e2e` makes first. The API
     has `API_KEY`, so the tests sign in as a user does (18.4's session) rather than run against
     an open server."""
+    # (18.10's example is built by `make e2e`; a run that has not built it serves the other two.)
+    ui_dirs = [E2E_UI_PLUGINS] + ([SHADCN_EXAMPLE] if SHADCN_EXAMPLE.is_dir() else [])
     path = root / "config.toml"
     path.write_text(
         CONFIG.format(
             downloads=root / "downloads",
             database=root / "udl.db",
             plugins=E2E_PLUGINS,
-            ui=E2E_UI_PLUGINS,
+            ui=json.dumps([str(one) for one in ui_dirs]),
             port=port,
             key=API_KEY,
         )
