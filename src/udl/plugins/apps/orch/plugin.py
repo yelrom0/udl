@@ -83,17 +83,6 @@ class Orch(AppPlugin[OrchSettings]):
             stored.AgentToken,
         )
 
-    @classmethod
-    def operations(cls) -> list[Operation]:
-        """The operations orch adds (the rest are 26.6's)."""
-        return [
-            cls.operation(
-                "issue_token",
-                title="Issue an agent's token",
-                hints=OperationHints(admin=True),
-            )
-        ]
-
     async def issue_token(
         self, request: IssueTokenRequest, *, service: UDLService
     ) -> IssueTokenResponse:
@@ -109,9 +98,14 @@ class Orch(AppPlugin[OrchSettings]):
 
     @classmethod
     def operations(cls) -> list[Operation]:
-        """The operations it adds: the queue's (27.3) and what to do next (27.4), each one of
-        its methods."""
+        """The operations it adds: the queue's (27.3), what to do next (27.4) and the agent
+        token's (27.2), each one of its methods (the rest are 26.6's)."""
         return [
+            cls.operation(
+                "issue_token",
+                title="Issue an agent's token",
+                hints=OperationHints(admin=True),
+            ),
             cls.operation(
                 "assign",
                 title="Assign a task",
