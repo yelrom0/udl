@@ -5,11 +5,11 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { api } from "../api";
 import { confirms } from "../stores/confirms";
 import type { UIPluginInfo } from "../stores/plugins";
 import { setTheme } from "../stores/theme";
 import { toasts } from "../stores/toasts";
-import { api } from "../api";
 import { contextOf, TOKENS } from "./context";
 import { forgetListeners, publishEvent } from "./events";
 
