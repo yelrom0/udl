@@ -928,6 +928,19 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - `orch_ready` (`task`, `note`): refuses with the blockers unless ready; then moves the task to `ready`, writes the note as `progress`, publishes `orch.task.ready`. Where the project's `merge = agent` and the caller is the assignee, it merges instead (28.3's path) and the task goes to `merged`.
 - Tests first: `tests/unit/plugins/apps/orch/test_readiness.py`: the phase's third bullet. Bot comments are real ones copied from udl's first PRs (23.2) into `tests/fixtures/reviews/`.
 - Done when: a comment with one PARTIALLY FIXED row is not ready, by test.
+- **Built (deepseek-b, 20 Nov, PR #N):** `readiness.py` — `readiness()` (pure) over a `Pull` that
+  keeps only what a verdict needs, and `parse_review()` for the bot's status table and its
+  numbered and bulleted lists; an approve line never overrides an open item, and a comment
+  written before the head's commit does not count. `Readiness` adds `held`, and `open_items` are
+  the bot's items that are not `fixed`. `orch_readiness` (read-only) and `orch_ready` (refuses
+  with the blockers; then moves the task to `ready` with its `progress` note in the same
+  `save_all` write, and publishes `orch.task.ready`). The GitHub integration grew
+  `head_committed_at` on a pull (`get_commit`), which is what makes "for this head" checkable.
+  Tests: 39 in `test_readiness.py` (the fixture is 28.2's real review comment,
+  `tests/fixtures/reviews/follow-up-all-clear.md`) and 12 in `test_readiness_operations.py`
+  through the service with a fake `github` app. The card's "merge instead when `merge = agent`"
+  is 28.3's, not built here. Names: the operations are `orch_readiness` and `orch_ready` (the
+  card wrote only `orch_ready`); `orch_pr_status` (27.5) can wrap `readiness` later.
 
 **27.7 The dispatcher** · needs 27.2–27.6, 25.7
 - Build: `dispatcher.py`, run from `OrchApp.serve()`. One loop per enabled agent, woken by `orch.*` and `github.pr.*` events and by a 30 s tick.

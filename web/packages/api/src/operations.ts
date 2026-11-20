@@ -68,6 +68,8 @@ export const operations = {
 	orch_list_actions: { method: "post", path: "/plugins/orch/list_actions" },
 	orch_list_runners: { method: "post", path: "/plugins/orch/list_runners" },
 	orch_my_task: { method: "post", path: "/plugins/orch/my_task" },
+	orch_readiness: { method: "post", path: "/plugins/orch/readiness" },
+	orch_ready: { method: "post", path: "/plugins/orch/ready" },
 	orch_reorder_queue: { method: "post", path: "/plugins/orch/reorder_queue" },
 	orch_runner_install: { method: "post", path: "/plugins/orch/runner_install" },
 	orch_runner_login: { method: "post", path: "/plugins/orch/runner_login" },

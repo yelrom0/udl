@@ -18,7 +18,7 @@ import contextlib
 import logging
 from collections.abc import Awaitable, Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
 # Package Imports
 from pydantic import BaseModel, ValidationError
@@ -41,9 +41,17 @@ from udl.plugins.apps.orch import actions as acted
 from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch import records as stored
 from udl.plugins.apps.orch import suggest as suggested
+from udl.plugins.apps.orch import transitions
 from udl.plugins.apps.orch.agents import AgentRole
-from udl.plugins.apps.orch.links import LINK_CHANGED, LinkChanged, LinkRecords, event_url
+from udl.plugins.apps.orch.links import (
+    LINK_CHANGED,
+    LinkChanged,
+    LinkRecords,
+    event_url,
+    pull_ref,
+)
 from udl.plugins.apps.orch.models import (
+    READY,
     Action,
     Actions,
     ActionState,
@@ -54,9 +62,15 @@ from udl.plugins.apps.orch.models import (
     MyTaskNote,
     MyTaskRequest,
     MyTaskResponse,
+    NoteKind,
+    OwnerKind,
+    Principal,
     PullReader,
     QueueEntry,
     QueueRequest,
+    Readiness,
+    ReadinessRequest,
+    ReadyRequest,
     ReorderQueueRequest,
     SetActionRequest,
     Suggestions,
@@ -64,6 +78,8 @@ from udl.plugins.apps.orch.models import (
     TaskQueue,
     UnassignTaskRequest,
 )
+from udl.plugins.apps.orch.readiness import TASK_READY, Pull, TaskReady
+from udl.plugins.apps.orch.readiness import readiness as assess
 from udl.plugins.apps.orch.settings import OrchSettings
 from udl.plugins.apps.orch.tokens import (
     IssueTokenRequest,
@@ -95,6 +111,10 @@ if TYPE_CHECKING:
 __all__ = ["EventEmission", "Orch", "OrchContext", "Stopping", "Subscription"]
 
 log = logging.getLogger(__name__)
+
+_UDL: Final = Principal(kind="human", name="udl")
+"""(Who udl is when it moves a task itself: a person, since the table lets only one move a task to
+`ready` or `merged`.)"""
 
 
 class Subscription(Protocol):
@@ -202,7 +222,7 @@ class Orch(AppPlugin[OrchSettings]):
     @classmethod
     def event_types(cls) -> Sequence[EventType[Any]]:
         """The events orch publishes: its links' changes (26.4), and its tasks' from 26.6 on."""
-        return (LINK_CHANGED,)
+        return (LINK_CHANGED, TASK_READY)
 
     def __init__(
         self, settings: OrchSettings, *, clock: Clock, records: AppRecords | None = None
@@ -268,6 +288,16 @@ class Orch(AppPlugin[OrchSettings]):
                 "drop_action",
                 title="Drop a human action",
                 hints=OperationHints(idempotent=True),
+            ),
+            cls.operation(
+                "readiness",
+                title="Whether a pull may be merged",
+                hints=OperationHints(read_only=True, open_world=True),
+            ),
+            cls.operation(
+                "ready",
+                title="Mark a task's pull ready",
+                hints=OperationHints(open_world=True),
             ),
             cls.operation(
                 "list_runners",
@@ -506,6 +536,96 @@ class Orch(AppPlugin[OrchSettings]):
             reason=request.reason,
         )
         return _action(found)
+
+    # -- readiness (27.6) ----------------------------------------------------------------------
+
+    async def readiness(self, request: ReadinessRequest, *, service: UDLService) -> Readiness:
+        """Whether the pull of the task `key` may be merged (27.6): ready or not, why not, and
+        the review bot's items it still lists. It reads: nothing changes."""
+        project = await self._project(request.project)
+        task, pull, why = await self._pull_of(service, project, request.key)
+        if pull is None:
+            return Readiness(ready=False, blockers=[why])
+        return await self._assess(task, pull, project)
+
+    async def ready(self, request: ReadyRequest, *, service: UDLService) -> Readiness:
+        """Mark the task `key`'s pull ready: it moves to `ready`, with `note` as its progress
+        note, and `orch.task.ready` is published.
+
+        Raises NotAllowed with the blockers unless it is ready (27.6): not a draft, cleanly
+        mergeable, its checks passed, the review bot's latest comment for this head clean, every
+        task it needs merged, and no hold. A task with a hold is not ready however clean it is
+        (it is built now and merged later, 28.3)."""
+        project = await self._project(request.project)
+        task, pull, why = await self._pull_of(service, project, request.key)
+        if pull is None:
+            raise NotAllowed(
+                f"{request.key!r} cannot be ready: {why}",
+                hint="Open its pull first (27.5), then ask again.",
+            )
+        found = await self._assess(task, pull, project)
+        if not found.ready:
+            raise NotAllowed(
+                f"{request.key!r} is not ready: {'; '.join(found.blockers)}",
+                hint="Fix what it says, then ask again.",
+            )
+        moved = transitions.move(task, READY, by=_UDL)
+        note = stored.Note(
+            owner_kind=OwnerKind.TASK,
+            owner=task.id,
+            note_kind=NoteKind.PROGRESS,
+            text=request.note or f"Ready to merge: {pull.head_sha[:7]}.",
+            author="udl",
+        )
+        await stored.TaskRecords(self.records).save_all([moved], also=[note])
+        events = AppEvents(service.bus, self.name, self.event_types())
+        await events.emit(
+            TASK_READY.name,
+            TaskReady(
+                project=project,
+                task=request.key,
+                pull=await self._pull_url(project, request.key),
+                sha=pull.head_sha,
+            ),
+            dedupe_key=f"{project}:{request.key}:{pull.head_sha}",
+        )
+        return found
+
+    async def _pull_of(
+        self, service: UDLService, project: str, key: str
+    ) -> tuple[stored.Task, Pull | None, str]:
+        """The task `key` of `project`, and its pull as readiness reads it (None and why when it
+        has none), read through udl's own `github_get_pull`."""
+        task = await stored.TaskRecords(self.records).task(project, key)
+        if task is None:
+            raise DoesNotExist(f"There is no task called {key!r} in {project!r}")
+        links = await stored.LinkRecords(self.records).for_owner(project, OwnerKind.TASK, key)
+        found = next((link for link in links if link.link_kind == "pull"), None)
+        if found is None:
+            return task, None, "it has no pull"
+        ref = pull_ref(found.url)
+        if ref is None:
+            return task, None, f"its pull link is not a pull ({found.url})"
+        repo, number = ref
+        detail = await service.call("github_get_pull", {"repo": repo, "number": number})
+        return task, Pull.model_validate(detail.model_dump()), ""
+
+    async def _pull_url(self, project: str, key: str) -> str:
+        """The URL of the task `key`'s pull, or "" when it has none."""
+        links = await stored.LinkRecords(self.records).for_owner(
+            project, OwnerKind.TASK, key
+        )
+        return next((link.url for link in links if link.link_kind == "pull"), "")
+
+    async def _assess(self, task: stored.Task, pull: Pull, project: str) -> Readiness:
+        """`readiness()` for `task`, with its project's review bot and every task's state."""
+        found = await stored.ProjectRecords(self.records).project(project)
+        if found is None:
+            raise DoesNotExist(f"There is no project called {project!r}")
+        tasks = {
+            one.key: one.state for one in await stored.TaskRecords(self.records).tasks(project)
+        }
+        return assess(pull, bot=found.review_bot, task=task, tasks=tasks)
 
     # -- the queue (27.3) ----------------------------------------------------------------------
 

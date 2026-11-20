@@ -1132,6 +1132,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Whether the pull of the task `key` may be merged (27.6): ready or not, why not, and
+         * @description Whether the pull of the task `key` may be merged (27.6): ready or not, why not, and
+         *     the review bot's items it still lists. It reads: nothing changes.
+         */
+        post: operations["orch_readiness"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark the task `key`'s pull ready: it moves to `ready`, with `note` as its progress
+         * @description Mark the task `key`'s pull ready: it moves to `ready`, with `note` as its progress
+         *     note, and `orch.task.ready` is published.
+         *
+         *     Raises NotAllowed with the blockers unless it is ready (27.6): not a draft, cleanly
+         *     mergeable, its checks passed, the review bot's latest comment for this head clean, every
+         *     task it needs merged, and no hold. A task with a hold is not ready however clean it is
+         *     (it is built now and merged later, 28.3).
+         */
+        post: operations["orch_ready"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/orch/reorder_queue": {
         parameters: {
             query?: never;
@@ -4887,6 +4934,12 @@ export interface components {
              */
             head: string;
             /**
+             * Head Committed At
+             * @description When the commit at its head was committed (None: GitHub did not say). A review bot's
+             *     first comment counts only if it was written after this (27.6).
+             */
+            head_committed_at?: string | null;
+            /**
              * Head Sha
              * @description The commit at its head.
              */
@@ -5070,6 +5123,66 @@ export interface components {
          */
         ReadPolicy: "first" | "merge";
         /**
+         * Readiness
+         * @description Whether a pull may be merged for a task (27.6): ready or not, why not, and what the
+         *     review bot still lists.
+         */
+        Readiness: {
+            /**
+             * Blockers
+             * @description Why it may not be merged, in the order a person would look at them (empty: it may).
+             */
+            blockers?: string[];
+            /**
+             * Held
+             * @description Whether it is held (`task.hold`) and otherwise ready: built now, merged later.
+             * @default false
+             */
+            held: boolean;
+            /**
+             * Open Items
+             * @description The review bot's items that are not fixed, for the task's note.
+             */
+            open_items?: components["schemas"]["ReviewItem"][];
+            /**
+             * Ready
+             * @description Whether it may be merged now.
+             */
+            ready: boolean;
+        };
+        /**
+         * ReadinessRequest
+         * @description Asking whether a task's pull may be merged (27.6).
+         */
+        ReadinessRequest: {
+            /**
+             * Key
+             * @description The task whose pull is asked about (`27.6`).
+             */
+            key: string;
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+        };
+        /**
+         * ReadyRequest
+         * @description Marking a task's pull ready: the task, and the note to write with it (27.6).
+         */
+        ReadyRequest: {
+            /**
+             * Key
+             * @description The task whose pull is ready (`27.6`).
+             */
+            key: string;
+            /**
+             * Note
+             * @description What to write as the task's `progress` note (empty: a line saying it is ready).
+             * @default
+             */
+            note: string;
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+        };
+        /**
          * RegexStep
          * @description The matches of a regex in each value: its first group, if it has groups, else the whole
          *     match.
@@ -5221,6 +5334,35 @@ export interface components {
              */
             path: string;
         };
+        /**
+         * ReviewItem
+         * @description One item of the review bot's comment: what it says, and where it is.
+         */
+        ReviewItem: {
+            /**
+             * Number
+             * @description Its number in the comment (`1`, or empty for a row without one).
+             * @default
+             */
+            number: string;
+            /**
+             * @description Where it is; anything but `fixed` keeps the pull from being ready.
+             * @default open
+             */
+            status: components["schemas"]["ReviewStatus"];
+            /**
+             * Text
+             * @description What the item is, as the bot wrote it (its status word left out).
+             */
+            text: string;
+        };
+        /**
+         * ReviewStatus
+         * @description Where one of the review bot's items is: open, fixed, partly fixed, not fixed, or a new
+         *     issue it found this round.
+         * @enum {string}
+         */
+        ReviewStatus: "open" | "fixed" | "partially_fixed" | "not_fixed" | "new_issue";
         /** RunActionRequestBody */
         RunActionRequestBody: {
             /**
@@ -11118,6 +11260,162 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MyTaskResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_readiness: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReadinessRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Readiness"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_ready: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReadyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Readiness"];
                 };
             };
             /** @description Bad Request */

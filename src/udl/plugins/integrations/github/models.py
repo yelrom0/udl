@@ -85,6 +85,31 @@ class PullState(StrEnum):
     CLOSED = "closed"
 
 
+class GhCommit(GhModel):
+    """A commit, as GitHub sends it (only what udl reads of it)."""
+
+    sha: str = ""
+    """Its sha."""
+    commit: GhCommit.Details
+    """What it is: who wrote and committed it, and when."""
+
+    class Details(GhModel):
+        """A commit's own details."""
+
+        committer: GhCommit.When | None = None
+        """Who committed it, and when (None: GitHub did not say)."""
+        author: GhCommit.When | None = None
+        """Who wrote it, and when."""
+
+    class When(GhModel):
+        """A person and a time."""
+
+        name: str = ""
+        """Their name."""
+        date: AwareDatetime | None = None
+        """When (None: GitHub did not say)."""
+
+
 class GhPull(GhModel):
     """A pull request."""
 
