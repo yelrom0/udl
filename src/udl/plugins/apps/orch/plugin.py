@@ -301,6 +301,7 @@ class Orch(AppPlugin[OrchSettings]):
         return Suggestions(project=project, suggestions=found)
 
     # -- the queue (27.3) ----------------------------------------------------------------------
+
     async def assign(self, request: AssignTaskRequest) -> TaskQueue:
         """Assign a task to an agent: it joins that agent's queue (at its end, or at a position).
 
