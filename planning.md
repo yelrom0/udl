@@ -139,7 +139,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [ ] 28.5 Events for all of it, and a `notify` example
   - [ ] 28.6 End to end on fakes: task → agent → question → answer → PR → ready → merged
 - [ ] **Phase 29: Screens (Google Stitch) and the `orch` UI plugin**
-  - [ ] 29.1 **(Claude)** A new Stitch project: design system from the shell's daisyUI themes; every screen below, desktop and phone, light and dark
+  - [!] 29.1 **(Claude)** A new Stitch project: design system from the shell's daisyUI themes; every screen below, desktop and phone, light and dark. BLOCKED: the user's look through the screens ([web/plugins/orch/design/](web/plugins/orch/design/README.md)), and the changes they ask for
   - [ ] 29.2 The `orch` UI plugin's skeleton: manifest, routes, stores, live data
   - [ ] 29.3 Inbox (home)
   - [ ] 29.4 Board: features and tasks, agents' queues, the suggested list, drag to assign
