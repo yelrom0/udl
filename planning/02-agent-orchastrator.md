@@ -931,8 +931,10 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   what the branch is built on when that moved (the repo's base, or the needed task's branch while
   its pull is open; a conflict is `NotAllowed` with git's hint and nothing is pushed), the repo's
   `gate` run in the lane under `[apps.orch] gate_minutes` (60) — read, not raised on, so the
-  agent gets its real exit code and the last 200 lines of its output, and a gate that runs past
-  its time or is not installed is `NotAllowed` — then `git push
+  agent gets its real exit code and the last 200 lines of its output (each stream's own end: the
+  last 100 of stdout and of stderr, since a suite's summary is on one and a compiler's error on
+  the other, and `HostShell.run(tail=True)` keeps stdout's end rather than its first 64 KiB) — and
+  a gate that runs past its time or is not installed is `NotAllowed` — then `git push
   --force-with-lease=<branch>:<the sha we saw>`, `github_open_pull` (as udl, not as the agent: an
   implementer may not call it) with the body's "Task: `<key>`" and "Merge after #N" for each
   needed task that has a pull, and the `pull` link on the task. A second push sends the title and
