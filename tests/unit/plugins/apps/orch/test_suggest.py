@@ -257,3 +257,79 @@ def test_a_limit_of_nothing_suggests_nothing(limit: int) -> None:
     tasks = [task("F-1.1")]
 
     assert suggest(tasks, [feature()], [agent()], agent="fake-a", limit=limit) == []
+
+
+def test_a_cancelled_dependent_is_not_one_it_unblocks() -> None:
+    # (The work it waited for is not needed any more, so it does not count.)
+    tasks = [task("F-1.1"), task("F-2.1", feature="F-2", state="cancelled", needs=["F-1.1"])]
+    features = [feature("F-1", status="planned", order=1), feature("F-2", order=2)]
+
+    (found,) = suggest(tasks, features, [agent()], agent="fake-a")
+
+    assert found.score == 0
+    assert found.reasons == []
+
+
+def test_a_task_with_two_ready_needs_is_not_suggested() -> None:
+    # (It would have to stack on two branches, which one suggestion cannot say: it waits until
+    # one of them is merged.)
+    tasks = [
+        task("F-1.1", feature="F-1", state="ready"),
+        task("F-2.1", feature="F-2", state="ready"),
+        task("F-3.1", feature="F-3", needs=["F-1.1", "F-2.1"]),
+    ]
+    features = [feature("F-1", order=1), feature("F-2", order=2), feature("F-3", order=3)]
+
+    assert suggest(tasks, features, [agent()], agent="fake-a") == []
+
+
+def test_a_queued_task_is_not_the_agents_last_task() -> None:
+    # (It has not worked it yet, so it says nothing about what follows.)
+    tasks = [
+        task("F-1.1", feature="F-1", state="queued", assignee="fake-a", minutes=9),
+        task("F-2.1", feature="F-2"),
+    ]
+    features = [
+        feature("F-1", status="planned", order=1),
+        feature("F-2", status="planned", order=2),
+    ]
+
+    (found,) = suggest(tasks, features, [agent()], agent="fake-a")
+
+    assert found.score == 0
+    assert "your last task was in this feature" not in found.reasons
+
+
+def test_a_busy_agent_is_not_suggested_anything_across_projects() -> None:
+    # (A caller reads the agents that are on something in every project and names them: a task of
+    # this project cannot know about another's.)
+    tasks = [task("F-1.1")]
+
+    assert suggest(tasks, [feature()], [agent("fake-a")], busy=["fake-a"]) == []
+
+
+def test_the_pairing_does_not_depend_on_the_order_the_agents_were_read_in() -> None:
+    tasks = [task("F-1.1")]
+    agents = [agent("fake-a"), agent("fake-b")]
+
+    found = suggest(tasks, [feature()], agents)
+
+    assert [one.agent for one in found] == ["fake-a"]
+    assert suggest(tasks, [feature()], list(reversed(agents))) == found
+
+
+def test_the_repo_rule_needs_a_repo_on_both_tasks() -> None:
+    # (A task with no repo, or a last task with none, is not "in the same repo".)
+    tasks = [
+        task("F-1.1", feature="F-1", state="merged", assignee="fake-a", repo=None),
+        task("F-2.1", feature="F-2", repo=None),
+    ]
+    features = [
+        feature("F-1", status="planned", order=1),
+        feature("F-2", status="planned", order=2),
+    ]
+
+    (found,) = suggest(tasks, features, [agent()], agent="fake-a")
+
+    assert found.score == 0
+    assert found.reasons == []

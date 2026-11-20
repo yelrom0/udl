@@ -127,12 +127,16 @@ class Orch(AppPlugin[OrchSettings]):
         tasks it unblocks all count. With no agent, each task is paired with the idle agent it
         suits best."""
         project = await self._project(request.project)
+        # (An agent on a task of another project is not idle here: a task of this project
+        # cannot know about another's, so they are read across every project.)
+        on = [one for one in await self.records.list(stored.Task) if one.state == "in_progress"]
         found = suggested.suggest(
             await stored.TaskRecords(self.records).tasks(project),
             await stored.FeatureRecords(self.records).features(project),
             await stored.AgentRecords(self.records).agents(),
             agent=request.agent,
             limit=request.limit,
+            busy=sorted({one.assignee for one in on if one.assignee}),
         )
         return Suggestions(project=project, suggestions=found)
 

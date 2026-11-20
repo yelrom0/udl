@@ -8,7 +8,7 @@ manager (27.8) and a person all see one ranking.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Final
 
 from udl.errors import DoesNotExist
@@ -19,6 +19,13 @@ __all__ = ["suggest"]
 
 DONE: Final[frozenset[str]] = frozenset({"merged", "done"})
 """The states a need is done in: its work is in, so what waits on it may start."""
+
+OVER: Final[frozenset[str]] = DONE | {"cancelled"}
+"""The states nothing waits on: its work is in, or it will not be done at all."""
+
+WORKED: Final[frozenset[str]] = frozenset({"in_progress", "blocked", "ready", "merged", "done"})
+"""The states an agent has started a task in: a `queued` one it has not, and says nothing about
+what follows it."""
 
 STARTS: Final[frozenset[str]] = frozenset({"ready"})
 """The states a need may be in for a task to start on its branch instead of waiting."""
@@ -34,6 +41,7 @@ def suggest(
     *,
     agent: str | None = None,
     limit: int = 10,
+    busy: Iterable[str] = (),
 ) -> list[Suggestion]:
     """The tasks to do next, best first, each with the agent it suits and why.
 
@@ -44,8 +52,9 @@ def suggest(
     to +3. Ties go to the feature's `order`, then the task's key.
 
     With `agent`, its own tasks are ranked. Without, each candidate is paired with the idle
-    agent (one with nothing in progress) it scores best for. Raises DoesNotExist for an agent
-    that is not one."""
+    agent it scores best for: one enabled, not paused, on nothing in these tasks — or named in
+    `busy`, which is how a caller says an agent is on something in another project (a task of
+    one project cannot know of another's). Raises DoesNotExist for an agent that is not one."""
     if limit <= 0:
         return []
     known = {one.name: one for one in agents}
@@ -57,24 +66,26 @@ def suggest(
     by_key = {one.key: one for one in tasks}
     by_feature = {one.key: one for one in features}
     unblocks = _unblocks(tasks)
-    wanted = [known[agent]] if agent is not None else _idle(tasks, agents)
+    wanted = [known[agent]] if agent is not None else _idle(tasks, agents, busy)
+    # (What each agent worked most recently, read once: it is what two of the scores and the
+    # tie-break ask about.)
+    last = {one.name: _last(tasks, one.name) for one in wanted}
     ranked: list[Suggestion] = []
     for one in tasks:
         if not _candidate(one, by_key):
             continue
-        best: tuple[int, Agent] | None = None
+        best: tuple[int, list[str], Agent] | None = None
         for who in wanted:
             if who.projects and one.project not in who.projects:
                 continue
-            scored = _score(one, who, tasks, by_feature, unblocks)
+            score, reasons = _rank(one, who, last[who.name], by_feature, by_key, unblocks)
             # (A tie goes to the agent whose name comes first, so the answer never depends on
             # the order the agents were read in.)
-            if best is None or scored > best[0] or (scored == best[0] and who.name < best[1].name):
-                best = (scored, who)
+            if best is None or score > best[0] or (score == best[0] and who.name < best[2].name):
+                best = (score, reasons, who)
         if best is None:
             continue
-        score, who = best
-        reasons = _reasons(one, who, tasks, by_feature, by_key, unblocks)
+        score, reasons, who = best
         ranked.append(
             Suggestion(
                 task=one.key,
@@ -100,6 +111,10 @@ def _candidate(task: Task, by_key: dict[str, Task]) -> bool:
     """`task` may be started now: it is an open build task whose needs are in."""
     if task.state != "open" or task.task_kind != "build":
         return False
+    if sum(1 for need in task.needs if need in by_key and by_key[need].state in STARTS) > 1:
+        # (It would have to stack on two branches at once, which one suggestion cannot say:
+        # it waits until one of them is merged.)
+        return False
     for need in task.needs:
         found = by_key.get(need)
         if found is None or found.state not in DONE | STARTS:
@@ -111,72 +126,57 @@ def _unblocks(tasks: Sequence[Task]) -> Counter[str]:
     """How many unfinished tasks each task's key is a need of."""
     counted: Counter[str] = Counter()
     for one in tasks:
-        if one.state in DONE:
+        if one.state in OVER:
             continue
         for need in one.needs:
             counted[need] += 1
     return counted
 
 
-def _idle(tasks: Sequence[Task], agents: Sequence[Agent]) -> list[Agent]:
-    """The agents a task may be suggested to: enabled, not paused, and on nothing now."""
-    busy = {one.assignee for one in tasks if one.state == "in_progress" and one.assignee}
-    return [one for one in agents if one.enabled and not one.paused and one.name not in busy]
+def _idle(tasks: Sequence[Task], agents: Sequence[Agent], busy: Iterable[str]) -> list[Agent]:
+    """The agents a task may be suggested to: enabled, not paused, and on nothing now (in these
+    tasks, or in the ones the caller named)."""
+    on = {one.assignee for one in tasks if one.state == "in_progress" and one.assignee}
+    on.update(busy)
+    return [one for one in agents if one.enabled and not one.paused and one.name not in on]
 
 
 def _last(tasks: Sequence[Task], name: str) -> Task | None:
     """The task `name` worked most recently (by when it last changed), or None."""
-    mine = [one for one in tasks if one.assignee == name]
+    mine = [one for one in tasks if one.assignee == name and one.state in WORKED]
     return max(mine, key=lambda one: (one.updated_at, _natural(one.key))) if mine else None
 
 
-def _score(
+def _rank(
     task: Task,
     who: Agent,
-    tasks: Sequence[Task],
-    by_feature: dict[str, Feature],
-    unblocks: Counter[str],
-) -> int:
-    """How well `task` suits `who` (higher is better)."""
-    score = 0
-    found = by_feature.get(task.feature)
-    if found is not None and found.status == "active":
-        score += 3
-    last = _last(tasks, who.name)
-    if last is not None and last.key != task.key:
-        if last.feature == task.feature:
-            score += 3
-        elif task.repo is not None and last.repo == task.repo:
-            score += 1
-    return score + min(unblocks[task.key], UNBLOCKS)
-
-
-def _reasons(
-    task: Task,
-    who: Agent,
-    tasks: Sequence[Task],
+    last: Task | None,
     by_feature: dict[str, Feature],
     by_key: dict[str, Task],
     unblocks: Counter[str],
-) -> list[str]:
-    """Why `task` was suggested to `who`, in the order they were counted."""
+) -> tuple[int, list[str]]:
+    """How well `task` suits `who`, and why: its score and the reasons for it, counted once."""
+    score = 0
     reasons: list[str] = []
     found = by_feature.get(task.feature)
     if found is not None and found.status == "active":
+        score += 3
         reasons.append("the feature is active")
-    last = _last(tasks, who.name)
     if last is not None and last.key != task.key:
         if last.feature == task.feature:
+            score += 3
             reasons.append("your last task was in this feature")
         elif task.repo is not None and last.repo == task.repo:
+            score += 1
             reasons.append("your last task was in this repo")
     counted = unblocks[task.key]
     if counted:
+        score += min(counted, UNBLOCKS)
         reasons.append(f"it unblocks {counted} task{'s' if counted > 1 else ''}")
     stack_on = _stack_on(task, by_key)
     if stack_on is not None:
         reasons.append(f"stack on {stack_on}")
-    return reasons
+    return score, reasons
 
 
 def _stack_on(task: Task, by_key: dict[str, Task]) -> str | None:

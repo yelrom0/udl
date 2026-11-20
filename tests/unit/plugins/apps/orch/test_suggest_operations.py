@@ -21,7 +21,7 @@ from udl.core.operations import OperationHints
 from udl.core.service import UDLService
 from udl.errors import DoesNotExist
 from udl.plugins.apps.base import AppRecords
-from udl.plugins.apps.orch.models import Suggestions, SuggestRequest
+from udl.plugins.apps.orch.models import Principal, Suggestions, SuggestRequest
 from udl.plugins.apps.orch.plugin import Orch
 from udl.plugins.apps.orch.records import (
     Agent,
@@ -119,6 +119,41 @@ async def test_the_plan_is_read_best_first(service: UDLService) -> None:
 async def test_an_agent_that_is_not_one_is_refused(service: UDLService) -> None:
     with pytest.raises(DoesNotExist, match="erine-c"):
         await service.call("orch_suggest", {"project": "udl", "agent": "erine-c"})
+
+
+async def test_an_agent_on_another_projects_task_is_not_idle(tmp_path: Path) -> None:
+    # (A task of this project cannot know about another's: the operation reads them all.)
+    async with UDLService(settings(tmp_path), registry=orch_registry()) as service:
+        records = AppRecords(service.db)
+        projects = ProjectRecords(records)
+        for name in ("udl", "thevault"):
+            await projects.save_project(Project(name=name, title=name))
+        await FeatureRecords(records).save_feature(
+            Feature(project="udl", key="F-1", title="The queue")
+        )
+        await FeatureRecords(records).save_feature(
+            Feature(project="thevault", key="F-1", title="The queue")
+        )
+        tasks = TaskRecords(records)
+        await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.1", title="Assign"))
+        other = await tasks.save_task(
+            Task(
+                project="thevault",
+                feature="F-1",
+                key="F-1.1",
+                title="Something else",
+                assignee="fake-a",
+            )
+        )
+        await tasks.move(other, "queued", by=Principal(kind="human", name="me"))
+        await tasks.move(
+            other, "in_progress", by=Principal(kind="agent", name="fake-a", role="start")
+        )
+        await AgentRecords(records).save_agent(Agent(name="fake-a", title="Fake A", runner="fake"))
+
+        answer = await suggested(service, project="udl")
+
+    assert answer.suggestions == []
 
 
 async def test_the_limit_is_the_operations(service: UDLService) -> None:
