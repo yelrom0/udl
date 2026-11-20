@@ -139,8 +139,8 @@ class Orch(AppPlugin[OrchSettings]):
     @classmethod
     def record_kinds(cls) -> Sequence[type[Record]]:
         """The kinds of record orch defines: a project, a repo, a feature, a task, a note and the
-        counter their keys come from (26.2-26.5), an agent, its session and the events of it
-        (27.1), and the tokens its agents call udl with (27.2)."""
+        counter their keys come from (26.2-26.5), a link (26.4), an agent, its session and the
+        events of it (27.1), and the tokens its agents call udl with (27.2)."""
         return (
             stored.Project,
             stored.Repo,
@@ -148,6 +148,7 @@ class Orch(AppPlugin[OrchSettings]):
             stored.Task,
             stored.Note,
             stored.Counter,
+            stored.Link,
             stored.Agent,
             stored.AgentSession,
             stored.SessionEvent,
@@ -234,30 +235,6 @@ class Orch(AppPlugin[OrchSettings]):
                 with contextlib.suppress(asyncio.CancelledError):
                     await waiting
 
-    # -- what to do next (27.4) ----------------------------------------------------------------
-
-    async def suggest(self, request: SuggestRequest) -> Suggestions:
-        """The tasks to do next, best first, each with the agent it suits and why.
-
-        A task is a candidate once everything it needs is merged (or done) — or `ready`, when it
-        may start on that task's branch instead. An active feature, the agent's last task and the
-        tasks it unblocks all count. With no agent, each task is paired with the idle agent it
-        suits best."""
-        project = await self._project(request.project)
-        # (An agent on a task of another project is not idle here: a task of this project
-        # cannot know about another's, so they are read across every project.)
-        on = [one for one in await self.records.list(stored.Task) if one.state == "in_progress"]
-        found = suggested.suggest(
-            await stored.TaskRecords(self.records).tasks(project),
-            await stored.FeatureRecords(self.records).features(project),
-            await stored.AgentRecords(self.records).agents(),
-            agent=request.agent,
-            limit=request.limit,
-            busy=sorted({one.assignee for one in on if one.assignee}),
-        )
-        return Suggestions(project=project, suggestions=found)
-
-    # -- the queue (27.3) ----------------------------------------------------------------------
     async def follow(
         self,
         links: LinkRecords,
@@ -300,6 +277,30 @@ class Orch(AppPlugin[OrchSettings]):
                 # else is a bug, and the supervisor's backoff is what reports it.)
                 log.warning("orch could not refresh a pull link: %s", error)
 
+    # -- what to do next (27.4) ----------------------------------------------------------------
+
+    async def suggest(self, request: SuggestRequest) -> Suggestions:
+        """The tasks to do next, best first, each with the agent it suits and why.
+
+        A task is a candidate once everything it needs is merged (or done) — or `ready`, when it
+        may start on that task's branch instead. An active feature, the agent's last task and the
+        tasks it unblocks all count. With no agent, each task is paired with the idle agent it
+        suits best."""
+        project = await self._project(request.project)
+        # (An agent on a task of another project is not idle here: a task of this project
+        # cannot know about another's, so they are read across every project.)
+        on = [one for one in await self.records.list(stored.Task) if one.state == "in_progress"]
+        found = suggested.suggest(
+            await stored.TaskRecords(self.records).tasks(project),
+            await stored.FeatureRecords(self.records).features(project),
+            await stored.AgentRecords(self.records).agents(),
+            agent=request.agent,
+            limit=request.limit,
+            busy=sorted({one.assignee for one in on if one.assignee}),
+        )
+        return Suggestions(project=project, suggestions=found)
+
+    # -- the queue (27.3) ----------------------------------------------------------------------
     async def assign(self, request: AssignTaskRequest) -> TaskQueue:
         """Assign a task to an agent: it joins that agent's queue (at its end, or at a position).
 
