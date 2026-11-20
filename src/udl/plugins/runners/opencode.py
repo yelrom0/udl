@@ -470,14 +470,14 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
         roles: Sequence[str] = (),
         env: Mapping[str, str] | None = None,
     ) -> list[str]:
-        """Write the deny policies (25.9's) and one agent file per role, then set the service's
-        environment (`env`: a provider's key by variable name).
+        """Write the deny policies (25.9's) and one agent file per role, then store the provider
+        keys it is given (`env`: a key by the variable its provider takes it in).
 
         The config file is read first and written back with udl's two policies merged into it: a
         host that already has providers, models or MCP servers keeps every one of them, and a
-        second setup changes nothing. The key's value reaches `opencode` through the shell's
-        environment, never through udl's argv (see the 25.11 card's decisions for what `opencode
-        service set env` does with it on the host)."""
+        second setup changes nothing. A key goes to the service's own credential API
+        (`POST /api/credential`, `_set_keys`): it never reaches a command line, so it is never in
+        udl's argv or in the host's process list."""
         written: list[str] = []
         await self._write(_POLICIES, json.dumps(await self._merged_policies(), indent=2))
         written.append(_POLICIES)

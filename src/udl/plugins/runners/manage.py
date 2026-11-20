@@ -280,25 +280,37 @@ class Harnesses:
             else (await self._service.hosts.all())
         )
         items: list[RunnerStatus] = []
-        problems: list[str] = []
         for host in hosts:
             for name in self._names():
-                try:
-                    runner = await self.runner(host.name, name)
-                    health = await self._health(host.name, name, runner)
-                    models = await runner.models()
-                except _ASK_FAILED as failure:
-                    problems.append(f"{host.name}/{name}: {failure}")
-                    continue
+                health, models = await self._checked(host.name, name)
                 items.append(
-                    RunnerStatus(
-                        host=host.name,
-                        runner=name,
-                        health=health,
-                        models=models,
-                    )
+                    RunnerStatus(host=host.name, runner=name, health=health, models=models)
                 )
-        return RunnerStatusList(items=items, problems=problems)
+        # (Every harness has its row, whatever went wrong: what could not be asked is in its
+        # health's problems, where the listing shows it, not dropped from the listing.)
+        return RunnerStatusList(items=items, problems=[])
+
+    async def _checked(self, host: str, name: str) -> tuple[RunnerHealth, list[RunnerModel]]:
+        """What the harness called `name` on `host` says about itself, and its models. Anything
+        that cannot be asked is a problem in its health, never an exception and never a missing
+        row: a harness udl cannot make (its settings do not fit it), one whose doctor fails, and
+        one whose models cannot be listed all still say which harness they are."""
+        try:
+            runner = await self.runner(host, name)
+        except _ASK_FAILED as failure:
+            return RunnerHealth(installed=False, problems=[f"udl cannot make it: {failure}"]), []
+        try:
+            health = await self._health(host, name, runner)
+        except _ASK_FAILED as failure:
+            health = RunnerHealth(installed=False, problems=[f"udl could not ask it: {failure}"])
+        models: list[RunnerModel] = []
+        try:
+            models = await runner.models()
+        except _ASK_FAILED as failure:
+            health = health.model_copy(
+                update={"problems": [*health.problems, f"its models: {failure}"]}
+            )
+        return health, models
 
     def _names(self) -> list[str]:
         """The runners udl has, sorted."""

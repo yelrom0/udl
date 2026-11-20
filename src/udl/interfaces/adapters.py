@@ -73,11 +73,14 @@ def cli_groups(ops: OperationRegistry) -> dict[str, TyperGroup]:
     """The command groups of the operations plugins add (`udl <plugin> <op>`, or the path their
     CLISpec gives), by their first word."""
     apps: dict[tuple[str, ...], typer.Typer] = {}
+    own = _own_paths(op for op in ops if op.namespace is not None)
     for op in ops:
         if op.namespace is None:  # (udl's own commands are written by hand)
             continue
         path = cli_path(op)
-        _group(apps, path[:-1]).command(path[-1], help=op.description)(cli_command(op))
+        if path in own:  # (it is the group's own command: made with the group, below)
+            continue
+        _group(apps, path[:-1], own=own).command(path[-1], help=op.description)(cli_command(op))
     return {path[0]: typer.main.get_group(app) for path, app in apps.items() if len(path) == 1}
 
 
@@ -95,20 +98,32 @@ def add_commands(
     `app` with commands of its own), shown by its renderer in `renderers` (by operation
     name)."""
     groups = dict(groups or {})
+    ops = [op for op in ops if op.namespace is None and op.cli is not None and op.cli.path]
+    own = _own_paths(ops)
     for op in ops:
-        if op.namespace is not None or op.cli is None or not op.cli.path:
+        spec = op.cli
+        if spec is None or not spec.path:
             continue
-        path = op.cli.path
+        path = spec.path
         command = cli_command(op, shown=renderers.get(op.name))
         if len(path) == 1:
             app.command(path[0], help=op.description)(command)
             continue
+        if path in own:  # (it is the group's own command: made with the group, below)
+            continue
         for depth in range(1, len(path)):
             group = path[:depth]
             if group not in groups:
+                at = own.get(group)
                 groups[group] = typer.Typer(
                     help=helps.get(" ".join(group), f"udl {' '.join(group)}"),
-                    no_args_is_help=True,
+                    no_args_is_help=at is None,
+                    invoke_without_command=at is not None,
+                    callback=(
+                        cli_command(at, shown=renderers.get(at.name), only_alone=True)
+                        if at is not None
+                        else None
+                    ),
                     rich_markup_mode="markdown",
                 )
                 parent = app if depth == 1 else groups[group[:-1]]
@@ -123,13 +138,39 @@ def cli_path(op: Operation) -> tuple[str, ...]:
     return (op.namespace or "udl", op.short_name.replace("_", "-"))
 
 
-def _group(apps: dict[tuple[str, ...], typer.Typer], path: tuple[str, ...]) -> typer.Typer:
+def _own_paths(ops: Iterable[Operation]) -> dict[tuple[str, ...], Operation]:
+    """The operations that are a group's own command, by the group's path: one whose CLISpec path
+    is also the start of another's (`udl orch runners --host local` runs the operation at
+    `orch runners`, which is the group `orch runners install` and the rest live under)."""
+    found = list(ops)
+    paths = [cli_path(op) for op in found]
+    own: dict[tuple[str, ...], Operation] = {}
+    for op in found:
+        path = cli_path(op)
+        if any(other != path and other[: len(path)] == path for other in paths):
+            own[path] = op
+    return own
+
+
+def _group(
+    apps: dict[tuple[str, ...], typer.Typer],
+    path: tuple[str, ...],
+    *,
+    own: Mapping[tuple[str, ...], Operation] | None = None,
+) -> typer.Typer:
     """The Typer app of the command group `path` (made, with the groups it is in, if new)."""
     if path not in apps:
         what = f"The {path[0]} plugin's operations." if len(path) == 1 else f"udl {' '.join(path)}"
-        apps[path] = typer.Typer(help=what, no_args_is_help=True, rich_markup_mode="markdown")
+        at = (own or {}).get(path)
+        apps[path] = typer.Typer(
+            help=what,
+            no_args_is_help=at is None,
+            invoke_without_command=at is not None,
+            callback=cli_command(at, only_alone=True) if at is not None else None,
+            rich_markup_mode="markdown",
+        )
         if len(path) > 1:
-            _group(apps, path[:-1]).add_typer(apps[path], name=path[-1])
+            _group(apps, path[:-1], own=own).add_typer(apps[path], name=path[-1])
     return apps[path]
 
 
@@ -143,9 +184,18 @@ class _Field:
     option_names: tuple[str, ...] = ()
 
 
-def cli_command(op: Operation, *, shown: Callable[..., None] | None = None) -> Callable[..., None]:
+def cli_command(
+    op: Operation,
+    *,
+    shown: Callable[..., None] | None = None,
+    only_alone: bool = False,
+) -> Callable[..., None]:
     """The command that runs `op`: its options (and arguments) are the request's fields. Its
-    response is shown by `shown`, else its CLISpec's renderer, else render.model."""
+    response is shown by `shown`, else its CLISpec's renderer, else render.model.
+
+    `only_alone` is for a group's own command: a group's callback runs even when a subcommand is
+    given, so the operation must stand aside then (`udl orch runners install` is not also
+    `udl orch runners`)."""
     spec = op.cli
     arguments = spec.arguments if spec is not None else ()
     names: Mapping[str, str | tuple[str, ...]] = spec.options if spec is not None else {}
@@ -162,6 +212,8 @@ def cli_command(op: Operation, *, shown: Callable[..., None] | None = None) -> C
     show_it = show_it or render.model
 
     def command(ctx: typer.Context, **options: Any) -> None:
+        if only_alone and ctx.invoked_subcommand is not None:
+            return
         values = _read_input(options.pop("input_file"))
         as_json: bool = options.pop("as_json")
         for found in fields:

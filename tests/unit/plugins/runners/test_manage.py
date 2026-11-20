@@ -14,6 +14,9 @@ nothing here runs a harness: the tests say what it prints.
 
 # System Imports
 import asyncio
+
+# Local Imports
+import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -21,17 +24,18 @@ from pathlib import Path
 # Package Imports
 import pytest
 
-# Local Imports
+from support.cli import CLI
 from support.clock import FakeClock
 from support.engine import settings
 from support.harnesses import ScriptedShell
+from support.interfaces import Harness
 from udl.core.operations import Operation, OperationRegistry
 from udl.core.service import UDLService
-from udl.errors import DoesNotExist, NotAllowed, ToolUnavailable
+from udl.errors import DoesNotExist, NotAllowed, PluginError, ToolUnavailable
 from udl.hosts.shell import Host, HostTransport
 from udl.plugins.apps.orch.plugin import Orch
 from udl.plugins.registry import APPS, PluginRegistry
-from udl.plugins.runners.base import AnAgentRunner, RunnerModel
+from udl.plugins.runners.base import AnAgentRunner, RunnerHealth, RunnerModel
 from udl.plugins.runners.manage import (
     TAIL,
     Harnesses,
@@ -135,7 +139,11 @@ async def test_every_host_s_harnesses_are_listed(hosts: Hosts) -> None:
     assert health.plan == "max"
     assert health.guards is True  # (its deny list is a settings file per session)
     assert health.problems == []
-    assert listed.problems  # (opencode was not scripted, so it cannot be asked)
+    # (opencode was not scripted, so it cannot be asked: its row stays, saying so.)
+    opencode = [item for item in listed.items if item.runner == "opencode" and item.host == "local"]
+    assert len(opencode) == 1
+    assert opencode[0].health.problems
+    assert listed.problems == []
 
 
 async def test_a_harness_that_is_not_there_says_so(hosts: Hosts) -> None:
@@ -160,14 +168,19 @@ async def test_an_unknown_host_is_refused(hosts: Hosts) -> None:
         await hosts.harnesses.all(ListRunnersRequest(host="nowhere"))
 
 
-async def test_a_harness_that_cannot_be_asked_is_a_problem(hosts: Hosts) -> None:
-    """opencode is there but its service is not: it is listed as a problem, not a failure."""
+async def test_a_harness_that_cannot_be_asked_keeps_its_row(hosts: Hosts) -> None:
+    """opencode is there but its service is not: its row stays, and its health says what could
+    not be asked — a listing that dropped it would hide a harness that is installed."""
     shell = hosts.shell("local")
     shell.answer(["opencode", "--version"], "2.1.4")
 
     listed = await hosts.harnesses.all(ListRunnersRequest(host="local"))
 
-    assert any("local/opencode" in problem for problem in listed.problems)
+    [opencode] = [item for item in listed.items if item.runner == "opencode"]
+    assert opencode.health.installed is True
+    assert opencode.models == []
+    assert any("models" in problem for problem in opencode.health.problems)
+    assert listed.problems == []
 
 
 async def test_a_quota_is_what_the_dispatcher_saw(hosts: Hosts) -> None:
@@ -292,14 +305,18 @@ async def test_a_runner_udl_cannot_make_is_a_problem_not_the_end(
 
         listed = await Harnesses(service).all(ListRunnersRequest(host="local"))
 
-    assert any("local/claude-code" in problem for problem in listed.problems)
+    [claude] = [item for item in listed.items if item.runner == "claude-code"]
+    assert claude.health.installed is False
+    assert any("no_such_option" in problem for problem in claude.health.problems)
+    assert listed.problems == []
     assert any(item.runner == "command" for item in listed.items)
 
 
-async def test_a_runner_that_cannot_answer_is_a_problem(
+async def test_a_runner_that_cannot_answer_is_a_problem_in_its_row(
     hosts: Hosts, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`models()` may raise ToolUnavailable (opencode's API is not up): a problem, not a crash."""
+    """`models()` may raise ToolUnavailable (opencode's API is not up): the row stays, with its
+    health's problems saying what failed — not a crash, and not a gap in the listing."""
     script_claude(hosts.shell("local"))
     runner = await hosts.harnesses.runner("local", "claude-code")
 
@@ -310,7 +327,30 @@ async def test_a_runner_that_cannot_answer_is_a_problem(
 
     listed = await hosts.harnesses.all(ListRunnersRequest(host="local"))
 
-    assert any("its service is not running" in problem for problem in listed.problems)
+    [claude] = [item for item in listed.items if item.runner == "claude-code"]
+    assert claude.models == []
+    assert any("its service is not running" in problem for problem in claude.health.problems)
+    assert listed.problems == []
+
+
+async def test_a_runner_whose_health_fails_keeps_its_row(
+    hosts: Hosts, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A health check that cannot answer at all is the row's problem, not a vanished harness."""
+    script_claude(hosts.shell("local"))
+    runner = await hosts.harnesses.runner("local", "claude-code")
+
+    async def broken(_: AnAgentRunner) -> RunnerHealth:
+        raise PluginError("its doctor crashed")
+
+    monkeypatch.setattr(type(runner), "health", broken)
+
+    listed = await hosts.harnesses.all(ListRunnersRequest(host="local"))
+
+    [claude] = [item for item in listed.items if item.runner == "claude-code"]
+    assert claude.health.installed is False
+    assert any("its doctor crashed" in problem for problem in claude.health.problems)
+    assert listed.problems == []
 
 
 # ---------------------------------------------------------------------------------------------
@@ -583,6 +623,38 @@ def test_a_harness_s_operations_are_udl_orch_runners_commands() -> None:
     assert paths["orch_list_runners"] == ("orch", "runners")
     assert paths["orch_runner_install"] == ("orch", "runners", "install")
     assert paths["orch_runner_logout"] == ("orch", "runners", "logout")
+
+
+def test_the_runners_command_lists_them_rather_than_showing_its_group_help(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`udl orch runners --host local` runs the listing: it sits at the group's own path, which
+    is also where its install, setup and sign-in live."""
+    shells = {name: ScriptedShell(host(name)) for name in HOSTS}
+
+    def shell_for(found: Host) -> ScriptedShell:
+        return shells[found.name]
+
+    monkeypatch.setattr("udl.hosts.manager.shell_for", shell_for)
+    script_claude(shells["local"])
+    harness = Harness(tmp_path)
+    harness.registry = PluginRegistry.discover(builtin_only=True)
+    harness.registry.register(APPS, Orch)
+
+    async def seed() -> None:
+        async with harness.service() as service:
+            for name in HOSTS:
+                await service.db.upsert_record(host(name))
+
+    asyncio.run(seed())
+
+    result = CLI(harness)("orch", "runners", "--host", "local", "--json")
+
+    assert result.exit_code == 0, result.output
+    listed = json.loads(result.stdout)
+    assert "Usage:" not in result.stdout
+    assert {item["runner"] for item in listed["items"]} >= {"claude-code", "command", "opencode"}
+    assert listed["problems"] == []
 
 
 def test_a_sign_in_is_never_an_mcp_tool() -> None:
