@@ -37,8 +37,8 @@ from udl.plugins.requirements import Requirement
 from udl.plugins.runners.base import (
     AgentEvent,
     AgentRunner,
-    LoginByHand,
     AnAgentRunner,
+    LoginByHand,
     RunnerHealth,
     RunnerLimited,
     RunnerOptions,
