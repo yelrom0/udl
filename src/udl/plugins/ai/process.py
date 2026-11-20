@@ -47,6 +47,10 @@ GRACE: Final = 5.0
 LOG_TAIL: Final = 2000
 """Characters of a program's output kept to say why it did not start."""
 
+_REAPING: set[asyncio.Future[None]] = set()
+"""The waits still ending a program: a stop that was cancelled mid-wait leaves its wait running,
+and this holds it until it is done (a collected task would never reap the program)."""
+
 type Key = tuple[str, tuple[str, ...]]
 """What makes two connections the same provider: where it is, and what starts it."""
 
@@ -140,6 +144,9 @@ class ProviderProcess:
         """When it was last asked for something."""
         self._process: asyncio.subprocess.Process | None = None
         self._keeper: asyncio.Task[None] | None = None
+        self._ending: asyncio.Future[None] | None = None
+        """The wait for the program to end, while one is running: the idle keeper clears its
+        place before it waits, so a stop() that finds no keeper waits on this."""
         self._reader: asyncio.Task[None] | None = None
         self._stopped = asyncio.Event()
         self._changed = asyncio.Event()  # (a request started or ended)
@@ -235,6 +242,26 @@ class ProviderProcess:
             with contextlib.suppress(asyncio.CancelledError):
                 await keeper
         await self._shutdown()
+        ending = self._ending
+        if ending is not None:
+            # (A keeper was already stopping the program: it clears its place before it waits,
+            # so this is the stop that is running. A close() must not return before it ends —
+            # and a cancel of this caller is its own to hear, so it is not suppressed here.)
+            await asyncio.shield(ending)
+
+    def _forget(self, done: asyncio.Future[None]) -> None:
+        """Forget the wait for the program once it is over (it is held, and awaited, until)."""
+        if self._ending is done:
+            self._ending = None
+
+    async def _ended(self, process: asyncio.subprocess.Process) -> None:
+        """Wait for the program to end, and kill it if it will not (the grace is its own)."""
+        try:
+            await asyncio.wait_for(process.wait(), timeout=GRACE)
+        except TimeoutError:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+            await process.wait()
 
     async def _shutdown(self) -> None:
         """End the program and forget it. (What the idle keeper calls too: it must not call
@@ -246,12 +273,15 @@ class ProviderProcess:
             log.info("Stopping the %s provider (pid %d)", self.provider.name, process.pid)
             with contextlib.suppress(ProcessLookupError):
                 process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=GRACE)
-            except TimeoutError:
-                with contextlib.suppress(ProcessLookupError):
-                    process.kill()
-                await process.wait()
+            # (The wait is shielded: a cancel — a pool's close() cancelling the idle keeper
+            # mid-stop — must not leave the program running or unreaped. The wait carries on
+            # without the caller, and is held until it is done so it cannot be collected.)
+            waiting = asyncio.ensure_future(self._ended(process))
+            self._ending = waiting
+            _REAPING.add(waiting)
+            waiting.add_done_callback(_REAPING.discard)
+            waiting.add_done_callback(self._forget)
+            await asyncio.shield(waiting)
         reader, self._reader = self._reader, None
         if reader is not None:
             # (The program has exited, so its output is at an end: let the reader finish, which

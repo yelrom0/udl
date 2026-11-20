@@ -100,6 +100,14 @@ _SLEEPER = textwrap.dedent(
     """
 )
 
+# The tiny server, with SIGTERM ignored: a stop of it has to wait its grace out, which is the
+# window a cancel can land in.
+_STUBBORN = _SERVER.replace(
+    "import json\n",
+    "import json\nimport signal\n\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n",
+    1,
+)
+
 PORT = 8765
 """The port the tiny server listens on (a test's own)."""
 URL = f"http://127.0.0.1:{PORT}/v1"
@@ -126,6 +134,13 @@ def sleeper(tmp_path: Path) -> Path:
     return _program(tmp_path, "sleeper.py", _SLEEPER)
 
 
+@pytest.fixture
+def stubborn(tmp_path: Path) -> Path:
+    """A program that will not take SIGTERM, as a program in scripts_dir (so stopping it has to
+    wait its grace out)."""
+    return _program(tmp_path, "stubborn.py", _STUBBORN)
+
+
 def _program(tmp_path: Path, name: str, text: str) -> Path:
     """`text` as an executable program in a scripts_dir of its own."""
     folder = tmp_path / "scripts"
@@ -147,6 +162,11 @@ async def stop_everything() -> AsyncIterator[None]:
     while _POOLS:
         await _POOLS.pop().close()
     assert not _children(), f"processes left running: {_children()}"
+
+
+def _gone(pid: int) -> bool:
+    """Whether the process is gone, and reaped (a zombie still has its /proc entry)."""
+    return not Path(f"/proc/{pid}").exists()
 
 
 def _children() -> list[str]:
@@ -427,6 +447,93 @@ async def test_it_is_stopped_once_it_has_been_idle_long_enough(script: Path) -> 
 
     assert not process.running
     assert process.pid is None
+
+
+async def test_a_stop_that_is_cancelled_still_ends_and_reaps_its_program(
+    stubborn: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (A program that ignores SIGTERM makes the wait a real one; the cancel is what a pool's
+    # close() does to the idle keeper, mid-stop. The program must still end and be reaped, or it
+    # is left running (or a zombie) for as long as udl is.)
+    monkeypatch.setattr("udl.plugins.ai.process.GRACE", 0.2)
+    provider = Tiny(options(stubborn), clock=FakeClock(), pool=pool(stubborn))
+    process = started(provider)
+    await process.ensure()
+    pid = process.pid
+    assert pid is not None
+    stopper = asyncio.create_task(process.stop())
+    await asyncio.sleep(0.05)
+
+    stopper.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stopper
+
+    for _ in range(100):
+        if _gone(pid):
+            break
+        await asyncio.sleep(0.01)
+    assert _gone(pid), "the program was left running or unreaped"
+    assert not process.running
+
+
+async def test_a_close_waits_for_a_program_the_idle_keeper_is_stopping(
+    stubborn: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (The keeper clears its place before it waits for the program, so a pool's close() has no
+    # keeper to cancel: it must wait for the stop that is already running, or return while the
+    # program still lives.)
+    monkeypatch.setattr("udl.plugins.ai.process.GRACE", 1.0)
+    clock = FakeClock()
+    processes = pool(stubborn)
+    provider = Tiny(
+        options(stubborn, idle_timeout=timedelta(seconds=30)), clock=clock, pool=processes
+    )
+    process = started(provider)
+    await process.ensure()
+    pid = process.pid
+    assert pid is not None
+
+    await clock.advance(timedelta(seconds=31))
+    await asyncio.sleep(0.1)  # (the keeper has sent SIGTERM and is waiting the grace out)
+    assert not _gone(pid), "the stubborn program took the SIGTERM"
+
+    await processes.close()
+
+    assert _gone(pid), "close() returned while the program was still ending"
+    assert not process.running
+
+
+async def test_a_stop_cancelled_while_the_keeper_stops_still_raises(
+    stubborn: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (Its caller must learn it was cancelled, and the program must still end: the wait carries
+    # on, the cancel is not swallowed.)
+    monkeypatch.setattr("udl.plugins.ai.process.GRACE", 1.0)
+    clock = FakeClock()
+    processes = pool(stubborn)
+    provider = Tiny(
+        options(stubborn, idle_timeout=timedelta(seconds=30)), clock=clock, pool=processes
+    )
+    process = started(provider)
+    await process.ensure()
+    pid = process.pid
+    assert pid is not None
+
+    await clock.advance(timedelta(seconds=31))
+    await asyncio.sleep(0.1)  # (the keeper has sent SIGTERM and is waiting the grace out)
+
+    stopper = asyncio.create_task(process.stop())
+    await asyncio.sleep(0.05)
+    stopper.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stopper
+    assert stopper.cancelled(), "the cancel was swallowed"
+
+    for _ in range(300):
+        if _gone(pid):
+            break
+        await asyncio.sleep(0.01)
+    assert _gone(pid), "the program was left running or unreaped"
 
 
 async def test_it_is_stopped_at_the_first_look_past_the_idle_timeout(script: Path) -> None:
