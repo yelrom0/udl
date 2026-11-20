@@ -1,6 +1,6 @@
 # The orch screens (29.1)
 
-Reference screens for Phase 29's hand-built pages (29.3–29.9), drawn in Google Stitch. Each UI task builds
+Reference screens for Phase 29's hand-built pages (29.3–29.9, 29.11, 29.12), drawn in Google Stitch. Each UI task builds
 its screen in React and daisyUI against these pictures and never pastes Stitch's HTML (O-C10). The
 design system they follow, with both themes' tokens, the shell and udl's own vocabulary (task states,
 agent status, link chips), is [DESIGN.md](DESIGN.md).
@@ -19,6 +19,19 @@ expression over daisyUI's CSS variables (`--color-base-100`, `--color-primary`�
 rendered in Chromium with `data-theme="light"` and `data-theme="dark"`. **A dark screen is its light
 screen's layout with daisyUI's dark tokens, nothing else.** Those renders, and the re-themed HTML,
 replaced Stitch's own, so the Stitch project shows the same pictures as this folder. The whole rule, every mapping and the steps to redo a screen are in [RETHEME.md](RETHEME.md).
+
+**The user's changes (Q-8, 21 Nov 2026)** were made as edits to each screen's HTML, not as new Stitch
+generations, so nothing already reviewed moved:
+
+- clearer card edges on Feature;
+- task sizes and points;
+- open PRs as links;
+- auto merge on Ready to merge;
+- a Chat button on every screen and "Progress" in the nav;
+- two new screens, Progress and the chat sidebar.
+
+Each edited screen was then re-themed and rendered the same way, and kept its Stitch id. Card 29.1 in
+[the plan](../../../../planning/02-agent-orchastrator.md) lists what changed where.
 
 ## Reading them
 
@@ -46,3 +59,5 @@ replaced Stitch's own, so the Stitch project shows the same pictures as this fol
 | Ready to merge | 29.8 | [light](merge-light-desktop.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=dad3482589b143abb7c0266c6562e6bc)) · [dark](merge-dark-desktop.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=2584378a5ef04df0a0e8f045046b3b6b)) | [light](merge-light-phone.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=529dd7d5434a491c82404792620125bd)) · [dark](merge-dark-phone.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=48bf3cac921645f28f8a45e23e97fc56)) |
 | To action | 29.8 | [light](actions-light-desktop.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=0c0b84dc96674e279f156dce50032e96)) · [dark](actions-dark-desktop.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=0fd28d661b034e41b6abd24c82305a09)) | [light](actions-light-phone.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=f55c20038eff4331a1ea94f4b4254a54)) · [dark](actions-dark-phone.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=d79a7ae6f71940d79d37fa5b8244a3d1)) |
 | Connections: a generated page (reference only) | 29.9 | [light](connections-light-desktop.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=126785af99b04553983316310fb2fd68)) · [dark](connections-dark-desktop.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=b4193d88b702431088fb00a576accdd4)) | [light](connections-light-phone.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=7272b669d4e243529dc6dd6406ee8579)) · [dark](connections-dark-phone.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=80b6bb3f19c449829bd03c30c808b326)) |
+| Progress | 29.11 | [light](progress-light-desktop.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=b66963cc7a234f828911ccd061168ef7)) · [dark](progress-dark-desktop.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=c060647fdc644d2a9b79f9769af789f4)) | [light](progress-light-phone.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=c1a79deffe0d4765913f560fbdc30867)) · [dark](progress-dark-phone.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=1bfeab5df26840ee8d0ed3d7fb3e1401)) |
+| The chat sidebar (over the Board) | 29.12 | [light](chat-light-desktop.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=77e7e5da0d184db7a599dc178b3dbc67)) · [dark](chat-dark-desktop.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=4292c722ab044c828fa5bd11a2571099)) | [light](chat-light-phone.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=2d8de97f1b714b84be450766032c5d1e)) · [dark](chat-dark-phone.png) ([Stitch](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=858586079f6c4119b1421a44832db6b0)) |

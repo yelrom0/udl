@@ -50,7 +50,11 @@ Dark is the same layout with only these tokens swapped: base surfaces get darker
 - Radius: boxes (cards, modals, alerts, tables' wrapper) 8px; fields (inputs, selects, buttons) 4px;
   selectors (badges, checkboxes, toggles, tabs) 8px. Badges are pills only when daisyUI makes them so.
 - Borders 1px, in base-300 (or base-content at 10 % opacity).
-- Depth 1: cards have a faint shadow (`shadow-sm`); nothing floats higher except modals, dropdowns and toasts.
+- Depth 1: cards have a faint shadow (`shadow-sm`); nothing floats higher except modals, dropdowns, toasts
+  and the chat sidebar.
+- **A card has a clear edge in both themes** (Q-8): a 1px border in base-content at 20 % and a `shadow`,
+  so a card on a base-100 page reads as a card in dark too, where base-300 borders all but vanish. Rows
+  inside a card divide at base-content 10 %.
 - No noise, no gradients, no glass, no illustrations, no stock photos, no avatars with faces
   (agents and people are shown by initials in a small `avatar placeholder` circle).
 
@@ -78,9 +82,25 @@ Keys, branch names, SHAs, commands and model ids are monospace (`font-mono`).
 - **Desktop (lg and up):** a fixed left sidebar 224px wide in base-200: a daisyUI `menu` of the shell's
   pages (Dashboard, Downloads, Sites, Chains, Events, Subscriptions, Actions, Runs, Schedules, AI,
   Accounts, Plugins, Databases, Settings), then a **Work** group from the orch plugin: Inbox, Board,
-  Agents, Q&A (with a count badge), Merge, To action. The active item is `menu-active` (primary).
+  Progress, Agents, Q&A (with a count badge), Merge, To action. The active item is `menu-active` (primary).
 - A top `navbar` in base-200: the word **udl** as a ghost button at the left; at the right a small
-  `badge badge-success` reading "live", a theme `select` (System / Light / Dark) and a "Sign out" `btn btn-sm`.
+  `badge badge-success` reading "live", a theme `select` (System / Light / Dark), a **Chat** button (a chat
+  icon and "Chat", `btn btn-sm btn-outline`, `btn-primary` while the sidebar is open; Ctrl+J) and a
+  "Sign out" `btn btn-sm`. On a phone the Chat button is the icon alone, after the theme control.
+- **The chat sidebar** (Q-8): 400px on the right, base-100, a base-content 15 % left border and a shadow;
+  over the page, docked beside it on a window 1600px or wider, a full-height sheet on a phone. From the
+  top:
+  - a header in base-200: the chat icon and "Chat"; the runner picker (Claude Code or Codex); New chat,
+    Pop out (into its own window) and Close;
+  - a context line in mono, 10px: model · host · directory · "as human:daniel";
+  - the transcript: the user's messages right-aligned in primary at 10 % with a primary 20 % border; the
+    model's as plain body text;
+  - each tool call, one line in base-200: a success check, the server (`udl`) as a small chip, the tool
+    in mono semibold, its input truncated, its result at the right, and a chevron that opens it;
+  - a **permission card**: a 2px warning border on warning at 10 %, "Claude wants to run a command", where
+    it would run, the command in a mono block, then Allow once (`btn-primary`), Allow for this chat
+    (`btn-outline`) and Deny (error text), and why it asked;
+  - the composer: a bordered box, a placeholder naming `@` and `/`, attach, and Send (`btn-primary`).
 - **Phone (under lg):** the sidebar is a drawer, hidden; the navbar gets a ☰ square ghost button on
   its left. Panes stack in one column; tables become stacked cards; nothing scrolls sideways except a
   board's columns, which scroll as a row of snap-to columns.
@@ -122,6 +142,24 @@ Icons: simple 16–20px outline icons (Heroicons outline style), never filled il
 `issue`, `commit` (7-char SHA in mono), `branch` (mono), `ci_run`, `file` (path in mono), `url`, `doc`,
 `stitch`, `task` (key in mono, e.g. `29.4`), `feature` (e.g. `29`), `question` (e.g. `Q-8`).
 
+**An open PR** (Q-8) is always a real link to it: a chip with a primary 40 % border on primary at 5 %, the
+checks dot (success, warning pulsing while checks run, error), `#41` in mono primary, and a small "opens
+elsewhere" icon (Heroicons' arrow-top-right-on-square). A PR's title in a list (Ready to merge) is a
+primary link with the same icon. A merged PR may stay a plain link.
+
+**Sizes** (Q-8): `S`, `M`, `L`, `XL`, worth 1, 3, 5 and 8 points. A size is a small square chip, mono
+semibold 10px, base-200 with a base-content 25 % border, the points in its tooltip, right after a task's
+key. Totals read "12/32 pts"; an estimate "est. 2.7 h"; time spent "worked 1 h 50 m".
+
+**Progress** (Q-8): a burn-up is two lines and a band. Scope is base-content at 55 %, merged is primary
+(2px, with a primary 12 % fill below), and the forecast is a dashed primary line to its date, inside a
+primary 8–10 % band from the early date to the late one. Today is a dashed vertical line. The axes are
+10px base-content at 55 %, and there are no other gridlines than faint horizontal ones.
+
+**Auto merge** (Q-8): a card above Ready now with a `toggle toggle-primary`, "Auto merge", an "on"
+`badge-success`, one line saying what the merger does, and the merger as a select ("claude · reviewer").
+A row the merger is on shows an info chip ("claude reviewing · 2 min").
+
 **Keys** are always monospace and always links: task keys `24.6`, feature keys `24` or `F-3`, question
 keys `Q-8`, action keys `A-3`, PRs `yelrom0/udl#41`.
 
@@ -130,7 +168,11 @@ in body-large, never raw HTML.
 
 ## Sample data (use it, so the screens read as udl's own work)
 
-- Project `udl` (repo `yelrom0/udl`, base `main`, gate `make check`, merge = human, bot `claude[bot]`).
+- Project `udl` (repo `yelrom0/udl`, base `main`, gate `make check`, merge = human, bot `claude[bot]`,
+  auto merge on with `claude` as its merger).
+- Sizes: feature `24` is 32 points, 12 merged (`24.1` XL, `24.2` M, `24.3` S, `24.4` L, `24.5` M, `24.6` L,
+  `24.7` M, `24.8` M, `24.9` S); project `udl` is 236 points, 148 merged, forecast Thu 27 Nov (±2 days);
+  `deepseek-v4.1-flash` learns 0.9 h a point. `24.7`'s open PR is `#45` (checks running).
 - Features: `24` Web UI foundations and a generated UI for every plugin (active); `27` Agents,
   assignment and the dispatcher (active); `28` Human comms: Q&A, Ready to merge, To action (planned);
   `29` Screens and the orch UI plugin (planned).

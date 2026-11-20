@@ -25,7 +25,7 @@ Alongside it come three things the notes ask for: a bot workspace on this machin
 | **O-D1** | **Phase 18 and 17.1/17.3 are pulled forward** and built first as part of this work | Backend first with the UI later; a small standalone UI |
 | **O-D2** | **udl drives harnesses.** A runner plugin starts and prompts OpenCode sessions (OpenRouter models) and the machine's `claude` CLI (subscription models), in a worktree per task. Any other AI is another runner | Tracking only with oc-guard driving; udl's own coding agent loop |
 | **O-D3** | **Who merges a ready PR is a project setting:** `human` (it appears on Ready to merge) or `agent` (the agent merges when green). Promotion branches, where a project has them, are always a reviewer's or a human's | Always a human; always the agent |
-| **O-D4** | **udl's own repo: `main` only.** Feature branches PR straight into a locked `main`, with CI and the review bot. Only Claude or the user merges (the user's standing rule for `main`), so udl's project uses `merge = human` | `develop → rc → main`; `develop → main` |
+| **O-D4** | **udl's own repo: `main` only.** Feature branches PR straight into a locked `main`, with CI and the review bot. Only Claude or the user merges (the user's standing rule for `main`), so udl's project uses `merge = human`, with auto merge on and `claude` as its merger (O-D13, 28.7) | `develop → rc → main`; `develop → main` |
 | **O-D5** | **1Password by reference:** anywhere udl takes a secret, `op://vault/item/field` may be given; udl reads it at use through `op` and never writes it to disk. Vaults are allow-listed. udl's own tokens stay in its secret store | 1Password as udl's secret store; both |
 | **O-D6** | **1Password sign-in is a service account token,** limited to the allowed vaults, kept in udl's secret store | The desktop app's integration; either per machine |
 | **O-D7** | **Many projects, each with several repos, from the start; agents run on this machine and on others over SSH** (thevault) | Local agents only; udl's repo only |
@@ -34,6 +34,15 @@ Alongside it come three things the notes ask for: a bot workspace on this machin
 | **O-D10** | **A manager model may assign and reorder tasks, answer its reports' questions, review before "ready", and create or split tasks. Each is a setting, allowed per manager** | A fixed set |
 | **O-D11** | **Other machines are reached over SSH now. udl clients come later** (see [Later](#later-not-in-these-phases)): udl itself in client mode on a machine, a full node on which the hub can run any allowed operation. `HostShell` (25.6) is the seam a client transport plugs into, so nothing above it changes. (Clients are planned now: Phase 34, after Phase 30, per H-D1, H-D3 and H-D4 in [04-shared-data-layer.md](04-shared-data-layer.md).) | Clients in this plan with SSH only to bootstrap; both transports now |
 | **O-D12** | **udl manages the `claude` CLI on every host, not only this one:** running and following sessions, status (version, signed in, plan, limit state), installing and updating it, and starting its sign-in from the hub for the user to finish. The same for OpenCode | Sessions only |
+
+**The user's (21 Nov 2026, Q-8, from looking through 29.1's screens):**
+
+| ID | Decision | Rejected |
+|---|---|---|
+| **O-D13** | **Auto merge:** a project can turn on auto merge, with a **merger**: a designated agent, most often the supervising model, that merges the project's ready PRs (after its own review). It is a switch on Ready to merge, with the merger beside it (28.7) | Only `merge = human` or the implementer itself (`merge = agent`) |
+| **O-D14** | **Tasks have a size, in T-shirt sizes:** `S`, `M`, `L`, `XL`, worth 1, 3, 5 and 8 points. udl times how long each task really took and learns the hours a point takes per model, so progress is graphed over time and forecasts get better (26.8, 27.10, 29.11) | Fibonacci points; an estimate in hours |
+| **O-D15** | **A chat sidebar on the right of the web UI** (and in a window of its own) **to talk to Claude, or ChatGPT, and get things done from the browser.** A chat is an ordinary Claude Code (or Codex) session: it can do whatever that harness can do in a terminal, practically anything, on the connected machines, and through udl's MCP everything the user can (27.11, 29.12) | A chat that asks before every change; a chat limited to a manager agent's powers |
+| **O-D16** | **OpenAI models, wherever Claude is used today, the main and planning models included. Both ways:** a `codex` runner for OpenAI's Codex CLI signed in with the user's ChatGPT plan, the twin of `claude-code` (25.12), and an OpenAI API key, by `op://` reference, for OpenCode's `openai` provider and udl's own AI provider (25.13). Not drawn in the screens | The Codex CLI only; an API key only |
 
 **Claude's, made while planning (revisit in the phase's "Decisions made while building" if building finds better):**
 
@@ -47,10 +56,14 @@ Alongside it come three things the notes ask for: a bot workspace on this machin
 | **O-C12** | **Sign-in from the hub is a relay, not a login by udl:** udl starts the harness's own login on the host, shows the link or code it prints, and passes back what the user types. The token is written by the harness, on that host, and udl never sees it | Same reason as O-C3 |
 | **O-C5** | **GitHub is an integration** (`github`), not part of `orch`. `orch` uses its operations and events | Its PR operations and events are useful to subscriptions and MCP clients on their own |
 | **O-C6** | **An agent talks to udl over MCP with its own token.** Marking a task ready, blocking it, asking a question and pushing are udl operations. Agents get no `git push` and no `gh pr merge` in their harness | It replaces `tracker-check`, the queue files and `agent-push`, and udl knows who called |
-| **O-C7** | **Merging is never an MCP tool for an implementer.** `github_merge_pull` is `mcp=False`-style (see 25.5) unless the project's `merge = agent`, and then only for that agent's own ready PR | A prompt-injected agent must not be able to merge |
+| **O-C7** | **Merging is never an MCP tool for an implementer.** `github_merge_pull` is `mcp=False`-style (see 25.5) unless the project's `merge = agent`, and then only for that agent's own ready PR. (A project's merger, under auto merge, is O-C13's.) | A prompt-injected agent must not be able to merge |
 | **O-C8** | **`main`'s ruleset has no bypass, the admin included:** PR only, CI and the review job required, signed commits, linear history, no force-push or delete | "Branch locking" that the owner can skip isn't locking; a hotfix is still a PR |
 | **O-C9** | Drag and drop uses `@dnd-kit` (keyboard-usable), and every drag has an operation and a CLI command behind it | The drag is a convenience over `orch_assign`, not a web-only feature |
 | **O-C10** | The Stitch screens are **references**: each UI task builds its screen in React and daisyUI against the screenshot, and never pastes Stitch's HTML | The shell's stack, typing and tests are fixed (18.1) |
+| **O-C13** (21 Nov) | **The merger is an agent with role `reviewer` or `manager`, never an implementer, and never merges a task it is the assignee of.** Auto merge is turned on, off or given another merger only by an owner. With it on, the merger may call `orch_merge` on its project's `ready` tasks, and `orch_merge` re-checks readiness for the current head (28.3) whoever calls it. O-C7 stands for implementers | Auto merge is O-D13's; who may hold it, and what it may not do, keeps a prompt-injected agent from merging, as O-C7 does |
+| **O-C14** (21 Nov) | **A task's size is set by whoever plans it** (the user, Claude, or a manager with `plan`), never by the agent doing it. The importer reads it from a card's header (`**27.3 Queues** · needs 27.1 · size L`). **Working time** is the time a task spent `in_progress`, less the time its agent waited on CI or the review bot or sat out a usage limit: what the agent spent, not what the calendar did | An agent sizing its own task would grade its own estimate |
+| **O-C15** (21 Nov) | **A chat runs the user's own harness, as the user.** The `claude` CLI (or `codex`) runs on the chosen host with the user's own settings and permission rules: udl adds its MCP server and nothing else, so whatever the harness would ask in a terminal, it asks in the sidebar (Allow once, Allow for this chat, Deny), and udl never passes a flag that skips permissions. The session calls udl with a chat token of its own, which is the owner's powers minus making tokens and opening chats, and ends with the chat | O-D15 gives a chat the harness's powers; the harness's own permission prompts are then the guard the user already relies on in a terminal, and a token per chat can be revoked |
+| **O-C16** (21 Nov) | **The chat sidebar is a new contribution point of the shell, `panels`** (a panel on the right of every page, with a button in the navbar), and `orch`'s UI plugin contributes the chat to it. It sits over the page, docks beside it on a window 1600 px or wider, and is a full-height sheet on a phone | The chat needs `orch`'s sessions and tokens, but belongs on every page, not only `orch`'s |
 
 ## Concepts
 
@@ -69,6 +82,9 @@ Alongside it come three things the notes ask for: a bot workspace on this machin
 | **Question** | Something an agent (or Claude) needs a human or a manager to answer, with its thread (`Q-7`) |
 | **Human action** | Something only a person can do, with a result line |
 | **Inbox** | Ready to merge + Q&A + To action: what human-comms.md is today |
+| **Size** | How big a task is: `S`, `M`, `L` or `XL`, worth 1, 3, 5 or 8 points (O-D14) |
+| **Merger** | The agent a project's auto merge lets merge its ready PRs (O-D13) |
+| **Chat** | A conversation with Claude Code or Codex from the web UI's sidebar, on a host the user picks, as the user (O-D15) |
 
 Task states and the marks they import from and print as:
 
@@ -714,6 +730,57 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
 - **`claude doctor` is an interactive screen:** it gets 20 seconds and no terminal, and one that
   does not end in time is no problem, so a listing never hangs on a host.
 
+**25.12 `codex`** · needs 25.7, 25.11 · size L (O-D16)
+- Build: `udl/plugins/runners/codex.py`, the runner for OpenAI's Codex CLI signed in with the user's ChatGPT plan: the twin of `claude-code` (25.8). Everything goes through the agent's `HostShell`, so each host has its own install, its own sign-in and its own limits.
+  - **Read the installed version first,** as 25.9 did for OpenCode: `codex --version`, `codex exec --help`, `codex exec resume --help`, `codex login --help`, and the `--json` output of one real turn. Commit them as `tests/fixtures/codex/<version>/` (the help texts and `events.jsonl`). The argv and the parser are written against them, and a test fails when a flag the runner passes is missing from the help text. The flags below are what to check for, not a promise.
+  - **A turn is one process,** as in 25.8. The first turn: `codex exec --json --model <model> --cd <worktree> --sandbox workspace-write -c approval_policy="never" -c sandbox_workspace_write.network_access=true -`, with the prompt on stdin. A later turn: `codex exec resume <session id> --json -`. The session id is the one the first event (`thread.started`) gives, and it is the `SessionRef`. The instructions (the fixed rules, the project's and the agent's brief) open the first prompt, unless the installed version has a config key for extra instructions: then use it, and say which in the card.
+  - **Events:** the JSON lines become `AgentEvent`s.
+    - `thread.started` gives the session.
+    - `item.started`/`item.completed` map by the item's type: `agent_message` is text; `command_execution`, `mcp_tool_call` and `file_change` are `ToolStarted`/`ToolFinished`; reasoning is skipped.
+    - `turn.completed` with its `usage` (input, cached input, output) is `TurnEnded`.
+    - `turn.failed` and `error` are `RunnerFailed`; a usage-limit error is `RunnerLimited`, with the reset time when it gives one.
+    - An unknown type is skipped, never fatal.
+    - The ChatGPT plan has no cost per turn (`cost = None`); a session on an API key (25.13) is priced from udl's model prices where it has them.
+  - **udl's MCP server** is added per turn with `-c` keys: a streamable HTTP server at `<hub>/mcp` whose `X-API-Key` header comes from an environment variable (`env_http_headers`). The token is in the process's environment, through the shell, never in `argv` or a file. If the installed version can't take a header from the environment, use udl's stdio MCP server instead (`udl mcp`, with the token in its environment), and say so in the card.
+  - **Hard stops.**
+    - Codex's sandbox keeps writes inside the worktree.
+    - `git push` and `gh pr merge` are refused by Codex's own command rules (`prefix_rule(pattern=[…], decision="forbidden")` in a rules file under `~/.codex/rules/`). 25.11's `setup()` writes them, and `health()` reports them as `guards`.
+    - On a version without command rules, `guards` is false, and the dispatcher won't start an implementer on that host (25.9's rule). A reviewer, a manager or a chat (27.11) still may.
+  - **Managing it:** a third column in 25.11's table.
+    - **Status:** `codex --version` and `codex login status` (whether it is signed in, and with ChatGPT or an API key: the `plan`).
+    - **Install and update:** the official npm package at a checked version (`npm install -g @openai/codex@<version>`), refused while a session runs on that host.
+    - **Sign in:** `codex login --device-auth`, relayed (O-C12: the page shows the link and the code it prints). With an API key (25.13): `codex login --with-api-key`, the key on stdin from udl's secret store.
+    - **Sign out:** `codex logout`.
+    - **The auth file:** **udl never opens `~/.codex/auth.json`** (O-C3's rule, for OpenAI's plan too).
+    - **Models:** the CLI lists none, so the runner's options name them (`models = […]`), and `orch_list_runners` shows those.
+  - `FakeCodex` in `tests/support/runners.py`: a script that prints the recorded events for a prompt and resumes by id.
+- Tests first: the runner contract over `FakeCodex`; `tests/unit/plugins/runners/test_codex.py`:
+  - the argv of a first and a later turn, with no token and no key in either;
+  - each recorded event type mapped, and an unknown one skipped;
+  - a usage limit;
+  - the guard check with and without the rules file;
+  - `login status` read for both kinds of sign-in;
+  - `auth.json` never opened (a test host that logs every read).
+- Done when: `udl orch runners` shows `codex` on `local`, signed in with the ChatGPT plan, and an opt-in smoke test runs one real turn that calls `get_status` over udl's MCP.
+
+**25.13 OpenAI by API key** · needs 25.2, 25.9, 25.11 · size M (O-D16)
+- Build:
+  - `udl/plugins/ai/openai.py`: `OpenAIProvider(OpenAICompatibleProvider)`, named `openai`.
+    - `url = "https://api.openai.com/v1"`; the key comes from the secret store, so an `op://` reference works (O-D5).
+    - `models()` comes from `GET /models`, and `health()` is the same call. OpenAI has no credit endpoint, so `credit_left` is `None`.
+    - A 429 is `RateLimited`, with `Retry-After`. A 401 is `NotAllowed` ("OpenAI: the key was refused").
+    - `FakeOpenAI` goes beside `FakeOpenRouter`.
+  - OpenCode gets the key the way it gets OpenRouter's (25.9): `POST /api/credential` with `OPENAI_API_KEY` from the secret store, sent by `orch_runner_setup`. Its model ids then start `openai/`.
+  - Codex on a host can be signed in with the key instead of the plan (25.12).
+  - So an agent of any role, and a chat (27.11), can run an OpenAI model: through `opencode` with an `openai/…` model, or through `codex`.
+- Tests first:
+  - the AI provider contract over `FakeOpenAI`;
+  - the key in no `argv` and no record;
+  - `orch_runner_setup` sends both providers' keys when both are set.
+- Done when:
+  - `udl ai models --provider openai` lists models against the fake, and an opt-in smoke test does against the real one;
+  - an `opencode` agent on an `openai/…` model passes the runner contract against `FakeOpenCode`.
+
 **Phase 25 is done when:** with real connections, `udl secrets status` shows 1Password healthy, `udl ai models --provider openrouter` lists models, `udl github list-pulls` lists udl's, `udl hosts check thevault` passes, and `udl orch runners` reports the `claude` CLI on both machines.
 
 ---
@@ -805,6 +872,25 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - The result is an `ImportReport`: created, updated, unchanged, and every line it could not place, with its line number.
 - Tests first: `tests/unit/plugins/apps/orch/test_importer.py`: the phase's third bullet, on copies of `planning.md` and `planning/03-proxmox.md` in `tests/fixtures/plans/`; nothing in a tracker is silently dropped (every `- [` line is in the report as placed or unplaced).
 - Done when: a dry run over udl's two plan files reports no unplaced lines.
+
+**26.8 Task sizes** · needs 26.3, 26.6, 26.7 · size M (O-D14, O-C14)
+- Build:
+  - **The size.** `Task.size: Literal["S", "M", "L", "XL"] | None` (`None`: not sized yet), and `POINTS = {"S": 1, "M": 3, "L": 5, "XL": 8}` in `orch/models.py`, the one place a size becomes points. `Task.points` is derived (`None` without a size). Records written before this read as unsized.
+  - **Who sets it** (O-C14): `orch_set_task` and `orch_add_task` take `size`. An agent may set it only with the `plan` power, and never on a task it is the assignee of (`NotAllowed`).
+  - **Totals:** a feature's and a project's, derived, in `orch_get_feature` and `orch_list_features`:
+    - `points`;
+    - `points_merged` (tasks `merged` or `done`);
+    - `points_ready`;
+    - `unsized`, a count, so a task without a size shows.
+  - **Import:** the importer (26.7) reads `· size M` from a card's header line, in any order with `needs`. A size it can't read is reported as an unplaced line.
+  - **CLI:** `udl orch tasks set 27.3 --size L`. `udl orch features show 24` prints each task's size, and the totals.
+  - **The plan:** planning.md's Working agreement says a new card gives its size in its header, as Q-8's cards do.
+- Tests first: `tests/unit/plugins/apps/orch/test_sizes.py`:
+  - the points for each size;
+  - a feature's totals, with an unsized task counted and a cancelled one left out;
+  - an implementer refused, and a manager with `plan` allowed on its reports' tasks;
+  - the importer on a card with and without `· size`.
+- Done when: importing this file gives 26.8 the size in its own header.
 
 **Phase 26 is done when:** `udl orch import planning/03-proxmox.md`, then `udl orch features show 22` prints the feature, its tasks with their states, and each task's spec.
 
@@ -976,6 +1062,79 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
 - Tests first: an interface test per operation and its `MATRIX` row.
 - Done when: the parity test lists them all.
 
+**27.10 Working time, learned hours and forecasts** · needs 26.8, 27.7 · size XL (O-D14, O-C14)
+- Build:
+  - **Recording time.** Two kinds of record:
+    - `StateChange` (scope: history): `task`, `from`, `to`, `at`, `by`. It is written in the same write as every move (26.3's `move()`, and `save_all`), so a task's history is complete.
+    - `Wait`: `task`, `kind: ci | bot | limit`, `start`, `end`. The dispatcher (27.7) writes it while the agent holds no turn because its PR's checks or the review bot are pending, and while the agent is `limited`.
+  - **`timing.py`** (pure): `working_time(changes, waits) -> timedelta`.
+    - It is the time spent `in_progress`, less the waits inside it; a wait that crosses a state change counts only for the part inside `in_progress`.
+    - A task that moved between agents counts each agent's part for that agent's model.
+  - **`estimates.py`** (pure):
+    - `hours_per_point(samples) -> Rate` takes merged, sized tasks: the median of working hours ÷ points, per model (the model of the agent that worked the task), over its last 30.
+    - A model needs at least 5 samples; below that the project's rate is used, then a default of 1 h a point. `Rate` says which it used (`model`, `project`, `default`).
+    - `estimate(task, agent) -> timedelta` is the size × that rate.
+    - The spread is the 25th and 75th percentile of actual ÷ estimate, over the same samples.
+  - **`forecast(project, now) -> Forecast`** (pure):
+    - It takes the open, sized work per agent in queue order: what is left of its current task's estimate, then each queued task's estimate.
+    - Unassigned tasks are spread over the project's enabled implementers in suggestion order (27.4).
+    - An agent's hours become days at its own working hours per day over the last 7 days (default 8).
+    - `likely` is when the last agent finishes; `early` and `late` come from the spread. The same is done per feature.
+    - Unsized tasks are left out, and counted.
+  - **`orch_progress`** (read-only; `project`, `since?`) → `Progress`:
+    - `series`: for each day, the scope's points and the points merged. A day's scope counts the tasks that existed and weren't cancelled then, at their size now.
+    - `pace`: points merged a day, over the last 7 days.
+    - `forecast`, and `features` (key, title, points, merged, forecast).
+    - `models`: model, runner, tasks, hours per point, and hours per size.
+    - `recent`: the last 20 merged, sized tasks (key, title, size, estimate, actual), and `estimate_ratio`, the median of actual ÷ estimate.
+  - **`orch_estimate`** (`task`): one task's size, estimate, and the time worked on it so far.
+- Tests first: `tests/unit/plugins/apps/orch/test_timing.py` and `test_estimates.py`, on `FakeClock` histories:
+  - waits taken off, including one across a state change, and a moved task split between two models;
+  - a model with fewer than five samples falls back, and says so;
+  - the forecast for two agents whose rates are known;
+  - a property test: a forecast never ends before `now`, and `early ≤ likely ≤ late`.
+
+  `test_progress_operations.py` goes through the service.
+- Done when: `udl orch progress udl` prints the burn-up's numbers, the forecast and the hours per point, on a fixture history.
+
+**27.11 Chat sessions** · needs 27.2, 27.9, 25.8, 25.12 · size XL (O-D15, O-C15)
+- Build: `orch/chat.py`, the sessions behind the chat sidebar (29.12).
+  - **`Chat`**: `id`, `owner` (`human:<name>`), `runner` (`claude-code` or `codex`), `model`, `host`, `directory`, `ref: SessionRef`, `state` (an `AgentSession`'s states), `title` (from the first message), `created_at`, `last_at`, `tokens_in`, `tokens_out`, `cost`.
+    - `directory` is where the harness starts: any directory on that host the user picks, by default the host's udl checkout.
+    - A chat's stream is `SessionEvent`s, as an agent session's is (27.1), so the live view and the transcript are shared code.
+  - **As the user** (O-C15). A chat's turn runs the runner with the chat's own options, not an agent's:
+    - none of `--settings` with a deny file, `--strict-mcp-config`, `--permission-mode` or a worktree: the user's own settings decide;
+    - udl's MCP server is added beside the user's own;
+    - never `--dangerously-skip-permissions`, `--permission-mode bypassPermissions` or Codex's bypass flag (asserted).
+  - **Permission prompts reach the sidebar.**
+    - **`claude-code`:** `--permission-prompt-tool mcp__udl__orch_chat_ask_permission`, an MCP-only tool (not on the CLI or the API). The harness calls it, with the tool and its input, whenever the user's settings say to ask.
+    - udl then records a `PermissionRequest` (`chat`, `id`, `tool`, `input` kept as data, `state`) and publishes `orch.chat.permission`. It waits up to 10 min, then denies, for `orch_chat_permission` (`chat`, `request`, `decision: allow_once | allow_chat | deny`, `message?`).
+    - `allow_chat` remembers the tool, and a command's first word, for the rest of the chat, and answers the next such request itself.
+    - **`codex`:** drive `codex app-server`, the JSON-RPC protocol over stdio that OpenAI's IDE extension uses. Its approval requests become the same `PermissionRequest`s. Read its methods from the installed version (`codex app-server generate-json-schema --out <dir>`, committed as fixtures).
+    - Without `app-server`, a Codex chat runs `codex exec` with approvals `never`, inside the `workspace-write` sandbox, and the sidebar says it won't ask.
+  - **The chat's token** (O-C15): a `ChatToken`.
+    - It has the `udl_chat_` prefix. The record keeps its SHA-256; the token itself is in the secret store at `apps/orch/chats/<id>/token`, and reaches the harness in its environment.
+    - 27.2's `authenticate` reads it as `Principal(kind="owner", name=<owner>, via=f"chat:{id}")`.
+    - `UDLService.call` refuses it `orch_issue_token`, every `orch_chat_*` operation, `orch_set_auto_merge` (28.7) and the secret store's writes.
+    - It is deleted when the chat is stopped or deleted, or has been idle for `[apps.orch] chat_idle` (default 24 h). Every call made with it is logged with its `via`.
+  - **Operations,** owner only (an agent's token is refused, `NotAllowed`):
+    - `orch_chat_start` (`runner`, `host`, `directory?`, `model?`, `text`);
+    - `orch_chat_send` (`chat`, `text`: queued while a turn runs, or steered where the runner can);
+    - `orch_chat_permission`;
+    - `orch_chat_stop`, which ends the turn;
+    - `orch_chat_list` (the user's chats, newest first) and `orch_chat_get` (the transcript, paged);
+    - `orch_chat_delete`.
+
+    `GET /orch/chats/{id}/stream` (an SSE of its events and permission requests) is interface-only, as 27.9's session stream is. The CLI has `udl orch chat`: an interactive loop over the same operations, with prompts answered in the terminal.
+  - **Text from outside:** what a chat reads (PR comments, bot reviews, pages) is its harness's business, as it is in a terminal. udl's own messages to it never carry text from outside.
+- Tests first: `tests/integration/plugins/apps/orch/test_chat.py`, with `FakeRunner` and a fake `claude` that asks for one permission:
+  - the request reaches `orch.chat.permission`;
+  - Allow once runs it, Deny stops it, Allow for this chat answers the second one by itself, and no answer in 10 min denies;
+  - the argv never has a flag that skips permissions;
+  - the chat's token is refused `orch_issue_token` and `orch_chat_start`, works for `orch_assign`, and stops working after `orch_chat_stop`;
+  - an agent's token can't start a chat.
+- Done when: an opt-in smoke test on `local`, with the real `claude`, starts a chat that asks to run `ls`; it is allowed through `orch_chat_permission`, and its answer names a file.
+
 **Phase 27 is done when:** `udl orch agents set fake-a --runner fake …`, `udl orch assign 22.2 fake-a`, and the task reaches `ready` with its PR linked, on the fakes, with `udl serve` restarted once in the middle.
 
 ---
@@ -1034,6 +1193,34 @@ This is human-comms.md as data. Its three sections become three lists with the s
 - Build: `tests/integration/plugins/apps/orch/test_end_to_end.py`, through a real `udl serve` on `FakeRunner`, `FakeGitHub` and a temp git repo, driven only by CLI commands and the fake agent's MCP calls: import a plan → assign a task → the agent asks a blocking question → answered from the CLI → the agent pushes, the fake bot finds one item, the agent fixes it, the bot's verification is clean → Ready to merge lists it → merged → the task is `merged`, the worktree gone, the decision on the task's notes.
 - Done when: it passes three times running with `pytest -p no:randomly` and with random ordering.
 
+**28.7 Auto merge** · needs 28.3, 27.8 · size L (O-D13, O-C13)
+- Build:
+  - **The setting.** `Project` gains `auto_merge: bool = False` and `merger: str | None` (an agent's name).
+    - Saving checks that the merger is an agent with role `reviewer` or `manager`, whose `projects` include this one (or are all).
+    - Turning auto merge on needs a merger.
+    - `merge = human | agent` is unchanged: auto merge sits beside it, and wins while it is on.
+  - **`orch_set_auto_merge`** (`project`, `on`, `merger?`), owner only. An agent's or a chat's token is refused, so no model can give itself the merge. It publishes `orch.project.changed`. CLI: `udl orch projects auto-merge udl --on --merger claude`.
+  - **The merger's turn.**
+    - The merger's standing session (27.8's; a reviewer gets one too) is prompted with each task of the project that becomes `ready`, in Ready to merge's order (28.3). The task comes as data: its spec, the PR's URL, the head SHA and the diff's stat.
+    - It reviews the diff against the task's spec and the project's rules.
+    - Then it calls `orch_merge` (`task`, `confirm`), or `orch_review_task` with `changes` and its reasons. That moves the task back to `in_progress`, and the reasons go to its agent as a note.
+    - One PR at a time per project: the next is prompted after the merge.
+  - **`orch_merge` for the merger** (it widens 28.3's rule). The merger may merge when:
+    - it is the project's merger and auto merge is on;
+    - the task is `ready`;
+    - it is not the task's assignee.
+
+    Readiness is re-checked for the current head, as it is for anyone. The merge's note and `orch.task.merged` carry `by` and `auto: true`.
+  - **The lists:** `orch_merge_list` and `orch_inbox` carry `auto_merge` and `merger`, and each ready row carries what the merger is doing with it (`reviewing`, `next`, `changes asked`).
+  - **udl's own project** (30.3) turns it on, with `claude` as its merger. That is the user's standing rule since 17 Nov 2026: Claude merges a PR once CI is green and the review bot has nothing open.
+- Tests first: `tests/integration/plugins/apps/orch/test_auto_merge.py`:
+  - with auto merge on, the merger merges two stacked PRs in order, with nobody else acting; with it off, nothing is merged;
+  - the merger can't merge its own task, another project's, or one whose head moved;
+  - an implementer's token is refused `orch_merge` while auto merge is on;
+  - `orch_set_auto_merge` is refused to an agent's token and to a chat's;
+  - a merger that isn't a reviewer or a manager can't be saved.
+- Done when: on the fakes, a reviewer merger takes a stack of three PRs from Ready to merge to merged by itself.
+
 **Phase 28 is done when:** that test passes, and `udl orch inbox` during it shows each stage.
 
 ---
@@ -1059,7 +1246,27 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
   - **The design system** is daisyUI 5.8.1's stock `light` and `dark`, the two themes the shell turns on (`web/packages/shell/src/index.css`): their colours as hex, the radius (boxes and selectors 8 px, fields 4 px), Tailwind's type scale, the shell's frame, and udl's vocabulary (a badge per task state, a dot per agent status, a chip per link kind). In Stitch it is two design systems, "udl daisyUI light" (the project's) and "udl daisyUI dark". Inter stands in for the shell's system font.
   - **Decision: Stitch draws the layout, daisyUI colours it.** Stitch colours every screen from a Material palette it derives itself, whatever hex values the design system gives (its primary came out `#2a00b5`, not `#422AD5`; its error `#ba1a1a`, not `#FF627D`). So each screen's HTML was re-themed onto daisyUI's CSS variables (Stitch's colour roles, Tailwind's palettes and any hex, by role or by lightness) and rendered in Chromium (Playwright) under `data-theme="light"` and `"dark"`; those renders and that HTML replaced Stitch's own, so the project and the folder show the same pictures. A dark screen is its light screen's layout with daisyUI's dark tokens, nothing else; in Stitch it is a copy titled "… (Dark)". The rule, every mapping and the steps are written down in [`RETHEME.md`](../web/plugins/orch/design/RETHEME.md), so a screen can be redone on any machine; the scripts that apply it are one-off tooling, kept on jeff-wiggle in `~/Documents/code/udl-wt/stitch-tools/` rather than under the gate.
   - **Hit:** Stitch kept adding what udl's shell doesn't have (an avatar in the navbar, a version line under the menu, a back-arrow top bar on phones, a stray "Feature" nav item) and making up details (an `orch/dispatch.yaml`, a "production-vault", an encryption claim, OpenCode 0.18): five screens were edited in Stitch to take them out, and the avatar is dropped when re-theming. An edit in Stitch makes a new screen, so the superseded ones became the dark copies; the other dark copies, made by edits, left three unused auto-named design systems in the project, which the MCP can't delete. Some screens came back on daisyUI 4's CSS (or Tailwind 4's): those keep it and get daisyUI 5.8.1's colours through its variables, so their component shapes are daisyUI 4's; the folder's README says to build with daisyUI 5's own components.
-  - **Waiting on** the card's Done when: the user's look through the screens. The changes asked for are made in Stitch and here, then this task is ticked.
+- **The user's look (Q-8, 21 Nov 2026), and the changes (Claude, 21 Nov 2026):** six answers.
+  - **The answers:** four are new work as well as screens, recorded as O-D13–O-D16 with Claude's O-C13–O-C16:
+    - auto merge by a designated model (28.7);
+    - T-shirt sizes and progress graphed over time (26.8, 27.10, 29.11);
+    - a chat sidebar to talk to Claude or ChatGPT from the web UI (27.11, 29.12);
+    - OpenAI models as well as Claude's (25.12, 25.13; not drawn).
+
+    The other two are screen changes: the Feature screens' cards needed clearer edges, and an open PR needed a link to it.
+  - **What changed on the screens:**
+    - **Feature:** cards have a `base-content` 20 % border and a shadow in both themes. Tasks have a Size column. The badges are udl's vocabulary, which the phone's dark theme couldn't read before. A Progress card holds the feature's burn-up and its forecast.
+    - **Board:** sizes on every card, points per feature and per agent queue, and open PRs as chips.
+    - **Task:** the size, its estimate and the time worked so far.
+    - **Agent:** sizes in the queue, and the PR chips.
+    - **Inbox:** PR links, and auto merge's merger.
+    - **Ready to merge:** the auto merge switch and its merger, a link on every PR's title, and the merger's state on each row.
+    - **Every screen:** a Chat button in the navbar, and "Progress" in the desktop nav.
+    - **New screens:** Progress, and the chat sidebar (over the Board on a desktop, a full-height sheet on a phone).
+
+    An open PR's chip (`#41` with its checks dot and an icon that says it opens GitHub) is a real link everywhere.
+  - **How:** these were edits to each screen's own HTML, not new Stitch generations, so nothing the user had already seen moved. The two new screens were drawn the same way, in the Feature and Board screens' shells. The re-theme and the renders are as before (RETHEME.md). Each screen keeps its Stitch id: the light and dark copies were updated in place, and the new ones are four more pairs. [`DESIGN.md`](../web/plugins/orch/design/DESIGN.md) gained the card edge, sizes, PR chips, auto merge and the chat.
+  - **Left in Stitch:** the generations that made the new screens' slots, and an extra first try at one of them, sit in the project under their own titles, unused. The MCP can't delete screens.
 
 **29.2 The UI plugin's skeleton** · needs 24.7, 28.4
 - Build: `web/plugins/orch/` (React, daisyUI, the SDK), built into `src/udl/plugins/apps/orch/ui/`.
@@ -1070,11 +1277,13 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 - Dependencies: `@dnd-kit/core`, `@dnd-kit/sortable`, `marked`, `dompurify`.
 - Tests first: stores against `FakeUdl`; `<Markdown>`'s sanitising (the phase's third bullet).
 - Done when: every route renders a heading inside the shell, isolated in its shadow root.
+- **Q-8 (user, 21 Nov 2026):** the manifest's nav gets "Progress" after Board (route `progress`, 29.11). `<LinkChip>` for an open PR is a real link to it (`target="_blank"`, `rel="noopener"`): the checks dot, `#n`, and an icon that says it opens GitHub. A `<SizeChip>` shows `S`/`M`/`L`/`XL`, with the points in its tooltip. And the shell's navbar gains the Chat button (29.12).
 
 **29.3 Inbox** · needs 29.2
 - Build: the home route: the three sections of `orch_inbox` as cards with counts, the agents strip (status dots, the task each is on), blocking questions pinned on top. Answering a question with `options` is one click; others open the thread.
 - Done when: its e2e test answers a question from the inbox and sees it leave.
 - **Screens (29.1, Google Stitch):** **Inbox**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=4fbab1751017480cacc6609079604f69) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=fddee541cf074971aec7566bd70cf58a), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=6c577ec04aa5438a903a91626e61388f) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=ebfcc3fa8f2d426a99640ee1e0a0c652); `web/plugins/orch/design/inbox-{light,dark}-{desktop,phone}.png`.
+- **Q-8 (user, 21 Nov 2026):** the Ready to merge card says whether auto merge is on, and who the merger is (28.7). Every PR number on it is a link to the PR.
 
 **29.4 Board** · needs 29.2
 - Build: three panes: **features** (collapsible, each with its tasks as cards showing key, title, state and link chips; filters by project, state and text, kept in the URL), **agents** (a column per agent: its queue as a sortable list, its current task on top, its status), and **suggested** (from `orch_suggest`, each card showing its reasons and the agent it suits; "Queue" on a card accepts the suggestion).
@@ -1082,16 +1291,19 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
   - The keyboard path and the menu path ("Assign to…") call the same functions.
 - Done when: its e2e test drags a suggested task to a fake agent and watches it go `in_progress` live.
 - **Screens (29.1, Google Stitch):** **Board**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=a01ede4ba0104abf9ad5eb2765efda0d) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=7051af8570a747ab841bc745f8ec20c2), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=714267e7946f417488a3f789e8f42688) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=35c29045a2ba4d27844663b7aa1044bd); `web/plugins/orch/design/board-{light,dark}-{desktop,phone}.png`.
+- **Q-8 (user, 21 Nov 2026):** each task card shows its size and, while its PR is open, the PR's chip (a link to it). Each feature's bar is its points merged out of its points. Each agent's column gives the points queued and their estimate in hours (27.10).
 
 **29.5 Feature and task pages** · needs 29.2
 - Build: **Feature:** spec (markdown, editable), its tasks in order with states, links, notes, "Add task", "Split". **Task:** breadcrumb back to its feature, spec, state with the moves this user may make, assignee, needs and what it unblocks (as links), every link by kind, the PR's readiness with its blockers, notes as a timeline with an "Add note" box, its questions, its session (a link to the agent's page at that session).
 - Done when: every key and URL on both pages is a link, and a task's page reaches its feature and back.
 - **Screens (29.1, Google Stitch):** **Feature**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=d2657d70cd2d41f29da24fb19918b6cf) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=4dc4588af1d843e8820efd62c771d5cc), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=1d4c2ed96c2a4aa189e87ef8718fccf9) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=51abd9cf242f4b79abe75aa577dddcd2); `web/plugins/orch/design/feature-{light,dark}-{desktop,phone}.png`; **Task**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=6423d930355047cb84df2a85eaaca868) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=bd90d38f4a3b449495a9f43bff0fa93b), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=22c404ee1d564a5a8e72da8d588f5cd4) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=b4dd135234bd406fab8a0321554992a3); `web/plugins/orch/design/task-{light,dark}-{desktop,phone}.png`.
+- **Q-8 (user, 21 Nov 2026):** **Feature:** each card has a clear edge in both themes (DESIGN.md's card rule: a `base-content` 20 % border and a shadow), and tasks get a Size column. An open PR is a chip that links to it. A Progress card shows the points merged, the feature's burn-up, its forecast, and the rate behind it (27.10). **Task:** its size, its estimate and the time worked so far (`orch_estimate`), and its PR as a link.
 
 **29.6 Agents** · needs 29.2
 - Build: **Agents:** the hierarchy as a tree (humans at the root); dragging an agent onto a manager sets `manager` ("assign models to models"), refused with a reason for a cycle or a non-manager; an editor for an agent (runner, model from `orch_list_runners`' list for its host, host, role, brief, and a manager's four powers as switches). **Agent:** status, queue (sortable), token rotate, pause / resume / stop, and the session: a live transcript from the SSE stream (text, tool calls collapsed to a line, usage and cost), a box to send it a message (owner only).
 - Done when: its e2e test builds a manager with two reports by dragging, and watches a fake session stream.
 - **Screens (29.1, Google Stitch):** **Agents**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=7791ff8dfd96441a8f407efbda0f23b5) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=d17fed4e665c45a880b2114968ccdcb3), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=ddefdd0cfbfb4718a0a6d7650b5754f1) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=0e287012078b43938fff6f0b4b492fa8); `web/plugins/orch/design/agents-{light,dark}-{desktop,phone}.png`; **Agent**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=da1624bace6c4b98a0d64c45d05165a0) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=fa261cca352745de8be29520980348ed), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=e4a4d6e0423e4ce989f0222376cac769) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=27ecbc8414ca40a091f73a3dac131dc2); `web/plugins/orch/design/agent-{light,dark}-{desktop,phone}.png`.
+- **Q-8 (user, 21 Nov 2026):** on an agent's page, the queue shows each task's size, the current task's open PR as a chip, and the queue's points.
 
 **29.7 Q&A** · needs 29.2
 - Build: open questions (blocking first) and answered ones with their outcomes; a thread view with the question, what it is about (link chips), option buttons or a markdown answer box, follow-ups, "Close with outcome". New questions appear live, with a count in the nav.
@@ -1102,6 +1314,7 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 - Build: **Merge:** Ready now (per repo, numbered in merge order, each with its PR link, checks, the bot's verdict and a Merge button that asks for the `owner/repo#n` confirmation), Coming soon (with blockers), Held (with reasons), Done (with what followed). **To action:** Now / After / Later, each with a result box and Done.
 - Done when: its e2e test merges a ready PR on `FakeGitHub` and sees the next in the stack flagged for rebase.
 - **Screens (29.1, Google Stitch):** **Ready to merge**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=dad3482589b143abb7c0266c6562e6bc) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=2584378a5ef04df0a0e8f045046b3b6b), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=529dd7d5434a491c82404792620125bd) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=48bf3cac921645f28f8a45e23e97fc56); `web/plugins/orch/design/merge-{light,dark}-{desktop,phone}.png`; **To action**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=0c0b84dc96674e279f156dce50032e96) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=0fd28d661b034e41b6abd24c82305a09), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=f55c20038eff4331a1ea94f4b4254a54) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=d79a7ae6f71940d79d37fa5b8244a3d1); `web/plugins/orch/design/actions-{light,dark}-{desktop,phone}.png`.
+- **Q-8 (user, 21 Nov 2026):** above Ready now, the project's auto merge switch, with its merger (owner only, 28.7). Each PR's title is a link to it, with an icon saying so. While auto merge is on, each ready row says what the merger is doing (`reviewing`, `next`), and Done says who merged it ("claude (auto merge)"). A person can still merge one by hand.
 
 **29.9 Connections and import** · needs 24.7, 29.2
 - Build: no hand-built pages: `generated` manifest entries and `ui_field()` hints so the generated pages for `github`, `openrouter`, hosts, secrets status, runners, projects and repos read well (groups, order, labels, the `account` and `markdown` widgets), and two contributions: a `resultViews` one that renders `orch_import_plan`'s report (what a dry run would create, the unplaced lines), and an `operationViews` one for `orch_list_runners`, the **Machines** view: a card per host with each harness's version, update available, signed in and plan, limit state and guards, with Install / Update, Set up and Sign in buttons. Sign in opens the relay (25.11): the harness's link as a button, a box for the code, and the result. This is Phase 24's point proved on real plugins: write down in the phase's decisions anything the generated UI couldn't do and how it was solved.
@@ -1111,6 +1324,39 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 **29.10 End to end** · needs 29.3–29.9
 - Build: `web/e2e/orch.spec.ts`: 28.6's story through the web UI only, with `tests/support/e2e.py` extended to start `FakeGitHub`, a `FakeRunner` plugin and a temp git repo.
 - Done when: `make e2e` passes in both themes.
+- **Q-8 (user, 21 Nov 2026):** it covers 29.11 and 29.12 too: the Progress page for a fixture history, and a chat that allows a permission and assigns a task.
+
+**29.11 Progress** · needs 29.2, 27.10 · size L (O-D14)
+- Build: the route `progress`, with a "Progress" nav item after Board.
+  - **Stats:** points merged of all the points, the forecast with its spread, the pace, and the estimate ratio.
+  - **A burn-up:** the scope, the points merged, the forecast line to its likely date with the early-to-late range shaded, and today marked. It is an SVG component, `<BurnUp>`, with no chart library: it is two lines and a band.
+  - **By feature:** a bar, the points and the forecast for each.
+  - **Recently merged:** size, estimate, actual, and their ratio (amber over 1.25×, green under 0.9×).
+  - **Hours per point by model,** and per size.
+  - The project and "since" are kept in the URL. On a phone it is the same page, stacked.
+- Tests first: `<BurnUp>` against fixed series (each point placed, the band between early and late, nothing drawn past the last day); the page's states against `FakeUdl`.
+- Done when: its e2e test shows the burn-up for a fixture history, with the forecast date the API gives.
+- **Screens (29.1, Google Stitch):** **Progress**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=b66963cc7a234f828911ccd061168ef7) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=c060647fdc644d2a9b79f9769af789f4), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=c1a79deffe0d4765913f560fbdc30867) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=1bfeab5df26840ee8d0ed3d7fb3e1401); `web/plugins/orch/design/progress-{light,dark}-{desktop,phone}.png`.
+
+**29.12 The chat sidebar** · needs 29.2, 27.11 · size XL (O-D15, O-C16)
+- Build:
+  - **In the shell:** a contribution point, `panels` (`PanelProps`: `open`, `close()`, `popOut()`).
+    - The navbar draws a button per panel; the chat's is its icon and "Chat", with Ctrl+J.
+    - An open panel gets 400 px on the right: over the page, docked beside it on a window 1600 px or wider, and a full-height sheet on a phone.
+    - A popped-out panel is the route `/ui/panel/<plugin>/<id>`, opened in its own window (`window.open`), drawing the same contribution at full size.
+    - Whether it is open, and its width, are remembered per browser, in `localStorage` (wrapped).
+  - **The chat** (`orch`'s contribution):
+    - **A header:** the runner picker (Claude Code or Codex, the model, the host and the directory), and New chat, Pop out and Close.
+    - **The context line:** model · host · directory · as whom.
+    - **The transcript:** the user's messages on the right; the model's as sanitised markdown; each tool call as one collapsed line with its result, which opens.
+    - **Permission cards:** the command or tool with its input in a block, where it would run, why it asked, and Allow once, Allow for this chat and Deny.
+    - **A composer:** `@` completes a task, feature or question key, and `/` the harness's commands. Enter sends and Shift+Enter starts a new line; while a turn runs, it shows Stop.
+    - Past chats are in a menu. It is live from the chat's SSE stream, and a reload resumes the chat.
+- Tests first:
+  - Vitest: the store (a permission card appears, and goes once answered; a reload resumes) and the sanitising of the model's markdown;
+  - Playwright: open it with Ctrl+J, send, answer a permission prompt, pop out and keep the same chat, in both themes, at desktop and phone widths.
+- Done when: its e2e test, on a `FakeRunner` chat, sends a message, allows a permission, and sees the result in the transcript and on the Board.
+- **Screens (29.1, Google Stitch):** **The chat sidebar**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=77e7e5da0d184db7a599dc178b3dbc67) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=4292c722ab044c828fa5bd11a2571099), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=2d8de97f1b714b84be450766032c5d1e) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=858586079f6c4119b1421a44832db6b0); `web/plugins/orch/design/chat-{light,dark}-{desktop,phone}.png`.
 
 **Phase 29 is done when:** with `udl serve` on real connections, the user assigns a task by dragging it, answers the agent's question, and merges its PR, all from `/ui/p/orch/`.
 
@@ -1120,12 +1366,13 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 
 **30.1 Security review** · needs Phase 29
 - Check, each with a test where one is missing: agent tokens (27.2) can't reach admin operations or another agent's work; an agent can't merge except under `merge = agent` on its own ready PR; text from PRs, bots and CI reaches a model only as fenced data; `HostShell` never builds a command from unquoted input; secrets (the 1Password token, agent tokens, the OpenCode password, `op://` values) appear in no record, log, `argv`, event or transcript; the generated UI never echoes a stored secret; markdown is sanitised. Findings are fixed test-first and listed here.
+- **Q-8 (user, 21 Nov 2026):** also check, each with a test: no model can turn auto merge on or name itself the merger, and a merger can't merge its own task or another project's (O-C13); a chat never gets a flag that skips permissions, its token can't make tokens, open chats or change auto merge, and the token is gone when the chat ends (O-C15); udl never opens `~/.codex/auth.json` (25.12).
 
 **30.2 Docs** · needs 30.1
 - Build: README (a "Work" section, the connections), `docs/orchestrator.md` (concepts, a walkthrough from import to merge, agent roles and powers, running agents on another host, the events), `docs/plugins.md` (writing an app plugin and a runner; what the generated UI reads and how to guide it), a config example for `[apps.orch]` and `[secrets.onepassword]`.
 
 **30.3 (Claude) Moving udl's plans in** · needs 30.1
-- Create project `udl` (`merge = human`, no promotion branches, repo `yelrom0/udl`, gate `make check`). Import planning.md and 03-proxmox.md; check the report line by line; fix what the importer placed wrongly by hand, and the importer by test where it was the importer's fault. Then replace the trackers in the markdown with one line pointing at `udl orch` and move the files to `planning/archive/` (O-D8). `planning/agent-queues/` goes too: the agents' queues are in udl.
+- Create project `udl` (`merge = human`, auto merge on with `claude` as its merger (28.7, the user's standing rule since 17 Nov 2026), no promotion branches, repo `yelrom0/udl`, gate `make check`). Import planning.md and 03-proxmox.md; check the report line by line; fix what the importer placed wrongly by hand, and the importer by test where it was the importer's fault. Then replace the trackers in the markdown with one line pointing at `udl orch` and move the files to `planning/archive/` (O-D8). `planning/agent-queues/` goes too: the agents' queues are in udl.
 - Done when: `udl orch features` lists Phases 13–22 with their tasks, and nothing in `planning/` is a live tracker.
 
 **30.4 (Claude + user) Live check** · needs 30.3
