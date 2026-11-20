@@ -268,6 +268,34 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - Bump `SDK_VERSION`'s minor.
 - Tests first: `tests/unit/plugins/test_ui.py` (a `hide` glob matching nothing and an `operationViews` key naming no operation are problems, not errors); Vitest for precedence.
 - Done when: the template plugin (18.10) hides one operation and replaces one result view in six lines of manifest.
+- **Built (deepseek-a, 2026-11-21, PR #54):** `UIManifest.generated` — `nav` (a title and icon of its own,
+  or `false` for no drawer entry), `tabs`, `hide`, `groups`, `order`, `labels` — validated in
+  `udl/plugins/ui/base.py` (`guidance_problems`: a `hide` glob matching nothing and an `operationViews`
+  key naming no operation are **problems, not errors**, so a page still opens and says what its guidance
+  names that the plugin has not), served in `/ui/plugins.json` as `generated`, and read by the shell's
+  `generated/guidance.ts` (`guidanceOf`, merging every manifest in order — the last to say something wins
+  — then `guided()`, `tabsOfGuided`, `navOfGuided`). `SDK_VERSION` is 1.1.0 (the minor bump, with the
+  `@udl/ui-sdk` package and `manifest.schema.json`). The three points joined the closed set with the SDK's
+  prop types: `operationViews` (`{operation, schema, run}`), `resultViews` (`{operation, value}`) and
+  `fieldWidgets` (`{field, value, onChange}`); the generated page draws them through the same
+  `<PluginSlot>`, and `PluginPage` now takes `manifests` and `registry` (the `/p/$plugin/$` route passes
+  the plugins store, which it was not doing — the first e2e run is what found it). A field asks for a
+  plugin's widget with `x-udl-ui.widget`, so `FieldSpec` gained `asked` (the name, when it is not one of
+  udl's own) and `SchemaForm` prefers `widgets[asked]` over `widgets[field.widget]`. Precedence is stated
+  once in `docs/ui-plugins.md` (new; 21.4 grows it): what a plugin contributes replaces that part of the
+  generated page and everything else stays generated. Tests: `tests/unit/plugins/test_ui.py` (the
+  guidance is read whole, its problems, the drawer's `false`), Vitest `guidance.test.ts` (the merge, the
+  tabs, the labels, the groups, the order, the drawer), `PluginPage.test.tsx` (8 precedence tests: a
+  hidden operation gone, a label and a group applied, the tabs it names, the problems said, a contributed
+  operation panel / result view / settings panel / account setup drawn instead), `widgets.test.tsx`,
+  `schema.test.ts` and `SchemaForm.test.tsx` for `asked`, and e2e `generated.spec.ts` — "another plugin's
+  manifest guides the page (24.7)", both themes. **Done when, met:** `web/packages/template`'s manifest
+  hides one operation and contributes one result view in six lines (`"generated": {"hide": ["fake_ping"]}`
+  and `"resultViews": ["fake_count_things"]`), drawn by `src/resultView.tsx`. **Two things to know:** the
+  template is a UI-only plugin, so its guidance names the e2e fake's operations — the fake gained
+  `count_things` and `ping` for it (guidance names operations, and the page it guides is udl's); and
+  24.8's `generated-guided.spec.ts` is still the browser proof the phase card describes, with the shadcn
+  example's own `resultViews`.
 
 **24.8 Proof** · needs 24.7
 - Build: `web/e2e/generated-guided.spec.ts`: the shadcn example (18.10) gains a `resultViews` contribution for one fake operation; the rest of that plugin's page stays generated. Both themes.

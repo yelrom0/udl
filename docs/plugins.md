@@ -21,6 +21,9 @@ keep udl's data somewhere new (a database).
 - [Database plugins](#database-plugins)
 - [Testing a plugin](#testing-a-plugin)
 
+UI plugins — the shell's pages, widgets and panels, and how one guides the page udl generates for
+its plugin — are in [docs/ui-plugins.md](ui-plugins.md).
+
 ## Where plugins come from
 
 udl finds plugins in two places:
