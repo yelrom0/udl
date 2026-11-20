@@ -367,6 +367,24 @@ async def test_a_runner_whose_health_fails_keeps_its_row(
     assert listed.problems == []
 
 
+async def test_a_failure_with_no_message_says_so(
+    hosts: Hosts, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure that says nothing is still a problem a person can read."""
+    script_claude(hosts.shell("local"))
+    runner = await hosts.harnesses.runner("local", "claude-code")
+
+    async def silent(_: AnAgentRunner) -> RunnerHealth:
+        raise PluginError("")
+
+    monkeypatch.setattr(type(runner), "health", silent)
+
+    listed = await hosts.harnesses.all(ListRunnersRequest(host="local"))
+
+    [claude] = [item for item in listed.items if item.runner == "claude-code"]
+    assert any("it failed without saying why" in problem for problem in claude.health.problems)
+
+
 # ---------------------------------------------------------------------------------------------
 # Setting up
 # ---------------------------------------------------------------------------------------------
