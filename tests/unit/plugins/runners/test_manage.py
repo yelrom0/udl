@@ -627,8 +627,8 @@ def test_a_harness_s_operations_are_udl_orch_runners_commands() -> None:
 def test_the_runners_command_lists_them_rather_than_showing_its_group_help(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`udl orch runners --host local` runs the listing: it sits at the group's own path, which
-    is also where its install, setup and sign-in live."""
+    """`udl orch runners` and `udl orch runners --host local` both print the table: the listing
+    sits at the group's own path, which is also where its install, setup and sign-in live."""
     shells = {name: ScriptedShell(host(name)) for name in HOSTS}
 
     def shell_for(found: Host) -> ScriptedShell:
@@ -648,14 +648,17 @@ def test_the_runners_command_lists_them_rather_than_showing_its_group_help(
     asyncio.run(seed())
 
     everyone = CLI(harness)("orch", "runners")
-    one = CLI(harness)("orch", "runners", "--host", "local", "--json")
+    local = CLI(harness)("orch", "runners", "--host", "local")
+    local_json = CLI(harness)("orch", "runners", "--host", "local", "--json")
 
-    assert everyone.exit_code == 0, everyone.output
-    assert "Usage:" not in everyone.stdout  # (it is the listing, not the group's help)
-    assert "claude-code" in everyone.stdout
+    for listed_table in (everyone, local):
+        assert listed_table.exit_code == 0, listed_table.output
+        assert "Usage:" not in listed_table.stdout  # (it is the listing, not the group's help)
+        assert "claude-code" in listed_table.stdout
     assert {name for name in HOSTS if name in everyone.stdout} == set(HOSTS)
-    assert one.exit_code == 0, one.output
-    listed = json.loads(one.stdout)
+    assert {name for name in HOSTS if name in local.stdout} == {"local"}
+    assert local_json.exit_code == 0, local_json.output
+    listed = json.loads(local_json.stdout)
     assert {item["host"] for item in listed["items"]} == {"local"}
     assert {item["runner"] for item in listed["items"]} >= {"claude-code", "command", "opencode"}
     assert listed["problems"] == []
