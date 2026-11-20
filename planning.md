@@ -116,7 +116,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 26.1 `udl.apps` plugin kind: `AppPlugin` + contract suite + `FakeApp`; app services in the runtime
   - [x] 26.2 `Project` and `Repo` records
   - [x] 26.3 `Feature` and `Task` records, task states and their transitions
-  - [ ] 26.4 `Link` records: everything linked, both ways; GitHub links kept current by the watcher
+  - [~] 26.4 `Link` records: everything linked, both ways; GitHub links kept current by the watcher
   - [ ] 26.5 `Note` records: what was done, decisions, findings, on a task or feature
   - [ ] 26.6 Operations (projects, repos, features, tasks, links, notes) via CLI, API and MCP
   - [ ] 26.7 Markdown import: a planning file's tracker, cards and spec sections become features and tasks

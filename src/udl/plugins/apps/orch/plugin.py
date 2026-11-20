@@ -13,23 +13,39 @@ module does.
 """
 
 # System Imports
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+import asyncio
+import contextlib
+import logging
+from collections.abc import Awaitable, Sequence
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Protocol
+
+# Package Imports
+from pydantic import BaseModel, ValidationError
 
 # Local Imports
 from udl.automations.events import EventType
 from udl.core.operations import Operation, OperationHints
+from udl.db.models import JsonObject
 from udl.db.records import Record
-from udl.errors import DoesNotExist, NotAllowed
-from udl.plugins.apps.base import AppContext, AppPlugin
+from udl.errors import DoesNotExist, NotAllowed, PluginError, UDLError
+from udl.plugins.apps.base import (
+    AppContext,
+    AppEvent,
+    AppEvents,
+    AppPlugin,
+    AppRecords,
+)
 from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch import records as stored
 from udl.plugins.apps.orch import suggest as suggested
+from udl.plugins.apps.orch.links import LINK_CHANGED, LinkChanged, LinkRecords, event_url
 from udl.plugins.apps.orch.models import (
     AssignTaskRequest,
     MyTaskNote,
     MyTaskRequest,
     MyTaskResponse,
+    PullReader,
     QueueEntry,
     QueueRequest,
     ReorderQueueRequest,
@@ -50,7 +66,62 @@ from udl.plugins.apps.orch.tokens import (
 if TYPE_CHECKING:
     from udl.core.service import UDLService
 
-__all__ = ["Orch"]
+__all__ = ["EventEmission", "Orch", "OrchContext", "Stopping", "Subscription"]
+
+log = logging.getLogger(__name__)
+
+
+class Subscription(Protocol):
+    """What orch's service reads of a subscription: the next event, as it is stored."""
+
+    def __anext__(self) -> Awaitable[AppEvent]:
+        """The next event (StopAsyncIteration when the subscription has ended)."""
+        ...
+
+
+class EventEmission(Protocol):
+    """What orch's service needs of an app's events: publish one of its own."""
+
+    async def emit(
+        self,
+        event_type: str,
+        data: BaseModel | JsonObject,
+        *,
+        dedupe_key: str,
+        occurred_at: datetime | None = None,
+    ) -> bool:
+        """Publish `event_type` with `data`."""
+        ...
+
+
+class Stopping(Protocol):
+    """What stops orch's service: udl's `asyncio.Event` (and a test's flag, which is read the
+    same way)."""
+
+    def is_set(self) -> bool:
+        """Whether it has been set."""
+        ...
+
+    async def wait(self) -> object:
+        """Wait until it is set (what it gives is its own business)."""
+        ...
+
+
+class OrchContext(Protocol):
+    """What orch's service reads of its AppContext: its records, its events, the service to call
+    `github_get_pull` on, and what stops it.
+
+    It is a Protocol so the service can be run in a test with a fake of each, without a whole
+    AppContext (which needs a service, a secret store, a clock and settings)."""
+
+    records: AppRecords
+    events: AppEvents
+    stop: Stopping
+
+    @property
+    def service(self) -> PullReader:
+        """The service to call `github_get_pull` on."""
+        ...
 
 
 class Orch(AppPlugin[OrchSettings]):
@@ -68,8 +139,8 @@ class Orch(AppPlugin[OrchSettings]):
     @classmethod
     def record_kinds(cls) -> Sequence[type[Record]]:
         """The kinds of record orch defines: a project, a repo, a feature, a task, a note and the
-        counter their keys come from (26.2-26.5), an agent, its session and the events of it
-        (27.1), and the tokens its agents call udl with (27.2)."""
+        counter their keys come from (26.2-26.5), a link (26.4), an agent, its session and the
+        events of it (27.1), and the tokens its agents call udl with (27.2)."""
         return (
             stored.Project,
             stored.Repo,
@@ -77,6 +148,7 @@ class Orch(AppPlugin[OrchSettings]):
             stored.Task,
             stored.Note,
             stored.Counter,
+            stored.Link,
             stored.Agent,
             stored.AgentSession,
             stored.SessionEvent,
@@ -96,8 +168,8 @@ class Orch(AppPlugin[OrchSettings]):
 
     @classmethod
     def event_types(cls) -> Sequence[EventType[Any]]:
-        """The events orch publishes (its links' and tasks' changes, from 26.4 on)."""
-        return ()
+        """The events orch publishes: its links' changes (26.4), and its tasks' from 26.6 on."""
+        return (LINK_CHANGED,)
 
     @classmethod
     def operations(cls) -> list[Operation]:
@@ -138,12 +210,72 @@ class Orch(AppPlugin[OrchSettings]):
         ]
 
     async def serve(self, ctx: AppContext) -> None:
-        """Orch's service: nothing to run until the dispatcher (Phase 27).
+        """Orch's service: it keeps its pull links current (26.4), until the dispatcher
+        (Phase 27) gives it more to do."""
+        await self._keep_links(ctx.records, ctx.events, ctx.service, ctx.stop)
 
-        An app that overrides no hook has no service of its own (AppPlugin's serve() returns at
-        once); this one waits on `ctx.stop`, so it is a service that runs while the runtime
-        holds its lease and ends when the lease goes."""
-        await ctx.stop.wait()
+    async def _keep_links(
+        self,
+        records: AppRecords,
+        events: AppEvents,
+        service: PullReader,
+        stop: Stopping,
+    ) -> None:
+        """Listen for `github.pr.*` events from now on, and for each one refresh every `pull`
+        link whose URL is that pull through `github_get_pull`, store it, and publish
+        `orch.link.changed`. It ends when `stop` is set (the lease going), or when the
+        subscription ends (the runtime closing it: the next lease starts this again)."""
+        links = LinkRecords(records)
+        async with events.subscribe("github.pr.*") as subs:
+            waiting = asyncio.ensure_future(asyncio.shield(stop.wait()))
+            try:
+                await self.follow(links, events, service, subs, waiting)
+            finally:
+                waiting.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await waiting
+
+    async def follow(
+        self,
+        links: LinkRecords,
+        events: EventEmission,
+        service: PullReader,
+        subs: Subscription,
+        waiting: asyncio.Future[object],
+    ) -> None:
+        """Handle each event until `waiting` (the app told to stop) ends first."""
+        while True:
+            try:
+                event = await _first(subs.__anext__(), waiting)
+            except StopAsyncIteration:
+                return
+            if event is None:
+                return
+            try:
+                url = event_url(event)
+                if not url:
+                    continue
+                for found in await links.for_url(url):
+                    if found.link_kind != "pull":
+                        continue
+                    link = await links.refresh(found, github=service)
+                    if link.state != found.state:
+                        # (Its own name: `link.changed` would be read as the whole name, and
+                        # this app's is `orch.link.changed`. The key carries what changed, so a
+                        # link that changed again is published again.)
+                        await events.emit(
+                            LINK_CHANGED.name,
+                            LinkChanged(
+                                owner_kind=link.owner_kind,
+                                owner=link.owner,
+                                url=link.url,
+                            ),
+                            dedupe_key=f"{link.id}:{link.state.model_dump_json()}",
+                        )
+            except (DoesNotExist, PluginError, UDLError, ValidationError) as error:
+                # (A pull that has gone, or one udl cannot read: say so and go on. Anything
+                # else is a bug, and the supervisor's backoff is what reports it.)
+                log.warning("orch could not refresh a pull link: %s", error)
 
     # -- what to do next (27.4) ----------------------------------------------------------------
 
@@ -275,3 +407,18 @@ def _entry(task: stored.Task) -> QueueEntry:
         assignee=task.assignee,
         repo=task.repo,
     )
+
+
+async def _first(waiting: Awaitable[object], stopped: asyncio.Future[object]) -> object | None:
+    """The next event, or None when `stopped` is set first (the app is shutting down)."""
+    waiter = asyncio.ensure_future(waiting)
+    try:
+        done, _ = await asyncio.wait({waiter, stopped}, return_when=asyncio.FIRST_COMPLETED)
+        if waiter in done:
+            return waiter.result()
+        waiter.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await waiter
+        return None
+    finally:
+        waiter.cancel()

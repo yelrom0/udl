@@ -55,6 +55,9 @@ from udl.plugins.apps.orch.records import (
     Feature as FeatureRecord,
 )
 from udl.plugins.apps.orch.records import (
+    Link as LinkRecord,
+)
+from udl.plugins.apps.orch.records import (
     Note as NoteRecord,
 )
 from udl.plugins.apps.orch.records import (
@@ -427,8 +430,9 @@ def test_orch_keeps_a_sessions_transcript_for_thirty_days() -> None:
         OrchSettings(session_days=0)
 
 
-def test_orch_brings_its_agent_kinds() -> None:
-    # (The exact set: a kind added or left in by mistake would be noticed here.)
+def test_orch_brings_its_kinds() -> None:
+    # (The exact set: a kind added or left in by mistake would be noticed here. A link is one
+    # of them, so the record contract runs over it too.)
     assert set(Orch.record_kinds()) == {
         ProjectRecord,
         RepoRecord,
@@ -436,6 +440,7 @@ def test_orch_brings_its_agent_kinds() -> None:
         TaskRecord,
         NoteRecord,
         CounterRecord,
+        LinkRecord,
         AgentRecord,
         AgentSessionRecord,
         AgentToken,

@@ -14,8 +14,9 @@ it is given are the project's own text.
 
 # System Imports
 import string
+from collections.abc import Mapping
 from enum import StrEnum
-from typing import Annotated, Final, Literal, get_args
+from typing import Annotated, Final, Literal, Protocol, get_args
 
 # Package Imports
 from pydantic import (
@@ -59,6 +60,8 @@ __all__ = [
     "GitHubSlug",
     "HostName",
     "Key",
+    "Link",
+    "LinkKind",
     "MergePolicy",
     "MyTaskNote",
     "MyTaskRequest",
@@ -68,6 +71,7 @@ __all__ = [
     "Principal",
     "Project",
     "Promotion",
+    "PullState",
     "QueueEntry",
     "QueueRequest",
     "ReorderQueueRequest",
@@ -82,6 +86,7 @@ __all__ = [
     "TaskKind",
     "TaskQueue",
     "Title",
+    "URLText",
     "UnassignTaskRequest",
     "branch_pattern_problem",
     "render_branch",
@@ -123,6 +128,12 @@ Key = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$", 
 
 Spec = Annotated[str, StringConstraints(max_length=100_000)]
 """A task's or a feature's spec, as markdown."""
+
+URLText = Annotated[str, StringConstraints(min_length=1, max_length=2000)]
+"""A URL, as it is stored (a `udl:` one for an internal kind)."""
+
+Text = Annotated[str, StringConstraints(max_length=2000)]
+"""A line of text (a link's title), as long as a title is."""
 
 
 def _not_empty(text: str) -> str:
@@ -182,6 +193,22 @@ type TaskKind = Literal["build", "human", "review"]
 
 type FeatureStatus = Literal["planned", "active", "done", "parked"]
 """Where a feature is: its own setting, or what its tasks make it (orch.records)."""
+
+type LinkKind = Literal[
+    "pull",
+    "issue",
+    "commit",
+    "branch",
+    "ci_run",
+    "file",
+    "url",
+    "doc",
+    "stitch",
+    "task",
+    "feature",
+    "question",
+]
+"""What a link points at (26.4's kinds)."""
 
 STATE_MARK: Final[dict[str, str]] = {
     "open": "[ ]",
@@ -430,6 +457,66 @@ class Feature(_Model):
     """Where it is: its own setting, or what its tasks make it (orch.records)."""
     order: int = 0
     """Where it sits among its project's features."""
+
+
+PullStateWord = Literal["open", "closed", "merged"]
+"""Where a pull is (GitHub's own word: a merged pull is never closed)."""
+PullChecksWord = Literal["pass", "fail", "pending", "none"]
+"""How a pull's checks are, in one word."""
+PullReviewWord = Literal["approved", "changes", "pending", "none"]
+"""How a pull's review is, in one word."""
+
+
+class PullReader(Protocol):
+    """What refreshing a pull needs of a service: udl's own `github_get_pull` operation.
+
+    It is udl's `UDLService.call` (an operation's name and its request, as plain data), so the
+    hub's service is a PullReader and so is a test's fake of one."""
+
+    async def call(self, name: str, request: BaseModel | Mapping[str, object]) -> BaseModel:
+        """Run the operation called `name` with `request`."""
+        ...
+
+
+class PullState(_Model):
+    """What a pull link keeps: where a pull is, its head, its checks and its review.
+
+    `state` is GitHub's own word (open, closed or merged — merged is never closed), `checks` and
+    `review` one word each for the pull, so a link says at a glance where its pull is. Each is a
+    `Literal`: a word outside them is refused when the link is stored, not kept as a string that
+    reads as nothing."""
+
+    state: PullStateWord = "open"
+    """Where the pull is: open, closed or merged."""
+    head_sha: str = ""
+    """The commit at its head."""
+    checks: PullChecksWord = "none"
+    """How its checks are: pass, fail, pending or none."""
+    review: PullReviewWord = "none"
+    """How its review is: approved, changes, pending or none."""
+
+
+class Link(_Model):
+    """A typed pointer from a feature, task, question or action to something else (26.4).
+
+    `url` is the canonical form (a `udl:` URL for an internal kind, so a task's link is
+    `udl:task/udl/26.2`), and `state` is what is known about it — for a pull its `state`,
+    `head_sha`, `checks` and `review`."""
+
+    owner_kind: OwnerKind
+    """What it hangs on."""
+    owner: str
+    """What it hangs on, by key (the task's key, `Q-7`)."""
+    link_kind: LinkKind
+    """What it points at (not `kind`: a record's `kind` is the name of its kind)."""
+    url: URLText
+    """The canonical form of the URL it points at."""
+    title: Text = ""
+    """What it is called, when it has been seen."""
+    state: PullState = Field(default_factory=PullState)
+    """What is known about it (for a pull: its state, head sha, checks and review)."""
+    added_by: Text = ""
+    """Who added it (an agent, `human:<name>`, or `scan`)."""
 
 
 class Task(_Model):
