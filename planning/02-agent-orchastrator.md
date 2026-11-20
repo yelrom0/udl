@@ -941,7 +941,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   "for this head" checkable. udl moves a task to `ready` as the system, in the role `ready` (a
   person's principal may move a task anywhere, which would ready an `open` or `blocked` one and
   clear its reason).
-  Tests: 43 in `test_readiness.py` (the fixture is 28.2's real review comment,
+  Tests: 42 in `test_readiness.py` (the fixture is 28.2's real review comment,
   `tests/fixtures/reviews/follow-up-all-clear.md`) and 14 in `test_readiness_operations.py`
   through the service with a fake `github` app, plus `test_plugin.py`'s two for the times the
   integration hands readiness. The card's "merge instead when `merge = agent`"
