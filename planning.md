@@ -92,38 +92,39 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [ ] 23.6 **(Claude)** Agent queues, rules and briefs in `planning/agent-queues/`; two DeepSeek V4.1 Flash agents (OpenRouter, paid; four free ERNIE ones until 19 Nov AEDT) registered, with a watchdog
 - [ ] **Phase 24: Web UI foundations, and a generated UI for every plugin**
   - [ ] 24.1 Phase 18 (18.1–18.10, ticked in their own tracker below), pulled forward and built as written, with the amendments in 24.1's card
-  - [~] 24.2 `UISpec` on operations and `ui_field()` on request, settings and account fields
-  - [~] 24.3 `GET /ui/generated.json`: every plugin's operations, settings, accounts and event types, with their schemas
-  - [~] 24.4 `<SchemaForm>`: a form from any request model's JSON Schema
-  - [~] 24.5 `<ResultView>`: a table, a detail list or a tree from any response
+  - [x] 24.2 `UISpec` on operations and `ui_field()` on request, settings and account fields
+  - [x] 24.3 `GET /ui/generated.json`: every plugin's operations, settings, accounts and event types, with their schemas
+  - [x] 24.4 `<SchemaForm>`: a form from any request model's JSON Schema
+  - [x] 24.5 `<ResultView>`: a table, a detail list or a tree from any response
   - [ ] 24.6 The generated plugin page (`/ui/p/<plugin>`): Operations, Settings, Accounts, Events; nav for every plugin
   - [ ] 24.7 UI plugins guide the generated UI: `generated` in the manifest, and the `operationViews`, `resultViews` and `fieldWidgets` points
   - [ ] 24.8 Proof (e2e): a plugin with no UI plugin is fully usable on the web; a UI plugin reshapes its generated page
   - [ ] 24.9 planning.md amended: requirement 5d, "Without a UI plugin", Phases 19–20's plugin tasks
 - [ ] **Phase 25: Connections: 1Password, OpenRouter, GitHub, hosts and runners**
-  - [~] 25.1 Secret references: `op://…` anywhere udl takes a secret, read at use through the `op` CLI (`onepassword` resolver)
-  - [ ] 25.2 17.1 (the `udl.ai` kind) and 17.3 (`openai-compatible`), pulled forward as written (ticked in Phase 17's tracker below)
-  - [~] 25.3 `openrouter` AI provider: models with prices, the key's credit, cost per reply
-  - [~] 25.4 Fake GitHub server in `tests/support/`; typed GitHub client
-  - [~] 25.5 `github` integration: accounts, PR / checks / comments operations, the PR watcher and its events
-  - [~] 25.6 `Host` records and `HostShell`: run a process here or on another machine over SSH
-  - [~] 25.7 `udl.runners` plugin kind: `AgentRunner` + contract suite + `FakeRunner`
-  - [~] 25.8 `claude-code` runner: the `claude` CLI on any host, on that host's own login (so subscription models)
-  - [~] 25.9 `opencode` runner: OpenCode 2's server API on any host (OpenRouter and any other provider it has)
-  - [~] 25.10 `command` runner (any other AI's CLI)
+  - [x] 25.1 Secret references: `op://…` anywhere udl takes a secret, read at use through the `op` CLI (`onepassword` resolver)
+  - [x] 25.2 17.1 (the `udl.ai` kind) and 17.3 (`openai-compatible`), pulled forward as written (ticked in Phase 17's tracker below)
+  - [x] 25.3 `openrouter` AI provider: models with prices, the key's credit, cost per reply
+  - [x] 25.4 Fake GitHub server in `tests/support/`; typed GitHub client
+  - [x] 25.5 `github` integration: accounts, PR / checks / comments operations, the PR watcher and its events
+  - [x] 25.6 `Host` records and `HostShell`: run a process here or on another machine over SSH
+  - [x] 25.7 `udl.runners` plugin kind: `AgentRunner` + contract suite + `FakeRunner`
+  - [x] 25.8 `claude-code` runner: the `claude` CLI on any host, on that host's own login (so subscription models)
+  - [x] 25.9 `opencode` runner: OpenCode 2's server API on any host (OpenRouter and any other provider it has)
+  - [x] 25.10 `command` runner (any other AI's CLI)
   - [ ] 25.11 Managing harnesses on every host: status (version, signed in, plan, limits), install and update, sign-in started from the hub
 - [ ] **Phase 26: Work tracking: projects, features, tasks, links**
-  - [~] 26.1 `udl.apps` plugin kind: `AppPlugin` + contract suite + `FakeApp`; app services in the runtime
-  - [~] 26.2 `Project` and `Repo` records
-  - [~] 26.3 `Feature` and `Task` records, task states and their transitions
+  - [x] 26.1 `udl.apps` plugin kind: `AppPlugin` + contract suite + `FakeApp`; app services in the runtime
+  - [x] 26.2 `Project` and `Repo` records
+  - [x] 26.3 `Feature` and `Task` records, task states and their transitions
   - [ ] 26.4 `Link` records: everything linked, both ways; GitHub links kept current by the watcher
   - [ ] 26.5 `Note` records: what was done, decisions, findings, on a task or feature
   - [ ] 26.6 Operations (projects, repos, features, tasks, links, notes) via CLI, API and MCP
   - [ ] 26.7 Markdown import: a planning file's tracker, cards and spec sections become features and tasks
 - [ ] **Phase 27: Agents, assignment and the dispatcher**
-  - [~] 27.1 `Agent` records: runner, model, host, role, manager (the hierarchy), permissions
+  - [x] 27.1 `Agent` records: runner, model, host, role, manager (the hierarchy), permissions
   - [ ] 27.2 Agent tokens: an agent calls udl as itself, and only the operations its role allows
-  - [~] 27.3 Queues: assign, reorder, unassign
+  - [x] 27.3 Queues: assign, reorder, unassign
+  - [ ] 27.3a A queue change is one write: `upsert_records` on the database kind, all or nothing, and a per-assignee lock in `orch.queue`
   - [ ] 27.4 Suggested next tasks, ranked, each with its reasons
   - [ ] 27.5 Worktrees and the gate lane: `orch_push` runs the repo's gates, pushes, opens or updates the PR
   - [ ] 27.6 PR readiness: CI, the review bot's verdict, mergeability, stacks, holds
@@ -298,9 +299,9 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
   - [ ] 16.7 Operations (`pages_preview`, `pages_suggest`, `pages_poll`) via CLI, API and MCP; `udl pages wizard <url>` (suggest → pick → preview → save, optionally with a subscription)
 
 - [ ] **Phase 17: Local AI**
-  - [~] 17.1 `udl.ai` plugin kind: `AIProvider` base + contract suite + `FakeAI` (scripted); `AIProviderConnection` records (pulled forward, built as part of **25.2**)
+  - [x] 17.1 `udl.ai` plugin kind: `AIProvider` base + contract suite + `FakeAI` (scripted); `AIProviderConnection` records (pulled forward, built as part of **25.2**)
   - [ ] 17.2 `ollama` provider: chat with tool calls, models, `keep_alive`, pulling a model
-  - [~] 17.3 `openai-compatible` provider (llama.cpp's `llama-server`, LM Studio, vLLM…); any provider's optional `command` is started on demand and stopped when idle (pulled forward, built as part of **25.2**)
+  - [x] 17.3 `openai-compatible` provider (llama.cpp's `llama-server`, LM Studio, vLLM…); any provider's optional `command` is started on demand and stopped when idle (pulled forward, built as part of **25.2**)
   - [ ] 17.4 Tools from operations: schemas from request models; `ToolPolicy` (allowlist; destructive / open-world tools wait for approval in `ask` mode and run unattended in `auto` mode; `admin` operations never, for now)
   - [ ] 17.5 The agent loop: tool calls, step / time / size limits, the transcript kept on the run
   - [ ] 17.6 Approvals (`ask` mode): a run waits (`awaiting_approval`), `decide_run`, a `udl.action.awaiting_approval` event, denied after a timeout
@@ -310,14 +311,14 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
   - [ ] 17.10 The `vision` solver: image challenges (reCAPTCHA's and hCaptcha's grids) answered by a local vision model
 
 - [ ] **Phase 18: Web UI foundations & UI plugins**: pulled forward and built now as **24.1** (see "Next to build")
-  - [~] 18.1 `web/` pnpm workspace and tooling: Vite + SWC, TypeScript strict, Biome, Vitest (+ coverage gate), Playwright, Tailwind CSS + daisyUI; `make web`, `make e2e`, and `make check` runs the web checks
-  - [~] 18.2 Typed API client generated from udl's OpenAPI schema (`openapi-typescript` + `openapi-fetch`); `make check` fails when it is stale
-  - [~] 18.3 FastAPI serves the UI at `/ui` (from the package, SPA fallback, CSP, cache headers), and a page saying how to build it when it isn't built
-  - [~] 18.4 Web sessions: sign in with the API key → a session cookie; a CSRF header and an Origin check on writes
-  - [~] 18.5 The shell: layout, TanStack Router (file routes, auth guard, a splat route for plugin pages), Zustand stores, light / dark / system theme
-  - [~] 18.6 Live data: shared SSE connections feeding Zustand stores, reconnecting with backoff
-  - [~] 18.7 `UIManifest` (Pydantic → JSON Schema → TypeScript), `ui` on every plugin kind, the `udl.ui` kind, local UI plugin dirs, `GET /ui/plugins.json`, UI availability in `list_plugins`
-  - [~] 18.8 `@udl/ui-sdk`: `defineUIPlugin`, the mount contract, a React adapter, the plugin context, SDK version checks
+  - [x] 18.1 `web/` pnpm workspace and tooling: Vite + SWC, TypeScript strict, Biome, Vitest (+ coverage gate), Playwright, Tailwind CSS + daisyUI; `make web`, `make e2e`, and `make check` runs the web checks
+  - [x] 18.2 Typed API client generated from udl's OpenAPI schema (`openapi-typescript` + `openapi-fetch`); `make check` fails when it is stale
+  - [x] 18.3 FastAPI serves the UI at `/ui` (from the package, SPA fallback, CSP, cache headers), and a page saying how to build it when it isn't built
+  - [x] 18.4 Web sessions: sign in with the API key → a session cookie; a CSRF header and an Origin check on writes
+  - [x] 18.5 The shell: layout, TanStack Router (file routes, auth guard, a splat route for plugin pages), Zustand stores, light / dark / system theme
+  - [x] 18.6 Live data: shared SSE connections feeding Zustand stores, reconnecting with backoff
+  - [x] 18.7 `UIManifest` (Pydantic → JSON Schema → TypeScript), `ui` on every plugin kind, the `udl.ui` kind, local UI plugin dirs, `GET /ui/plugins.json`, UI availability in `list_plugins`
+  - [x] 18.8 `@udl/ui-sdk`: `defineUIPlugin`, the mount contract, a React adapter, the plugin context, SDK version checks
   - [ ] 18.9 The plugin host: `<PluginSlot>` (lazy import, Shadow DOM isolation, error boundary) and the contribution points
   - [ ] 18.10 Proof: an example UI plugin built with shadcn/ui runs isolated inside the daisyUI shell (e2e); a template for new UI plugins
 
