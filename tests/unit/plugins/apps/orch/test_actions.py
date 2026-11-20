@@ -23,11 +23,13 @@ from support.engine import databases, registry, settings
 from udl.config import Settings
 from udl.errors import DoesNotExist, NotAllowed
 from udl.plugins.apps.base import AppRecords
+from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch.actions import (
     ActionRecords,
     become_now,
     drop,
     finish,
+    for_task,
     set_action,
 )
 from udl.plugins.apps.orch.models import (
@@ -73,6 +75,24 @@ async def actions(tmp_path: Path) -> ActionRecords:
     return ActionRecords(records)
 
 
+@pytest.fixture
+async def store(tmp_path: Path) -> tuple[ActionRecords, TaskRecords]:
+    """Orch's actions and tasks over a fresh in-memory database, with a project and two tasks."""
+    plugins = registry()
+    config: Settings = settings(tmp_path)
+    db = databases(config, plugins)
+    await db.connect()
+    records = AppRecords(db)
+    await ProjectRecords(records).save_project(Project(name="udl", title="udl"))
+    await FeatureRecords(records).save_feature(Feature(project="udl", key="F-1", title="The queue"))
+    tasks = TaskRecords(records)
+    await tasks.save_task(
+        Task(project="udl", feature="F-1", key="F-1.1", title="F-1.1", task_kind="human")
+    )
+    await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.2", title="F-1.2"))
+    return ActionRecords(records), tasks
+
+
 async def a_task(tasks: TaskRecords, key: str, *, task_kind: str = "build") -> Task:
     """A task of the project, saved and read back."""
     await tasks.save_task(
@@ -110,6 +130,7 @@ async def test_each_action_gets_the_next_key(actions: ActionRecords) -> None:
 
 
 async def test_actions_are_listed_now_then_after_then_later(actions: ActionRecords) -> None:
+    await a_task(TaskRecords(actions.records), "F-1.1")
     await set_action(actions, project="udl", title="Later", when=LATER)
     await set_action(actions, project="udl", title="After", when=AFTER, after="F-1.1")
     await set_action(actions, project="udl", title="Now")
@@ -140,6 +161,9 @@ async def test_an_action_is_a_person_s(actions: ActionRecords) -> None:
 async def test_an_action_waiting_after_a_task_becomes_now_when_it_merges(
     actions: ActionRecords,
 ) -> None:
+    tasks = TaskRecords(actions.records)
+    for key in ("F-1.2", "F-1.3"):
+        await a_task(tasks, key)
     waiting = await set_action(
         actions, project="udl", title="Promote 26.2", when=AFTER, after="F-1.2"
     )
@@ -269,3 +293,163 @@ def test_the_action_record_is_one_of_orch_s_kinds() -> None:
 
     assert HumanAction in Orch.record_kinds()
     assert Note in Orch.record_kinds()
+
+
+# ---------------------------------------------------------------------------------------------
+# What deleting a task, a feature or a project takes with it (the review's first item)
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_deleting_a_task_deletes_the_actions_about_it(
+    store: tuple[ActionRecords, TaskRecords],
+) -> None:
+    actions, tasks = store
+    about = await set_action(actions, project="udl", title="A", task="F-1.1")
+    after = await set_action(actions, project="udl", title="B", when=AFTER, after="F-1.1")
+    other = await set_action(actions, project="udl", title="C", task="F-1.2")
+
+    assert await tasks.delete_task("udl", "F-1.1") is True
+
+    left = await actions.actions("udl", state=None)
+    assert [action.key for action in left] == [other.key]
+    assert about.key not in [action.key for action in left]
+    assert after.key not in [action.key for action in left]
+
+
+async def test_deleting_a_feature_deletes_the_actions_of_its_tasks(
+    store: tuple[ActionRecords, TaskRecords],
+) -> None:
+    actions, tasks = store
+    await set_action(actions, project="udl", title="A", task="F-1.1")
+
+    assert await FeatureRecords(tasks.records).delete_feature("udl", "F-1") is True
+
+    assert await actions.actions("udl", state=None) == []
+
+
+async def test_deleting_a_project_deletes_its_actions_and_its_action_numbers_start_over(
+    store: tuple[ActionRecords, TaskRecords],
+) -> None:
+    actions, tasks = store
+    await set_action(actions, project="udl", title="A")
+    await set_action(actions, project="udl", title="B", when=AFTER, after="F-1.1")
+
+    assert await ProjectRecords(tasks.records).delete_project("udl") is True
+
+    assert await actions.actions("udl", state=None) == []
+    # (And a project of the same name starts its numbers over, so `A-1` is not a duplicate.)
+    await ProjectRecords(tasks.records).save_project(Project(name="udl", title="udl"))
+    again = await set_action(actions, project="udl", title="C")
+    assert again.key == "A-1"
+
+
+# ---------------------------------------------------------------------------------------------
+# A person's task merging: what waited after it, and a second action about it
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_finishing_a_person_s_task_makes_what_waited_after_it_now(
+    store: tuple[ActionRecords, TaskRecords],
+) -> None:
+    actions, _ = store
+    mine = await set_action(
+        actions, project="udl", title="Merge the checklist", task="F-1.1", assignee="human:claude"
+    )
+    waited = await set_action(actions, project="udl", title="Tell them", when=AFTER, after="F-1.1")
+
+    await finish(actions, project="udl", key=mine.key, result="Done.")
+
+    found = await actions.action("udl", waited.key)
+    assert found is not None
+    assert found.when == NOW
+
+
+async def test_a_second_action_about_a_finished_person_s_task_changes_nothing(
+    store: tuple[ActionRecords, TaskRecords],
+) -> None:
+    actions, tasks = store
+    mine = await set_action(
+        actions, project="udl", title="Merge the checklist", task="F-1.1", assignee="human:claude"
+    )
+    await finish(actions, project="udl", key=mine.key, result="Done.")
+    task = await tasks.task("udl", "F-1.1")
+    assert task is not None
+    notes = len(await NoteRecords(actions.records).notes("task", task.id))
+    second = await set_action(actions, project="udl", title="Again", task="F-1.1")
+
+    with pytest.raises(NotAllowed, match="already merged"):
+        await finish(actions, project="udl", key=second.key, result="Done again.")
+
+    # (The refusal came before anything was written: no second note, no half-finished action.)
+    assert len(await NoteRecords(actions.records).notes("task", task.id)) == notes
+    after = await actions.action("udl", second.key)
+    assert after is not None
+    assert after.state == OPEN
+
+
+# ---------------------------------------------------------------------------------------------
+# The rest of the review
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_dropped_action_is_reopened_when_the_task_goes_to_a_person(
+    store: tuple[ActionRecords, TaskRecords],
+) -> None:
+    actions, tasks = store
+    task = await tasks.task("udl", "F-1.1")
+    assert task is not None
+    first = await for_task(actions, task, assignee="human:claude")
+    await drop(actions, project="udl", key=first.key, reason="Not now.")
+
+    again = await for_task(actions, task, assignee="human:sam")
+
+    assert (again.key, again.state, again.result) == (first.key, OPEN, None)
+    assert again.assignee == "human:sam"
+
+
+async def test_dropping_an_action_twice_answers_it_unchanged(
+    store: tuple[ActionRecords, TaskRecords],
+) -> None:
+    # (The operation is marked idempotent, so a client may retry it.)
+    actions, _ = store
+    found = await set_action(actions, project="udl", title="A")
+    dropped = await drop(actions, project="udl", key=found.key, reason="Not needed.")
+
+    again = await drop(actions, project="udl", key=found.key, reason="Not needed.")
+
+    assert again == dropped
+
+
+async def test_an_action_about_a_task_that_is_not_there_is_refused(
+    store: tuple[ActionRecords, TaskRecords],
+) -> None:
+    actions, _ = store
+
+    with pytest.raises(DoesNotExist, match=r"28\.33"):
+        await set_action(actions, project="udl", title="A", task="28.33")
+    with pytest.raises(DoesNotExist, match=r"28\.33"):
+        await set_action(actions, project="udl", title="A", when=AFTER, after="28.33")
+
+
+async def test_an_assignee_of_human_alone_says_it_has_no_name(
+    store: tuple[ActionRecords, TaskRecords],
+) -> None:
+    actions, _ = store
+
+    with pytest.raises(NotAllowed, match="name"):
+        await set_action(actions, project="udl", title="A", assignee="human:")
+
+
+async def test_unassigning_a_person_s_task_takes_the_action_off_them(
+    store: tuple[ActionRecords, TaskRecords],
+) -> None:
+    actions, tasks = store
+    await assign(tasks, "F-1.1", "human:claude", project="udl")
+    mine = (await actions.actions("udl", state=OPEN, task="F-1.1"))[0]
+
+    await queues.unassign(tasks, project="udl", key="F-1.1")
+
+    after = await actions.action("udl", mine.key)
+    assert after is not None
+    assert after.assignee is None
+    assert after.state == OPEN

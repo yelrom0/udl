@@ -625,11 +625,13 @@ class ProjectRecords:
         project = await self.project(name)
         if project is None:
             return False
+        await _delete_actions(self._records, name)
         for kind in (Repo, Feature, Task, Counter):
             for record in await self._records.list(kind, RecordQuery(where={"project": name})):
                 if isinstance(record, Task):
                     await _delete_notes(self._records, "task", record.id)
                     await _delete_links(self._records, record.project, "task", record.key)
+                    await _delete_actions(self._records, record.project, record.key)
                 elif isinstance(record, Feature):
                     await _delete_notes(self._records, "feature", record.id)
                     await _delete_links(self._records, record.project, "feature", record.key)
@@ -851,6 +853,7 @@ class FeatureRecords:
         for task in await TaskRecords(self._records, self._projects).tasks(project, feature=key):
             await _delete_notes(self._records, "task", task.id)
             await _delete_links(self._records, task.project, "task", task.key)
+            await _delete_actions(self._records, task.project, task.key)
             await self._records.delete(Task, task.id)
         await _delete_notes(self._records, "feature", feature.id)
         await _delete_links(self._records, feature.project, "feature", feature.key)
@@ -1036,6 +1039,7 @@ class TaskRecords:
             return False
         await _delete_notes(self._records, "task", task.id)
         await _delete_links(self._records, task.project, "task", task.key)
+        await _delete_actions(self._records, task.project, task.key)
         return await self._records.delete(Task, task.id)
 
 
@@ -1326,6 +1330,15 @@ class SessionRecords:
         by when it was stored)."""
         found = await self._records.list(SessionEvent, RecordQuery(where={"session": session}))
         return sorted(found, key=lambda one: (one.turn, one.created_at))
+
+
+async def _delete_actions(records: AppRecords, project: str, key: str | None = None) -> None:
+    """Delete the human actions about or after the task called `key` in `project` — or, when
+    `key` is None, every action of the project (28.2: what deleting a task takes with it, and a
+    project's actions go with the project, so its `A-` numbers start over)."""
+    for action in await records.list(HumanAction, RecordQuery(where={"project": project})):
+        if key is None or key in (action.task, action.after):
+            await records.delete(HumanAction, action.id)
 
 
 async def _delete_notes(records: AppRecords, owner_kind: str, owner: UUID) -> None:

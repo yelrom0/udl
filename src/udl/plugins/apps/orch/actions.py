@@ -136,6 +136,10 @@ async def set_action(
     await ProjectRecords(actions.records).require(project)
     due = ActionWhen(when)
     _check_when(due, after=after)
+    tasks = TaskRecords(actions.records)
+    for named in (task, after):
+        if named is not None and await tasks.task(project, named) is None:
+            raise DoesNotExist(f"There is no task called {named!r} in {project!r}")
     if assignee is not None:
         _check_person(assignee)
     number = await Counters(actions.records).claim(project, ACTIONS)
@@ -170,9 +174,14 @@ def _check_when(when: ActionWhen, *, after: str | None) -> None:
 
 def _check_person(assignee: str) -> None:
     """Raises NotAllowed when `assignee` is not a person (`human:<name>`)."""
-    if not assignee.startswith("human:") or not assignee.removeprefix("human:").strip():
+    if not assignee.startswith("human:"):
         raise NotAllowed(
             f"An action is a person's: {assignee!r} is an agent's name",
+            hint="Assign it to human:<name>, or to nobody.",
+        )
+    if not assignee.removeprefix("human:").strip():
+        raise NotAllowed(
+            f"An action is a person's: {assignee!r} has no name",
             hint="Assign it to human:<name>, or to nobody.",
         )
 
@@ -216,6 +225,13 @@ async def finish(
     tasks = TaskRecords(actions.records)
     if action.task is not None:
         task = await tasks.task(project, action.task)
+        if task is not None and task.task_kind == "human" and task.state == "merged":
+            # (Before anything is written: a second action about a task that is already done
+            # would write its note and then fail the move.)
+            raise NotAllowed(
+                f"{action.task!r} is already merged",
+                hint="The task this action is about is done; there is nothing left to finish.",
+            )
         if task is not None:
             await NoteRecords(actions.records).add(
                 Note(
@@ -243,6 +259,8 @@ async def finish(
                             agent=person,
                             keys=[found.key for found in left],
                         )
+                # (A person's task merges here, with no PR: what waited `after` it is now due.)
+                await become_now(actions, project=project, task=task.key)
     return await actions.save_action(
         action.model_copy(update={"state": ActionState.DONE, "result": result})
     )
@@ -253,6 +271,9 @@ async def drop(actions: ActionRecords, *, project: str, key: str, reason: str = 
 
     Raises DoesNotExist when there is no such action, and NotAllowed when it is not open."""
     action = await _action(actions, project=project, key=key)
+    if action.state is ActionState.DROPPED:
+        # (Dropping is idempotent: a client that retries gets the same answer, 28.2.)
+        return action
     if action.state is not ActionState.OPEN:
         raise NotAllowed(
             f"{key!r} is already {action.state.value}",
@@ -273,7 +294,17 @@ async def for_task(actions: ActionRecords, task: Task, *, assignee: str) -> Huma
         )
     found = await actions.actions(task.project, state=None, task=task.key)
     if found:
-        return await actions.save_action(found[0].model_copy(update={"assignee": assignee}))
+        # (A dropped one is reopened: the task is somebody's again, so the action is open again
+        # — otherwise it would never reach `merged` through 28.2.)
+        return await actions.save_action(
+            found[0].model_copy(
+                update={
+                    "assignee": assignee,
+                    "state": ActionState.OPEN,
+                    "result": None,
+                }
+            )
+        )
     return await set_action(
         actions,
         project=task.project,

@@ -316,7 +316,14 @@ async def _unassign(
         found for found in await queue_of(tasks, project=project, agent=agent) if found.key != key
     ]
     saved = await tasks.save_all([freed, *_renumbered(left, was=left)])
-    return saved[0]
+    freed = saved[0]
+    if freed.task_kind == "human":
+        # (The action it had is nobody's now: it goes back to `open` and off the person's list,
+        # so a task nobody holds is not still on someone's To action, 28.2.)
+        stored = actions.ActionRecords(tasks.records)
+        for found in await stored.actions(project, state=OPEN, task=freed.key):
+            await stored.save_action(found.model_copy(update={"assignee": None}))
+    return freed
 
 
 async def queue_of(tasks: TaskRecords, *, project: str, agent: str) -> list[Task]:
