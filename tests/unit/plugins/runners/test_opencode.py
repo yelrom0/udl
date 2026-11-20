@@ -846,7 +846,7 @@ async def test_a_brief_that_cannot_be_written_is_not_run(service: FakeOpenCode) 
     shell = FakeShell()
     shell.writes_fail = True
 
-    with pytest.raises(PluginFailed, match="agent file"):
+    with pytest.raises(PluginFailed, match="no permission"):
         await _runner(service, shell).start(SessionSpec(cwd="/w", instructions="a brief"))
 
     assert service.calls == []  # (no session was created)

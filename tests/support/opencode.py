@@ -38,6 +38,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 # Local Imports
+from udl.errors import PluginFailed
 from udl.hosts.shell import Host, HostShell, Interaction
 from udl.process import CancelToken, ProcessResult
 
@@ -124,6 +125,16 @@ class FakeShell(HostShell):
         cancel: CancelToken | None = None,
     ) -> ProcessResult:
         self.runs.append(list(argv))
+        answered = self._answer(argv, stdin=stdin)
+        if answered.returncode != 0:
+            # (As the real shell does: a command that fails is PluginFailed, not a result.)
+            raise PluginFailed(
+                f"{argv[0]} failed with exit code {answered.returncode}: {answered.stderr.strip()}"
+            )
+        return answered
+
+    def _answer(self, argv: Sequence[str], *, stdin: bytes | None = None) -> ProcessResult:
+        """What this fake says to `argv` (before the shell's own failure rule is applied)."""
         if argv[1:4] == ["auth", "list", "--format"]:
             return ProcessResult(returncode=0, stdout=self.auths, stderr="")
         if argv[-1] == "status":
@@ -145,11 +156,24 @@ class FakeShell(HostShell):
             and "service.json" not in argv[-1]
             and ".config/opencode" in argv[-1]
         ):
-            # (A config file read back through the shell: what it has, or nothing.)
-            path = argv[-1].split("cat ", 1)[1].split(" 2>", 1)[0].strip().strip('"')
+            # (A config file read back through the shell, as `cat` does it: a file that is not
+            # there is a failure, which is what a setup on a fresh host meets.)
+            path = (
+                argv[-1]
+                .split("cat ", 1)[1]
+                .split(" 2>", 1)[0]
+                .split(" ||", 1)[0]
+                .strip()
+                .strip('"')
+            )
             found = _AGENT_FILE.search(path)
             key = found.group(1) if found is not None else path
-            return ProcessResult(returncode=0, stdout=self.files.get(key, ""), stderr="")
+            if key not in self.files and "|| true" in argv[-1]:
+                # (The command says a missing file is not a failure: it exits 0, as `sh` does.)
+                return ProcessResult(returncode=0, stdout="", stderr="")
+            if key not in self.files:
+                return ProcessResult(returncode=1, stdout="", stderr=f"cat: {path}: No such file")
+            return ProcessResult(returncode=0, stdout=self.files[key], stderr="")
         if argv[0] == "sh":
             return ProcessResult(returncode=0, stdout=self.service, stderr="")
         return ProcessResult(returncode=0, stdout="", stderr="")

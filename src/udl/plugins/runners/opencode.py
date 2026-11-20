@@ -601,14 +601,11 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
         if not spec.instructions:
             return self.options.agent
         name = f"{_AGENT}-{hashlib.sha256(spec.instructions.encode()).hexdigest()[:12]}"
-        written = await self.shell.run(
+        # (A failed write is the shell's PluginFailed, not a result to check here.)
+        await self.shell.run(
             ["sh", "-c", _WRITE_AGENT.format(name=name)],
             stdin=f"---\nmode: primary\n---\n\n{spec.instructions}\n".encode(),
         )
-        if written.returncode != 0:
-            raise PluginFailed(
-                f"opencode's agent file cannot be written: {written.stderr.strip()[:200]}"
-            )
         return name
 
     def _variables(self, spec: SessionSpec) -> dict[str, str]:
