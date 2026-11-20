@@ -93,6 +93,8 @@ def test_every_plugin_operation_has_its_cli_command(harness: Harness) -> None:
     things = groups["gizmo"].commands["things"]
     assert isinstance(things, TyperGroup)
     assert operation_of(inspect.unwrap(things.commands["find"].callback or print)) == "gizmo_find"
+    # (every_thing's path is the group's own: it is the group's callback, not a command of it.)
+    assert operation_of(inspect.unwrap(things.callback or print)) == "gizmo_every_thing"
 
 
 def test_every_plugin_operation_has_its_api_route(harness: Harness) -> None:
