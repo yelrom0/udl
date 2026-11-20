@@ -3676,6 +3676,34 @@
         "title": "FollowStep",
         "type": "object"
       },
+      "GateRun": {
+        "additionalProperties": false,
+        "description": "The gate a push ran: how it ended, and the end of what it printed.",
+        "properties": {
+          "exit_code": {
+            "description": "Its exit code (0: it passed, which is the only way a push goes on).",
+            "title": "Exit Code",
+            "type": "integer"
+          },
+          "output": {
+            "description": "The last of its output (the end, which is where a failure says why).",
+            "title": "Output",
+            "type": "string"
+          },
+          "seconds": {
+            "description": "How long it took, in seconds.",
+            "title": "Seconds",
+            "type": "number"
+          }
+        },
+        "required": [
+          "exit_code",
+          "output",
+          "seconds"
+        ],
+        "title": "GateRun",
+        "type": "object"
+      },
       "GithubCommentRequest": {
         "additionalProperties": false,
         "description": "Comment on a pull request.",
@@ -3932,15 +3960,21 @@
             "type": "string"
           },
           "title": {
-            "description": "Its title.",
-            "title": "Title",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its title (none: the head branch's name when one is opened, and left as it is when the\npull is already open).",
+            "title": "Title"
           }
         },
         "required": [
           "repo",
-          "head",
-          "title"
+          "head"
         ],
         "title": "GithubOpenPullRequest",
         "type": "object"
@@ -5511,6 +5545,54 @@
         "title": "PluginStatus",
         "type": "object"
       },
+      "PrStatusRequest": {
+        "additionalProperties": false,
+        "description": "Asking whether a task's pull is ready, and holding until it is (27.5).",
+        "properties": {
+          "key": {
+            "description": "The task whose pull is asked about.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "minutes": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How long the wait may take, in minutes (None: orch's `wait_minutes`).",
+            "title": "Minutes"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          },
+          "wait": {
+            "default": false,
+            "description": "Whether to hold until GitHub's checks and the review bot have finished with this head\n(an answer that is not ready for another reason comes at once: waiting would not change\nit).",
+            "title": "Wait",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "PrStatusRequest",
+        "type": "object"
+      },
       "PreviewScheduleRequest": {
         "additionalProperties": false,
         "description": "When a schedule would fire, without saving anything.",
@@ -5935,6 +6017,103 @@
         ],
         "type": "string"
       },
+      "PushRequest": {
+        "additionalProperties": false,
+        "description": "Push a task's work (27.5): its branch to origin, then its pull request.",
+        "properties": {
+          "body": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the pull says, as markdown (the task's key is added to it).",
+            "title": "Body"
+          },
+          "key": {
+            "description": "The task whose work it is.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          },
+          "title": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The pull's title (None: the task's own).",
+            "title": "Title"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "PushRequest",
+        "type": "object"
+      },
+      "PushResult": {
+        "additionalProperties": false,
+        "description": "What a push did: the branch it pushed, the gate it passed, and the pull it opened (or\nupdated).",
+        "properties": {
+          "branch": {
+            "description": "The branch it pushed.",
+            "maxLength": 200,
+            "pattern": "^[^\\s~^:?*\\[\\\\]+$",
+            "title": "Branch",
+            "type": "string"
+          },
+          "gate": {
+            "$ref": "#/components/schemas/GateRun",
+            "description": "The gate it passed first."
+          },
+          "key": {
+            "description": "The task whose work it is.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "project": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The project the task is of."
+          },
+          "pull": {
+            "description": "The pull request's URL.",
+            "title": "Pull",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "key",
+          "branch",
+          "gate",
+          "pull"
+        ],
+        "title": "PushResult",
+        "type": "object"
+      },
       "QueueEntry": {
         "additionalProperties": false,
         "description": "A task on a queue, as the operations answer with it: what a board shows, and nothing that\nis not needed to show it.",
@@ -6064,17 +6243,31 @@
             "type": "boolean"
           },
           "open_items": {
-            "description": "The review bot's items that are not fixed, for the task's note.",
+            "description": "The review bot's items it still lists as open (empty: nothing).",
             "items": {
               "$ref": "#/components/schemas/ReviewItem"
             },
             "title": "Open Items",
             "type": "array"
           },
+          "pending": {
+            "description": "The blockers that are only a matter of time (the checks still running, the review bot not\ndone with this head, GitHub not knowing yet): what a wait can change, and the rest of\n`blockers` cannot (27.5).",
+            "items": {
+              "type": "string"
+            },
+            "title": "Pending",
+            "type": "array"
+          },
           "ready": {
             "description": "Whether it may be merged now.",
             "title": "Ready",
             "type": "boolean"
+          },
+          "waited": {
+            "default": 0.0,
+            "description": "How long the answer waited for GitHub's checks and the review bot, in seconds (0: it did\nnot: `orch_pr_status` without `wait`, 27.5).",
+            "title": "Waited",
+            "type": "number"
           }
         },
         "required": [
@@ -15540,6 +15733,200 @@
           }
         ],
         "summary": "What an agent is to work next: the task it is in progress on, else the first on its",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/pr_status": {
+      "post": {
+        "description": "Whether the task `key`'s pull may be merged (27.6), and with `wait`, holding until\nGitHub's checks and the review bot have finished with this head (or until the time it\nis given runs out).\n\nA pull that is not ready for a reason waiting cannot change (a draft, a failed check,\nan open item) is answered at once, as is one that has no pull yet.",
+        "operationId": "orch_pr_status",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Readiness"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Whether the task `key`'s pull may be merged (27.6), and with `wait`, holding until",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/push": {
+      "post": {
+        "description": "Push a task's work: its branch to origin, then its pull request (27.5).\n\nOnly the task's own agent may (or udl's owner), in the task's worktree on the agent's\nhost: nothing uncommitted, rebased on the base, the repo's gate run in its host's lane,\nand on a pass the push, the pull, and the pull's link on the task.",
+        "operationId": "orch_push",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Push a task's work: its branch to origin, then its pull request (27.5).",
         "tags": [
           "orch"
         ]

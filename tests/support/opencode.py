@@ -147,10 +147,12 @@ class FakeShell(HostShell):
         stdin: bytes | None = None,
         within: timedelta | None = None,
         cancel: CancelToken | None = None,
+        check: bool = True,
+        tail: bool = False,
     ) -> ProcessResult:
         self.runs.append(list(argv))
         answered = self._answer(argv, stdin=stdin)
-        if answered.returncode != 0:
+        if answered.returncode != 0 and check:
             # (As the real shell does: a command that fails is PluginFailed, not a result.)
             raise PluginFailed(
                 f"{argv[0]} failed with exit code {answered.returncode}: {answered.stderr.strip()}"

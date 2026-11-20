@@ -17,7 +17,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
 # Package Imports
@@ -30,6 +30,7 @@ from udl.core.operations import CLISpec, Operation, OperationHints
 from udl.db.models import JsonObject
 from udl.db.records import Record
 from udl.errors import DoesNotExist, NotAllowed, PluginError, UDLError
+from udl.hosts import LOCAL
 from udl.plugins.apps.base import (
     AppContext,
     AppEvent,
@@ -42,6 +43,7 @@ from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch import records as stored
 from udl.plugins.apps.orch import suggest as suggested
 from udl.plugins.apps.orch import transitions
+from udl.plugins.apps.orch import workspace as space
 from udl.plugins.apps.orch.agents import AgentRole
 from udl.plugins.apps.orch.links import (
     LINK_CHANGED,
@@ -65,7 +67,10 @@ from udl.plugins.apps.orch.models import (
     NoteKind,
     OwnerKind,
     Principal,
+    PrStatusRequest,
     PullReader,
+    PushRequest,
+    PushResult,
     QueueEntry,
     QueueRequest,
     Readiness,
@@ -263,6 +268,16 @@ class Orch(AppPlugin[OrchSettings]):
                 hints=OperationHints(idempotent=True),
             ),
             cls.operation("unassign", title="Unassign a task"),
+            cls.operation(
+                "push",
+                title="Push a task's work",
+                hints=OperationHints(open_world=True),
+            ),
+            cls.operation(
+                "pr_status",
+                title="Whether a task's pull is ready",
+                hints=OperationHints(read_only=True, open_world=True),
+            ),
             cls.operation(
                 "get_queue",
                 title="An agent's queue",
@@ -697,6 +712,92 @@ class Orch(AppPlugin[OrchSettings]):
             ],
         )
 
+    # -- a pull's readiness, waited for (27.5) --------------------------------------------------
+
+    async def pr_status(self, request: PrStatusRequest, *, service: UDLService) -> Readiness:
+        """Whether the task `key`'s pull may be merged (27.6), and with `wait`, holding until
+        GitHub's checks and the review bot have finished with this head (or until the time it
+        is given runs out).
+
+        A pull that is not ready for a reason waiting cannot change (a draft, a failed check,
+        an open item) is answered at once, as is one that has no pull yet."""
+        project = await self._project(request.project)
+        started = self.clock.now()
+        limit = timedelta(minutes=request.minutes or self.settings.wait_minutes)
+        while True:
+            task, pull, why = await self._pull_of(service, project, request.key)
+            if pull is None:
+                return Readiness(ready=False, blockers=[why])
+            found = await self._assess(task, pull, project)
+            waited = round((self.clock.now() - started).total_seconds(), 1)
+            spent = self.clock.now() - started >= limit
+            if not request.wait or found.ready or spent or not _not_yet(found):
+                return found.model_copy(update={"waited": waited})
+            await self.clock.sleep(timedelta(seconds=self.settings.poll_seconds))
+
+    # -- the worktree, the gate and the push (27.5) ---------------------------------------------
+
+    async def push(self, request: PushRequest, *, service: UDLService) -> PushResult:
+        """Push a task's work: its branch to origin, then its pull request (27.5).
+
+        Only the task's own agent may (or udl's owner), in the task's worktree on the agent's
+        host: nothing uncommitted, rebased on the base, the repo's gate run in its host's lane,
+        and on a pass the push, the pull, and the pull's link on the task."""
+        tasks = stored.TaskRecords(self.records)
+        project = await self._project(request.project)
+        task = await tasks.task(project, request.key)
+        if task is None:
+            raise NotAllowed(
+                f"There is no task {request.key!r} in {project!r}",
+                hint="List them with `udl orch queue`.",
+            )
+        from udl.core.service import principal  # (the caller's, as each interface set it)
+
+        who = principal()
+        if who is not None and who.is_agent and who.name != task.assignee:
+            raise NotAllowed(
+                f"{task.key!r} is not yours to push: it is {task.assignee or 'nobody'}'s",
+                hint="An agent pushes only the work it is assigned.",
+            )
+        repo = await self._repo_of(task)
+        agent = (
+            await stored.AgentRecords(self.records).agent(task.assignee)
+            if task.assignee and not task.assignee.startswith("human:")
+            else None
+        )
+        hosts = service.hosts
+        host = await hosts.get(agent.host if agent is not None else LOCAL)
+        return await space.push(
+            task,
+            repo=repo,
+            host=host,
+            shell=await hosts.shell(host.name),
+            service=service,
+            records=self.records,
+            title=request.title,
+            body=request.body,
+            within=timedelta(minutes=self.settings.gate_minutes),
+        )
+
+    async def _repo_of(self, task: stored.Task) -> stored.Repo:
+        """The repo a task's work is in: the one it names, or the project's only one."""
+        repos = stored.RepoRecords(self.records)
+        if task.repo:
+            found = await repos.repo(task.project, task.repo)
+            if found is not None:
+                return found
+            raise NotAllowed(
+                f"{task.key!r} names the repo {task.repo!r}, and {task.project!r} has none of it",
+                hint="Name one it has, or add it first.",
+            )
+        every = await repos.repos(task.project)
+        if len(every) == 1:
+            return every[0]
+        raise NotAllowed(
+            f"Which repo? {task.project!r} has {len(every)}",
+            hint="Name the task's repo.",
+        )
+
     async def _project(self, project: str | None) -> str:
         """The project an operation is of: `project`, or the only one udl has. Raises NotAllowed
         when there is none, or more than one and none is named."""
@@ -720,6 +821,12 @@ class Orch(AppPlugin[OrchSettings]):
         """`agent`'s queue, as the operations answer with it."""
         found = await queues.queue_of(tasks, project=project, agent=agent)
         return TaskQueue(project=project, agent=agent, tasks=[_entry(task) for task in found])
+
+
+def _not_yet(found: Readiness) -> bool:
+    """Whether everything still in the way is only a matter of time — the checks running, the
+    bot not done with this head, GitHub not knowing yet — so a wait is worth it (27.5)."""
+    return bool(found.blockers) and len(found.pending) == len(found.blockers)
 
 
 def _action(found: stored.HumanAction) -> Action:
