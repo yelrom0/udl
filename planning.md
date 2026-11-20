@@ -320,7 +320,7 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
   - [x] 18.7 `UIManifest` (Pydantic → JSON Schema → TypeScript), `ui` on every plugin kind, the `udl.ui` kind, local UI plugin dirs, `GET /ui/plugins.json`, UI availability in `list_plugins`
   - [x] 18.8 `@udl/ui-sdk`: `defineUIPlugin`, the mount contract, a React adapter, the plugin context, SDK version checks
   - [~] 18.9 The plugin host: `<PluginSlot>` (lazy import, Shadow DOM isolation, error boundary) and the contribution points
-  - [ ] 18.10 Proof: an example UI plugin built with shadcn/ui runs isolated inside the daisyUI shell (e2e); a template for new UI plugins
+  - [~] 18.10 Proof: an example UI plugin built with shadcn/ui runs isolated inside the daisyUI shell (e2e); a template for new UI plugins
 
 - [ ] **Phase 19: Web UI for the downloader and the fetcher**
   - [ ] 19.1 Dashboard (recent downloads, runs and events, next schedules, accounts needing attention, approvals, checks waiting for you; a widget slot)
@@ -4622,6 +4622,33 @@ timeout: 5m
     `docs/ui-plugins.md` (21.4) grows from.
 - Tests first: `web/e2e/ui-plugins.spec.ts`: what "18.10's proof" (below) describes, in both themes.
 - Done when: the e2e test passes.
+
+- **Built (deepseek-a, 2026-11-21, PR #51):** `web/examples/shadcn` — shadcn/ui's `button` and `card`,
+  generated with `pnpm dlx shadcn@latest add button card` (their `cn` import pointed at this package's
+  `@/lib/utils`; the CLI had resolved it to a package named `cn`), Tailwind 4 with `source(none)` then
+  `@source "./"` so it scans only its own files, `@custom-variant dark` over the shell's `data-theme`, and
+  shadcn's tokens (`--primary`, `--background`, `--card`, …) as aliases of daisyUI's, on `:host > *` — the
+  wrapper the shell draws into — with `@theme inline` for the utilities. `vite.config.ts` builds one ES
+  module (React in it: the page has no import map), one stylesheet, and the manifest, into
+  `dist/shadcn/`, a folder of bundles as `[web] ui_plugin_dirs` reads one; `process.env.NODE_ENV` is
+  defined, or React's bundle throws `process is not defined` in the browser. It contributes a page
+  (`gallery`) and a dashboard widget. `web/packages/template` — React, daisyUI and the SDK, its own
+  `vite.config.ts`, a README `docs/ui-plugins.md` (21.4) can grow from, and a test that the manifest's
+  contributions are the entry's. `make web` builds both; `tests/support/e2e.py` serves the example's
+  `dist/` when it is there.
+  **Two gaps 18.9's proof exposed, fixed here:** daisyUI registers its colours with
+  `@property … inherits: false`, so they never reached a plugin's shadow root — `prepare()` now puts the
+  theme's tokens on the wrapper (and refreshes them on a theme switch); and `setTheme` told its listeners
+  before it put `data-theme` on the page, so a listener reading the page's tokens read the old palette —
+  the page first now. Tests: e2e `web/e2e/shadcn.spec.ts`, 3 tests in both themes (its own styles reach
+  the root; its button is the theme's primary, and the other palette's after the switch; the shell's own
+  text, ground and tokens are unchanged), Vitest `dom.test.ts`/`slot.test.tsx`/`theme.test.ts` for the
+  two fixes, and the example's and template's own tests; `ui-plugins.spec.ts`'s dashboard count is three
+  widgets now, the template's included (24.7's "done when" rests on it, so the shell loads it too).
+  **Two deviations from the card, on record:** the proof is `web/e2e/shadcn.spec.ts`, not
+  `ui-plugins.spec.ts` — that spec is 18.9's, and a spec of its own says which task proves what; and
+  the commits group tests with their code (the specs were written and run red first in the worktree —
+  the transparent button is how the token gap was found — but the history does not show it).
 
 **Phase 18 is done when:** `make web && udl serve` serves the shell at `/ui/` with sign-in, live status
 and both themes, and the shadcn example plugin renders in it, isolated.

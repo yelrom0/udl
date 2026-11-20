@@ -47,22 +47,38 @@ export const theme = createStore<{ current: Theme }>(() => ({ current: initial()
 
 /** Set the chosen theme (persisting it), or move back to following the system. */
 export function setTheme(current: Theme): void {
+	// (The page first, then the listeners: one of them reads the theme's tokens off the page,
+	// and must read the new theme's.)
+	applyTheme(current);
 	theme.setState({ current });
 	try {
 		localStorage.setItem(KEY, JSON.stringify(current));
 	} catch {
 		// (Private mode: the choice lasts this visit.)
 	}
-	applyTheme(current);
 }
 
 /** The chosen theme, as a hook. */
 export const useTheme = () => useStore(theme, (state) => state.current);
 
+/**
+ * Put the system's theme on the page, and tell the store's listeners — the value is still
+ * `system`, but the page changed, and what follows the page (a plugin's wrapper, its tokens,
+ * `ctx.theme.onChange`) must follow it.
+ */
+function syncSystem(): void {
+	applyTheme("system");
+	theme.setState({ current: "system" });
+}
+
 /** Follow the system while that is what the user chose (called when the shell starts). */
 export function followSystem(): () => void {
 	const media = window.matchMedia(MEDIA);
-	const changed = () => theme.getState().current === "system" && applyTheme("system");
+	const changed = () => {
+		if (theme.getState().current === "system") {
+			syncSystem();
+		}
+	};
 	media.addEventListener("change", changed);
 	return () => media.removeEventListener("change", changed);
 }

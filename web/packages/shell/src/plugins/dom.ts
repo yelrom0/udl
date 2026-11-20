@@ -18,6 +18,9 @@ export interface MountPoint {
 /** What `prepare` needs of the page. */
 export interface PrepareOptions {
 	readonly theme: Mode;
+	/** The theme's daisyUI tokens, put on the wrapper: daisyUI registers them with
+	 * `@property ... inherits: false`, so a plugin's shadow root would not see them otherwise. */
+	readonly tokens?: Readonly<Record<string, string>>;
 	readonly fetch?: typeof globalThis.fetch;
 }
 
@@ -121,7 +124,7 @@ export async function prepare(
 async function draw(
 	host: HTMLElement,
 	info: UIPluginInfo | undefined,
-	{ theme, fetch = globalThis.fetch }: PrepareOptions,
+	{ theme, tokens = {}, fetch = globalThis.fetch }: PrepareOptions,
 ): Promise<MountPoint> {
 	const styles = await Promise.all((info?.styles ?? []).map(async (url) => textOf(url, fetch)));
 	// (The shell's own contributions draw in its own DOM: they share its React and its CSS.)
@@ -141,6 +144,9 @@ async function draw(
 	}
 	const wrapper = div(root, "udl-plugin");
 	wrapper.dataset.theme = theme;
+	for (const [name, value] of Object.entries(tokens)) {
+		wrapper.style.setProperty(name, value);
+	}
 	return { wrapper, target: div(wrapper, "udl-plugin-content") };
 }
 

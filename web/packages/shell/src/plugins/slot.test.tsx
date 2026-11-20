@@ -10,7 +10,8 @@ import type { RouteProps } from "@udl/ui-sdk";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { plugins, type UIPluginInfo } from "../stores/plugins";
-import { setTheme } from "../stores/theme";
+import { followSystem, setTheme } from "../stores/theme";
+import { startFakingMatchMedia, stopFakingMatchMedia, systemIs } from "../test-setup";
 import { clearHoisted } from "./dom";
 import { forgetListeners } from "./events";
 import { forgetPlugins } from "./load";
@@ -300,6 +301,73 @@ describe("a plugin slot", () => {
 				"dark",
 			),
 		);
+	});
+
+	it("gives the plugin's wrapper the page's tokens, and refreshes them with the theme", async () => {
+		const drawn = recording();
+		plugins.setState({ manifests: [GMAIL], problems: [], errors: [] });
+		document.documentElement.style.setProperty("--color-primary", "oklch(45% .24 277.023)");
+
+		render(
+			<PluginSlot
+				point="routes"
+				registry={registryWith(GMAIL)}
+				lookup="gmail"
+				importer={async () => ({ default: { routes: { inbox: drawn.mount } } })}
+				props={ROUTE}
+			/>,
+		);
+		await waitFor(() => expect(drawn.mount).toHaveBeenCalled());
+		const wrapper = drawn.drawn[0]?.target.closest<HTMLElement>(".udl-plugin");
+		expect(wrapper?.style.getPropertyValue("--color-primary")).toBe("oklch(45% .24 277.023)");
+
+		// (A plugin's shadow root does not inherit daisyUI's `@property`-registered colours, so
+		// the wrapper carries them — and the new palette's when the theme changes.)
+		document.documentElement.style.setProperty("--color-primary", "oklch(80% .1 20)");
+		act(() => {
+			setTheme("dark");
+		});
+
+		await waitFor(() =>
+			expect(wrapper?.style.getPropertyValue("--color-primary")).toBe("oklch(80% .1 20)"),
+		);
+	});
+
+	it("follows the system when that is the choice, tokens and all", async () => {
+		startFakingMatchMedia();
+		const drawn = recording();
+		plugins.setState({ manifests: [GMAIL], problems: [], errors: [] });
+		systemIs(false);
+		setTheme("system");
+		document.documentElement.style.setProperty("--color-primary", "oklch(45% .24 277.023)");
+
+		const stop = followSystem();
+		render(
+			<PluginSlot
+				point="routes"
+				registry={registryWith(GMAIL)}
+				lookup="gmail"
+				importer={async () => ({ default: { routes: { inbox: drawn.mount } } })}
+				props={ROUTE}
+			/>,
+		);
+		await waitFor(() => expect(drawn.mount).toHaveBeenCalled());
+		const wrapper = drawn.drawn[0]?.target.closest<HTMLElement>(".udl-plugin");
+		expect(wrapper?.getAttribute("data-theme")).toBe("light");
+
+		// (An OS flip while the choice is "system": the wrapper's theme and its tokens are the
+		// new palette's, not the old ones' — they are inline, so nothing else would correct them.)
+		document.documentElement.style.setProperty("--color-primary", "oklch(80% .1 20)");
+		act(() => {
+			systemIs(true);
+		});
+
+		await waitFor(() => expect(wrapper?.getAttribute("data-theme")).toBe("dark"));
+		expect(wrapper?.style.getPropertyValue("--color-primary")).toBe("oklch(80% .1 20)");
+
+		stop();
+		stopFakingMatchMedia();
+		setTheme("light");
 	});
 
 	it("says a contribution whose plugin is no longer listed", async () => {

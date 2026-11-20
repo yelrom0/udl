@@ -52,6 +52,21 @@ describe("preparing where a plugin draws", () => {
 		expect(point.target).not.toBe(host);
 	});
 
+	it("gives the wrapper the theme's tokens, so a shadow root has daisyUI's palette", async () => {
+		// (daisyUI registers its colours with `@property ... inherits: false`, so they do not
+		// reach a plugin's shadow root on their own; the wrapper carries them instead.)
+		const host = document.createElement("div");
+
+		const point = await prepare(host, GMAIL, {
+			theme: "dark",
+			tokens: { "--color-primary": "oklch(45% .24 277.023)" },
+			fetch: serving(),
+		});
+
+		expect(point.wrapper.style.getPropertyValue("--color-primary")).toBe("oklch(45% .24 277.023)");
+		expect(point.target.style.getPropertyValue("--color-primary")).toBe("");
+	});
+
 	it("leaves a plugin that asks for no isolation in the shell's own DOM", async () => {
 		const host = document.createElement("div");
 

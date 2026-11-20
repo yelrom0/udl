@@ -1,0 +1,33 @@
+{
+	"name": "@udl/example-shadcn",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"description": "18.10's proof: a UI plugin built with shadcn/ui and its own Tailwind 4 setup.",
+	"scripts": {
+		"build": "vite build",
+		"dev": "vite build --watch",
+		"test": "tsc --noEmit && vitest run --coverage"
+	},
+	"dependencies": {
+		"@udl/ui-sdk": "workspace:*",
+		"class-variance-authority": "0.7.1",
+		"clsx": "2.1.1",
+		"lucide-react": "0.577.0",
+		"radix-ui": "1.8.1",
+		"react": "19.3.1",
+		"react-dom": "19.3.1",
+		"tailwind-merge": "3.3.1"
+	},
+	"devDependencies": {
+		"@tailwindcss/vite": "4.3.5",
+		"@types/react": "19.3.0",
+		"@types/react-dom": "19.3.0",
+		"@vitejs/plugin-react-swc": "4.3.3",
+		"@vitest/coverage-v8": "5.1.0",
+		"jsdom": "31.0.1",
+		"tailwindcss": "4.3.5",
+		"vite": "8.3.8",
+		"vitest": "5.1.0"
+	}
+}

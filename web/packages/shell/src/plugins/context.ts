@@ -47,13 +47,19 @@ export const TOKENS: readonly string[] = [
 	"--noise",
 ];
 
-/** The theme as a plugin reads it: the mode, its name, its tokens, and when it changes. */
-function themeOf(): Theme {
+/** The page's own values of the daisyUI tokens (what the theme is, as CSS). */
+export function tokensOf(): Record<string, string> {
 	const tokens: Record<string, string> = {};
 	const style = window.getComputedStyle(document.documentElement);
 	for (const token of TOKENS) {
 		tokens[token] = style.getPropertyValue(token).trim();
 	}
+	return tokens;
+}
+
+/** The theme as a plugin reads it: the mode, its name, its tokens, and when it changes. */
+function themeOf(): Theme {
+	const tokens = tokensOf();
 	const shown = shownTheme();
 	return {
 		mode: shown,
