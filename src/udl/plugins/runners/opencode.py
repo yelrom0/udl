@@ -508,27 +508,35 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
         async with self._api() as api:
             by_env = await self._providers(api)
             for name, value in env.items():
-                integration = by_env.get(name)
-                if integration is None:
+                providers = by_env.get(name, ())
+                if len(providers) > 1:
+                    raise NotAllowed(
+                        f"{name!r} is the key of more than one provider: {' and '.join(providers)}",
+                        hint="Set the key with the CLI (`opencode auth login <provider>`) instead.",
+                    )
+                if not providers:
                     known = ", ".join(sorted(by_env)) or "none"
                     raise NotAllowed(
                         f"opencode has no provider whose key is called {name!r}",
                         hint=f"Its providers take: {known}.",
                     )
-                await self._credential(api, integration, value)
+                await self._credential(api, providers[0], value)
 
-    async def _providers(self, api: httpx.AsyncClient) -> dict[str, str]:
+    async def _providers(self, api: httpx.AsyncClient) -> dict[str, tuple[str, ...]]:
         """Every provider the service offers, by the variable its key is given in
         (`GET /api/integration`: `OPENROUTER_API_KEY` is `openrouter`, `TOGETHER_API_KEY` is
-        `togetherai` — the service's own ids, never a guess from the name)."""
+        `togetherai` — the service's own ids, never a guess from the name).
+
+        A variable two providers take keeps both, in the order they were listed: a key stored under
+        whichever came last would be on the wrong provider, so the caller refuses it."""
         listed = await self._get(api, "/api/integration", _Integrations)
-        found: dict[str, str] = {}
+        found: dict[str, list[str]] = {}
         for integration in listed.data:
             for method in integration.methods:
                 if method.type == "env":
                     for name in method.names:
-                        found[name] = integration.id
-        return found
+                        found.setdefault(name, []).append(integration.id)
+        return {name: tuple(ids) for name, ids in found.items()}
 
     async def _credential(self, api: httpx.AsyncClient, integration: str, key: str) -> None:
         """`key` as `integration`'s credential, replacing the one udl stored before.
@@ -545,7 +553,12 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
         }
         status = await self._status(api, "POST", "/api/credential", json=body)
         if status == 409:  # (the one udl wrote before: replaced, not added to)
-            await self._status(api, "DELETE", f"/api/credential/{credential}")
+            removed = await self._status(api, "DELETE", f"/api/credential/{credential}")
+            if removed >= httpx.codes.INTERNAL_SERVER_ERROR:  # (400: it is already gone)
+                raise PluginFailed(
+                    f"opencode said {removed} to DELETE /api/credential/{credential}",
+                    hint="Its answer is not shown: it may repeat the key.",
+                )
             status = await self._status(api, "POST", "/api/credential", json=body)
         if status >= httpx.codes.BAD_REQUEST:
             raise PluginFailed(

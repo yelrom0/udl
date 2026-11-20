@@ -702,7 +702,9 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   makes it the one sessions use. The key is in no argv on either machine, and it is set at setup,
   not at every session. Which provider a variable is for comes from the service itself
   (`GET /api/integration`, each one's `EnvMethod.names`), never from its name: `TOGETHER_API_KEY`
-  is `togetherai`, and a variable the service does not list is refused, naming what it does.
+  is `togetherai`; a variable the service does not list is refused, naming what it does, and one
+  two providers take is refused too (storing it under whichever came last would be the wrong
+  provider).
 - **A runner's quota is the dispatcher's to record:** `Harnesses.limited(host, runner, until)` is
   what 27.7 calls; `RunnerHealth.limited_until` reads it back. Nothing polls a provider's quota.
 - **`claude doctor` is an interactive screen:** it gets 20 seconds and no terminal, and one that

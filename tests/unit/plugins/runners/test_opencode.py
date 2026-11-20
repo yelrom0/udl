@@ -377,6 +377,37 @@ async def test_a_key_the_service_does_not_know_is_refused(
     assert service.credentials == {}
 
 
+async def test_a_variable_two_providers_take_is_refused(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """Storing it under whichever integration happened to be listed last would put the key on the
+    wrong provider, so an ambiguous name is refused and both providers are named."""
+    service.integrations.append(
+        {
+            "id": "cloudflare",
+            "name": "Cloudflare",
+            "methods": [{"type": "env", "names": ["OPENROUTER_API_KEY"]}],
+            "connections": [],
+        }
+    )
+
+    with pytest.raises(NotAllowed, match="openrouter and cloudflare"):
+        await _runner(service, shell).setup([], {"OPENROUTER_API_KEY": "sk-1"})
+
+    assert service.credentials == {}
+
+
+async def test_a_credential_that_cannot_be_replaced_says_which_call_failed(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """A delete that fails is the delete's failure, not a misleading 409 on the post after it."""
+    await _runner(service, shell).setup([], {"OPENROUTER_API_KEY": "sk-1"})
+    service.delete_status = 500
+
+    with pytest.raises(PluginFailed, match="DELETE /api/credential/udl-openrouter"):
+        await _runner(service, shell).setup([], {"OPENROUTER_API_KEY": "sk-2"})
+
+
 async def test_a_key_never_appears_in_the_failure_it_causes(
     service: FakeOpenCode, shell: FakeShell
 ) -> None:
@@ -667,12 +698,14 @@ async def test_every_call_it_makes_is_in_the_openapi_document_it_was_written_aga
     await _turn(runner, session)
     await runner.models()
     await runner.health()
+    await runner.setup([], {"OPENROUTER_API_KEY": "sk-1"})
+    await runner.setup([], {"OPENROUTER_API_KEY": "sk-2"})  # (the replace: a delete, then a post)
     await runner.stop(session)
 
     made = {
         "/api/session/{sessionID}/permission/{requestID}/reply"
         if "/permission/" in path
-        else path.replace(session.id, "{sessionID}")
+        else path.replace(session.id, "{sessionID}").replace("udl-openrouter", "{credentialID}")
         for _, path, _ in service.calls
     }
     assert made

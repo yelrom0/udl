@@ -324,6 +324,8 @@ class FakeOpenCode:
     """What `GET /api/integration` lists (the provider ids a key's variable can be found under)."""
     credential_bodies: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     """Every body `POST /api/credential` was sent, as it was sent."""
+    delete_status: int = 204
+    """What `DELETE /api/credential/{id}` answers (204: it is gone; a test's own failure)."""
     credential_status: int = 200
     """What `POST /api/credential` answers (200: it stores it; a test's own failure)."""
     credential_says: str = ""
@@ -498,6 +500,8 @@ class FakeOpenCode:
             return JSONResponse({"message": "unauthorized"}, status_code=401)
         credential_id = request.path_params["credential_id"]
         self.calls.append(("DELETE", f"/api/credential/{credential_id}", None))
+        if self.delete_status != 204:
+            return JSONResponse({"message": "cannot delete"}, status_code=self.delete_status)
         if self.credentials.pop(credential_id, None) is None:
             return JSONResponse({"message": "no such credential"}, status_code=400)
         return Response(status_code=204)
