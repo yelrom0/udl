@@ -330,6 +330,17 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
 **24.8 Proof** · needs 24.7
 - Build: `web/e2e/generated-guided.spec.ts`: the shadcn example (18.10) gains a `resultViews` contribution for one fake operation; the rest of that plugin's page stays generated. Both themes.
 - Done when: both e2e specs of this phase pass under `make e2e`.
+- **Built (deepseek-a, 2026-11-21, PR #57):** `web/examples/shadcn` gains `resultViews: ["fake_list_things"]`
+  in its manifest (and `sdk: ^1.1`), drawn by `src/resultView.tsx` — shadcn's card with the things as a
+  list, in place of udl's table. It reads a fan-out list's answer as udl shapes it
+  (`{items: [{account, item: {id, text}}]}`), and draws nothing it cannot read. `web/e2e/generated-guided.spec.ts`
+  connects an account of its own, runs the list, and asserts shadcn's card is there, udl's table is not,
+  the destructive operation is still udl's own form with its confirm field, and the template plugin still
+  draws the count on the same page — both themes. **Red first:** the spec was written before the example's
+  contribution and failed on `[data-testid='shadcn-list']`; the first fix still failed, which is what
+  found that a fan-out list's answer wraps each thing with its account. Tests: `generated-guided.spec.ts`
+  (both themes), `src/index.test.tsx` (the manifest↔entry guard now covers `resultViews`, the card's
+  drawing, and every unreadable answer, at 100 % coverage of the file).
 
 **24.9 planning.md amended** · needs 24.8
 - Build: requirement **5d** becomes "A plugin without a UI plugin gets a generated UI from its operations, settings and accounts"; the "Without a UI plugin" bullet under UI plugins is rewritten to match; 20.7–20.10 note that each UI plugin now only builds what the generated page can't (the mailbox, the watch wizard) and guides the rest.
