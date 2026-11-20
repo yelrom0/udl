@@ -100,7 +100,6 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [~] 24.7 UI plugins guide the generated UI: `generated` in the manifest, and the `operationViews`, `resultViews` and `fieldWidgets` points
   - [~] 24.8 Proof (e2e): a plugin with no UI plugin is fully usable on the web; a UI plugin reshapes its generated page
   - [~] 24.9 planning.md amended: requirement 5d, "Without a UI plugin", Phases 19–20's plugin tasks
-
 - [ ] **Phase 25: Connections: 1Password, OpenRouter, GitHub, hosts and runners**
   - [x] 25.1 Secret references: `op://…` anywhere udl takes a secret, read at use through the `op` CLI (`onepassword` resolver)
   - [x] 25.2 17.1 (the `udl.ai` kind) and 17.3 (`openai-compatible`), pulled forward as written (ticked in Phase 17's tracker below)
