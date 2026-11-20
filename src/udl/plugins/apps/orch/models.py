@@ -134,7 +134,6 @@ URLText = Annotated[str, StringConstraints(min_length=1, max_length=2000)]
 
 Text = Annotated[str, StringConstraints(max_length=2000)]
 """A line of text (a link's title), as long as a title is."""
-"""A URL, as it is stored (a `udl:` one for an internal kind)."""
 
 
 def _not_empty(text: str) -> str:

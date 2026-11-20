@@ -13,10 +13,9 @@ are records whose examples round-trip; and its service runs until it is told to 
 
 # System Imports
 import asyncio
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any
 
 # Package Imports
 import pytest
@@ -25,6 +24,7 @@ from pydantic import BaseModel
 # Local Imports
 from support.apps import FakeApp, FakeAppSettings, Tick
 from support.clock import FakeClock
+from udl.automations.bus import BusNotice
 from udl.automations.events import EventTypes
 from udl.core.operations import Operation, OperationRegistry, resolved_view
 from udl.db.models import JsonObject
@@ -42,10 +42,10 @@ class _FakeBus:
     Its subscription ends at once, so a service that waits for events ends with it — which is
     what these tests want of a service that has nothing to do yet."""
 
-    def notices(self, pattern: str, *, runs: bool) -> Any:
+    def notices(self, pattern: str, *, runs: bool) -> AsyncGenerator[BusNotice]:
         """A listener that ends at once (no event ever comes)."""
 
-        async def none() -> Any:
+        async def none() -> AsyncGenerator[BusNotice]:
             return
             yield  # pragma: no cover  (an async generator that never yields)
 

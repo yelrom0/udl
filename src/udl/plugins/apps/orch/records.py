@@ -81,6 +81,7 @@ from udl.plugins.apps.orch.models import (
     Spec,
     State,
     TaskKind,
+    Text,
     Title,
     URLText,
 )
@@ -308,12 +309,12 @@ class Link(Record):
     """What it points at (not `kind`: a record's `kind` is the name of its kind)."""
     url: URLText
     """The canonical form of the URL (a `udl:` one for an internal kind)."""
-    title: str = ""
+    title: Text = ""
     """What it is called, when it has been seen."""
     state: PullState = Field(default_factory=PullState)
     """What is known about it (for a pull: its state, head sha, checks and review)."""
-    added_by: str = ""
-    """Who added it."""
+    added_by: Text = ""
+    """Who added it (an agent, `human:<name>`, `scan`, or empty)."""
 
     @classmethod
     def example(cls) -> Self:

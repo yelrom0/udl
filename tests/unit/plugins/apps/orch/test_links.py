@@ -15,8 +15,8 @@ fake service (no GitHub here).
 # System Imports
 import asyncio
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
 
 # Package Imports
 import pytest
@@ -25,7 +25,8 @@ from pydantic import BaseModel, ConfigDict, Field
 # Local Imports
 from udl.clock import SystemClock
 from udl.config import Settings
-from udl.plugins.apps.base import AppRecords
+from udl.db.models import JsonObject
+from udl.plugins.apps.base import AppEvent, AppRecords
 from udl.plugins.apps.orch.links import LinkRecords
 from udl.plugins.apps.orch.models import Link as ShapeLink
 from udl.plugins.apps.orch.models import OwnerKind, PullState
@@ -53,12 +54,6 @@ class _FakeCheck(BaseModel):
     conclusion: str | None = None
 
 
-class _FakeComment(BaseModel):
-    """One of a pull's comments, as far as a review word goes."""
-
-    state: str = ""
-
-
 class PullDetail(BaseModel):
     """A `github_get_pull` answer, as far as a link's state goes (the github integration's own
     shape, with the fields it has)."""
@@ -68,7 +63,6 @@ class PullDetail(BaseModel):
     state: str = "open"
     head_sha: str = ""
     checks: list[_FakeCheck] = Field(default_factory=list[_FakeCheck])
-    comments: list[_FakeComment] = Field(default_factory=list[_FakeComment])
 
 
 # ---------------------------------------------------------------------------------------------
@@ -511,13 +505,13 @@ class FakeGithub:
         self.detail = detail
         self.calls: list[tuple[str, int]] = []
 
-    async def call(self, name: str, request: object) -> PullDetail:
+    async def call(self, name: str, request: BaseModel | Mapping[str, object]) -> PullDetail:
         repo, number = _repo_and_number(request)
         self.calls.append((repo, number))
         return self.detail
 
 
-def _repo_and_number(request: object) -> tuple[str, int]:
+def _repo_and_number(request: BaseModel | Mapping[str, object]) -> tuple[str, int]:
     """A `github_get_pull` request's repository and number (a model's or a dict's)."""
     repo = _field(request, "repo")
     number = _field(request, "number")
@@ -528,12 +522,11 @@ def _repo_and_number(request: object) -> tuple[str, int]:
     return str(repo), digits
 
 
-def _field(request: object, name: str) -> object:
+def _field(request: BaseModel | Mapping[str, object], name: str) -> object:
     """A request's field (a model's or a dict's)."""
-    if isinstance(request, Mapping):
-        found = cast("Mapping[str, object]", request)
-        return found.get(name, "")
-    return getattr(request, name, "")
+    if isinstance(request, BaseModel):
+        return getattr(request, name, "")
+    return request.get(name, "")
 
 
 async def test_a_pull_link_is_refreshed_on_a_github_pr_event() -> None:
@@ -552,7 +545,6 @@ async def test_a_pull_link_is_refreshed_on_a_github_pr_event() -> None:
             state="merged",
             head_sha="abc",
             checks=[_FakeCheck(name="check", status="completed", conclusion="success")],
-            comments=[_FakeComment(state="APPROVED")],
         )
     )
 
@@ -560,7 +552,8 @@ async def test_a_pull_link_is_refreshed_on_a_github_pr_event() -> None:
 
     assert refreshed.state.state == "merged"
     assert refreshed.state.checks == "pass"
-    assert refreshed.state.review == "approved"
+    # (udl's github_get_pull has no reviews: `review` is `none` until it does — O-C5.)
+    assert refreshed.state.review == "none"
     assert github.calls == [("yelrom0/udl", 33)]
 
 
@@ -703,7 +696,7 @@ async def test_a_task_with_nothing_to_link_has_none(links: LinkRecords) -> None:
     assert await links.for_owner("udl", OwnerKind.TASK, "F-1.1") == []
 
 
-async def _task_records(links: LinkRecords) -> Any:
+async def _task_records(links: LinkRecords) -> TaskRecords:
     """orch's tasks over the same records, with a feature to hang them on."""
     from udl.plugins.apps.orch.records import Feature
 
@@ -806,6 +799,42 @@ async def test_a_stopped_service_ends_before_the_next_event(links: LinkRecords) 
     assert sink.emitted == []
 
 
+async def test_a_pull_that_cannot_be_read_is_said_and_the_loop_goes_on(
+    links: LinkRecords,
+) -> None:
+    """A pull that has gone (or one udl cannot read) is logged, and the loop keeps going."""
+    from udl.errors import DoesNotExist
+    from udl.plugins.apps.orch.plugin import Orch
+    from udl.plugins.apps.orch.settings import OrchSettings
+
+    class Gone:
+        """A service whose `github_get_pull` answers that the pull is not there."""
+
+        async def call(self, name: str, request: BaseModel | Mapping[str, object]) -> BaseModel:
+            raise DoesNotExist("There is no pull 33 in yelrom0/udl")
+
+    await links.add(
+        project="udl",
+        owner_kind=OwnerKind.TASK,
+        owner="26.2",
+        kind="pull",
+        url="https://github.com/yelrom0/udl/pull/33",
+        state=PullState(state="open"),
+    )
+    sink = _Sink()
+    app = Orch(OrchSettings(), clock=SystemClock(), records=links.records)
+
+    await app.follow(
+        links,
+        sink,
+        Gone(),
+        _OneEvent({"html_url": "https://github.com/yelrom0/udl/pull/33"}),
+        _waiting(),
+    )
+
+    assert sink.emitted == []
+
+
 async def test_the_scan_drops_a_link_the_text_no_longer_has(links: LinkRecords) -> None:
     """A spec that no longer names a PR loses its link (a scan's own, not one a person added)."""
     records = await _task_records(links)
@@ -873,7 +902,7 @@ async def test_the_service_refreshes_a_pull_link_and_publishes(
 class _NoEvents:
     """A subscription that never ends (a runtime that has not closed it)."""
 
-    async def __anext__(self) -> Any:
+    async def __anext__(self) -> AppEvent:
         await asyncio.sleep(3600)
         raise AssertionError("unreachable")  # pragma: no cover
 
@@ -906,8 +935,8 @@ def _waiting() -> asyncio.Future[object]:
 class _OneEvent:
     """A subscription of one event, then the end (what a service's loop reads)."""
 
-    def __init__(self, data: dict[str, Any]) -> None:
-        self._data: dict[str, Any] | None = data
+    def __init__(self, data: JsonObject) -> None:
+        self._data: JsonObject | None = data
 
     async def __aenter__(self) -> _OneEvent:
         return self
@@ -918,10 +947,7 @@ class _OneEvent:
     def __aiter__(self) -> _OneEvent:
         return self
 
-    async def __anext__(self) -> Any:
-        from datetime import datetime
-
-        from udl.plugins.apps.base import AppEvent
+    async def __anext__(self) -> AppEvent:
 
         if self._data is None:
             raise StopAsyncIteration

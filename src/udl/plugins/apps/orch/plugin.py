@@ -21,14 +21,14 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 # Package Imports
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 # Local Imports
 from udl.automations.events import EventType
 from udl.core.operations import Operation, OperationHints
 from udl.db.models import JsonObject
 from udl.db.records import Record
-from udl.errors import DoesNotExist, NotAllowed
+from udl.errors import DoesNotExist, NotAllowed, PluginError, UDLError
 from udl.plugins.apps.base import (
     AppContext,
     AppEvent,
@@ -295,7 +295,9 @@ class Orch(AppPlugin[OrchSettings]):
                             ),
                             dedupe_key=f"{link.id}:{link.state.model_dump_json()}",
                         )
-            except Exception as error:  # noqa: BLE001 - (a pull we cannot read is retried)
+            except (DoesNotExist, PluginError, UDLError, ValidationError) as error:
+                # (A pull that has gone, or one udl cannot read: say so and go on. Anything
+                # else is a bug, and the supervisor's backoff is what reports it.)
                 log.warning("orch could not refresh a pull link: %s", error)
 
     async def assign(self, request: AssignTaskRequest) -> TaskQueue:

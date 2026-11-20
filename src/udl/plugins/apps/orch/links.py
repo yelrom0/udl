@@ -35,7 +35,11 @@ from udl.plugins.apps.orch.models import (
     PullReader,
     PullState,
 )
+
+# (The store is orch.records': one copy, so a save and the service use one rule. It is imported
+# here too for a caller that works with links — `from orch.links import LinkRecords`.)
 from udl.plugins.apps.orch.records import Link as StoredLink
+from udl.plugins.apps.orch.records import LinkRecords
 
 __all__ = [
     "GITHUB_PR_PATH",
@@ -74,12 +78,16 @@ GITHUB_URL: Final = re.compile(
 )
 """A GitHub URL in a text: what a sentence writes as a URL, its trailing punctuation left out."""
 
-TASK_KEY: Final = re.compile(r"`(?P<key>[0-9]+(?:\.[0-9]+)+[A-Za-z0-9_.]*)`")
-"""A task key in backticks: `26.2`, a number, a dot and a number (the plan's own shape).
+TASK_KEY: Final = re.compile(
+    r"`(?P<key>(?:[A-Z][A-Z0-9_]*-[0-9]+(?:\.[0-9]+)+|[0-9]{2,}(?:\.[0-9]+)+))`"
+)
+"""A task key in backticks: a counter's own key (`F-1.1`, `PROJ-1.4`) or the plan's (`26.2`).
 
-A bare `3.14` is the same shape and cannot be told from a key — a spec that must cite a version
-should say `version 3.14`, not put it alone in backticks. `v1.2.3` (a letter first) and
-`python3.14` (a word) are not keys, and neither is a feature's own key (`F-1`)."""
+A version (`v1.2.3`, `0.5`, `3.14`) is neither: a version's first number is one digit or it has
+three parts, and a counter's key is capitals, a dash and a number. A task number with one digit
+before the dot (`0.5`) is a version, and a spec that must cite one should say "version 0.5" —
+a key udl hands out is `26.2` at the earliest (its phases are two digits). A feature's own key
+(`F-1`) is not a task's: it has no dot."""
 
 _TRAILING: Final = ".,;:!?)]}'\""
 """What a sentence puts after a URL that is the sentence's, not the URL's."""
@@ -229,14 +237,6 @@ class _Check(BaseModel):
     conclusion: str | None = None
 
 
-class _Comment(BaseModel):
-    """One of a pull's comments (a CommentInfo), as far as a review word goes."""
-
-    model_config = ConfigDict(extra="ignore", from_attributes=True)
-
-    state: str = ""
-
-
 class _PullDetail(BaseModel):
     """What a pull link reads of udl's `github_get_pull` answer (a PullDetail): where the pull
     is, its head, its checks and its comments."""
@@ -246,7 +246,6 @@ class _PullDetail(BaseModel):
     state: str = "open"
     head_sha: str = ""
     checks: list[_Check] = Field(default_factory=list[_Check])
-    comments: list[_Comment] = Field(default_factory=list[_Comment])
 
 
 def _check_word(checks: list[_Check]) -> str:
@@ -261,22 +260,6 @@ def _check_word(checks: list[_Check]) -> str:
     return "pending"
 
 
-def _review_word(review: str, comments: list[_Comment]) -> str:
-    """One word for a pull's review: approved, changes, pending or none (what a link keeps).
-
-    udl's `github_get_pull` answers a pull's comments, not its reviews, so `review` is `none`
-    while no comment carries a state — the pull's own reviews are the github integration's to
-    answer (O-C5), and this reads one when it does."""
-    if review:
-        return review
-    states = {one.state.upper() for one in comments if one.state}
-    if "CHANGES_REQUESTED" in states:
-        return "changes"
-    if "APPROVED" in states:
-        return "approved"
-    return "none"
-
-
 def _pull_state(detail: object) -> PullState:
     """A `github_get_pull` answer as a pull link's own state: where the pull is, its head, its
     checks and its review (the card's four)."""
@@ -285,17 +268,17 @@ def _pull_state(detail: object) -> PullState:
         state=raw.state or "open",
         head_sha=raw.head_sha,
         checks=_check_word(raw.checks),
-        review=_review_word(_review_of(detail), raw.comments),
+        review=_review_of(detail),
     )
 
 
 def _review_of(detail: object) -> str:
-    """The review word an answer carries, if it has one (udl's own `github_get_pull` does not:
-    it answers the pull, not its reviews)."""
-    if isinstance(detail, BaseModel):
-        extra = getattr(detail, "review", "")
-        return str(extra) if isinstance(extra, str) else ""
-    return ""
+    """The review word an answer carries, if it has one.
+
+    udl's `github_get_pull` answers a pull and its comments, not its reviews (O-C5), so this is
+    `none` for it; an answer that grows a review word is read as it is."""
+    extra = getattr(detail, "review", "")
+    return extra if isinstance(extra, str) and extra else "none"
 
 
 async def refresh_pull(link: StoredLink, *, github: PullReader) -> StoredLink:
@@ -359,10 +342,3 @@ def event_url(event: object) -> str:
     read = _PullEvent.model_validate(event)
     page = (read.data or read).html_url or (read.pull_request or _PullPage()).html_url
     return canonical(page) if page else ""
-
-
-# (The store is orch.records': one copy, so a save and the service use one rule. It is imported
-# here for a caller that works with links — `from orch.links import LinkRecords`.)
-from udl.plugins.apps.orch.records import LinkRecords  # noqa: E402
-
-__all__ += ["LinkRecords"]
