@@ -80,6 +80,7 @@ __all__ = [
     "MyTaskResponse",
     "NoteKind",
     "OwnerKind",
+    "PrStatusRequest",
     "Principal",
     "Project",
     "Promotion",
@@ -950,6 +951,10 @@ class Readiness(_Model):
     blockers: list[str] = Field(default_factory=list[str])
     """Why it may not be merged, in the order a person would look at them (empty: it may)."""
     open_items: list[ReviewItem] = Field(default_factory=list[ReviewItem])
+    """The review bot's items it still lists as open (empty: nothing)."""
+    waited: float = 0.0
+    """How long the answer waited for GitHub's checks and the review bot, in seconds (0: it did
+    not: `orch_pr_status` without `wait`, 27.5)."""
     """The review bot's items that are not fixed, for the task's note."""
 
 
@@ -958,6 +963,21 @@ class ReadinessRequest(_Model):
 
     key: Key
     """The task whose pull is asked about (`27.6`)."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class PrStatusRequest(_Model):
+    """Asking whether a task's pull is ready, and holding until it is (27.5)."""
+
+    key: Key
+    """The task whose pull is asked about."""
+    wait: bool = False
+    """Whether to hold until GitHub's checks and the review bot have finished with this head
+    (an answer that is not ready for another reason comes at once: waiting would not change
+    it)."""
+    minutes: PositiveInt | None = None
+    """How long the wait may take, in minutes (None: orch's `wait_minutes`)."""
     project: Name | None = None
     """The project it is in (None: the only one, while udl has one)."""
 

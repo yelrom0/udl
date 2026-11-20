@@ -5,8 +5,9 @@
 
 Orch's settings: its `[apps.orch]` table, as every app has one (udl.plugins.apps.base).
 
-A session's transcript is kept for `session_days` (30 unless a config says otherwise), and one
-push's gate gets `gate_minutes` (60); the dispatcher's other knobs come with 27.7.
+A session's transcript is kept for `session_days` (30 unless a config says otherwise), one push's
+gate gets `gate_minutes` (60), and a readiness wait holds `wait_minutes` (60); the dispatcher's
+other knobs come with 27.7.
 """
 
 # Package Imports
@@ -25,6 +26,13 @@ class OrchSettings(AppSettings):
     gate_minutes: PositiveInt = 60
     """How long one push's gate run gets, in minutes (a test suite on a busy machine is the slow
     one, 27.5)."""
+
+    wait_minutes: PositiveInt = 60
+    """How long `orch_pr_status`'s wait holds, in minutes, before answering with what is still
+    running (27.5)."""
+
+    poll_seconds: PositiveInt = 20
+    """How often the wait looks at the pull again, in seconds (27.5)."""
 
     session_days: PositiveInt = 30
     """How many days a session's transcript (its SessionEvents) is kept: what the dispatcher

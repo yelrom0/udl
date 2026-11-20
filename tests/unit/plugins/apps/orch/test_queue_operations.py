@@ -67,6 +67,7 @@ QUEUE_OPERATIONS: list[str] = [
     "reorder_queue",
     "unassign",
     "push",
+    "pr_status",
     "get_queue",
     "my_task",
     "suggest",

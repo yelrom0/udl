@@ -67,6 +67,7 @@ from udl.plugins.apps.orch.models import (
     NoteKind,
     OwnerKind,
     Principal,
+    PrStatusRequest,
     PullReader,
     PushRequest,
     PushResult,
@@ -271,6 +272,11 @@ class Orch(AppPlugin[OrchSettings]):
                 "push",
                 title="Push a task's work",
                 hints=OperationHints(open_world=True),
+            ),
+            cls.operation(
+                "pr_status",
+                title="Whether a task's pull is ready",
+                hints=OperationHints(read_only=True, open_world=True),
             ),
             cls.operation(
                 "get_queue",
@@ -706,6 +712,29 @@ class Orch(AppPlugin[OrchSettings]):
             ],
         )
 
+    # -- a pull's readiness, waited for (27.5) --------------------------------------------------
+
+    async def pr_status(self, request: PrStatusRequest, *, service: UDLService) -> Readiness:
+        """Whether the task `key`'s pull may be merged (27.6), and with `wait`, holding until
+        GitHub's checks and the review bot have finished with this head (or until the time it
+        is given runs out).
+
+        A pull that is not ready for a reason waiting cannot change (a draft, a failed check,
+        an open item) is answered at once, as is one that has no pull yet."""
+        project = await self._project(request.project)
+        started = self.clock.now()
+        limit = timedelta(minutes=request.minutes or self.settings.wait_minutes)
+        while True:
+            task, pull, why = await self._pull_of(service, project, request.key)
+            if pull is None:
+                return Readiness(ready=False, blockers=[why])
+            found = await self._assess(task, pull, project)
+            waited = round((self.clock.now() - started).total_seconds(), 1)
+            spent = self.clock.now() - started >= limit
+            if not request.wait or found.ready or spent or not _not_yet(found.blockers):
+                return found.model_copy(update={"waited": waited})
+            await self.clock.sleep(timedelta(seconds=self.settings.poll_seconds))
+
     # -- the worktree, the gate and the push (27.5) ---------------------------------------------
 
     async def push(self, request: PushRequest, *, service: UDLService) -> PushResult:
@@ -792,6 +821,22 @@ class Orch(AppPlugin[OrchSettings]):
         """`agent`'s queue, as the operations answer with it."""
         found = await queues.queue_of(tasks, project=project, agent=agent)
         return TaskQueue(project=project, agent=agent, tasks=[_entry(task) for task in found])
+
+
+_NOT_YET: Final = (
+    "its checks are still running",
+    "has not commented on it",
+    "is not about",
+    "GitHub has not worked out",
+)
+"""The blockers that waiting can change: the checks, the bot's comment on this head, and GitHub
+working out whether it merges."""
+
+
+def _not_yet(blockers: list[str]) -> bool:
+    """Whether every one of `blockers` is a thing that may still change (so a wait is worth
+    it)."""
+    return bool(blockers) and all(any(word in one for word in _NOT_YET) for one in blockers)
 
 
 def _action(found: stored.HumanAction) -> Action:
