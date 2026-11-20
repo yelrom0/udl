@@ -295,7 +295,10 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   template is a UI-only plugin, so its guidance names the e2e fake's operations — the fake gained
   `count_things` and `ping` for it (guidance names operations, and the page it guides is udl's); and
   24.8's `generated-guided.spec.ts` is still the browser proof the phase card describes, with the shadcn
-  example's own `resultViews`.
+  example's own `resultViews`. **Red first:** the Python guidance tests in `test_ui.py` and the Vitest
+  cases in `guidance.test.ts` were written before `guidance_problems` and `guidanceOf` and failed on
+  them; the template's `resultView` test came after the coverage gate named the file uncovered (it is
+  the test that found the gap, not one written with the design).
 
 - **Review round (deepseek-a, 2026-11-21, PR #55):** six items, all test-first. (1) A global
   manifest's guidance reaches every page, so it is now checked against every operation udl knows and its
@@ -313,7 +316,16 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   matching nothing is a problem on the bundle), `guidance.test.ts` (two manifests' members of one group;
   an empty `tabs`), `slot.test.tsx` (the last of two contributions to a replacing point), `PluginList.test.tsx`
   (the bundle's problems said) and `Settings.test.tsx` (a contributed panel's save sends only what
-  changed, never the file-only field or the secret's mask).
+  changed, never the file-only field or the secret's mask). **Second round** (three items from the
+  follow-up review, test-first again): (7) guidance is scoped as `docs/ui-plugins.md` says —
+  `guidanceOf(manifests, plugin)` keeps a bound manifest for its own plugin's page only and applies it
+  after the UI-only ones (so its labels and hides win), and `generatedNav` asks per plugin; (8) `replace`
+  with `match="prefix"` takes the exact key, then the longest wildcard, then the last registered
+  (`oneOf`), so a UI-only `resultViews: ["*"]` cannot take a plugin's own view; (9) the Built note above
+  says which tests ran red first. Tests: `guidance.test.ts` (a bound manifest's guidance reaches its
+  page only; its labels beat a UI-only one's; the UI-only ones come first), `nav.test.ts` (another
+  plugin's guidance leaves this one's entry) and `slot.test.tsx` (the exact key over `gmail_*` over `*`;
+  the longest wildcard when no key is exact).
 
 **24.8 Proof** · needs 24.7
 - Build: `web/e2e/generated-guided.spec.ts`: the shadcn example (18.10) gains a `resultViews` contribution for one fake operation; the rest of that plugin's page stays generated. Both themes.

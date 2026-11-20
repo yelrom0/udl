@@ -93,7 +93,7 @@ describe("a pattern", () => {
 
 describe("the guidance every UI plugin gives", () => {
 	it("is nothing when none gives any", () => {
-		expect(guidanceOf([])).toEqual({
+		expect(guidanceOf([], "gmail")).toEqual({
 			hide: [],
 			groups: {},
 			groupOrder: [],
@@ -102,32 +102,63 @@ describe("the guidance every UI plugin gives", () => {
 		});
 	});
 
-	it("is what every UI plugin's manifest says, in the order they were listed", () => {
-		const found = guidanceOf([
-			ui("gmail", { hide: ["gmail_send_*"] }, "gmail"),
-			ui("shadcn", { hide: ["fake_delete"], labels: { fake_list: "Things" } }),
-		]);
+	it("is what reaches the page: the UI-only manifests', then its own", () => {
+		const found = guidanceOf(
+			[
+				ui("gmail", { hide: ["gmail_send_*"] }, "gmail"),
+				ui("shadcn", { hide: ["fake_delete"], labels: { fake_list: "Things" } }),
+			],
+			"gmail",
+		);
 
-		expect(found.hide).toEqual(["gmail_send_*", "fake_delete"]);
+		expect(found.hide).toEqual(["fake_delete", "gmail_send_*"]);
 		expect(found.labels).toEqual({ fake_list: "Things" });
 	});
 
+	it("takes only the guidance that reaches its page", () => {
+		// (A bound manifest guides its own plugin's page; a UI-only one guides every page.)
+		const manifests = [
+			ui("gmail", { hide: ["gmail_list"] }, "gmail"),
+			ui("theme", { hide: ["fake_list"] }),
+		];
+
+		expect(guidanceOf(manifests, "gmail").hide).toEqual(["fake_list", "gmail_list"]);
+		expect(guidanceOf(manifests, "fake").hide).toEqual(["fake_list"]);
+		expect(guidanceOf(manifests, "other").hide).toEqual(["fake_list"]);
+	});
+
+	it("gives the plugin's own guidance the last word", () => {
+		const manifests = [
+			ui("gmail", { labels: { gmail_list: "Inbox" } }, "gmail"),
+			ui("theme", { labels: { gmail_list: "Mail", gmail_send: "Send" } }),
+		];
+
+		expect(guidanceOf(manifests, "gmail").labels).toEqual({
+			gmail_list: "Inbox",
+			gmail_send: "Send",
+		});
+	});
+
 	it("keeps a group's own order", () => {
-		const found = guidanceOf([
-			ui("gmail", { groups: { Mail: ["gmail_list"], Drafts: ["gmail_drafts"] } }, "gmail"),
-		]);
+		const found = guidanceOf(
+			[ui("gmail", { groups: { Mail: ["gmail_list"], Drafts: ["gmail_drafts"] } }, "gmail")],
+			"gmail",
+		);
 
 		expect(found.groupOrder).toEqual(["Mail", "Drafts"]);
 	});
 
 	it("keeps both manifests' members of a group they both name", () => {
 		// (A group is a name, not an owner: the second to say it adds to it, not replaces it.)
-		const found = guidanceOf([
-			ui("gmail", { groups: { Mail: ["gmail_list"] } }, "gmail"),
-			ui("shadcn", { groups: { Mail: ["fake_list"] } }),
-		]);
+		const found = guidanceOf(
+			[
+				ui("gmail", { groups: { Mail: ["gmail_list"] } }, "gmail"),
+				ui("shadcn", { groups: { Mail: ["fake_list"] } }),
+			],
+			"gmail",
+		);
 
-		expect(found.groups.Mail).toEqual(["gmail_list", "fake_list"]);
+		expect(found.groups.Mail).toEqual(["fake_list", "gmail_list"]);
 		expect(found.groupOrder).toEqual(["Mail"]);
 	});
 });
@@ -136,7 +167,7 @@ describe("a guided page", () => {
 	it("is the page udl answered when there is no guidance", () => {
 		const page = plugin(operation("gmail_list"));
 
-		expect(guided(page, guidanceOf([]))).toEqual(page);
+		expect(guided(page, guidanceOf([], "gmail"))).toEqual(page);
 	});
 
 	it("hides the operations it names, a star naming a prefix", () => {
@@ -146,14 +177,20 @@ describe("a guided page", () => {
 			operation("gmail_send_all"),
 		);
 
-		const found = guided(page, guidanceOf([ui("gmail", { hide: ["gmail_send*"] }, "gmail")]));
+		const found = guided(
+			page,
+			guidanceOf([ui("gmail", { hide: ["gmail_send*"] }, "gmail")], "gmail"),
+		);
 
 		expect(found.operations.map((one) => one.name)).toEqual(["gmail_list"]);
 	});
 
 	it("leaves a hidden operation out of the tabs' count too", () => {
 		const page = plugin(operation("gmail_list", { hidden: true }));
-		const found = guided(page, guidanceOf([ui("gmail", { hide: ["gmail_list"] }, "gmail")]));
+		const found = guided(
+			page,
+			guidanceOf([ui("gmail", { hide: ["gmail_list"] }, "gmail")], "gmail"),
+		);
 
 		expect(found.operations).toEqual([]);
 	});
@@ -161,7 +198,7 @@ describe("a guided page", () => {
 	it("calls an operation what it says", () => {
 		const found = guided(
 			plugin(operation("gmail_list", { title: "List messages" })),
-			guidanceOf([ui("gmail", { labels: { gmail_list: "Inbox" } }, "gmail")]),
+			guidanceOf([ui("gmail", { labels: { gmail_list: "Inbox" } }, "gmail")], "gmail"),
 		);
 
 		expect(found.operations[0]?.title).toBe("Inbox");
@@ -170,7 +207,10 @@ describe("a guided page", () => {
 	it("moves an operation under the group it names", () => {
 		const found = guided(
 			plugin(operation("gmail_list"), operation("gmail_drafts")),
-			guidanceOf([ui("gmail", { groups: { Mail: ["gmail_list", "gmail_drafts"] } }, "gmail")]),
+			guidanceOf(
+				[ui("gmail", { groups: { Mail: ["gmail_list", "gmail_drafts"] } }, "gmail")],
+				"gmail",
+			),
 		);
 
 		expect(found.operations.map((one) => one.ui.group)).toEqual(["Mail", "Mail"]);
@@ -185,7 +225,7 @@ describe("a guided page", () => {
 
 		const found = guided(
 			page,
-			guidanceOf([ui("gmail", { order: ["gmail_drafts", "gmail_list"] }, "gmail")]),
+			guidanceOf([ui("gmail", { order: ["gmail_drafts", "gmail_list"] }, "gmail")], "gmail"),
 		);
 
 		expect([...found.operations].sort((left, right) => left.ui.order - right.ui.order)).toEqual([

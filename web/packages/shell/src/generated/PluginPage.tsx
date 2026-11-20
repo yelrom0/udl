@@ -42,7 +42,7 @@ export function PluginPage({
 	registry = shellRegistry,
 }: PluginPageProps) {
 	// (Its guidance is the page's: udl's answer, as its UI plugin asks for it.)
-	const guidance = guidanceOf(manifests);
+	const guidance = guidanceOf(manifests, plugin.name);
 	const page = guided(plugin, guidance);
 	const tabs = tabsGuided(page, tabsOfGuided(manifests, plugin.name));
 	const problems = plugin.problems ?? [];

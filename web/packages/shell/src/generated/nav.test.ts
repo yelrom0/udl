@@ -159,4 +159,14 @@ describe("the entry a UI plugin asks for (24.7)", () => {
 
 		expect(generatedNav(ui(gmail), [guiding("gmail", { hide: ["list_*"] })])).toEqual([]);
 	});
+
+	it("is there still when another plugin's guidance hides its operations", () => {
+		// (A bound manifest guides its own plugin's page only.)
+		const gmail = plugin({ operations: [operation()] });
+		const fake = plugin({ name: "fake", title: "Fake", operations: [operation()] });
+
+		const entries = generatedNav(ui(gmail, fake), [guiding("gmail", { hide: ["list_*"] })]);
+
+		expect(entries.map((entry) => entry.plugin.name)).toEqual(["fake"]);
+	});
 });

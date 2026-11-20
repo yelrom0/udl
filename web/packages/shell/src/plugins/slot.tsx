@@ -208,6 +208,17 @@ function SlotItem<P extends Point>(props: {
 	return <Draw key={attempt} {...props} onFailure={setFailure} />;
 }
 
+/** The one of `found` that replaces the thing named `key`: an exact key first, then the longest
+ * wildcard that reaches it (`gmail_list_*` over `*`), then the last one registered. */
+function oneOf<P>(found: readonly Contribution<P>[], key: string): readonly Contribution<P>[] {
+	const exact = found.filter((one) => one.key === key);
+	if (exact.length > 0) {
+		return exact.slice(-1);
+	}
+	const longest = found.reduce((size, one) => Math.max(size, one.key.length), 0);
+	return found.filter((one) => one.key.length === longest).slice(-1);
+}
+
 /** What the shell's own contribution is, as the shape a mount's context takes. */
 function ownInfo<P>(contribution: Contribution<P>): UIPluginInfo {
 	return {
@@ -240,7 +251,7 @@ export function PluginSlot<P extends Point>({
 	const at = registry.point(point);
 	const found = match === "prefix" ? at.prefixed(key) : at.at(key);
 	const scoped = of === undefined ? found : found.filter((one) => one.plugin.name === of);
-	const chosen = replace ? scoped.slice(-1) : scoped;
+	const chosen = replace ? oneOf(scoped, key) : scoped;
 
 	if (chosen.length === 0) {
 		return fallback;

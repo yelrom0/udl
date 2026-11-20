@@ -128,6 +128,82 @@ describe("a plugin slot", () => {
 		expect(first.mount).not.toHaveBeenCalled();
 	});
 
+	it("prefers the exact key to a wildcard, and the longest wildcard to a shorter one", async () => {
+		// (A UI-only plugin's `resultViews: ["*"]` guides every page: it must not take a view a
+		// plugin brought for that one operation.)
+		const wild = recording();
+		const longer = recording();
+		const exact = recording();
+		const identity = { name: "gmail", version: "0.1.0", baseUrl: "/ui/plugins/gmail/" };
+		const registry = new Registry();
+		registry.point("resultViews").add("*", {
+			plugin: identity,
+			key: "*",
+			entry: "*",
+			mount: wild.mount,
+		});
+		registry.point("resultViews").add("gmail_*", {
+			plugin: identity,
+			key: "gmail_*",
+			entry: "gmail_*",
+			mount: longer.mount,
+		});
+		registry.point("resultViews").add("gmail_list", {
+			plugin: identity,
+			key: "gmail_list",
+			entry: "gmail_list",
+			mount: exact.mount,
+		});
+
+		render(
+			<PluginSlot
+				point="resultViews"
+				props={{ operation: GUIDED, value: { things: 3 } }}
+				registry={registry}
+				lookup="gmail_list"
+				match="prefix"
+				replace
+			/>,
+		);
+
+		await waitFor(() => expect(exact.mount).toHaveBeenCalledTimes(1));
+		expect(longer.mount).not.toHaveBeenCalled();
+		expect(wild.mount).not.toHaveBeenCalled();
+	});
+
+	it("draws the longest wildcard when no key is exact", async () => {
+		const wild = recording();
+		const longer = recording();
+		const identity = { name: "gmail", version: "0.1.0", baseUrl: "/ui/plugins/gmail/" };
+		const registry = new Registry();
+		registry.point("resultViews").add("*", {
+			plugin: identity,
+			key: "*",
+			entry: "*",
+			mount: wild.mount,
+		});
+		registry.point("resultViews").add("gmail_*", {
+			plugin: identity,
+			key: "gmail_*",
+			entry: "gmail_*",
+			mount: longer.mount,
+		});
+
+		render(
+			<PluginSlot
+				point="resultViews"
+				props={{ operation: GUIDED, value: { things: 3 } }}
+				registry={registry}
+				lookup="gmail_list"
+				match="prefix"
+				replace
+			/>,
+		);
+
+		await waitFor(() => expect(longer.mount).toHaveBeenCalledTimes(1));
+		expect(wild.mount).not.toHaveBeenCalled();
+	});
+
 	it("draws the contribution in a shadow root of its own", async () => {
 		const drawn = recording();
 		plugins.setState({ manifests: [GMAIL], problems: [], errors: [] });

@@ -34,7 +34,6 @@ export function generatedNav(ui: GeneratedUI | null, infos: readonly UIPluginInf
 	if (ui === null) {
 		return [];
 	}
-	const guidance = guidanceOf(infos);
 	const own = new Set(
 		infos.filter((info) => (info.contributes.nav ?? []).length > 0).map((info) => info.name),
 	);
@@ -48,7 +47,7 @@ export function generatedNav(ui: GeneratedUI | null, infos: readonly UIPluginInf
 		if (asked === false || (asked === null && own.has(plugin.name))) {
 			continue;
 		}
-		if (!hasSomething(guided(plugin, guidance))) {
+		if (!hasSomething(guided(plugin, guidanceOf(infos, plugin.name)))) {
 			continue;
 		}
 		entries.push({

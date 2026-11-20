@@ -8,8 +8,9 @@
  * drawer entry is; its three points (`operationViews`, `resultViews`, `fieldWidgets`) replace
  * part of the page, and are drawn by `<PluginSlot>` like any other contribution.
  *
- * Guidance is by operation name, which is udl's own (`gmail_send`), so every UI plugin's
- * guidance can be merged and applied to every page: nothing can collide. What names no operation
+ * Guidance is by operation name, which is udl's own (`gmail_send`). A UI-only manifest (one with
+ * no `plugin`) guides every generated page, and a bound one (`"plugin": "gmail"`) only its own
+ * plugin's page, applied after the UI-only ones so it has the last word. What names no operation
  * was already said by udl (`problems` on the plugin), and is ignored here.
  */
 
@@ -40,13 +41,27 @@ export function matches(pattern: string, name: string): boolean {
 	return pattern.endsWith("*") ? name.startsWith(pattern.slice(0, -1)) : pattern === name;
 }
 
-/** The guidance every UI plugin in `manifests` gives, merged (nothing when none does). */
-export function guidanceOf(manifests: readonly UIPluginInfo[]): Guidance {
+/** The guidance `plugin`'s page takes: every UI-only manifest's (they guide every page), then
+ * the plugin's own (it is applied last, so it has the last word), each in udl's order (nothing
+ * when none gives any). */
+export function guidanceOf(manifests: readonly UIPluginInfo[], plugin: string): Guidance {
+	const reaching = manifests.filter((manifest) => {
+		if (manifest.generated === undefined || manifest.generated === null) {
+			return false;
+		}
+		const bound = manifest.plugin ?? null;
+		return bound === null || bound === plugin;
+	});
+	// (Two groups, each in the order udl listed them: `filter` keeps that order.)
+	const ordered = [
+		...reaching.filter((manifest) => (manifest.plugin ?? null) === null),
+		...reaching.filter((manifest) => (manifest.plugin ?? null) === plugin),
+	];
 	const hide: string[] = [];
 	const groups: Record<string, readonly string[]> = {};
 	const order: string[] = [];
 	const labels: Record<string, string> = {};
-	for (const manifest of manifests) {
+	for (const manifest of ordered) {
 		const given = manifest.generated;
 		if (given === undefined || given === null) {
 			continue;
