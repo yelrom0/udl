@@ -525,6 +525,26 @@ async def test_an_assign_that_finds_the_task_moved_while_it_waited_starts_over(
     assert await keys_of(tasks, "ernie-c") == ["F-1.1"]
 
 
+async def test_an_unassign_that_finds_the_task_moved_while_it_waited_starts_over(
+    tasks: TaskRecords,
+) -> None:
+    # (The same as an assign: the lock is the one of the queue the first read saw. When the task
+    # is on another queue by the re-read, this call starts over and takes that one.)
+    await a_task(tasks, "F-1.1")
+    await assign(tasks, "F-1.1", "ernie-c", project="udl", by=ME)
+    stale = await tasks.task("udl", "F-1.1")
+    assert stale is not None
+    moved = MovedFirst(tasks.records)
+    moved.stale = stale.model_copy(update={"assignee": "deepseek-b"})
+
+    freed = await unassign(moved, project="udl", key="F-1.1", by=ME)
+
+    assert (freed.key, freed.assignee, freed.state) == ("F-1.1", None, "open")
+    assert moved.reads == 4  # (read, read under the lock, then both again: 4 in all)
+    assert await keys_of(tasks, "ernie-c") == []
+    assert await keys_of(tasks, "deepseek-b") == []
+
+
 async def test_an_unassign_writes_only_the_tasks_whose_place_changed(
     tasks: TaskRecords,
 ) -> None:

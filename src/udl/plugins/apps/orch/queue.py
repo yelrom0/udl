@@ -271,35 +271,46 @@ async def unassign(
     Raises DoesNotExist when there is no such task, and NotAllowed when it is nobody's (there is
     no queue to leave) or is not `queued` (a task an agent is on is stopped first, 27.7). The
     queue is read and written under its lock, in one write (27.3a)."""
-    task = await _task(tasks, project, key)
+    while True:
+        task = await _task(tasks, project, key)
+        held = (project, _on_a_queue(task, key=key))
+        async with _locked(held):
+            task = await _task(tasks, project, key)  # (again: it may have moved while we waited)
+            if (project, _on_a_queue(task, key=key)) != held:
+                # (It changed hands while this call waited: the queue it is on now is not held,
+                # so it is read again and that one taken, from the start.)
+                continue
+            return await _unassign(tasks, task, project=project, key=key, by=by)
+
+
+def _on_a_queue(task: Task, *, key: str) -> str:
+    """`task`'s assignee. Raises NotAllowed when it is nobody's (there is no queue to leave)."""
     if task.assignee is None:
         raise NotAllowed(
             f"{key!r} is nobody's to unassign",
             hint="A task that is not on a queue leaves none.",
         )
-    async with _locked((project, task.assignee)):
-        task = await _task(tasks, project, key)  # (again: it may have moved while we waited)
-        if task.assignee is None:
-            raise NotAllowed(
-                f"{key!r} is nobody's to unassign",
-                hint="A task that is not on a queue leaves none.",
-            )
-        if task.state != QUEUED:
-            raise NotAllowed(
-                f"{key!r} cannot leave a queue from {task.state!r}",
-                hint="Only a queued task is taken off its queue.",
-            )
-        agent = task.assignee
-        freed = transitions.move(task, OPEN, by=_by(by, "assign")).model_copy(
-            update={"assignee": None, "position": None}
+    return task.assignee
+
+
+async def _unassign(
+    tasks: TaskRecords, task: Task, *, project: str, key: str, by: Principal | None
+) -> Task:
+    """`task`, off its agent's queue (whose lock the caller holds), in one write."""
+    agent = _on_a_queue(task, key=key)
+    if task.state != QUEUED:
+        raise NotAllowed(
+            f"{key!r} cannot leave a queue from {task.state!r}",
+            hint="Only a queued task is taken off its queue.",
         )
-        left = [
-            found
-            for found in await queue_of(tasks, project=project, agent=agent)
-            if found.key != key
-        ]
-        saved = await tasks.save_all([freed, *_renumbered(left, was=left)])
-        return saved[0]
+    freed = transitions.move(task, OPEN, by=_by(by, "assign")).model_copy(
+        update={"assignee": None, "position": None}
+    )
+    left = [
+        found for found in await queue_of(tasks, project=project, agent=agent) if found.key != key
+    ]
+    saved = await tasks.save_all([freed, *_renumbered(left, was=left)])
+    return saved[0]
 
 
 async def queue_of(tasks: TaskRecords, *, project: str, agent: str) -> list[Task]:
