@@ -56,6 +56,11 @@ function ui(...plugins: GeneratedPlugin[]): GeneratedUI {
 	return { plugins };
 }
 
+/** A UI plugin, with `generated` as its guidance (24.7). */
+function guiding(name: string, generated: NonNullable<UIPluginInfo["generated"]>): UIPluginInfo {
+	return { ...ownNavPlugin(name), contributes: {}, generated };
+}
+
 /** A UI plugin that brings navigation of its own. */
 function ownNavPlugin(name: string): UIPluginInfo {
 	return {
@@ -67,6 +72,7 @@ function ownNavPlugin(name: string): UIPluginInfo {
 		isolation: "shadow",
 		contributes: { nav: [{ title: "Inbox", route: "inbox" }] },
 		plugin: name,
+		generated: null,
 	};
 }
 
@@ -123,5 +129,34 @@ describe("the drawer's generated entries", () => {
 				to: "/p/feed/",
 			},
 		]);
+	});
+});
+
+describe("the entry a UI plugin asks for (24.7)", () => {
+	it("says what it says, with its icon", () => {
+		const gmail = plugin({ operations: [operation()] });
+
+		expect(
+			generatedNav(ui(gmail), [guiding("gmail", { nav: { title: "Mail", icon: "mail" } })]),
+		).toEqual([
+			{
+				plugin: { name: "gmail", version: "", baseUrl: "/ui/" },
+				title: "Mail",
+				icon: "mail",
+				to: "/p/gmail/",
+			},
+		]);
+	});
+
+	it("is no entry when it asks for none", () => {
+		const gmail = plugin({ operations: [operation()] });
+
+		expect(generatedNav(ui(gmail), [guiding("gmail", { nav: false })])).toEqual([]);
+	});
+
+	it("is none when its guidance hides everything it had", () => {
+		const gmail = plugin({ operations: [operation()] });
+
+		expect(generatedNav(ui(gmail), [guiding("gmail", { hide: ["list_*"] })])).toEqual([]);
 	});
 });

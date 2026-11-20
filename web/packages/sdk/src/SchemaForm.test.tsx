@@ -241,6 +241,26 @@ describe("a plugin's own widget", () => {
 
 		expect(screen.getByText("drawn by the plugin: to")).toBeDefined();
 	});
+
+	it("draws the widget a field asks for by name, when it is not udl's own (24.7)", () => {
+		render(
+			<SchemaForm
+				schema={{
+					type: "object",
+					properties: {
+						tint: { type: "string", "x-udl-ui": { widget: "color", label: "Tint" } },
+					},
+				}}
+				value={{}}
+				onChange={() => {}}
+				widgets={{ color: ({ field }) => <p>the plugin's colour box for {field.label}</p> }}
+			/>,
+		);
+
+		expect(screen.getByText("the plugin's colour box for Tint")).toBeDefined();
+		// (udl's own box is not drawn beside it.)
+		expect(screen.queryByLabelText(/^Tint/)).toBeNull();
+	});
 });
 
 describe("a box of JSON", () => {

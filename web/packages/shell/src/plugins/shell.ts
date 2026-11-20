@@ -7,7 +7,7 @@ import { generatedNav } from "../generated/nav";
 import type { GeneratedUI } from "../generated/spec";
 import { plugins, type UIPluginInfo } from "../stores/plugins";
 import { OWN_NAV, UDL } from "./own";
-import { Registry } from "./registry";
+import { type Point, Registry } from "./registry";
 
 export { OWN_NAV, UDL } from "./own";
 
@@ -62,6 +62,32 @@ export function registerPlugin(info: UIPluginInfo): void {
 			entry: widget.id,
 		});
 	}
+	// (24.7: what it replaces in the page udl generates, by the operation's name or a prefix.)
+	for (const name of contributes.operationViews ?? []) {
+		shellRegistry.point("operationViews").add(name, { plugin: identity, key: name, entry: name });
+	}
+	for (const pattern of contributes.resultViews ?? []) {
+		shellRegistry
+			.point("resultViews")
+			.add(pattern, { plugin: identity, key: pattern, entry: pattern });
+	}
+	for (const widget of contributes.fieldWidgets ?? []) {
+		shellRegistry
+			.point("fieldWidgets")
+			.add(widget, { plugin: identity, key: widget, entry: widget });
+	}
+}
+
+/**
+ * Whether a contribution is registered for `lookup` at `point`: what a generated page asks
+ * before it draws its own (24.7's settings panel, account setup, operation and result).
+ */
+export function contributed<P extends Point>(
+	point: P,
+	lookup: string,
+	registry: Registry = shellRegistry,
+): boolean {
+	return registry.point(point).at(lookup).length > 0;
 }
 
 /**

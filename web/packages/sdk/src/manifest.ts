@@ -85,6 +85,42 @@ export type Widgets = Widget[];
  * The daisyUI themes it adds.
  */
 export type Themes = string[];
+/**
+ * The operations whose panel it replaces (a mount of its own).
+ */
+export type Operationviews = string[];
+/**
+ * The operations whose result it draws itself (a name, or a `*` prefix).
+ */
+export type Resultviews = string[];
+/**
+ * The field widgets it adds, by the name a field's `x-udl-ui.widget` asks for.
+ */
+export type Fieldwidgets = string[];
+/**
+ * Its drawer entry: a title and an icon of its own, or False for no entry.
+ */
+export type Nav1 = GeneratedNav | false | null;
+/**
+ * What it says.
+ */
+export type Title1 = string;
+/**
+ * The icon's name (the shell maps it to lucide's).
+ */
+export type Icon1 = string | null;
+/**
+ * Which tabs stay, in this order (all of them, as udl lists them, when this is empty).
+ */
+export type Tabs = ("operations" | "settings" | "accounts" | "events")[];
+/**
+ * The operations not to show (a name, or a `*` prefix: `gmail_send_*`).
+ */
+export type Hide = string[];
+/**
+ * The operations to put first, in this order.
+ */
+export type Order = string[];
 
 /**
  * A UI plugin's manifest.json: what it is, and what it adds to the shell.
@@ -97,6 +133,10 @@ export interface UIManifest {
   styles?: Styles;
   isolation?: Isolation;
   contributes?: Contributions;
+  /**
+   * How it guides the page udl generates for its plugin (24.7).
+   */
+  generated?: Generated | null;
 }
 /**
  * What it adds to the shell.
@@ -111,6 +151,9 @@ export interface Contributions {
   actionEditors?: Actioneditors;
   widgets?: Widgets;
   themes?: Themes;
+  operationViews?: Operationviews;
+  resultViews?: Resultviews;
+  fieldWidgets?: Fieldwidgets;
 }
 /**
  * A page in the shell's navigation.
@@ -126,4 +169,35 @@ export interface NavItem {
 export interface Widget {
   slot: Slot;
   id: Id;
+}
+/**
+ * How a UI plugin guides the page udl generates for its plugin (24.7): everything here is
+ * optional, and what it does not say stays as udl answered it.
+ */
+export interface Generated {
+  nav?: Nav1;
+  tabs?: Tabs;
+  hide?: Hide;
+  groups?: Groups;
+  order?: Order;
+  labels?: Labels;
+}
+/**
+ * What the drawer's entry for its plugin says, when the page is generated (24.7).
+ */
+export interface GeneratedNav {
+  title: Title1;
+  icon?: Icon1;
+}
+/**
+ * The operations to move under a group of this name (the group's own order is the dict's).
+ */
+export interface Groups {
+  [k: string]: string[];
+}
+/**
+ * What to call an operation, instead of its title.
+ */
+export interface Labels {
+  [k: string]: string;
 }

@@ -49,7 +49,8 @@ function PluginPage() {
 	if (generated !== undefined) {
 		return (
 			<section className="my-6">
-				<GeneratedPage plugin={generated} />
+				{/* (Every manifest may guide it: a UI-only plugin's as much as its own, 24.7.) */}
+			<GeneratedPage plugin={generated} manifests={manifests} />
 			</section>
 		);
 	}

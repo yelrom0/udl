@@ -11,9 +11,12 @@ import type {
 	AccountSetupProps,
 	ActionEditorProps,
 	EventViewProps,
+	FieldWidgetProps,
 	FilterEditorProps,
 	Mount,
+	OperationViewProps,
 	PluginIdentity,
+	ResultViewProps,
 	RouteProps,
 	SettingsProps,
 	WidgetProps,
@@ -28,6 +31,10 @@ export interface Points {
 	filterEditors: FilterEditorProps;
 	actionEditors: ActionEditorProps;
 	widgets: WidgetProps;
+	/** 24.7: what replaces part of the page udl generates. */
+	operationViews: OperationViewProps;
+	resultViews: ResultViewProps;
+	fieldWidgets: FieldWidgetProps;
 }
 
 /** One of them. */
@@ -42,6 +49,9 @@ export const POINTS: readonly Point[] = [
 	"filterEditors",
 	"actionEditors",
 	"widgets",
+	"operationViews",
+	"resultViews",
+	"fieldWidgets",
 ];
 
 /** Something in the registry: whose it is, what it is called there, and how it mounts. */
@@ -87,6 +97,9 @@ const KEYS: { [Q in Point]: (props: Points[Q], lookup?: string) => { key: string
 		filterEditors: (_props, lookup) => ({ key: lookup ?? "" }),
 		actionEditors: (_props, lookup) => ({ key: lookup ?? "" }),
 		widgets: (props) => ({ key: props.slot }),
+		operationViews: (_props, lookup) => ({ key: lookup ?? "" }),
+		resultViews: (_props, lookup) => ({ key: lookup ?? "" }),
+		fieldWidgets: (props) => ({ key: props.field.asked ?? props.field.widget }),
 	};
 
 /** The type of the event an event view is drawn for (its `type`). */
@@ -146,6 +159,20 @@ export class Contributions<P> {
 		return found;
 	}
 
+	/**
+	 * The ones a name is drawn with: those registered for it, then those whose key ends with
+	 * `*` and is a prefix of it (a manifest's `"gmail_*"`, 24.7).
+	 */
+	prefixed(name: string): readonly Contribution<P>[] {
+		const found = [...this.at(name)];
+		for (const [key, contributions] of this.#byKey) {
+			if (key.endsWith("*") && name.startsWith(key.slice(0, -1))) {
+				found.push(...contributions);
+			}
+		}
+		return found;
+	}
+
 	/** Forget everything (a test's own registry, and a page that signs out). */
 	clear(): void {
 		this.#byKey.clear();
@@ -164,6 +191,9 @@ export class Registry {
 		filterEditors: new Contributions<FilterEditorProps>(),
 		actionEditors: new Contributions<ActionEditorProps>(),
 		widgets: new Contributions<WidgetProps>(),
+		operationViews: new Contributions<OperationViewProps>(),
+		resultViews: new Contributions<ResultViewProps>(),
+		fieldWidgets: new Contributions<FieldWidgetProps>(),
 	};
 
 	/** One point's contributions. */

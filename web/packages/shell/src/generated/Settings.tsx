@@ -6,14 +6,21 @@
  * A plugin's settings (24.6), in 24.4's `<SchemaForm>` drawn from the schema udl sends: the
  * fields only the config file sets are shown and not editable, a secret is a password box, and
  * Save sends what changed. udl's answer (or its refusal) is said under the form.
+ *
+ * Since 24.7 the plugin's own UI plugin may draw the panel instead (`settings`): it is given what
+ * udl answered, and a `save` that sends it back.
  */
 
 import type { UdlApi } from "@udl/api";
 import type { JsonObject } from "@udl/ui-sdk";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Registry } from "../plugins/registry";
+import { contributed, shellRegistry } from "../plugins/shell";
+import { PluginSlot } from "../plugins/slot";
 import { jsonObject, saidBy } from "./run";
 import { SchemaForm } from "./SchemaForm";
 import type { GeneratedPlugin } from "./spec";
+import { useFieldWidgets } from "./widgets";
 
 /** What udl says a plugin's settings are (`PluginSettingsInfo`). */
 interface SettingsInfo {
@@ -26,6 +33,8 @@ interface SettingsInfo {
 export interface SettingsTabProps {
 	readonly plugin: GeneratedPlugin;
 	readonly api: UdlApi;
+	/** Where the contributions are (a test's own; the shell's when none is given). */
+	readonly registry?: Registry;
 }
 
 /** What to send: only what the user changed, and never a file-only field. (udl answers with the
@@ -48,8 +57,10 @@ function unsent(info: SettingsInfo | null, seed: JsonObject, values: JsonObject)
 }
 
 /** A plugin's settings: its form, and Save. */
-export function SettingsTab({ plugin, api }: SettingsTabProps) {
+export function SettingsTab({ plugin, api, registry = shellRegistry }: SettingsTabProps) {
 	const [info, setInfo] = useState<SettingsInfo | null>(null);
+	// (What udl answered, whole: a contributed panel is given it as it is.)
+	const [answered, setAnswered] = useState<JsonObject | null>(null);
 	const [values, setValues] = useState<JsonObject>({});
 	const [said, setSaid] = useState<{ message: string; hint: string | null } | null>(null);
 	const [saved, setSaved] = useState(false);
@@ -61,6 +72,8 @@ export function SettingsTab({ plugin, api }: SettingsTabProps) {
 	const seed = useRef<JsonObject>({});
 	const [busy, setBusy] = useState(false);
 	const live = useRef(true);
+	// (Every render, before any return: a hook after one would change the count.)
+	const widgets = useFieldWidgets(registry);
 
 	useEffect(() => {
 		live.current = true;
@@ -72,18 +85,19 @@ export function SettingsTab({ plugin, api }: SettingsTabProps) {
 	useEffect(() => {
 		void (async () => {
 			try {
-				const answered = await api.call("get_plugin_settings", undefined, {
+				const said = await api.call("get_plugin_settings", undefined, {
 					name: plugin.name,
 				});
 				if (live.current) {
+					setAnswered(jsonObject(said));
 					setInfo({
-						values: jsonObject(answered.values),
-						json_schema: jsonObject(answered.json_schema),
-						file_only: answered.file_only,
-						secrets: answered.secrets,
+						values: jsonObject(said.values),
+						json_schema: jsonObject(said.json_schema),
+						file_only: said.file_only,
+						secrets: said.secrets,
 					});
 					// (The form starts with what udl runs with, not only the schema's defaults.)
-					seed.current = jsonObject(answered.values);
+					seed.current = jsonObject(said.values);
 					setValues(seed.current);
 				}
 			} catch (error) {
@@ -136,6 +150,26 @@ export function SettingsTab({ plugin, api }: SettingsTabProps) {
 		);
 	}
 
+	// (The plugin's own panel, when it has one: it is given what udl answered, and the save.)
+	if (contributed("settings", plugin.name, registry)) {
+		return answered === null ? (
+			<output className="loading loading-spinner" aria-label="Loading the settings" />
+		) : (
+			<PluginSlot
+				point="settings"
+				lookup={plugin.name}
+				registry={registry}
+				props={{
+					plugin: plugin.name,
+					info: answered,
+					save: async (values) => {
+						await api.call("set_plugin_settings", { values }, { name: plugin.name });
+					},
+				}}
+			/>
+		);
+	}
+
 	return (
 		<div className="flex flex-col gap-4">
 			{info === null ? (
@@ -149,6 +183,7 @@ export function SettingsTab({ plugin, api }: SettingsTabProps) {
 					readOnly={info.file_only}
 					secret={info.secrets}
 					disabled={busy}
+					widgets={widgets}
 				/>
 			)}
 			<div className="card-actions items-center">

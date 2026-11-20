@@ -6,7 +6,7 @@
  */
 
 import type { Mount, UIPluginSpec } from "@udl/ui-sdk";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { ErrorCard } from "../components/ErrorCard";
 import { addError, plugins, type UIPluginInfo } from "../stores/plugins";
 import { shownTheme, theme as themeStore } from "../stores/theme";
@@ -29,6 +29,9 @@ const RECORDS: {
 	filterEditors: (spec) => spec.filterEditors,
 	actionEditors: (spec) => spec.actionEditors,
 	widgets: (spec) => spec.widgets,
+	operationViews: (spec) => spec.operationViews,
+	resultViews: (spec) => spec.resultViews,
+	fieldWidgets: (spec) => spec.fieldWidgets,
 };
 
 /** What a slot is told: the point, the props that point's contributions take, and how it is
@@ -43,6 +46,11 @@ export type PluginSlotProps<P extends Point> = {
 	readonly lookup?: string;
 	/** How a bundle is imported (the browser's `import()`, unless a test has its own). */
 	readonly importer?: Importer;
+	/** What to draw when nothing is registered for the key (the page's own, before 24.7). */
+	readonly fallback?: ReactNode;
+	/** How the key matches: itself (the default), or a manifest's `*` prefix too (24.7's
+	 * `resultViews`). */
+	readonly match?: "exact" | "prefix";
 };
 
 /** `contribution`'s mount, from its plugin's bundle (imported once per bundle). */
@@ -219,13 +227,16 @@ export function PluginSlot<P extends Point>({
 	registry = shellRegistry,
 	lookup,
 	importer,
+	fallback = null,
+	match = "exact",
 }: PluginSlotProps<P>) {
 	const { key, of } = keyOf(point, props, lookup);
-	const found = registry.point(point).at(key);
+	const at = registry.point(point);
+	const found = match === "prefix" ? at.prefixed(key) : at.at(key);
 	const chosen = of === undefined ? found : found.filter((one) => one.plugin.name === of);
 
 	if (chosen.length === 0) {
-		return null;
+		return fallback;
 	}
 	return (
 		<ErrorBoundary>

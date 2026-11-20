@@ -97,3 +97,24 @@ test("a plugin with no UI plugin gets a page that does something", async ({ page
 	await expect(page.getByText("fake.thing.happened")).toBeVisible();
 	await expect(page.getByText("A thing happened in the fake.")).toBeVisible();
 });
+
+test("another plugin's manifest guides the page (24.7)", async ({ page }, info) => {
+	// (`web/packages/template`'s manifest hides the fake's `ping` and draws its `count_things`
+	// itself: guidance names operations, and the page it guides is udl's.)
+	const name = `work-${info.project.name}`;
+	await page.goto("/ui/p/fake/");
+	await page.getByRole("tab", { name: "operations" }).click();
+
+	// -- the operation its guidance hides is not drawn ---------------------------------------
+	const countCard = page.locator("article", { hasText: "Count the things" });
+	await expect(countCard.getByRole("heading", { level: 4 })).toHaveText("Count the things");
+	await expect(page.getByText("Ping", { exact: true })).toHaveCount(0);
+
+	// -- the result it draws itself, in place of udl's table ---------------------------------
+	const card = countCard;
+	// (Not a fan-out list, so its account box takes one name, not JSON.)
+	await card.getByRole("textbox", { name: /^account/i }).fill(`fake:${name}`);
+	await card.getByRole("button", { name: "Refresh" }).click();
+
+	await expect(card.getByText("Count the things, drawn by this plugin")).toBeVisible();
+});

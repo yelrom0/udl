@@ -71,8 +71,11 @@ export interface FieldSpec {
 	readonly help?: string;
 	/** What to show in an empty box, when it says. */
 	readonly placeholder?: string;
-	/** The widget that shows it. */
+	/** The widget that shows it (udl's own; a plugin's own is `asked`). */
 	readonly widget: FieldWidget;
+	/** The widget name the schema asks for, when it is not one of udl's own: a UI plugin may have
+	 * one of that name (24.7's `fieldWidgets`), and then it draws the field. */
+	readonly asked?: string;
 	/** Whether the value must have it. */
 	readonly required: boolean;
 	/** What it is when nothing is given. */
@@ -200,6 +203,7 @@ function fieldOf(
 	const choices = asArray(said.enum) ?? asArray(item?.enum);
 	const help = asString(hints.help) ?? asString(said.description);
 	const placeholder = asString(hints.placeholder);
+	const asked = asString(hints.widget);
 	return {
 		name,
 		path,
@@ -207,6 +211,7 @@ function fieldOf(
 		...(help === undefined ? {} : { help }),
 		...(placeholder === undefined ? {} : { placeholder }),
 		widget: asWidget(hints.widget) ?? widgetOf(said),
+		...(asked === undefined || isWidget(asked) ? {} : { asked }),
 		required,
 		...(said.default === undefined ? {} : { default: said.default }),
 		...(choices === undefined
@@ -330,4 +335,13 @@ export function withoutValue(value: JsonValue, path: readonly string[]): JsonVal
 		return others;
 	}
 	return { ...object, [name]: withoutValue(object[name] ?? {}, rest) };
+}
+
+/** What a plugin's own widget for a field is given (a manifest's `fieldWidgets`). */
+export interface FieldWidgetProps {
+	readonly field: FieldSpec;
+	readonly value: JsonValue | undefined;
+	readonly onChange: (value: JsonValue) => void;
+	readonly disabled: boolean;
+	readonly invalid: boolean;
 }
