@@ -168,8 +168,19 @@ def tokens_for(service: UDLService) -> OrchTokens:
 
 async def issue_token(service: UDLService, agent: str) -> str:
     """Issue a new token for the agent called `agent`, rotating the one it had: the token is
-    kept in udl's secret store, and given out here, once. Raises DoesNotExist for an agent that
-    is not there."""
+    kept in udl's secret store, and given out here, once.
+
+    Raises DoesNotExist for an agent that is not there, and NotAllowed when the server has no
+    `api.api_key`: a token only means something on a server that needs a key, since without one
+    every request is the owner's — an agent could drop its token and be the owner, with every
+    operation and no limit."""
+    if service.settings.api.api_key is None:
+        raise NotAllowed(
+            f"This udl has no api.api_key, so a {AGENT_PREFIX}… token would limit nothing",
+            hint="Set api.api_key in the server's config (and give it to the agents' clients): "
+            "without it every request is the owner's, so an agent could drop its token and be "
+            "the owner.",
+        )
     agents = AgentRecords(AppRecords(service.db))
     found = await agents.agent(agent)
     if found is None:

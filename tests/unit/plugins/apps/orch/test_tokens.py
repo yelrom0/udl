@@ -14,10 +14,12 @@ from pathlib import Path
 
 # Package Imports
 import pytest
+from pydantic import SecretStr
 
 # Local Imports
 from support.engine import databases, registry, settings
 from support.interfaces import Harness
+from udl.config import APISettings
 from udl.errors import DoesNotExist, NotAllowed
 from udl.interfaces.security import AGENT_PREFIX, Principal, PrincipalKind
 from udl.plugins.apps.base import AppRecords
@@ -169,7 +171,7 @@ async def test_a_token_whose_agent_is_gone_is_nobody(
 async def test_issuing_one_through_a_service_is_kept_in_the_secret_store(
     tmp_path: Path,
 ) -> None:
-    harness = Harness(tmp_path)
+    harness = Harness(tmp_path, api=APISettings(api_key=SecretStr("s3cret")))
     async with harness.service() as service:
         agents = AgentRecords(AppRecords(service.db))
         await agents.save_agent(
@@ -186,6 +188,23 @@ async def test_issuing_one_through_a_service_is_kept_in_the_secret_store(
 
         with pytest.raises(DoesNotExist, match="fake-b"):
             await issue_token(service, "fake-b")
+
+
+async def test_a_token_is_not_issued_on_a_server_without_an_api_key(tmp_path: Path) -> None:
+    """A token only means something on a server that needs a key: without one every request is
+    the owner's, so a token would limit nothing (an agent could drop it and do everything)."""
+    harness = Harness(tmp_path)  # (no api.api_key)
+    async with harness.service() as service:
+        agents = AgentRecords(AppRecords(service.db))
+        await agents.save_agent(
+            AgentRecord.model_validate({"name": "fake-a", "title": "Fake A", "runner": "fake"})
+        )
+
+        with pytest.raises(NotAllowed, match=r"api\.api_key") as asked:
+            await issue_token(service, "fake-a")
+
+        assert "every request is the owner" in (asked.value.hint or "")
+        assert await agents.tokens.by_hash(hash_token("anything")) is None  # (nothing was issued)
 
 
 def _ref(agent: str) -> SecretRef:

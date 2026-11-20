@@ -88,7 +88,10 @@ class Orch(AppPlugin[OrchSettings]):
     ) -> IssueTokenResponse:
         """Issue a new token for the agent called `agent` (rotating the one it had, which stops
         working at once). The token is given here, once, and kept in udl's secret store, so the
-        dispatcher can hand it to the agent's runner."""
+        dispatcher can hand it to the agent's runner.
+
+        Raises NotAllowed while the server has no `api.api_key`: without one every request is
+        the owner's, so a token would limit nothing."""
         return IssueTokenResponse(agent=request.agent, token=await issue(service, request.agent))
 
     @classmethod
