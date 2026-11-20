@@ -344,6 +344,105 @@
         "title": "AccountStatus",
         "type": "string"
       },
+      "Action": {
+        "additionalProperties": false,
+        "description": "Something only a person can do, with a result line (human-comms.md's \"To action\").\n\n`when` is `now`, `after` a task (it becomes `now` when that task merges), or `later`; `task`\nis the task it is about, when it is about one, and the result of finishing it is written\nthere as a note.",
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The task it waits for, while `when` is `after` (it becomes `now` when that one merges).",
+            "title": "After"
+          },
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The person it is for (`human:<name>`), or None for whoever picks it up.",
+            "title": "Assignee"
+          },
+          "key": {
+            "description": "Its key within the project (`A-<n>`).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "project": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The project it belongs to."
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What came of it: the result of finishing it, or why it was dropped.",
+            "title": "Result"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ActionState",
+            "default": "open",
+            "description": "Where it is: open, done or dropped."
+          },
+          "task": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The task it is about, when it is about one (the result is written there).",
+            "title": "Task"
+          },
+          "text": {
+            "default": "",
+            "description": "What it says, as markdown (what to do, and why).",
+            "maxLength": 2000,
+            "title": "Text",
+            "type": "string"
+          },
+          "title": {
+            "description": "What is to be done, in a line.",
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "when": {
+            "$ref": "#/components/schemas/ActionWhen",
+            "default": "now",
+            "description": "When it is due: now, after a task, or later."
+          }
+        },
+        "required": [
+          "key",
+          "project",
+          "title"
+        ],
+        "title": "Action",
+        "type": "object"
+      },
       "ActionInfo": {
         "additionalProperties": false,
         "description": "An action (its secrets hidden: each kept secret shows where the store keeps it).",
@@ -467,6 +566,49 @@
           "actions"
         ],
         "title": "ActionList",
+        "type": "object"
+      },
+      "ActionState": {
+        "description": "Where an action is: still to do, done (with its result), or dropped.",
+        "enum": [
+          "open",
+          "done",
+          "dropped"
+        ],
+        "title": "ActionState",
+        "type": "string"
+      },
+      "ActionWhen": {
+        "description": "When a person's action is due (28.2): now, after a task merges, or later.",
+        "enum": [
+          "now",
+          "after",
+          "later"
+        ],
+        "title": "ActionWhen",
+        "type": "string"
+      },
+      "Actions": {
+        "additionalProperties": false,
+        "description": "What is to be done, in the order it is due (28.2).",
+        "properties": {
+          "actions": {
+            "description": "The actions, now first, then after, then later (empty: nothing to do).",
+            "items": {
+              "$ref": "#/components/schemas/Action"
+            },
+            "title": "Actions",
+            "type": "array"
+          },
+          "project": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The project they are of."
+          }
+        },
+        "required": [
+          "project"
+        ],
+        "title": "Actions",
         "type": "object"
       },
       "AllOf-Input": {
@@ -1933,6 +2075,41 @@
           "urls"
         ],
         "title": "DownloadSpec",
+        "type": "object"
+      },
+      "DropActionRequest": {
+        "additionalProperties": false,
+        "description": "Dropping something that is not going to be done, with the reason.",
+        "properties": {
+          "key": {
+            "description": "The action to drop (`A-<n>`).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          },
+          "reason": {
+            "default": "",
+            "description": "Why it is dropped.",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "DropActionRequest",
         "type": "object"
       },
       "Duration-Input": {
@@ -3435,6 +3612,41 @@
           }
         ]
       },
+      "FinishActionRequest": {
+        "additionalProperties": false,
+        "description": "Finishing something only a person could do, with what came of it.",
+        "properties": {
+          "key": {
+            "description": "The action to finish (`A-<n>`).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          },
+          "result": {
+            "description": "What came of it (written as a note on the task it is about).",
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "result"
+        ],
+        "title": "FinishActionRequest",
+        "type": "object"
+      },
       "FollowStep": {
         "additionalProperties": false,
         "description": "Open the URL the step before found (relative to its document), and go on on that\ndocument.",
@@ -4433,6 +4645,59 @@
       "JsonValue": {},
       "Length": {
         "$ref": "#/components/schemas/Duration-Input"
+      },
+      "ListActionsRequest": {
+        "additionalProperties": false,
+        "description": "Asking what is to be done, in the order it is due.",
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only the actions of this person (`human:<name>`).",
+            "title": "Assignee"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project they are of (None: the only one, while udl has one)."
+          },
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActionState"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only the actions in this state (None: the open ones)."
+          },
+          "when": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActionWhen"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only the actions due at this time (None: now, after and later)."
+          }
+        },
+        "title": "ListActionsRequest",
+        "type": "object"
       },
       "ListRunnersRequest": {
         "additionalProperties": false,
@@ -7369,6 +7634,86 @@
           }
         },
         "title": "SetAccountRequestBody",
+        "type": "object"
+      },
+      "SetActionRequest": {
+        "additionalProperties": false,
+        "description": "Adding something only a person can do (28.2).",
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The task it waits for (only while `when` is `after`).",
+            "title": "After"
+          },
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The person it is for (`human:<name>`).",
+            "title": "Assignee"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          },
+          "task": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The task it is about, when it is about one.",
+            "title": "Task"
+          },
+          "text": {
+            "default": "",
+            "description": "What it says, as markdown.",
+            "maxLength": 2000,
+            "title": "Text",
+            "type": "string"
+          },
+          "title": {
+            "description": "What is to be done, in a line.",
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "when": {
+            "$ref": "#/components/schemas/ActionWhen",
+            "default": "now",
+            "description": "When it is due: now, after a task, or later."
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "SetActionRequest",
         "type": "object"
       },
       "SetActionRequestBody": {
@@ -14353,6 +14698,200 @@
         ]
       }
     },
+    "/plugins/orch/drop_action": {
+      "post": {
+        "description": "Drop something that is not going to be done, with the reason.",
+        "operationId": "orch_drop_action",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DropActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Action"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Drop something that is not going to be done, with the reason.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/finish_action": {
+      "post": {
+        "description": "Finish something only a person could do: the result is written as a note on the task\nit is about, and that task, when it is a person's, is `merged`.",
+        "operationId": "orch_finish_action",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FinishActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Action"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Finish something only a person could do: the result is written as a note on the task",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
     "/plugins/orch/get_queue": {
       "post": {
         "description": "What an agent's queue is: its tasks, in the order it will work them.\n\nA person's own list is asked for the same way, by `human:<name>`.",
@@ -14542,6 +15081,103 @@
           }
         ],
         "summary": "Issue a new token for the agent called `agent` (rotating the one it had, which stops",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/list_actions": {
+      "post": {
+        "description": "What is to be done, in the order it is due: now, then after, then later.",
+        "operationId": "orch_list_actions",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListActionsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Actions"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "What is to be done, in the order it is due: now, then after, then later.",
         "tags": [
           "orch"
         ]
@@ -15415,6 +16051,103 @@
           }
         ],
         "summary": "Write a harness's deny policies and its agent files on a host (idempotent), and set",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/set_action": {
+      "post": {
+        "description": "Add something only a person can do: now, after a task merges, or later.\n\nAn action `after` a task names it, and becomes `now` when that task merges (28.3).",
+        "operationId": "orch_set_action",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Action"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Add something only a person can do: now, after a task merges, or later.",
         "tags": [
           "orch"
         ]

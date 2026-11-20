@@ -30,7 +30,7 @@ from weakref import WeakKeyDictionary
 # Local Imports
 from udl.db.records import Record
 from udl.errors import DoesNotExist, NotAllowed
-from udl.plugins.apps.orch import transitions
+from udl.plugins.apps.orch import actions, transitions
 from udl.plugins.apps.orch.models import (
     IN_PROGRESS,
     MOVED,
@@ -183,6 +183,14 @@ async def _assign(
         ]
         writes += _renumbered(left, was=left)
         also.append(_stopped(placed, stopped=stopped, agent=agent))
+    if placed.task_kind == "human":
+        # (A person's task is something only they can do: it is their action from the moment it
+        # is theirs, 28.2. The action is planned here and written in the same batch, so a task
+        # is never queued without it — the batch is one write, or none.)
+        action = await actions.plan_for_task(
+            actions.ActionRecords(tasks.records), placed, assignee=agent
+        )
+        also.append(action)
     saved = await tasks.save_all(writes, also=also)
     return next((one for one in saved if one.id == placed.id), placed)
 
@@ -309,7 +317,15 @@ async def _unassign(
     left = [
         found for found in await queue_of(tasks, project=project, agent=agent) if found.key != key
     ]
-    saved = await tasks.save_all([freed, *_renumbered(left, was=left)])
+    also: list[Record] = []
+    if freed.task_kind == "human":
+        # (The action it had is nobody's now: it goes back to `open` and off the person's list,
+        # so a task nobody holds is not still on someone's To action, 28.2. It is written in
+        # the queue's own batch, like its assignment.)
+        stored = actions.ActionRecords(tasks.records)
+        for found in await stored.actions(project, state=OPEN, task=freed.key):
+            also.append(found.model_copy(update={"assignee": None}))
+    saved = await tasks.save_all([freed, *_renumbered(left, was=left)], also=also)
     return saved[0]
 
 

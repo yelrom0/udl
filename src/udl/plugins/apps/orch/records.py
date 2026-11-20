@@ -60,6 +60,8 @@ from udl.plugins.apps.orch.models import (
     CANCELLED,
     DONE,
     OPEN,
+    ActionState,
+    ActionWhen,
     BranchName,
     CheckedBranchPattern,
     FeatureStatus,
@@ -328,6 +330,49 @@ class Link(Record):
         )
 
 
+class HumanAction(Record):
+    """Something only a person can do (28.2), as it is stored: what orch.models.Action is.
+
+    Its key is `A-<n>` of its project's counter, and it is unique by it. `after` is the task it
+    waits for (it becomes `now` when that one merges, `orch.actions.become_now`), and `task` is
+    the task it is about, whose notes its result is written to."""
+
+    kind = "orch_action"
+    indexed = ("project", "key", "state", "when", "assignee", "task")
+    unique = (("project", "key"),)
+
+    key: Key
+    """Its key within the project (`A-<n>`)."""
+    project: Name
+    """The project it belongs to."""
+    title: Title
+    """What is to be done, in a line."""
+    text: Text = ""
+    """What it says, as markdown."""
+    when: ActionWhen = ActionWhen.NOW
+    """When it is due: now, after a task, or later."""
+    after: Key | None = None
+    """The task it waits for, while `when` is `after`."""
+    task: Key | None = None
+    """The task it is about, when it is about one."""
+    assignee: str | None = None
+    """The person it is for (`human:<name>`), or None."""
+    state: ActionState = ActionState.OPEN
+    """Where it is: open, done or dropped."""
+    result: str | None = None
+    """What came of it: its result, or why it was dropped."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            project="udl",
+            key="A-1",
+            title="Send the OpenRouter key to Liively",
+            text="The one from 1Password, for the AI providers.",
+            assignee="human:claude",
+        )
+
+
 class Counter(Record):
     """One number a counter handed out: the compare-and-set claim of a key (`F-`, `Q-`, `A-`).
 
@@ -580,6 +625,7 @@ class ProjectRecords:
         project = await self.project(name)
         if project is None:
             return False
+        await _delete_actions(self._records, name)
         for kind in (Repo, Feature, Task, Counter):
             for record in await self._records.list(kind, RecordQuery(where={"project": name})):
                 if isinstance(record, Task):
@@ -806,6 +852,7 @@ class FeatureRecords:
         for task in await TaskRecords(self._records, self._projects).tasks(project, feature=key):
             await _delete_notes(self._records, "task", task.id)
             await _delete_links(self._records, task.project, "task", task.key)
+            await _delete_actions(self._records, task.project, task.key)
             await self._records.delete(Task, task.id)
         await _delete_notes(self._records, "feature", feature.id)
         await _delete_links(self._records, feature.project, "feature", feature.key)
@@ -991,6 +1038,7 @@ class TaskRecords:
             return False
         await _delete_notes(self._records, "task", task.id)
         await _delete_links(self._records, task.project, "task", task.key)
+        await _delete_actions(self._records, task.project, task.key)
         return await self._records.delete(Task, task.id)
 
 
@@ -1281,6 +1329,15 @@ class SessionRecords:
         by when it was stored)."""
         found = await self._records.list(SessionEvent, RecordQuery(where={"session": session}))
         return sorted(found, key=lambda one: (one.turn, one.created_at))
+
+
+async def _delete_actions(records: AppRecords, project: str, key: str | None = None) -> None:
+    """Delete the human actions about or after the task called `key` in `project` — or, when
+    `key` is None, every action of the project (28.2: what deleting a task takes with it, and a
+    project's actions go with the project, so its `A-` numbers start over)."""
+    for action in await records.list(HumanAction, RecordQuery(where={"project": project})):
+        if key is None or key in (action.task, action.after):
+            await records.delete(HumanAction, action.id)
 
 
 async def _delete_notes(records: AppRecords, owner_kind: str, owner: UUID) -> None:

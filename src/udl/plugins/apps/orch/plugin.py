@@ -37,13 +37,20 @@ from udl.plugins.apps.base import (
     AppPlugin,
     AppRecords,
 )
+from udl.plugins.apps.orch import actions as acted
 from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch import records as stored
 from udl.plugins.apps.orch import suggest as suggested
 from udl.plugins.apps.orch.agents import AgentRole
 from udl.plugins.apps.orch.links import LINK_CHANGED, LinkChanged, LinkRecords, event_url
 from udl.plugins.apps.orch.models import (
+    Action,
+    Actions,
+    ActionState,
     AssignTaskRequest,
+    DropActionRequest,
+    FinishActionRequest,
+    ListActionsRequest,
     MyTaskNote,
     MyTaskRequest,
     MyTaskResponse,
@@ -51,6 +58,7 @@ from udl.plugins.apps.orch.models import (
     QueueEntry,
     QueueRequest,
     ReorderQueueRequest,
+    SetActionRequest,
     Suggestions,
     SuggestRequest,
     TaskQueue,
@@ -177,6 +185,7 @@ class Orch(AppPlugin[OrchSettings]):
             stored.AgentSession,
             stored.SessionEvent,
             stored.AgentToken,
+            stored.HumanAction,
         )
 
     async def issue_token(
@@ -247,6 +256,18 @@ class Orch(AppPlugin[OrchSettings]):
                 "suggest",
                 title="What to do next",
                 hints=OperationHints(read_only=True),
+            ),
+            cls.operation("set_action", title="Add a human action"),
+            cls.operation(
+                "list_actions",
+                title="What is to be done",
+                hints=OperationHints(read_only=True),
+            ),
+            cls.operation("finish_action", title="Finish a human action"),
+            cls.operation(
+                "drop_action",
+                title="Drop a human action",
+                hints=OperationHints(idempotent=True),
             ),
             cls.operation(
                 "list_runners",
@@ -433,6 +454,59 @@ class Orch(AppPlugin[OrchSettings]):
         )
         return Suggestions(project=project, suggestions=found)
 
+    # -- what only a person can do (28.2) -------------------------------------------------------
+
+    async def set_action(self, request: SetActionRequest) -> Action:
+        """Add something only a person can do: now, after a task merges, or later.
+
+        An action `after` a task names it, and becomes `now` when that task merges (28.3)."""
+        project = await self._project(request.project)
+        found = await acted.set_action(
+            acted.ActionRecords(self.records),
+            project=project,
+            title=request.title,
+            text=request.text,
+            when=request.when,
+            after=request.after,
+            task=request.task,
+            assignee=request.assignee,
+        )
+        return _action(found)
+
+    async def list_actions(self, request: ListActionsRequest) -> Actions:
+        """What is to be done, in the order it is due: now, then after, then later."""
+        project = await self._project(request.project)
+        found = await acted.ActionRecords(self.records).actions(
+            project,
+            state=request.state if request.state is not None else ActionState.OPEN,
+            when=request.when,
+            assignee=request.assignee,
+        )
+        return Actions(project=project, actions=[_action(one) for one in found])
+
+    async def finish_action(self, request: FinishActionRequest) -> Action:
+        """Finish something only a person could do: the result is written as a note on the task
+        it is about, and that task, when it is a person's, is `merged`."""
+        project = await self._project(request.project)
+        found = await acted.finish(
+            acted.ActionRecords(self.records),
+            project=project,
+            key=request.key,
+            result=request.result,
+        )
+        return _action(found)
+
+    async def drop_action(self, request: DropActionRequest) -> Action:
+        """Drop something that is not going to be done, with the reason."""
+        project = await self._project(request.project)
+        found = await acted.drop(
+            acted.ActionRecords(self.records),
+            project=project,
+            key=request.key,
+            reason=request.reason,
+        )
+        return _action(found)
+
     # -- the queue (27.3) ----------------------------------------------------------------------
 
     async def assign(self, request: AssignTaskRequest) -> TaskQueue:
@@ -527,6 +601,22 @@ class Orch(AppPlugin[OrchSettings]):
         """`agent`'s queue, as the operations answer with it."""
         found = await queues.queue_of(tasks, project=project, agent=agent)
         return TaskQueue(project=project, agent=agent, tasks=[_entry(task) for task in found])
+
+
+def _action(found: stored.HumanAction) -> Action:
+    """`found` as the operations answer with it."""
+    return Action(
+        key=found.key,
+        project=found.project,
+        title=found.title,
+        text=found.text,
+        when=found.when,
+        after=found.after,
+        task=found.task,
+        assignee=found.assignee,
+        state=found.state,
+        result=found.result,
+    )
 
 
 def _entry(task: stored.Task) -> QueueEntry:
