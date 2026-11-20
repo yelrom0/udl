@@ -109,7 +109,6 @@ from udl.plugins.apps.orch.tokens import (
 from udl.plugins.apps.orch.tokens import (
     issue_token as issue,
 )
-from udl.plugins.apps.orch.workspace import Worktree, remove
 from udl.plugins.runners.manage import (
     Harnesses,
     InstallRunnerRequest,
@@ -941,35 +940,7 @@ class Orch(AppPlugin[OrchSettings]):
         changed = await after_merge(
             self.records, project=project, key=key, by=by, reviewed=reviewed, promoted=promoted
         )
-        merged = changed[0]
-        await self._remove_worktree(service, merged)
-        return merged
-
-    async def _remove_worktree(self, service: UDLService, task: stored.Task) -> None:
-        """Take `task`'s worktree and branch away (28.3), when it has one and its repo does: one
-        that cannot be taken away is said and left, never an error for the merge."""
-        if not task.worktree or not task.branch or not task.repo:
-            return
-        repo = await stored.RepoRecords(self.records).repo(task.project, task.repo)
-        if repo is None or not repo.checkouts:
-            return
-        host = next(iter(repo.checkouts))
-        try:
-            shell = await service.hosts.shell(host)
-            await remove(
-                Worktree(
-                    host=host,
-                    path=task.worktree,
-                    branch=task.branch,
-                    base=repo.base_branch,
-                ),
-                repo=repo,
-                shell=shell,
-            )
-        except (ConfigError, PluginError, UDLError) as error:
-            log.warning("orch could not take %s's worktree away: %s", task.key, error)
-            return
-        await stored.TaskRecords(self.records).save_task(task.model_copy(update={"worktree": None}))
+        return changed[0]
 
     async def _pull_of(
         self, service: UDLService, project: str, key: str
