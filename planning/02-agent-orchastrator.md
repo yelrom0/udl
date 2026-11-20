@@ -927,13 +927,12 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   already gone), `GateLane` (a `Lease` `orch-gate:<host>`: one gate at a time per host, its lease
   as long as the gate may run plus 10 minutes and renewed every third of that while it runs, and
   a holder unique per push — `assignee:key:8 hex` — so two pushes never take each other's lease
-  for granted) and `push()`: uncommitted work refused with `git status`'s summary, a branch that
-  grew on origin since this task last pushed it refused (`git pull --rebase` in its hint), so
-  someone else's commits are never overwritten — what the task last pushed is kept under
-  `refs/udl/pushed/<branch>` (written after each push, taken away by `remove()`), not the tracking
-  ref, which every worktree of the checkout shares and any fetch moves — and the lease pinned to
-  origin's tip as just fetched (so a push after the agent's `git pull --rebase` goes through, and
-  one after the gate window does not); a rebase on what the branch is built on when that moved (the repo's base, or the needed task's branch while
+  for granted) and `push()`: uncommitted work refused with `git status`'s summary, and nothing on
+  the branch that the worktree does not have refused (`git pull --rebase origin <branch>` in its
+  hint), whether the task pushed it before or not, so someone else's commits are never
+  overwritten; the lease pinned to origin's tip as just fetched, so the same holds for a push
+  while the gate runs, and a push after the agent's own pull goes through; a rebase on what the
+  branch is built on when that moved (the repo's base, or the needed task's branch while
   its pull is open; a conflict is `NotAllowed` with git's hint and nothing is pushed), the repo's
   `gate` run in the lane under `[apps.orch] gate_minutes` (60) — read, not raised on, so the
   agent gets its real exit code and the last 200 lines of its output (each stream's own end: the
@@ -953,12 +952,13 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   answers with `Readiness.waited` (seconds). The tests: 7 in `test_workspace.py`, 6 in
   `test_gate_lane.py` (two lanes on one host serialise, another host does not wait, an expired
   lease is taken, a gate longer than its lease keeps the lane, two holders of one name are two
-  lanes, a failing gate still releases), 14 in `test_orch_push.py` (on a real temp repo with a
+  lanes, a failing gate still releases), 15 in `test_orch_push.py` (on a real temp repo with a
   bare `origin` and a fake `github`: a failing gate pushes nothing, a long one says its code and
   the end of its output, a gate that prints more than udl keeps still says its summary, a second
   push with no body leaves the description, a branch someone else moved is refused and their
   commit stays even when a fetch moved the tracking ref first, and the pull that follows lets the
-  push through, a stacked task's body says what it merges after) and 6 in `test_pr_status.py` (on a `FakeClock`), plus
+  push through, a branch udl never pushed is not overwritten either, a stacked task's body says
+  what it merges after) and 6 in `test_pr_status.py` (on a `FakeClock`), plus
   `HostShell.run(check=False)` in `test_host_shell.py` (both shells give a failure back).
   Names, as the card's differ: the operation is `orch_pr_status`, the request field is `key` (not
   `task`), the setting is `gate_minutes` (not `gate_timeout`) and the wait's is `minutes` (not

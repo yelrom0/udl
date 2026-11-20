@@ -491,6 +491,30 @@ async def test_a_push_whose_branch_someone_else_moved_is_refused(
     ]
 
 
+async def test_a_branch_udl_never_pushed_is_not_overwritten_either(
+    service: UDLService, worktree: Path, home: Path, as_agent: None
+) -> None:
+    """(The branch was pushed with plain git, or from another host's checkout: nothing of this
+    task says what is on it, and its commits are not overwritten, 27.5.)"""
+    # (The worktree fixture's one commit, pushed with plain git.)
+    git("push", "origin", "HEAD:refs/heads/feat/F-1.1-it", cwd=worktree)
+    elsewhere = home / "elsewhere"
+    git("clone", str(home / "origin.git"), str(elsewhere), cwd=home)
+    git("config", "user.name", "someone", cwd=elsewhere)
+    git("config", "user.email", "someone@example.com", cwd=elsewhere)
+    git("checkout", "feat/F-1.1-it", cwd=elsewhere)
+    (elsewhere / "theirs.txt").write_text("their work\n")
+    git("add", "theirs.txt", cwd=elsewhere)
+    git("commit", "-m", "feat: their work", cwd=elsewhere)
+    git("push", "origin", "feat/F-1.1-it", cwd=elsewhere)
+    theirs = git("rev-parse", "HEAD", cwd=elsewhere)
+
+    with pytest.raises(NotAllowed, match="has commits this worktree does not"):
+        await pushed(service, key="F-1.1", title="It")
+
+    assert git("rev-parse", "feat/F-1.1-it", cwd=home / "origin.git") == theirs
+
+
 async def test_the_branch_is_rebased_when_the_base_moved(
     service: UDLService, worktree: Path, home: Path, as_agent: None
 ) -> None:
