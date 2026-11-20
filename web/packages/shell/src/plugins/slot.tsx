@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import { ErrorCard } from "../components/ErrorCard";
 import { addError, plugins, type UIPluginInfo } from "../stores/plugins";
 import { shownTheme, theme as themeStore } from "../stores/theme";
-import { contextOf } from "./context";
+import { contextOf, tokensOf } from "./context";
 import { prepare } from "./dom";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { type Importer, loadPlugin } from "./load";
@@ -98,7 +98,10 @@ function Draw<P extends Point>({
 					.getState()
 					.manifests.find((one) => one.name === name);
 				const mount = contribution.mount ?? (await bundleMount(point, contribution, importer));
-				const place = await prepare(element, info, { theme: shownTheme() });
+				const place = await prepare(element, info, {
+					theme: shownTheme(),
+					tokens: tokensOf(),
+				});
 				if (!live) {
 					// (Gone before its bundle arrived: the wrapper is not the page's to keep.)
 					place.wrapper.remove();
@@ -154,6 +157,10 @@ function Draw<P extends Point>({
 		return themeStore.subscribe(() => {
 			if (wrapper.current !== null) {
 				wrapper.current.dataset.theme = shownTheme();
+				// (The other palette's tokens, for a plugin whose shadow root cannot inherit them.)
+				for (const [token, value] of Object.entries(tokensOf())) {
+					wrapper.current.style.setProperty(token, value);
+				}
 			}
 		});
 	}, []);

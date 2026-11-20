@@ -302,6 +302,36 @@ describe("a plugin slot", () => {
 		);
 	});
 
+	it("gives the plugin's wrapper the page's tokens, and refreshes them with the theme", async () => {
+		const drawn = recording();
+		plugins.setState({ manifests: [GMAIL], problems: [], errors: [] });
+		document.documentElement.style.setProperty("--color-primary", "oklch(45% .24 277.023)");
+
+		render(
+			<PluginSlot
+				point="routes"
+				registry={registryWith(GMAIL)}
+				lookup="gmail"
+				importer={async () => ({ default: { routes: { inbox: drawn.mount } } })}
+				props={ROUTE}
+			/>,
+		);
+		await waitFor(() => expect(drawn.mount).toHaveBeenCalled());
+		const wrapper = drawn.drawn[0]?.target.closest<HTMLElement>(".udl-plugin");
+		expect(wrapper?.style.getPropertyValue("--color-primary")).toBe("oklch(45% .24 277.023)");
+
+		// (A plugin's shadow root does not inherit daisyUI's `@property`-registered colours, so
+		// the wrapper carries them — and the new palette's when the theme changes.)
+		document.documentElement.style.setProperty("--color-primary", "oklch(80% .1 20)");
+		act(() => {
+			setTheme("dark");
+		});
+
+		await waitFor(() =>
+			expect(wrapper?.style.getPropertyValue("--color-primary")).toBe("oklch(80% .1 20)"),
+		);
+	});
+
 	it("says a contribution whose plugin is no longer listed", async () => {
 		plugins.setState({ manifests: [], problems: [], errors: [] });
 
