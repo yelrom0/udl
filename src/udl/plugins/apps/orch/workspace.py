@@ -145,8 +145,9 @@ async def _saved(found: Worktree, *, task: Task, tasks: TaskRecords | None) -> W
 
 
 async def remove(found: Worktree, *, repo: RepoLike, shell: HostShell) -> None:
-    """Take `found`'s worktree and its branch away (after a merge): nothing when it is already
-    gone, so removing twice is what removing once is."""
+    """Take `found`'s worktree and its branch away (after a merge), and what its pushes wrote
+    about the branch: nothing when it is already gone, so removing twice is what removing once
+    is."""
     checkout = repo.checkouts.get(found.host)
     if checkout is None:
         raise ConfigError(f"the repo {repo.name!r} has no checkout on {found.host!r}")
@@ -154,6 +155,8 @@ async def remove(found: Worktree, *, repo: RepoLike, shell: HostShell) -> None:
         await _git(shell, ["-C", checkout, "worktree", "remove", "--force", found.path])
     if await _has_branch(shell, checkout, found.branch):
         await _git(shell, ["-C", checkout, "branch", "-D", found.branch])
+    if await _sha_of(shell, checkout, _pushed(found.branch)):
+        await _git(shell, ["-C", checkout, "update-ref", "-d", _pushed(found.branch)])
 
 
 def _off(stacked_on: str | None, base: str) -> str:
@@ -281,7 +284,8 @@ async def push(
     """Push `task`'s work: its branch to origin, then its pull request (27.5).
 
     Nothing uncommitted (else NotAllowed with `git status`'s summary), nothing on the branch this
-    worktree does not have (else NotAllowed: someone else's commits are not overwritten), rebased
+    task did not push and the worktree does not have (else NotAllowed: someone else's commits are
+    not overwritten — what the task pushed last is kept under `refs/udl/pushed/<branch>`), rebased
     on what it is built on when that has
     moved, the repo's gate run in its host's lane (one at a time, 27.5), and on a pass `git push
     --force-with-lease=<branch>:<origin's tip when we looked>`, then `github_open_pull` and a
@@ -303,12 +307,15 @@ async def push(
             f"{task.key!r} has uncommitted work",
             hint=_summary(dirty),
         )
-    # (Whatever is on the branch now, and whether this worktree has it: a commit someone else
-    # pushed is refused rather than overwritten, and the lease is pinned to it, so the same holds
+    # (Whatever is on the branch now, against what this task last pushed (`refs/udl/pushed`, which
+    # only its own pushes write: the tracking ref is shared by every worktree of the checkout and
+    # any fetch moves it). Its own rewritten commits are its own to replace; anyone else's are
+    # refused rather than overwritten, and the lease pinned to origin's tip means the same holds
     # for a push to the branch while the gate runs, 27.5.)
+    seen = await _sha_of(shell, path, _pushed(branch))
     await _git(shell, ["-C", path, "fetch", "origin"])
     moved = await _sha_of(shell, path, f"origin/{branch}")
-    if moved and not await _contains(shell, path, moved):
+    if moved and moved != seen and not await _contains(shell, path, moved):
         raise NotAllowed(
             f"{branch!r} has commits this worktree does not",
             hint=(
@@ -340,6 +347,7 @@ async def push(
             hint=ran.output or None,
         )
     await _git(shell, ["-C", path, "push", *_lease(branch, moved), "origin", branch])
+    await _git(shell, ["-C", path, "update-ref", _pushed(branch), "HEAD"], within=GIT_QUIET)
     first = not await _has_pull(task, records=records)
     pull = await _as_udl(
         service,
@@ -363,6 +371,13 @@ async def push(
             added_by=task.assignee or "",
         )
     return PushResult(project=task.project, key=task.key, branch=branch, gate=ran, pull=url)
+
+
+def _pushed(branch: str) -> str:
+    """The ref a task's own pushes write with the sha they pushed: what tells its own earlier
+    commits (rewritten by a rebase, an amend or a squash, and its own to replace) from someone
+    else's on the same branch (27.5)."""
+    return f"refs/udl/pushed/{branch}"
 
 
 def _lease(branch: str, at: str) -> list[str]:

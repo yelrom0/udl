@@ -491,6 +491,21 @@ async def test_a_push_whose_branch_someone_else_moved_is_refused(
     ]
 
 
+async def test_a_task_that_rewrote_its_own_pushed_commits_pushes_again(
+    service: UDLService, worktree: Path, home: Path, as_agent: None
+) -> None:
+    """(A rebase the agent resolved, an amend, a squash: the task's own commits rewritten after a
+    push are its own to replace, so the push goes through, 27.5.)"""
+    await pushed(service, key="F-1.1", title="It")
+    git("commit", "--amend", "-m", "feat: the work, said better", cwd=worktree)
+
+    await pushed(service, key="F-1.1")
+
+    assert git("log", "-1", "--format=%s", "feat/F-1.1-it", cwd=home / "origin.git").strip() == (
+        "feat: the work, said better"
+    )
+
+
 async def test_a_branch_udl_never_pushed_is_not_overwritten_either(
     service: UDLService, worktree: Path, home: Path, as_agent: None
 ) -> None:
