@@ -1001,6 +1001,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/issue_token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Issue a new token for the agent called `agent` (rotating the one it had, which stops
+         * @description Issue a new token for the agent called `agent` (rotating the one it had, which stops
+         *     working at once). The token is given here, once, and kept in udl's secret store, so the
+         *     dispatcher can hand it to the agent's runner.
+         */
+        post: operations["orch_issue_token"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/orch/my_task": {
         parameters: {
             query?: never;
@@ -3775,6 +3797,27 @@ export interface components {
         };
         "Interval-Input": components["schemas"]["Duration-Input"];
         "Interval-Output": components["schemas"]["Duration-Output"];
+        /**
+         * IssueTokenRequest
+         * @description Ask for an agent's token (a new one: the old one stops working at once).
+         */
+        IssueTokenRequest: {
+            /** @description The agent to issue it for. */
+            agent: components["schemas"]["Name"];
+        };
+        /**
+         * IssueTokenResponse
+         * @description An agent's new token. It is given here, once, and kept in udl's secret store.
+         */
+        IssueTokenResponse: {
+            /** @description The agent it belongs to. */
+            agent: components["schemas"]["Name"];
+            /**
+             * Token
+             * @description The token itself (what the agent sends).
+             */
+            token: string;
+        };
         /**
          * ItemStatus
          * @description Where a URL of a batch is.
@@ -9832,6 +9875,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskQueue"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_issue_token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IssueTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueTokenResponse"];
                 };
             };
             /** @description Bad Request */
