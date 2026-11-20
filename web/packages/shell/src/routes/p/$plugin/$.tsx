@@ -1,11 +1,13 @@
 /**
- * A plugin's own page: `p/<plugin>/<anything>`, the route a plugin's nav item and links go
- * to. 18.9 mounts the plugin's bundle here; until then (and for a plugin that brings no route
- * of its own, 24.1's amendment) the page says which plugin was asked for.
+ * A plugin's own page: `p/<plugin>/<anything>`, the route a plugin's nav item and links go to.
+ * The path is one its manifest lists (`inbox`, `message/$id`); its `$name`s are what the
+ * contribution is drawn with, in its own shadow root (18.9's `<PluginSlot>`).
  */
 
 import { createFileRoute, useParams } from "@tanstack/react-router";
 import { Placeholder } from "../../../components/Placeholder";
+import { matchRoute, searchOf } from "../../../plugins/routes";
+import { PluginSlot } from "../../../plugins/slot";
 import { usePlugins } from "../../../stores/plugins";
 
 export const Route = createFileRoute("/p/$plugin/$")({
@@ -14,17 +16,34 @@ export const Route = createFileRoute("/p/$plugin/$")({
 
 function PluginPage() {
 	const { plugin, _splat } = useParams({ from: "/p/$plugin/$" });
+	const search = Route.useSearch();
 	const manifests = usePlugins();
 	const known = manifests.find((manifest) => manifest.name === plugin);
 
+	if (known === undefined) {
+		return (
+			<Placeholder
+				title={plugin}
+				note={`No UI plugin named "${plugin}" is loaded; the Plugins page says which ones are.`}
+			/>
+		);
+	}
+	const matched = matchRoute(known.contributes.routes ?? [], _splat ?? "");
+	if (matched === null) {
+		return (
+			<Placeholder
+				title={`${known.name} ${known.version}`}
+				note={`This plugin has no page "${_splat ?? ""}".`}
+			/>
+		);
+	}
 	return (
-		<Placeholder
-			title={known ? `${known.name} ${known.version}` : plugin}
-			note={
-				known
-					? `The page "${_splat ?? ""}" this plugin brings is mounted here by 18.9.`
-					: `No UI plugin named "${plugin}" is loaded; 18.7's list says which ones are.`
-			}
-		/>
+		<section className="my-6">
+			<PluginSlot
+				point="routes"
+				lookup={plugin}
+				props={{ path: matched.route, params: matched.params, search: searchOf(search) }}
+			/>
+		</section>
 	);
 }

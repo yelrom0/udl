@@ -6,7 +6,7 @@
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 
-export const KINDS = ["info", "success", "error"] as const;
+export const KINDS = ["info", "success", "warning", "error"] as const;
 export type ToastKind = (typeof KINDS)[number];
 
 export interface Toast {
@@ -19,6 +19,7 @@ export interface Toast {
 export const LIFETIME: Record<ToastKind, number> = {
 	info: 5000,
 	success: 5000,
+	warning: 10000,
 	error: 10000,
 };
 

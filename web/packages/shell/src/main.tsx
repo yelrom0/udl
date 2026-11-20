@@ -6,6 +6,7 @@
 import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { loadPlugins } from "./plugins/list";
 import { router } from "./router";
 import { applyTheme, followSystem, theme } from "./stores/theme";
 import "./index.css";
@@ -16,6 +17,10 @@ if (root === null) {
 }
 applyTheme(theme.getState().current);
 followSystem();
+// (The UI plugins udl lists, into the page's registry: before the first route is drawn, so a
+// plugin's nav item is there from the start. A list that cannot be read is a problem the
+// Plugins page shows, never a page that fails to open.)
+void loadPlugins();
 createRoot(root).render(
 	<StrictMode>
 		<RouterProvider router={router} />

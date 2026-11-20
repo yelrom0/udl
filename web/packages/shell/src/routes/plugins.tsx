@@ -1,15 +1,20 @@
 /**
- * The plugins page. The shell makes it reachable now; its own task fills it.
+ * The plugins udl has: the UI plugins the page can load, the bundles udl refused, and the ones
+ * this browser could not load. What each one brings, and where.
  */
 
 import { createFileRoute } from "@tanstack/react-router";
-import { Placeholder } from "../components/Placeholder";
+import { PluginList } from "../components/PluginList";
 
 export const Route = createFileRoute("/plugins")({
-	component: () => (
-		<Placeholder
-			title="Plugins"
-			note="The plugins udl has, the UI they bring, and their settings arrive with 18.7 and 18.9."
-		/>
-	),
+	component: PluginsPage,
 });
+
+function PluginsPage() {
+	return (
+		<section className="my-6">
+			<h1 className="text-2xl font-bold">Plugins</h1>
+			<PluginList />
+		</section>
+	);
+}

@@ -1,52 +1,77 @@
 /**
- * UI plugins, as the shell knows them: each one's manifest (18.7's `UIManifest`; a small shape
- * until then) and the bundles that would not load. 18.7's `GET /ui/plugins.json` fills it;
- * 18.9 loads them.
+ * The plugins the page knows, as udl lists them at `/ui/plugins.json`: each one's manifest (what
+ * it is, and what it adds), the bundles udl refused (and why), and the bundles that would not
+ * load in this browser.
  */
 
+import type { Contributions } from "@udl/ui-sdk";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
+import type { NavEntry } from "../plugins/registry";
 
-/** What a UI plugin's manifest says about its nav item and the routes it brings. */
-export interface Manifest {
+/** A UI plugin the shell can load: where its files are, and what it adds (18.7's
+ * `UIPluginInfo`). */
+export interface UIPluginInfo {
 	readonly name: string;
 	readonly version: string;
-	readonly entry: string;
-	readonly styles?: readonly string[];
-	readonly isolation?: "shadow" | "none";
-	readonly contributes?: {
-		readonly nav?: readonly {
-			readonly title: string;
-			readonly icon?: string;
-			readonly route?: string;
-		}[];
-		readonly routes?: readonly string[];
-	};
+	/** Where its files are served from: `/ui/plugins/<name>/`. */
+	readonly base_url: string;
+	/** Its ES module. */
+	readonly entry_url: string;
+	/** Its stylesheets, in the order they are adopted. */
+	readonly styles: readonly string[];
+	readonly isolation: "shadow" | "none";
+	readonly contributes: Contributions;
+	/** The plugin it belongs to (`null` for a UI-only plugin). */
+	readonly plugin: string | null;
 }
 
-/** A plugin whose bundle the browser could not load, and why. */
+/** A bundle udl refused: where it was, and what was wrong with it. */
+export interface BundleProblem {
+	readonly origin: string;
+	readonly error: string;
+}
+
+/** A plugin whose bundle this browser could not load, and why. */
 export interface PluginError {
 	readonly name: string;
 	readonly message: string;
 }
 
 export const plugins = createStore<{
-	manifests: readonly Manifest[];
+	manifests: readonly UIPluginInfo[];
+	problems: readonly BundleProblem[];
 	errors: readonly PluginError[];
-}>(() => ({ manifests: [], errors: [] }));
+	/** The navigation's pages: the shell's own, then each plugin's (18.9's registry fills it). */
+	nav: readonly NavEntry[];
+}>(() => ({ manifests: [], problems: [], errors: [], nav: [] }));
 
 /** Replace what the page knows about the plugins (after `GET /ui/plugins.json`). */
-export function setPlugins(manifests: readonly Manifest[]): void {
-	plugins.setState({ manifests });
+export function setPlugins(
+	manifests: readonly UIPluginInfo[],
+	problems: readonly BundleProblem[],
+): void {
+	plugins.setState({ manifests, problems });
 }
 
-/** Say a plugin's bundle did not load (it stays out of the page, and is listed). */
+/** Say a plugin's bundle did not load (it stays out of the page, and is listed once). */
 export function addError(name: string, message: string): void {
-	plugins.setState(({ errors }) => ({ errors: [...errors, { name, message }] }));
+	plugins.setState(({ errors }) => {
+		if (errors.some((error) => error.name === name && error.message === message)) {
+			return { errors };
+		}
+		return { errors: [...errors, { name, message }] };
+	});
 }
 
 /** The plugins' state, as a hook. */
 export const usePlugins = () => useStore(plugins, (state) => state.manifests);
+
+/** The bundles udl refused, as a hook. */
+export const useProblems = () => useStore(plugins, (state) => state.problems);
+
+/** The navigation's pages, as a hook. */
+export const useNav = () => useStore(plugins, (state) => state.nav);
 
 /** The bundles that would not load, as a hook. */
 export const usePluginErrors = () => useStore(plugins, (state) => state.errors);

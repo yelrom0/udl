@@ -1,7 +1,7 @@
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NAV } from "./routes/__root";
+import { OWN_NAV, registerPlugins } from "./plugins/shell";
 import { routeTree } from "./routeTree.gen";
 import { clear, pushEvent, setRun } from "./stores/live";
 import { setPlugins } from "./stores/plugins";
@@ -59,6 +59,8 @@ beforeEach(() => {
 	session.setState({ state: "unknown" });
 	clear();
 	localStorage.clear();
+	// (The page's own pages, as `main.tsx` registers them before the first route is drawn.)
+	registerPlugins([]);
 });
 
 afterEach(() => {
@@ -71,12 +73,12 @@ afterEach(() => {
 describe("the shell", () => {
 	it("reaches every page of the nav", async () => {
 		udl();
-		for (const item of NAV) {
+		for (const item of OWN_NAV) {
 			draw(item.to === "/" ? "/ui/" : `/ui${item.to}`);
 			const heading =
 				item.to === "/"
 					? await screen.findByRole("heading", { level: 1, name: "Dashboard" })
-					: await screen.findByRole("heading", { level: 1, name: item.label });
+					: await screen.findByRole("heading", { level: 1, name: item.title });
 			expect(heading).toBeTruthy();
 		}
 	});
@@ -86,8 +88,8 @@ describe("the shell", () => {
 		draw("/ui/downloads");
 
 		await screen.findByRole("heading", { name: "Downloads" });
-		for (const item of NAV) {
-			expect(screen.getAllByRole("link", { name: item.label }).length).toBeGreaterThan(0);
+		for (const item of OWN_NAV) {
+			expect(screen.getAllByRole("link", { name: item.title }).length).toBeGreaterThan(0);
 		}
 		expect(screen.getByRole("combobox", { name: "Theme" })).toBeTruthy();
 		expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
@@ -237,13 +239,57 @@ describe("the shell", () => {
 		expect(await screen.findByRole("alert")).toHaveProperty("textContent", "udl is unwell");
 	});
 
-	it("says a plugin page it knows, with the plugin's name", async () => {
+	it("says a plugin page the plugin has no route for", async () => {
 		udl();
-		setPlugins([{ name: "gmail", version: "0.1.0", entry: "index.js" }]);
-		draw("/ui/p/gmail/inbox");
+		const gmail = {
+			name: "gmail",
+			version: "0.1.0",
+			base_url: "/ui/plugins/gmail/",
+			entry_url: "/ui/plugins/gmail/index.js",
+			styles: [],
+			isolation: "shadow" as const,
+			contributes: { routes: ["inbox"] },
+			plugin: "gmail",
+		};
+		setPlugins([gmail], []);
+		registerPlugins([gmail]);
+		draw("/ui/p/gmail/compose");
 
 		expect(await screen.findByRole("heading", { level: 1, name: "gmail 0.1.0" })).toBeTruthy();
-		expect(screen.getByText(/The page "inbox" this plugin brings/)).toBeTruthy();
+		expect(screen.getByText(/This plugin has no page "compose"/)).toBeTruthy();
+	});
+
+	it("says an unknown plugin, and the shell carries on", async () => {
+		udl();
+		draw("/ui/p/nobody/inbox");
+
+		expect(await screen.findByRole("heading", { level: 1, name: "nobody" })).toBeTruthy();
+		expect(screen.getByText(/No UI plugin named "nobody"/)).toBeTruthy();
+	});
+
+	it("shows a plugin's page in its own shadow root, and an error card when it fails", async () => {
+		udl();
+		const gmail = {
+			name: "gmail",
+			version: "0.1.0",
+			base_url: "/ui/plugins/gmail/",
+			entry_url: "/ui/plugins/gmail/index.js",
+			styles: [],
+			isolation: "shadow" as const,
+			contributes: { routes: ["inbox"] },
+			plugin: "gmail",
+		};
+		setPlugins([gmail], []);
+		registerPlugins([gmail]);
+		draw("/ui/p/gmail/inbox");
+
+		// (A page test cannot import a bundle: what it can check is that the failure is one
+		// card in the plugin's place, and the shell's own pages are still there.)
+		expect(await screen.findByRole("alert")).toHaveProperty(
+			"textContent",
+			expect.stringContaining("The gmail UI failed"),
+		);
+		expect(screen.getAllByRole("link", { name: "Dashboard" }).length).toBeGreaterThan(0);
 	});
 
 	it("says where the live connection is: connecting until its stream opens", async () => {

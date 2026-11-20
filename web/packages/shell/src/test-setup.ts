@@ -115,3 +115,51 @@ Object.defineProperty(globalThis, "EventSource", {
 	configurable: true,
 	writable: true,
 });
+
+/**
+ * What jsdom has in name only: a constructed stylesheet (`new CSSStyleSheet()` is not its to
+ * build) and the roots that adopt them (its `adoptedStyleSheets` takes only its own brand, which
+ * a test cannot make). A browser has both; the page uses them for UI plugins' isolation, so the
+ * tests get a stub of the same contract: text in, the sheets a root was given out.
+ */
+export class FakeStyleSheet {
+	css = "";
+
+	replaceSync(text: string): void {
+		this.css = text;
+	}
+
+	static is(sheet: unknown): sheet is FakeStyleSheet {
+		return sheet instanceof FakeStyleSheet;
+	}
+}
+
+/** What a stylesheet says, for a test that adopted it. */
+export function cssOf(sheet: CSSStyleSheet): string {
+	return FakeStyleSheet.is(sheet) ? sheet.css : "";
+}
+
+Object.defineProperty(globalThis, "CSSStyleSheet", {
+	value: FakeStyleSheet,
+	configurable: true,
+	writable: true,
+});
+
+// (One list per root, in a `WeakMap`, as a browser keeps it: assigning a root's sheets replaces
+// them, and reading them back is what the page does.)
+const adopted = new WeakMap<object, CSSStyleSheet[]>();
+
+function adoptable(proto: object): void {
+	Object.defineProperty(proto, "adoptedStyleSheets", {
+		configurable: true,
+		get(this: object): CSSStyleSheet[] {
+			return adopted.get(this) ?? [];
+		},
+		set(this: object, sheets: CSSStyleSheet[]): void {
+			adopted.set(this, sheets);
+		},
+	});
+}
+
+adoptable(ShadowRoot.prototype);
+adoptable(Document.prototype);

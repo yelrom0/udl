@@ -1,0 +1,12 @@
+/* (An adopted stylesheet, and a registered custom property: what a shadow root ignores unless
+   the shell hoists it to the document.) */
+@property --hello-colour {
+	syntax: "<color>";
+	inherits: false;
+	initial-value: rgb(1, 2, 3);
+}
+
+.hello {
+	color: rgb(1, 2, 3);
+	font-weight: 700;
+}
