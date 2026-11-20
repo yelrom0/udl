@@ -31,7 +31,7 @@ describe("a plugin's navigation", () => {
 
 	it("puts the page's base in front of the path, so the router moves and the server is not asked", () => {
 		const pushed: string[] = [];
-		const go = routerNavigation({ push: (path: string) => pushed.push(path) });
+		const go = routerNavigation({ push: (path: string) => pushed.push(path) }, "/ui");
 
 		go("/sites");
 		go("p/gmail/inbox");

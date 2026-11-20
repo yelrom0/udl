@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { onNavigate, routerNavigation } from "./plugins/navigation";
 import { OWN_NAV, registerPlugins } from "./plugins/shell";
+import { BASE } from "./router";
 import { routeTree } from "./routeTree.gen";
 import { clear, pushEvent, setRun } from "./stores/live";
 import { setPlugins } from "./stores/plugins";
@@ -77,7 +78,7 @@ function draw(path: string) {
 		history: createMemoryHistory({ initialEntries: [path] }),
 	});
 	// (As `main.tsx` does it: a plugin's `ctx.navigate` moves the router.)
-	onNavigate(routerNavigation(router.history));
+	onNavigate(routerNavigation(router.history, BASE));
 	render(<RouterProvider router={router} />);
 	return router;
 }

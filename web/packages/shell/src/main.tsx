@@ -8,7 +8,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { loadPlugins } from "./plugins/list";
 import { onNavigate, routerNavigation } from "./plugins/navigation";
-import { router } from "./router";
+import { BASE, router } from "./router";
 import { applyTheme, followSystem, theme } from "./stores/theme";
 import "./index.css";
 
@@ -24,7 +24,7 @@ followSystem();
 void loadPlugins();
 // (A plugin's `ctx.navigate("/sites")` is a path of the page's: the router moves, with its
 // basepath, instead of the browser loading `/sites` from udl.)
-onNavigate(routerNavigation(router.history));
+onNavigate(routerNavigation(router.history, BASE));
 createRoot(root).render(
 	<StrictMode>
 		<RouterProvider router={router} />

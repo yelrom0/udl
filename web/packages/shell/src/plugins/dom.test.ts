@@ -124,4 +124,29 @@ describe("preparing where a plugin draws", () => {
 			prepare(document.createElement("div"), GMAIL, { theme: "dark", fetch }),
 		).rejects.toThrow("udl could not read /ui/plugins/gmail/index.css: it answered 404");
 	});
+
+	it("does not let a prepare that arrives late empty the root a later one drew into", async () => {
+		// (A remount while the first's stylesheets are still on their way: the first answers
+		// last, and must not wipe what the page is showing.)
+		const host = document.createElement("div");
+		let answerFirst: () => void = () => {};
+		const firstText = new Promise<string>((resolve) => {
+			answerFirst = () => resolve(".first { color: red; }");
+		});
+		const first = prepare(host, GMAIL, {
+			theme: "light",
+			fetch: async () => new Response(await firstText, { status: 200 }),
+		});
+		const second = prepare(host, GMAIL, {
+			theme: "light",
+			fetch: async () => new Response(".second { color: blue; }", { status: 200 }),
+		});
+
+		answerFirst();
+		const [stale, live] = await Promise.all([first, second]);
+
+		expect(host.shadowRoot?.contains(live.wrapper)).toBe(true);
+		expect(host.shadowRoot?.contains(stale.wrapper)).toBe(false);
+		expect(host.shadowRoot?.children).toHaveLength(1);
+	});
 });

@@ -80,6 +80,11 @@ async function textOf(url: string, fetch: typeof globalThis.fetch): Promise<stri
 	return response.text();
 }
 
+/** The prepare in flight for a host, by host: a second one waits for the first, so a stale one
+ * cannot empty a root that a later one has just drawn into (a remount while the first's
+ * stylesheets are still on their way). */
+const preparing = new WeakMap<HTMLElement, Promise<MountPoint>>();
+
 /** A `div` with `className` inside `parent`. */
 function div(parent: HTMLElement | ShadowRoot, className: string): HTMLElement {
 	const element = document.createElement("div");
@@ -94,6 +99,26 @@ function div(parent: HTMLElement | ShadowRoot, className: string): HTMLElement {
  * wrapper inside it carrying `theme` so daisyUI's tokens reach the plugin.
  */
 export async function prepare(
+	host: HTMLElement,
+	info: UIPluginInfo | undefined,
+	options: PrepareOptions,
+): Promise<MountPoint> {
+	const before = preparing.get(host) ?? Promise.resolve();
+	const run: Promise<MountPoint> = before
+		.catch(() => undefined)
+		.then(() => draw(host, info, options));
+	preparing.set(host, run);
+	try {
+		return await run;
+	} finally {
+		if (preparing.get(host) === run) {
+			preparing.delete(host);
+		}
+	}
+}
+
+/** `prepare` itself, once no other prepare for the same host is in flight. */
+async function draw(
 	host: HTMLElement,
 	info: UIPluginInfo | undefined,
 	{ theme, fetch = globalThis.fetch }: PrepareOptions,

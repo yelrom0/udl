@@ -11,7 +11,10 @@ vi.mock("react-dom/client", () => ({
 	}),
 }));
 
-vi.mock("./router", () => ({ router: { routeTree: null } }));
+vi.mock("./router", () => ({
+	BASE: "/ui",
+	router: { routeTree: null, history: { push: () => {} } },
+}));
 
 beforeEach(() => {
 	startFakingMatchMedia();
