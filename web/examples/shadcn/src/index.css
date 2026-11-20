@@ -22,7 +22,8 @@
 	--secondary: var(--color-base-200);
 	--secondary-foreground: var(--color-base-content);
 	--muted: var(--color-base-200);
-	--muted-foreground: var(--color-base-content);
+	/* (daisyUI has one text colour; shadcn's muted one is that, quieter.) */
+	--muted-foreground: color-mix(in oklch, var(--color-base-content) 60%, transparent);
 	--accent: var(--color-accent);
 	--accent-foreground: var(--color-accent-content);
 	--destructive: var(--color-error);

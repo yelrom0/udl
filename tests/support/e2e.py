@@ -53,6 +53,10 @@ E2E_PLUGINS: Final[Path] = Path(__file__).resolve().parent / "e2e_plugins"
 E2E_UI_PLUGINS: Final[Path] = Path(__file__).resolve().parent / "e2e_ui_plugins"
 # 18.10's proof: the shadcn/ui example plugin, as `make web` builds it (a folder of bundles).
 SHADCN_EXAMPLE: Final[Path] = ROOT / "web" / "examples" / "shadcn" / "dist"
+# 18.10's starting point: the template plugin, built the same way (a folder of bundles).
+TEMPLATE: Final[Path] = ROOT / "web" / "packages" / "template" / "dist"
+# The shell, as `make web` builds it: the other half of the web tree, and what says a build ran.
+SHELL_DIST: Final[Path] = ROOT / "src" / "udl" / "interfaces" / "web" / "dist"
 # How long a test server gets to answer before it is called broken (a loaded machine is slow).
 READY_TIMEOUT: Final[float] = 30
 # How long the server runs on its own before it stops itself, so a test that leaves it behind
@@ -95,14 +99,28 @@ enabled = false
 """
 
 
+def half_built() -> str | None:
+    """What is wrong with the web tree, if it is half built: the shell is there and a plugin the
+    e2e tests expect is not. (Neither built is a fresh checkout, and the harness serves the
+    hand-written bundles alone; `make e2e` builds both, so a half-built one is a mistake worth
+    saying out loud rather than a page quietly missing a plugin.)"""
+    if not SHELL_DIST.is_dir():
+        return None
+    missing = [one.name for one in (SHADCN_EXAMPLE, TEMPLATE) if not one.is_dir()]
+    if not missing:
+        return None
+    return f"the shell is built and {', '.join(missing)} is not: run `make web`"
+
+
 def write_config(root: Path, port: int) -> Path:
     """The config `udl serve` reads: a SQLite database and downloads under `root`, the e2e
     plugins as local ones, the memory secret store, and udl on `port`. The web UI is served (a
     browser is what most of the e2e tests are), from the build `make e2e` makes first. The API
     has `API_KEY`, so the tests sign in as a user does (18.4's session) rather than run against
     an open server."""
-    # (18.10's example is built by `make e2e`; a run that has not built it serves the other two.)
-    ui_dirs = [E2E_UI_PLUGINS] + ([SHADCN_EXAMPLE] if SHADCN_EXAMPLE.is_dir() else [])
+    # (18.10's two plugins are built by `make e2e`; a run that has not built them serves the
+    # hand-written bundles alone.)
+    ui_dirs = [E2E_UI_PLUGINS] + [one for one in (SHADCN_EXAMPLE, TEMPLATE) if one.is_dir()]
     path = root / "config.toml"
     path.write_text(
         CONFIG.format(
@@ -299,6 +317,9 @@ def main(
     port = port_from(argv, port)
     if port is None:
         port = free_port()
+    if (wrong := half_built()) is not None:
+        print(f"e2e: {wrong}", file=sys.stderr, flush=True)  # noqa: T201
+        return 1
     control = Control()
     stopping = threading.Event()
 

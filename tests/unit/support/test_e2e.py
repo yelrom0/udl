@@ -30,6 +30,7 @@ from support.e2e import (
     Control,
     environment,
     free_port,
+    half_built,
     main,
     port_from,
     serving,
@@ -97,19 +98,43 @@ def test_the_config_is_what_the_server_reads(tmp_path: Path) -> None:
     assert (E2E_UI_PLUGINS / "boom" / "manifest.json").is_file()
 
 
-def test_the_example_plugin_is_served_when_it_is_built(
+def test_the_example_and_the_template_are_served_when_they_are_built(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # (18.10's proof: `make web` builds it, so `make e2e` serves it; a run that has not built it
+    # (18.10: `make web` builds both, so `make e2e` serves both; a run that has not built them
     # serves the hand-written bundles alone rather than failing.)
-    built = tmp_path / "dist"
-    (built / "shadcn").mkdir(parents=True)
-    monkeypatch.setattr("support.e2e.SHADCN_EXAMPLE", built)
+    example, template = tmp_path / "example", tmp_path / "template"
+    (example / "shadcn").mkdir(parents=True)
+    (template / "template").mkdir(parents=True)
+    monkeypatch.setattr("support.e2e.SHADCN_EXAMPLE", example)
+    monkeypatch.setattr("support.e2e.TEMPLATE", template)
 
-    assert f'"{built}"' in write_config(tmp_path, port=9124).read_text()
+    text = write_config(tmp_path, port=9124).read_text()
+    assert f'"{example}"' in text
+    assert f'"{template}"' in text
 
     monkeypatch.setattr("support.e2e.SHADCN_EXAMPLE", tmp_path / "not-built")
-    assert f'"{built}"' not in write_config(tmp_path, port=9124).read_text()
+    assert f'"{example}"' not in write_config(tmp_path, port=9124).read_text()
+
+
+def test_a_half_built_web_tree_is_said_not_served(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (The shell is there and a plugin the specs expect is not: a page missing a plugin would
+    # fail somewhere confusing, so the harness says what to run instead.)
+    shell = tmp_path / "shell"
+    shell.mkdir()
+    monkeypatch.setattr("support.e2e.SHELL_DIST", shell)
+    monkeypatch.setattr("support.e2e.SHADCN_EXAMPLE", tmp_path / "example")
+    monkeypatch.setattr("support.e2e.TEMPLATE", tmp_path / "template")
+
+    assert half_built() == "the shell is built and example, template is not: run `make web`"
+    with taken_port() as port:
+        assert main(port=port, make_site=nothing) == 1
+
+    # (Nothing built is a fresh checkout, which the harness serves: the hand-written bundles.)
+    monkeypatch.setattr("support.e2e.SHELL_DIST", tmp_path / "no-shell")
+    assert half_built() is None
 
 
 def test_the_server_runs_without_the_callers_settings(

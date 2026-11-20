@@ -4643,8 +4643,12 @@ timeout: 5m
   the page first now. Tests: e2e `web/e2e/shadcn.spec.ts`, 3 tests in both themes (its own styles reach
   the root; its button is the theme's primary, and the other palette's after the switch; the shell's own
   text, ground and tokens are unchanged), Vitest `dom.test.ts`/`slot.test.tsx`/`theme.test.ts` for the
-  two fixes, and the example's and template's own tests; `ui-plugins.spec.ts`'s dashboard count is two
-  widgets now.
+  two fixes, and the example's and template's own tests; `ui-plugins.spec.ts`'s dashboard count is three
+  widgets now, the template's included (24.7's "done when" rests on it, so the shell loads it too).
+  **Two deviations from the card, on record:** the proof is `web/e2e/shadcn.spec.ts`, not
+  `ui-plugins.spec.ts` — that spec is 18.9's, and a spec of its own says which task proves what; and
+  the commits group tests with their code (the specs were written and run red first in the worktree —
+  the transparent button is how the token gap was found — but the history does not show it).
 
 **Phase 18 is done when:** `make web && udl serve` serves the shell at `/ui/` with sign-in, live status
 and both themes, and the shadcn example plugin renders in it, isolated.
