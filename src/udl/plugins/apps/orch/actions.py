@@ -107,6 +107,7 @@ class ActionRecords:
             found, key=lambda action: (_ORDER[ActionWhen(action.when)], action.created_at)
         )
 
+
 async def set_action(
     actions: ActionRecords,
     *,
