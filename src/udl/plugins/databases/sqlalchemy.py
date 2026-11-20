@@ -569,25 +569,40 @@ class SQLAlchemyDatabase(DatabasePlugin):
             return [_record(kind, row) for row in await conn.execute(statement)]
 
     async def upsert_record[R: Record](self, record: R) -> R:
+        return (await self.upsert_records([record]))[0]
+
+    async def upsert_records[R: Record](self, records: Sequence[R]) -> list[R]:
+        if not records:
+            return []
+        # (The tables are made before the connection is taken: a kind defined after connecting
+        # needs a connection of its own to be created in, and there is one to spare.)
+        tables = [await self._records_of(type(record)) for record in records]
+        # (One connection is one transaction: a batch that fails halfway is rolled back whole.)
+        stored: list[R] = []
+        async with self._connection() as conn:
+            for record, table in zip(records, tables, strict=True):
+                stored.append(await self._store(conn, record, table))
+        return stored
+
+    async def _store[R: Record](self, conn: AsyncConnection, record: R, table: Table) -> R:
+        """Store one record in `table` on `conn`: replaced by id, or inserted, then read back."""
         kind = type(record)
-        table = await self._records_of(kind)
         row = _record_row(record)
         changes = {name: value for name, value in row.items() if name not in ("id", "created_at")}
         stored = sa.select(table).where(table.c.id == record.id)
-        async with self._connection() as conn:
-            try:
-                async with conn.begin_nested():
-                    replaced = await conn.execute(
-                        update(table).where(table.c.id == record.id).values(changes)
-                    )
-                    if replaced.rowcount == 0:
-                        await conn.execute(sa.insert(table).values(row))
-            except IntegrityError as e:
-                raise DuplicateKey(
-                    f"A {kind.kind} record with one of its unique keys "
-                    f"({_unique(kind)}) the same is already stored"
-                ) from e
-            return _record(kind, (await conn.execute(stored)).one())
+        try:
+            async with conn.begin_nested():
+                replaced = await conn.execute(
+                    update(table).where(table.c.id == record.id).values(changes)
+                )
+                if replaced.rowcount == 0:
+                    await conn.execute(sa.insert(table).values(row))
+        except IntegrityError as e:
+            raise DuplicateKey(
+                f"A {kind.kind} record with one of its unique keys "
+                f"({_unique(kind)}) the same is already stored"
+            ) from e
+        return _record(kind, (await conn.execute(stored)).one())
 
     async def delete_record(self, kind: type[Record], record_id: UUID) -> bool:
         table = await self._records_of(kind)

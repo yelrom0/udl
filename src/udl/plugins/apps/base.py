@@ -123,6 +123,12 @@ class AppRecords:
         with when it was made and last changed."""
         return await self._db.upsert_record(record)
 
+    async def save_all[R: Record](self, records: Sequence[R]) -> list[R]:
+        """Store records as one write — all of them, or none — and give them back, stamped with
+        when they were made and last changed. A queue's positions are written this way (27.3a):
+        half of one is a queue with two tasks in one place."""
+        return await self._db.upsert_records(records)
+
     async def get[R: Record](self, kind: type[R], record_id: UUID) -> R | None:
         """The record of `kind` with that id, or None when there is none."""
         return await self._db.get_record(kind, record_id)

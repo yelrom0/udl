@@ -22,9 +22,12 @@ own list, never in an agent's queue (28.2's To action).
 """
 
 # System Imports
-from collections.abc import Sequence
+import asyncio
+import contextlib
+from collections.abc import AsyncGenerator, Sequence
 
 # Local Imports
+from udl.db.records import Record
 from udl.errors import DoesNotExist, NotAllowed
 from udl.plugins.apps.orch import transitions
 from udl.plugins.apps.orch.models import (
@@ -40,15 +43,40 @@ from udl.plugins.apps.orch.models import (
 from udl.plugins.apps.orch.records import (
     AgentRecords,
     Note,
-    NoteRecords,
     Task,
     TaskRecords,
 )
 
 __all__ = ["HUMAN", "assign", "next_task", "queue_of", "reorder", "unassign"]
 
+_locks: dict[tuple[str, str], asyncio.Lock] = {}
+"""One lock per (project, assignee) queue: two calls in this udl cannot interleave the read of a
+queue with the write that renumbers it (another udl's can, so a batch is all or nothing on the
+database's side: 27.3a)."""
+
 HUMAN = "human:"
 """What a person's assignee begins with (`human:<name>`)."""
+
+
+def _lock(project: str, agent: str) -> asyncio.Lock:
+    """The lock of one queue (made the first time it is asked for)."""
+    key = (project, agent)
+    found = _locks.get(key)
+    if found is None:
+        found = _locks[key] = asyncio.Lock()
+    return found
+
+
+@contextlib.asynccontextmanager
+async def _locked(*queues: tuple[str, str]) -> AsyncGenerator[None]:
+    """These queues held, in one fixed order (by key), for as long as the block runs.
+
+    A reassign changes two queues and takes both; taken in the callers' order instead, two
+    opposite reassigns (A→B and B→A) would wait on each other forever."""
+    async with contextlib.AsyncExitStack() as held:
+        for project, agent in sorted(set(queues)):
+            await held.enter_async_context(_lock(project, agent))
+        yield
 
 
 def _by(by: Principal | None, role: Role) -> Principal:
@@ -73,10 +101,32 @@ async def assign(
     queue (0 to its length), when a person's task is given to an agent, and when the task is in a
     state the table does not let a caller move to `queued` (a `ready` task has a PR waiting).
     Assigning a task another agent holds leaves that agent's queue (renumbered), and a system note
-    says who must stop."""
-    task = await tasks.task(project, key)
-    if task is None:
-        raise DoesNotExist(f"There is no task called {key!r} in {project!r}")
+    says who must stop.
+
+    The two queues are written in one write, under both of their locks (27.3a): a queue is never
+    seen, or stored, half renumbered."""
+    task = await _task(tasks, project, key)
+    # (Which queues the write touches is read before the locks are taken; a reassign takes
+    # both, in a fixed order.)
+    held = [(project, agent)]
+    if task.assignee is not None and task.assignee != agent:
+        held.append((project, task.assignee))
+    async with _locked(*held):
+        task = await _task(tasks, project, key)  # (again: it may have moved while we waited)
+        return await _assign(tasks, task, agent, project=project, position=position, by=by)
+
+
+async def _assign(
+    tasks: TaskRecords,
+    task: Task,
+    agent: str,
+    *,
+    project: str,
+    position: int | None,
+    by: Principal | None,
+) -> Task:
+    """`task` put in `agent`'s queue, at `position`, as one write (its two queues' locks held)."""
+    key = task.key
     await _check_agent(tasks, task, agent, key=key)
     if task.assignee == agent and task.state != QUEUED:
         # (Its session is working the task: putting it back on that queue would leave the
@@ -104,18 +154,20 @@ async def assign(
         planned = transitions.move(planned, MOVED, by=_by(by, "move"))
     if planned.state != QUEUED:
         planned = transitions.move(planned, QUEUED, by=_by(by, role))
-    current = task
-    if stopped is not None:
-        current = await tasks.move(current, MOVED, by=_by(by, "move"))
-    if current.state != QUEUED:
-        current = await tasks.move(current, QUEUED, by=_by(by, role))
-    placed = await tasks.save_task(current.model_copy(update={"assignee": agent, "position": at}))
+    placed = planned.model_copy(update={"assignee": agent, "position": at})
     order = [*others[:at], placed, *others[at:]]
-    await _place(tasks, order)
+    writes = [_at(one, index) for index, one in enumerate(order)]
+    also: list[Record] = []
     if stopped is not None:
-        await _stopped(tasks, placed, stopped=stopped, agent=agent)
-        await _renumber(tasks, project=project, agent=stopped)
-    return placed
+        left = [
+            found
+            for found in await queue_of(tasks, project=project, agent=stopped)
+            if found.key != key
+        ]
+        writes += [_at(one, index) for index, one in enumerate(left)]
+        also.append(_stopped(placed, stopped=stopped, agent=agent))
+    saved = await tasks.save_all(writes, also=also)
+    return saved[at]
 
 
 async def _check_agent(tasks: TaskRecords, task: Task, agent: str, *, key: str) -> None:
@@ -165,7 +217,16 @@ async def reorder(
     """`agent`'s queue in the order `keys` names, renumbered 0, 1, 2 ….
 
     Raises NotAllowed when `keys` is not exactly the keys on that queue, each once: a task that
-    is not on it is not the reorder's to move, and one it leaves out would be lost."""
+    is not on it is not the reorder's to move, and one it leaves out would be lost. The queue is
+    read and written under its lock, in one write (27.3a)."""
+    async with _locked((project, agent)):
+        return await _reorder(tasks, project=project, agent=agent, keys=keys)
+
+
+async def _reorder(
+    tasks: TaskRecords, *, project: str, agent: str, keys: Sequence[str]
+) -> list[Task]:
+    """`agent`'s queue in the order `keys` names, as one write (its lock held)."""
     queue = await queue_of(tasks, project=project, agent=agent)
     on_it = [found.key for found in queue]
     if sorted(keys) != sorted(on_it):
@@ -191,25 +252,35 @@ async def unassign(
     """The task called `key`, taken out of its agent's queue: back to `open`, and nobody's.
 
     Raises DoesNotExist when there is no such task, and NotAllowed when it is nobody's (there is
-    no queue to leave) or is not `queued` (a task an agent is on is stopped first, 27.7)."""
-    task = await tasks.task(project, key)
-    if task is None:
-        raise DoesNotExist(f"There is no task called {key!r} in {project!r}")
+    no queue to leave) or is not `queued` (a task an agent is on is stopped first, 27.7). The
+    queue is read and written under its lock, in one write (27.3a)."""
+    task = await _task(tasks, project, key)
     if task.assignee is None:
         raise NotAllowed(
             f"{key!r} is nobody's to unassign",
             hint="A task that is not on a queue leaves none.",
         )
-    if task.state != QUEUED:
-        raise NotAllowed(
-            f"{key!r} cannot leave a queue from {task.state!r}",
-            hint="Only a queued task is taken off its queue.",
+    async with _locked((project, task.assignee)):
+        task = await _task(tasks, project, key)  # (again: it may have moved while we waited)
+        if task.assignee is None:
+            raise NotAllowed(
+                f"{key!r} is nobody's to unassign",
+                hint="A task that is not on a queue leaves none.",
+            )
+        if task.state != QUEUED:
+            raise NotAllowed(
+                f"{key!r} cannot leave a queue from {task.state!r}",
+                hint="Only a queued task is taken off its queue.",
+            )
+        agent = task.assignee
+        freed = transitions.move(task, OPEN, by=_by(by, "assign")).model_copy(
+            update={"assignee": None, "position": None}
         )
-    agent = task.assignee
-    freed = await tasks.move(task, OPEN, by=_by(by, "assign"))
-    freed = await tasks.save_task(freed.model_copy(update={"assignee": None, "position": None}))
-    await _renumber(tasks, project=project, agent=agent)
-    return freed
+        left = [
+            found for found in await queue_of(tasks, project=project, agent=agent) if found.key != key
+        ]
+        saved = await tasks.save_all([freed, *(_at(one, index) for index, one in enumerate(left))])
+        return saved[0]
 
 
 async def queue_of(tasks: TaskRecords, *, project: str, agent: str) -> list[Task]:
@@ -233,32 +304,42 @@ async def next_task(tasks: TaskRecords, *, project: str, agent: str) -> Task | N
 
 
 async def _place(tasks: TaskRecords, order: Sequence[Task]) -> list[Task]:
-    """`order`, stored as a queue: each task at its index, and only the ones that moved saved."""
-    placed: list[Task] = []
-    for position, task in enumerate(order):
-        if task.position != position:
-            task = await tasks.save_task(task.model_copy(update={"position": position}))
-        placed.append(task)
-    return placed
+    """`order`, stored as a queue: each task at its index, and only the ones that moved saved —
+    all of them in one write, so a queue is never stored half renumbered (27.3a)."""
+    moved = [
+        task.model_copy(update={"position": index})
+        for index, task in enumerate(order)
+        if task.position != index
+    ]
+    if not moved:
+        return list(order)
+    saved = {task.id: task for task in await tasks.save_all(moved)}
+    return [saved.get(task.id, task) for task in order]
 
 
-async def _renumber(tasks: TaskRecords, *, project: str, agent: str) -> None:
-    """`agent`'s queue, closed up: the tasks after a gap take the places they are in."""
-    await _place(tasks, await queue_of(tasks, project=project, agent=agent))
-
-
-async def _stopped(tasks: TaskRecords, task: Task, *, stopped: str, agent: str) -> None:
-    """Write the system note that says `stopped` must stop working on `task` (26.5): it was moved
-    to `agent`'s queue, and its session is the dispatcher's to stop (27.7)."""
-    await NoteRecords(tasks.records).add(
-        Note(
-            owner_kind=OwnerKind.TASK,
-            owner=task.id,
-            note_kind=NoteKind.SYSTEM,
-            text=f"Moved to {agent}'s queue: {stopped} must stop working on it.",
-            author="udl",
-        )
+def _stopped(task: Task, *, stopped: str, agent: str) -> Note:
+    """The system note that says `stopped` must stop working on `task` (26.5): it was moved to
+    `agent`'s queue, and its session is the dispatcher's to stop (27.7)."""
+    return Note(
+        owner_kind=OwnerKind.TASK,
+        owner=task.id,
+        note_kind=NoteKind.SYSTEM,
+        text=f"Moved to {agent}'s queue: {stopped} must stop working on it.",
+        author="udl",
     )
+
+
+def _at(task: Task, position: int) -> Task:
+    """`task` at `position` (a copy, whether or not it moved)."""
+    return task if task.position == position else task.model_copy(update={"position": position})
+
+
+async def _task(tasks: TaskRecords, project: str, key: str) -> Task:
+    """The task called `key` of `project`. Raises DoesNotExist when there is none."""
+    found = await tasks.task(project, key)
+    if found is None:
+        raise DoesNotExist(f"There is no task called {key!r} in {project!r}")
+    return found
 
 
 def _twice(keys: Sequence[str]) -> list[str]:

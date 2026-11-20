@@ -29,6 +29,7 @@ sit over it, so nothing here knows about a database.
 # System Imports
 import hashlib
 import logging
+from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 from typing import Final, Self
@@ -850,6 +851,54 @@ class TaskRecords:
         await _scan(self._records, task.project, OwnerKind.TASK, task.key, task.spec)
         return saved
 
+    async def save_all(
+        self, tasks: Sequence[Task], *, also: Sequence[Record] = ()
+    ) -> list[Task]:
+        """Store tasks as one write — all of them, or none — and `also` in the same write (a
+        queue's system note, 26.5), keeping each feature's status in step with its tasks.
+
+        What `save_task` checks of a new task is checked for every task: its project and its
+        feature are there. Its state is not checked: a batch is a queue's own write, and the
+        states in it are the ones `orch.transitions.move()` planned (the table), which
+        `save_task`'s guard cannot see. Returns the stored tasks, in order."""
+        if not tasks and not also:
+            return []
+        features = FeatureRecords(self._records, self._projects)
+        for task in tasks:
+            await self._projects.require(task.project)
+            if await features.feature(task.project, task.feature) is None:
+                raise DoesNotExist(f"There is no feature {task.feature!r} in {task.project!r}")
+            if await self._records.get(Task, task.id) is None and task.state != OPEN:
+                raise NotAllowed(
+                    f"a new task cannot start in {task.state!r}",
+                    hint="A task is saved open, and then moved.",
+                )
+        followed = await self._follow_all(tasks)
+        batch: list[Record] = [*tasks, *followed, *also]
+        saved = await self._records.save_all(batch)
+        return [one for one in saved[: len(tasks)] if isinstance(one, Task)]
+
+    async def _follow_all(self, tasks: Sequence[Task]) -> list[Feature]:
+        """The features whose status the batch changes, ready to be written with it."""
+        changed: list[Feature] = []
+        for project, key in sorted({(task.project, task.feature) for task in tasks}):
+            feature = await FeatureRecords(self._records, self._projects).feature(project, key)
+            if feature is None or feature.status == "parked":
+                continue
+            in_batch = {
+                task.id: task
+                for task in tasks
+                if (task.project, task.feature) == (project, key)
+            }
+            states = {
+                (in_batch[one.id] if one.id in in_batch else one).state
+                for one in await self.tasks(project, feature=key)
+            }
+            status = _status_of(states)
+            if status is not None and status != feature.status:
+                changed.append(feature.model_copy(update={"status": status}))
+        return changed
+
     async def move(self, task: Task, to: str, *, by: Principal, note: str = "") -> Task:
         """`task` moved to `to` by `by` and stored: the one path that sets a task's state (the
         table is orch.transitions', so what may move it is one rule in one place)."""
@@ -874,14 +923,8 @@ class TaskRecords:
         if feature is None or feature.status == "parked":
             return
         tasks = await self.tasks(task.project, feature=task.feature)
-        states = {found.state for found in tasks}
-        if states and states <= {DONE, CANCELLED}:
-            status: FeatureStatus = "done"
-        elif states - {OPEN, CANCELLED}:
-            status = "active"
-        else:
-            status = "planned"
-        if status != feature.status:
+        status = _status_of({found.state for found in tasks})
+        if status is not None and status != feature.status:
             await self._records.save(feature.model_copy(update={"status": status}))
 
     async def task(self, project: str, key: str) -> Task | None:
@@ -954,6 +997,19 @@ class TaskRecords:
         await _delete_notes(self._records, "task", task.id)
         await _delete_links(self._records, task.project, "task", task.key)
         return await self._records.delete(Task, task.id)
+
+
+def _status_of(states: set[str]) -> FeatureStatus | None:
+    """The status a feature's tasks give it: `done` when all of them are done or cancelled,
+    `active` once one is past `open`, `planned` while they are all open. None when it has no
+    tasks at all (there is nothing to say)."""
+    if not states:
+        return None
+    if states <= {DONE, CANCELLED}:
+        return "done"
+    if states - {OPEN, CANCELLED}:
+        return "active"
+    return "planned"
 
 
 class Counters:

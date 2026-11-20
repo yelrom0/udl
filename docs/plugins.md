@@ -356,6 +356,14 @@ each record is a document of its JSON form. Times are written at a fixed width i
 sort as text and keep their microseconds. Its updates do their own arithmetic (`$inc`), so
 outcomes are counted atomically.
 
+**A batch of records is one write.** `upsert_records(records)` stores all of them or none (a
+queue's positions are written that way, so a queue is never stored half renumbered). SQL writes
+the batch on one connection, in one transaction. MongoDB runs it in a session transaction, which
+only a **replica set or a sharded cluster** has: on a standalone server the records go in order,
+a failure part way keeps the ones before it, `connect()` logs one warning saying a replica set is
+needed, and `transactions` is `False` (it is `True` everywhere else). A plugin of another kind
+that cannot make a batch atomic says so the same way.
+
 ## Testing a plugin
 
 udl's tests include a **contract suite** for each kind of plugin: one set of tests that every

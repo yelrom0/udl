@@ -23,8 +23,9 @@ without it.
 
 # System Imports
 import enum
+import logging
 import re
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, ClassVar, Final
@@ -51,7 +52,10 @@ from udl.plugins.requirements import Requirement
 
 from .base import DatabasePlugin
 
+log = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
+    from pymongo.asynchronous.client_session import AsyncClientSession
     from pymongo.asynchronous.collection import AsyncCollection
     from pymongo.asynchronous.database import AsyncDatabase
     from pymongo.asynchronous.mongo_client import AsyncMongoClient
@@ -109,6 +113,16 @@ def _collection(kind: type[Record]) -> str:
     return f"record_{kind.kind}"
 
 
+def _duplicate(record: Record, e: Exception) -> DuplicateKey:
+    """`e` as the DuplicateKey a caller sees for `record`'s kind's unique keys."""
+    kind = type(record)
+    return DuplicateKey(
+        f"A {kind.kind} record with one of its unique keys "
+        f"({'; '.join(', '.join(together) for together in kind.unique)}) the same is "
+        "already stored"
+    )
+
+
 def _model[M: SQLModel](model_type: type[M], document: Document) -> M:
     """The model a document holds."""
     fields = {name: value for name, value in document.items() if name != "_id"}
@@ -143,6 +157,13 @@ class MongoDBPlugin(DatabasePlugin):
             self._options["serverSelectionTimeoutMS"] = round(self.connect_timeout * 1000)
         self._client: AsyncMongoClient[Document] | None = None
         self._record_kinds: set[str] = set()  # the kinds whose indexes are known to be made
+        self._transactions = True  # until connect() asks the deployment (a standalone has none)
+
+    @property
+    def transactions(self) -> bool:
+        """Whether a batch is all or nothing here: only a replica set or a sharded cluster has
+        multi-document transactions; a standalone server writes a batch in order."""
+        return self._transactions
 
     @property
     def _database(self) -> AsyncDatabase[Document]:
@@ -188,6 +209,27 @@ class MongoDBPlugin(DatabasePlugin):
             except ValueError as e:  # e.g. a port that is not a number
                 raise self._error(e) from e
         await self.migrate()
+        await self._ask_transactions()
+
+    async def _ask_transactions(self) -> None:
+        """Find out whether this deployment has multi-document transactions, and say so once
+        when it does not: a batch of writes is then not all or nothing."""
+        if self._client is None:
+            return
+        try:
+            with self._errors():
+                hello = await self._client.admin.command("hello")
+        except DatabaseError:
+            return  # (health() is where an unreachable server is reported)
+        sharded = hello.get("msg") == "isdbgrid"
+        self._transactions = sharded or "setName" in hello
+        if not self._transactions:
+            log.warning(
+                "The %r MongoDB is a standalone server: it has no transactions, so a batch of "
+                "record writes goes in order, and a failure part way leaves the ones before it "
+                "(a replica set or a sharded cluster makes one all or nothing)",
+                self.connection.name,
+            )
 
     async def close(self) -> None:
         if self._client is not None:
@@ -414,27 +456,46 @@ class MongoDBPlugin(DatabasePlugin):
             return [_model(kind, document) async for document in cursor]
 
     async def upsert_record[R: Record](self, record: R) -> R:
+        return (await self.upsert_records([record]))[0]
+
+    async def upsert_records[R: Record](self, records: Sequence[R]) -> list[R]:
+        if not records:
+            return []
+        if not self._transactions:
+            # (A standalone server: in order, and a failure part way keeps the ones before it.)
+            return [await self._store(record) for record in records]
+        if self._client is None:
+            raise DatabaseError(f"The {self.connection.name!r} database is not connected")
+        try:
+            session = self._client.start_session()
+            async with session, await session.start_transaction():
+                return [await self._store(record, session=session) for record in records]
+        except _Duplicate as e:
+            raise _duplicate(records[-1], e) from e
+
+    async def _store[R: Record](
+        self, record: R, *, session: AsyncClientSession | None = None
+    ) -> R:
+        """Store one record: replaced by id, or inserted, then read back (in `session`)."""
         kind = type(record)
         collection = await self._records_of(kind)
         document = _document(record)
         changes = {
             name: value for name, value in document.items() if name not in ("_id", "created_at")
         }
-        duplicate = DuplicateKey(
-            f"A {kind.kind} record with one of its unique keys "
-            f"({'; '.join(', '.join(together) for together in kind.unique)}) the same is "
-            "already stored"
-        )
         try:
             with self._errors(duplicates=True):
                 stored = await collection.find_one_and_update(
-                    {"_id": document["_id"]}, {"$set": changes}, return_document=_AFTER
+                    {"_id": document["_id"]},
+                    {"$set": changes},
+                    return_document=_AFTER,
+                    session=session,
                 )
                 if stored is None:
-                    await collection.insert_one(document)
+                    await collection.insert_one(document, session=session)
                     stored = document
         except _Duplicate as e:
-            raise duplicate from e
+            raise _duplicate(record, e) from e
         return _model(kind, stored)
 
     async def delete_record(self, kind: type[Record], record_id: UUID) -> bool:

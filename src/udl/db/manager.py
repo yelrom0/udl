@@ -9,7 +9,7 @@ DBManager: the configured database connections ([db] in the config), used as one
 # System Imports
 import copy
 import logging
-from collections.abc import Awaitable, Callable, Collection, Hashable, Iterable
+from collections.abc import Awaitable, Callable, Collection, Hashable, Iterable, Sequence
 from datetime import datetime, timedelta
 from itertools import chain
 from types import TracebackType
@@ -314,6 +314,25 @@ class DBManager:
         now = self._clock.now()
         stamped = record.model_copy(update={"created_at": now, "updated_at": now})
         return await self._record_write(type(record), lambda db: db.upsert_record(stamped))
+
+    async def upsert_records[R: Record](self, records: Sequence[R]) -> list[R]:
+        """Store records as one write — all of them, or none — stamped with the clock's time (a
+        stored one keeps its created_at). Every record in a batch is of one scope, so the batch
+        goes to one connection. Raises DatabaseError when they are not."""
+        if not records:
+            return []
+        scopes = {type(record).scope for record in records}
+        if len(scopes) > 1:
+            named = ", ".join(sorted(scope.value for scope in scopes))
+            raise DatabaseError(
+                f"A batch of records cannot mix scopes ({named}): it is one write, on one "
+                "connection"
+            )
+        now = self._clock.now()
+        stamped = [
+            record.model_copy(update={"created_at": now, "updated_at": now}) for record in records
+        ]
+        return await self._record_write(type(records[0]), lambda db: db.upsert_records(stamped))
 
     async def delete_record(self, kind: type[Record], record_id: UUID) -> bool:
         return await self._record_write(kind, lambda db: db.delete_record(kind, record_id))
