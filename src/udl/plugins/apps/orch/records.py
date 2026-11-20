@@ -891,7 +891,7 @@ class TaskRecords:
                 if (task.project, task.feature) == (project, key)
             }
             states = {
-                (in_batch[one.id] if one.id in in_batch else one).state
+                in_batch.get(one.id, one).state
                 for one in await self.tasks(project, feature=key)
             }
             status = _status_of(states)

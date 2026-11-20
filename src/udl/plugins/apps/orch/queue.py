@@ -277,7 +277,9 @@ async def unassign(
             update={"assignee": None, "position": None}
         )
         left = [
-            found for found in await queue_of(tasks, project=project, agent=agent) if found.key != key
+            found
+            for found in await queue_of(tasks, project=project, agent=agent)
+            if found.key != key
         ]
         saved = await tasks.save_all([freed, *(_at(one, index) for index, one in enumerate(left))])
         return saved[0]
