@@ -79,6 +79,9 @@ _IMPLEMENTER: Final = frozenset(
         "orch_push",
         "orch_pr_status",
         "orch_ready",
+        # (A merge is a person's, or — where the project's `merge` is `agent` — the task's own
+        # assignee's: the operation refuses anyone else (28.3).)
+        "orch_merge",
         # (A read-only operation of another kind: an implementer reads the PR it pushed.)
         "github_get_pull",
     }

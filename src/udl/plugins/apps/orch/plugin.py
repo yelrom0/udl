@@ -52,7 +52,7 @@ from udl.plugins.apps.orch.links import (
     event_url,
     pull_ref,
 )
-from udl.plugins.apps.orch.merge import after_merge, order
+from udl.plugins.apps.orch.merge import after_close, after_merge, order
 from udl.plugins.apps.orch.models import (
     CANCELLED,
     DONE,
@@ -67,23 +67,23 @@ from udl.plugins.apps.orch.models import (
     DropActionRequest,
     FinishActionRequest,
     ListActionsRequest,
+    Merged,
     MergeList,
     MergeListRequest,
     MergePolicy,
     MergeRequest,
     MergeRow,
-    Merged,
     MyTaskNote,
     MyTaskRequest,
     MyTaskResponse,
     NoteKind,
     OwnerKind,
     Principal,
-    PrStatusRequest,
     Promoted,
     PromoteRequest,
     PromotionList,
     PromotionRequest,
+    PrStatusRequest,
     PullReader,
     PushRequest,
     PushResult,
@@ -136,6 +136,12 @@ log = logging.getLogger(__name__)
 
 _UDL: Final = Principal(kind="system", role="ready")
 
+_MERGED: Final = "github.pr.merged"
+"""The event the GitHub watcher publishes for a pull that merged (25.5)."""
+
+_CLOSED: Final = "github.pr.closed"
+"""The event it publishes for one closed without merging."""
+
 _REVIEWER: Final = Principal(kind="agent", name="reviewer", role="review")
 """The reviewer: what a promotion's `done` is (only a reviewer or a person reviews)."""
 """(Who udl is when it moves a task itself: the system, in the role `ready` — not a person, who may
@@ -148,6 +154,15 @@ class Subscription(Protocol):
 
     def __anext__(self) -> Awaitable[AppEvent]:
         """The next event (StopAsyncIteration when the subscription has ended)."""
+        ...
+
+
+class PullHappened(Protocol):
+    """What orch's service calls when a pull it follows merged or closed (28.3): what a merge
+    sets off is more than a link's refresh, so it is done with the whole service."""
+
+    def __call__(self, event: AppEvent, url: str) -> Awaitable[None]:
+        """`event` (a `github.pr.merged` or `github.pr.closed`) about the pull at `url`."""
         ...
 
 
@@ -454,22 +469,33 @@ class Orch(AppPlugin[OrchSettings]):
         self,
         records: AppRecords,
         events: AppEvents,
-        service: PullReader,
+        service: UDLService,
         stop: Stopping,
     ) -> None:
         """Listen for `github.pr.*` events from now on, and for each one refresh every `pull`
         link whose URL is that pull through `github_get_pull`, store it, and publish
-        `orch.link.changed`. It ends when `stop` is set (the lease going), or when the
-        subscription ends (the runtime closing it: the next lease starts this again)."""
+        `orch.link.changed`; and when a pull merged or closed, do what that sets off (28.3). It
+        ends when `stop` is set (the lease going), or when the subscription ends (the runtime
+        closing it: the next lease starts this again)."""
         links = LinkRecords(records)
         async with events.subscribe("github.pr.*") as subs:
             waiting = asyncio.ensure_future(asyncio.shield(stop.wait()))
             try:
-                await self.follow(links, events, service, subs, waiting)
+                await self.follow(
+                    links, events, service, subs, waiting, happened=self._pull_happened(service)
+                )
             finally:
                 waiting.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await waiting
+
+    def _pull_happened(self, service: UDLService) -> PullHappened:
+        """What to do when a pull merged or closed: the service's own, bound to `service`."""
+
+        async def happened(event: AppEvent, url: str) -> None:
+            await self.pull_happened(event, url, service=service)
+
+        return happened
 
     async def follow(
         self,
@@ -478,14 +504,19 @@ class Orch(AppPlugin[OrchSettings]):
         service: PullReader,
         subs: Subscription,
         waiting: asyncio.Future[object],
+        *,
+        happened: PullHappened | None = None,
     ) -> None:
-        """Handle each event until `waiting` (the app told to stop) ends first."""
+        """Handle each event until `waiting` (the app told to stop) ends first. `happened` is
+        called for a pull that merged or closed, with the whole service (28.3)."""
         while True:
             try:
                 event = await _first(subs.__anext__(), waiting)
             except StopAsyncIteration:
                 return
             if event is None:
+                return
+            if not isinstance(event, AppEvent):  # (what `_first` answers: the event, or None)
                 return
             try:
                 url = event_url(event)
@@ -512,6 +543,54 @@ class Orch(AppPlugin[OrchSettings]):
                 # (A pull that has gone, or one udl cannot read: say so and go on. Anything
                 # else is a bug, and the supervisor's backoff is what reports it.)
                 log.warning("orch could not refresh a pull link: %s", error)
+                continue
+            if happened is not None and event.type in (_MERGED, _CLOSED):
+                try:
+                    await happened(event, url)
+                except (DoesNotExist, PluginError, UDLError, ValidationError) as error:
+                    log.warning("orch could not finish what %s set off: %s", event.type, error)
+
+    async def pull_happened(self, event: AppEvent, url: str, *, service: UDLService) -> None:
+        """A pull merged or closed (28.3): the task its link is on moves as the event says, and
+        what a merge sets off runs (`_after_merge`), or its task goes back to work."""
+        links = LinkRecords(self.records)
+        for found in await links.for_url(url):
+            if found.link_kind != "pull":
+                continue
+            task = await stored.TaskRecords(self.records).task(found.project, found.owner)
+            if task is None or task.state in (MERGED, DONE, CANCELLED):
+                continue
+            project = await stored.ProjectRecords(self.records).project(found.project)
+            if project is None:
+                continue
+            if event.type == _MERGED:
+                by = str(event.data.get("merged_by") or "")
+                await self._after_merge(
+                    service,
+                    project=found.project,
+                    key=task.key,
+                    by=by or "someone",
+                    reviewed=bool(by) and by == project.review_bot,
+                    promoted=bool(project.promotion),
+                )
+            else:
+                await after_close(
+                    self.records,
+                    project=found.project,
+                    key=task.key,
+                    why=await self._closing_comment(service, url),
+                )
+
+    async def _closing_comment(self, service: UDLService, url: str) -> str:
+        """The last thing said on a pull that was closed without merging ("" when nothing was):
+        what its agent is told, as data."""
+        ref = pull_ref(url)
+        if ref is None:
+            return ""
+        repo, number = ref
+        detail = await service.call("github_get_pull", {"repo": repo, "number": number})
+        pull = Pull.model_validate(detail.model_dump())
+        return pull.comments[-1].body if pull.comments else ""
 
     # -- what to do next (27.4) ----------------------------------------------------------------
 
@@ -727,11 +806,13 @@ class Orch(AppPlugin[OrchSettings]):
         found = await stored.ProjectRecords(self.records).project(project)
         if found is None:
             raise DoesNotExist(f"There is no project called {project!r}")
-        from udl.interfaces.security import current_principal  # noqa: PLC0415 (no cycle: 28.3)
+        from udl.interfaces.security import current_principal
 
         who = current_principal.get()
-        if who is not None and who.is_agent and not (
-            found.merge == MergePolicy.AGENT and task.assignee == who.name
+        if (
+            who is not None
+            and who.is_agent
+            and not (found.merge == MergePolicy.AGENT and task.assignee == who.name)
         ):
             raise NotAllowed(
                 f"{request.key!r} is not {who.name}'s to merge",
@@ -757,10 +838,16 @@ class Orch(AppPlugin[OrchSettings]):
                 f"Merging {expected} is confirmed by confirm={expected}",
                 hint=f"Say which pull it is: confirm={expected}.",
             )
-        await service.call(
-            "github_merge_pull",
-            {"repo": repo, "number": number, "sha": pull.head_sha, "confirm": expected},
-        )
+        # (The merge is udl's on the caller's behalf: `github_merge_pull` is not an agent's to
+        # call, and who may merge at all is decided above.)
+        calling = current_principal.set(None)
+        try:
+            await service.call(
+                "github_merge_pull",
+                {"repo": repo, "number": number, "sha": pull.head_sha, "confirm": expected},
+            )
+        finally:
+            current_principal.reset(calling)
         moved = await self._after_merge(
             service,
             project=project,
@@ -779,7 +866,9 @@ class Orch(AppPlugin[OrchSettings]):
         if found is None:
             raise DoesNotExist(f"There is no project called {project!r}")
         tasks = await stored.TaskRecords(self.records).tasks(project)
-        rows = [await self._merge_row(None, found, one, tasks) for one in tasks if one.state == MERGED]
+        rows = [
+            await self._merge_row(None, found, one, tasks) for one in tasks if one.state == MERGED
+        ]
         return PromotionList(
             project=project,
             promotion=list(found.promotion),
@@ -846,7 +935,12 @@ class Orch(AppPlugin[OrchSettings]):
         try:
             shell = await service.hosts.shell(host)
             await remove(
-                Worktree(task=task.key, host=host, path=task.worktree, branch=task.branch),
+                Worktree(
+                    host=host,
+                    path=task.worktree,
+                    branch=task.branch,
+                    base=repo.base_branch,
+                ),
                 repo=repo,
                 shell=shell,
             )

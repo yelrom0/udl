@@ -20,7 +20,9 @@ NOW: datetime = datetime(2026, 11, 21, 9, 0, tzinfo=UTC)
 """The time the tests are at."""
 
 
-def row(key: str, *, needs: list[str] | None = None, minutes: int = 0, repo: str = "a/one") -> MergeRow:
+def row(
+    key: str, *, needs: list[str] | None = None, minutes: int = 0, repo: str = "a/one"
+) -> MergeRow:
     """A ready row, ready `minutes` after `NOW`."""
     return MergeRow(
         project="udl",
