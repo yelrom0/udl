@@ -554,7 +554,7 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
         status = await self._status(api, "POST", "/api/credential", json=body)
         if status == 409:  # (the one udl wrote before: replaced, not added to)
             removed = await self._status(api, "DELETE", f"/api/credential/{credential}")
-            if removed >= httpx.codes.INTERNAL_SERVER_ERROR:  # (400: it is already gone)
+            if removed >= httpx.codes.BAD_REQUEST and removed != 400:  # (400: it is gone)
                 raise PluginFailed(
                     f"opencode said {removed} to DELETE /api/credential/{credential}",
                     hint="Its answer is not shown: it may repeat the key.",

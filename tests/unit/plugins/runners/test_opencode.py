@@ -408,6 +408,19 @@ async def test_a_credential_that_cannot_be_replaced_says_which_call_failed(
         await _runner(service, shell).setup([], {"OPENROUTER_API_KEY": "sk-2"})
 
 
+@pytest.mark.parametrize("status", [401, 403, 404, 500])
+async def test_a_delete_the_service_refuses_is_the_delete_s_failure(
+    service: FakeOpenCode, shell: FakeShell, status: int
+) -> None:
+    """Only a 400 (already gone) is the post's to carry on from; anything else is said as what it
+    was, not as a misleading 409 on the post after it."""
+    await _runner(service, shell).setup([], {"OPENROUTER_API_KEY": "sk-1"})
+    service.delete_status = status
+
+    with pytest.raises(PluginFailed, match=f"said {status} to DELETE"):
+        await _runner(service, shell).setup([], {"OPENROUTER_API_KEY": "sk-2"})
+
+
 async def test_a_key_never_appears_in_the_failure_it_causes(
     service: FakeOpenCode, shell: FakeShell
 ) -> None:
