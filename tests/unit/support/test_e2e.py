@@ -26,6 +26,7 @@ import pytest
 
 # Local Imports
 from support.e2e import (
+    E2E_UI_PLUGINS,
     Control,
     environment,
     free_port,
@@ -85,13 +86,15 @@ def test_the_config_is_what_the_server_reads(tmp_path: Path) -> None:
     assert f'download_dir = "{tmp_path / "downloads"}"' in text
     assert f'plugin_dirs = ["{E2E_PLUGINS}"]' in text
     # (Secrets are the memory store, so no keyring is opened; the web UI is served — a browser is
-    # what most e2e tests are — and its plugins are looked for under the temp dir, not the user's
-    # ~/.config/udl/ui-plugins.)
+    # what most e2e tests are — and its plugins are the fixtures the repo has, not the user's
+    # ~/.config/udl/ui-plugins: a working one, and one that throws, for 18.9's plugin host.)
     assert '[secrets]\nstore = "memory"' in text
     assert "[web]\nenabled = true" in text
     # (A key, so a browser test signs in as a user does; 18.4's session is what the UI uses.)
     assert 'api_key = "e2e-key"' in text
-    assert f'ui_plugin_dirs = ["{tmp_path / "ui-plugins"}"]' in text
+    assert f'ui_plugin_dirs = ["{E2E_UI_PLUGINS}"]' in text
+    assert (E2E_UI_PLUGINS / "hello" / "manifest.json").is_file()
+    assert (E2E_UI_PLUGINS / "boom" / "manifest.json").is_file()
 
 
 def test_the_server_runs_without_the_callers_settings(
