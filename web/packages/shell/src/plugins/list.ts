@@ -31,7 +31,9 @@ function isPlugin(value: unknown): value is UIPluginInfo {
 		(one.isolation === "shadow" || one.isolation === "none") &&
 		typeof one.contributes === "object" &&
 		one.contributes !== null &&
-		(one.plugin === null || typeof one.plugin === "string")
+		(one.plugin === null || typeof one.plugin === "string") &&
+		// (Its guidance is read tolerantly where it is used: this only says it is an object.)
+		(one.generated === undefined || one.generated === null || typeof one.generated === "object")
 	);
 }
 

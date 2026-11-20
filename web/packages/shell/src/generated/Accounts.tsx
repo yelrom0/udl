@@ -6,11 +6,17 @@
  * An integration's accounts (24.6): the ones udl has, each checked or disconnected from here,
  * and the form that connects another — how it connects (as the integration says it can), its
  * name, what for, and its tokens when they are what connects it. OAuth says where to go next.
+ *
+ * Since 24.7 the integration's own UI plugin may draw the setup instead (`accountSetup`): the
+ * accounts it has are still udl's to list, check and disconnect.
  */
 
 import type { UdlApi } from "@udl/api";
 import { fieldsOf, type JsonObject } from "@udl/ui-sdk";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Registry } from "../plugins/registry";
+import { contributed, shellRegistry } from "../plugins/shell";
+import { PluginSlot } from "../plugins/slot";
 import { ask } from "../stores/confirms";
 import { jsonObject, saidBy } from "./run";
 import { SchemaForm } from "./SchemaForm";
@@ -35,10 +41,12 @@ interface Health {
 export interface AccountsTabProps {
 	readonly plugin: GeneratedPlugin;
 	readonly api: UdlApi;
+	/** Where the contributions are (a test's own; the shell's when none is given). */
+	readonly registry?: Registry;
 }
 
 /** The accounts of `plugin`, and connecting another. */
-export function AccountsTab({ plugin, api }: AccountsTabProps) {
+export function AccountsTab({ plugin, api, registry = shellRegistry }: AccountsTabProps) {
 	const [accounts, setAccounts] = useState<readonly Account[] | null>(null);
 	const [said, setSaid] = useState<{ message: string; hint: string | null } | null>(null);
 	const [checked, setChecked] = useState<Record<string, Health>>({});
@@ -186,7 +194,21 @@ export function AccountsTab({ plugin, api }: AccountsTabProps) {
 					</table>
 				</div>
 			)}
-			<ConnectForm plugin={plugin} accounts={accounts_} api={api} onConnected={() => void read()} />
+			{contributed("accountSetup", plugin.name, registry) ? (
+				<PluginSlot
+					point="accountSetup"
+					lookup={plugin.name}
+					registry={registry}
+					props={{ integration: plugin.name, done: () => void read() }}
+				/>
+			) : (
+				<ConnectForm
+					plugin={plugin}
+					accounts={accounts_}
+					api={api}
+					onConnected={() => void read()}
+				/>
+			)}
 		</div>
 	);
 }

@@ -20,6 +20,12 @@ describe("the template's manifest and its entry", () => {
 		expect(Object.keys(plugin.widgets ?? {}).sort()).toEqual([...declared].sort());
 	});
 
+	it("names a mount for every result view the manifest contributes", () => {
+		expect(Object.keys(plugin.resultViews ?? {}).sort()).toEqual(
+			[...(manifest.contributes.resultViews ?? [])].sort(),
+		);
+	});
+
 	it("gives every nav item a route the plugin has", () => {
 		const routes = Object.keys(plugin.routes ?? {});
 		for (const item of manifest.contributes.nav ?? []) {

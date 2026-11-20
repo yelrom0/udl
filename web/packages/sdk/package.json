@@ -1,6 +1,6 @@
 {
 	"name": "@udl/ui-sdk",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"private": true,
 	"type": "module",
 	"description": "What a udl UI plugin is written against: the manifest's types (from udl's model), defineUIPlugin, the mount contract, and react().",

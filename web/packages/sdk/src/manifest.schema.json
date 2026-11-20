@@ -75,9 +75,137 @@
 					},
 					"title": "Themes",
 					"type": "array"
+				},
+				"operationViews": {
+					"description": "The operations whose panel it replaces (a mount of its own).",
+					"items": {
+						"type": "string"
+					},
+					"title": "Operationviews",
+					"type": "array"
+				},
+				"resultViews": {
+					"description": "The operations whose result it draws itself (a name, or a `*` prefix).",
+					"items": {
+						"type": "string"
+					},
+					"title": "Resultviews",
+					"type": "array"
+				},
+				"fieldWidgets": {
+					"description": "The field widgets it adds, by the name a field's `x-udl-ui.widget` asks for.",
+					"items": {
+						"type": "string"
+					},
+					"title": "Fieldwidgets",
+					"type": "array"
 				}
 			},
 			"title": "Contributions",
+			"type": "object"
+		},
+		"Generated": {
+			"additionalProperties": false,
+			"description": "How a UI plugin guides the page udl generates for its plugin (24.7): everything here is\noptional, and what it does not say stays as udl answered it.",
+			"properties": {
+				"nav": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/GeneratedNav"
+						},
+						{
+							"const": false,
+							"type": "boolean"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"default": null,
+					"description": "Its drawer entry: a title and an icon of its own, or False for no entry.",
+					"title": "Nav"
+				},
+				"tabs": {
+					"description": "Which tabs stay, in this order (all of them, as udl lists them, when this is empty).",
+					"items": {
+						"enum": [
+							"operations",
+							"settings",
+							"accounts",
+							"events"
+						],
+						"type": "string"
+					},
+					"title": "Tabs",
+					"type": "array"
+				},
+				"hide": {
+					"description": "The operations not to show (a name, or a `*` prefix: `gmail_send_*`).",
+					"items": {
+						"type": "string"
+					},
+					"title": "Hide",
+					"type": "array"
+				},
+				"groups": {
+					"additionalProperties": {
+						"items": {
+							"type": "string"
+						},
+						"type": "array"
+					},
+					"description": "The operations to move under a group of this name (the group's own order is the dict's).",
+					"title": "Groups",
+					"type": "object"
+				},
+				"order": {
+					"description": "The operations to put first, in this order.",
+					"items": {
+						"type": "string"
+					},
+					"title": "Order",
+					"type": "array"
+				},
+				"labels": {
+					"additionalProperties": {
+						"type": "string"
+					},
+					"description": "What to call an operation, instead of its title.",
+					"title": "Labels",
+					"type": "object"
+				}
+			},
+			"title": "Generated",
+			"type": "object"
+		},
+		"GeneratedNav": {
+			"additionalProperties": false,
+			"description": "What the drawer's entry for its plugin says, when the page is generated (24.7).",
+			"properties": {
+				"title": {
+					"description": "What it says.",
+					"minLength": 1,
+					"title": "Title",
+					"type": "string"
+				},
+				"icon": {
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"default": null,
+					"description": "The icon's name (the shell maps it to lucide's).",
+					"title": "Icon"
+				}
+			},
+			"required": [
+				"title"
+			],
+			"title": "GeneratedNav",
 			"type": "object"
 		},
 		"NavItem": {
@@ -186,6 +314,18 @@
 		"contributes": {
 			"$ref": "#/$defs/Contributions",
 			"description": "What it adds to the shell."
+		},
+		"generated": {
+			"anyOf": [
+				{
+					"$ref": "#/$defs/Generated"
+				},
+				{
+					"type": "null"
+				}
+			],
+			"default": null,
+			"description": "How it guides the page udl generates for its plugin (24.7)."
 		}
 	},
 	"required": [

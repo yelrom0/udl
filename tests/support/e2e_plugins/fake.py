@@ -167,6 +167,28 @@ class FakeIntegration(Integration[FakeSettings, FakeAccountOptions]):
         return ItemsPage(items=[thing for thing in things if request.contains in thing.text])
 
     @integration_operation(
+        "count_things",
+        title="Count the things",
+        hints=OperationHints(read_only=True),
+        access="read",
+        ui=UISpec(group="Reading", order=2),
+    )
+    async def count_things(self, account: Any, request: ListThingsRequest) -> Counted:
+        """Count the things (24.7: a result the template plugin draws itself)."""
+        await account.credentials()
+        return Counted(count=2)
+
+    @integration_operation(
+        "ping",
+        title="Ping",
+        ui=UISpec(group="Writing", order=2, view="action"),
+    )
+    async def ping(self, account: Any, request: PingRequest) -> Pinged:
+        """Say pong (24.7: an operation the template plugin hides)."""
+        await account.credentials()
+        return Pinged(pong=True)
+
+    @integration_operation(
         "delete_thing",
         title="Delete a thing",
         hints=OperationHints(destructive=True),
@@ -178,6 +200,22 @@ class FakeIntegration(Integration[FakeSettings, FakeAccountOptions]):
         must say the thing's name)."""
         await account.credentials()
         return DeletedThing(deleted=request.name)
+
+
+class PingRequest(BaseModel):
+    """Nothing to say (an action's own model, which has no fields)."""
+
+
+class Counted(BaseModel):
+    """How many things there are."""
+
+    count: int
+
+
+class Pinged(BaseModel):
+    """That it answered."""
+
+    pong: bool
 
 
 # (What `udl.interfaces.adapters` looks for in a plugin's file: a module-level name bound to

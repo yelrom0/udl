@@ -19,6 +19,7 @@ import { type ReactNode, useId, useState } from "react";
 import type { JsonValue } from "./index";
 import {
 	type FieldSpec,
+	type FieldWidgetProps,
 	fieldsOf,
 	isJsonObject,
 	resolveRefs,
@@ -30,14 +31,7 @@ import {
 /** A form's value: a JSON object, as a request's body or a plugin's settings. */
 export type FormValue = Readonly<Record<string, JsonValue>>;
 
-/** What a plugin's own widget for a field is given. */
-export interface FieldWidgetProps {
-	readonly field: FieldSpec;
-	readonly value: JsonValue | undefined;
-	readonly onChange: (value: JsonValue) => void;
-	readonly disabled: boolean;
-	readonly invalid: boolean;
-}
+export type { FieldWidgetProps } from "./schema";
 
 export interface SchemaFormProps {
 	readonly schema: JsonValue;
@@ -198,7 +192,10 @@ function Field({
 		);
 	}
 
-	const own = widgets[field.widget];
+	// (A widget the field asks for by name wins: a plugin's own, for a field udl has no control
+	// for. What it does not have falls back to the widget its type means.)
+	const own =
+		(field.asked === undefined ? undefined : widgets[field.asked]) ?? widgets[field.widget];
 	const control =
 		own === undefined ? (
 			<Control

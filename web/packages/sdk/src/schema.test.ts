@@ -38,6 +38,27 @@ const person = {
 };
 
 describe("a field's widget", () => {
+	it("keeps the name a schema asks for, when it is not udl's own (24.7)", () => {
+		const [field] = fieldsOf({
+			type: "object",
+			properties: { when: { type: "string", "x-udl-ui": { widget: "color" } } },
+		});
+
+		// (udl's own widget is still what the form draws when nothing takes the name.)
+		expect(field?.widget).toBe("text");
+		expect(field?.asked).toBe("color");
+	});
+
+	it("asks for nothing when the name is one of udl's", () => {
+		const [field] = fieldsOf({
+			type: "object",
+			properties: { when: { type: "string", "x-udl-ui": { widget: "textarea" } } },
+		});
+
+		expect(field?.widget).toBe("textarea");
+		expect(field?.asked).toBeUndefined();
+	});
+
 	it("is its type's: text, number, switch", () => {
 		const found = of(person);
 
