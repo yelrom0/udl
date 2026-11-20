@@ -5088,21 +5088,15 @@
             "description": "The project it is in (None: the only one, while udl has one)."
           },
           "sha": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The head the caller saw (`orch_merge_list`'s row): a pull that moved since is refused,\nrather than merged blind (None: whatever head it has now).",
-            "title": "Sha"
+            "description": "The head the caller saw (`orch_merge_list`'s row): the pull is merged only at that head,\nand one that moved since is refused rather than merged blind.",
+            "title": "Sha",
+            "type": "string"
           }
         },
         "required": [
           "key",
-          "confirm"
+          "confirm",
+          "sha"
         ],
         "title": "MergeRequest",
         "type": "object"
@@ -16005,7 +15999,7 @@
     },
     "/plugins/orch/merge": {
       "post": {
-        "description": "Merge the pull of the task `key` (28.3), once more against its current head: it must be\nready, `confirm` must say which pull it is (`owner/repo#number`), and the head that was\nchecked is the commit merged, so a pull that changed since is not merged blind.\n\nA person merges, or \u2014 where the project's `merge` is `agent` \u2014 the task's own assignee.\nAfter it the task is `merged` (and `done` at once when a person merged and nothing follows\nthe base), its worktree is taken away, and each task stacked on it is told to rebase and\npush again.",
+        "description": "Merge the pull of the task `key` (28.3), once more against its current head: it must be\nready, `confirm` must say which pull it is (`owner/repo#number`), and the head that was\nchecked is the commit merged, so a pull that changed since is not merged blind.\n\nA person merges, or \u2014 where the project's `merge` is `agent` \u2014 the task's own assignee.\nAfter it the task is `merged` (and `done` at once when a person merged and nothing follows\nthe base), and each task stacked on it is told to rebase and push again. Its worktree is\ntaken away by 27.5's `remove()`, which this PR does not reach (it is in #52, not in\n`main`).",
         "operationId": "orch_merge",
         "requestBody": {
           "content": {

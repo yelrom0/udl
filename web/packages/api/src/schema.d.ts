@@ -1125,8 +1125,9 @@ export interface paths {
          *
          *     A person merges, or — where the project's `merge` is `agent` — the task's own assignee.
          *     After it the task is `merged` (and `done` at once when a person merged and nothing follows
-         *     the base), its worktree is taken away, and each task stacked on it is told to rebase and
-         *     push again.
+         *     the base), and each task stacked on it is told to rebase and push again. Its worktree is
+         *     taken away by 27.5's `remove()`, which this PR does not reach (it is in #52, not in
+         *     `main`).
          */
         post: operations["orch_merge"];
         delete?: never;
@@ -4708,10 +4709,10 @@ export interface components {
             project?: components["schemas"]["Name"] | null;
             /**
              * Sha
-             * @description The head the caller saw (`orch_merge_list`'s row): a pull that moved since is refused,
-             *     rather than merged blind (None: whatever head it has now).
+             * @description The head the caller saw (`orch_merge_list`'s row): the pull is merged only at that head,
+             *     and one that moved since is refused rather than merged blind.
              */
-            sha?: string | null;
+            sha: string;
         };
         /**
          * MergeResult
