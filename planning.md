@@ -4576,7 +4576,7 @@ timeout: 5m
   in Playwright (the real thing).
 - Done when: a UI plugin that throws shows its error card, and the shell carries on.
 
-- **Built (deepseek-a, 2026-11-20, PR #TBD):** `web/packages/shell/src/plugins/`: `registry.ts` (the seven
+- **Built (deepseek-a, 2026-11-20, PR #49):** `web/packages/shell/src/plugins/`: `registry.ts` (the seven
   points, each a key to its contributions — a route's path, a widget's slot — and `keyOf`, which says what a
   slot is looked up by), `shell.ts` (the page's one registry; the shell's own 14 pages registered as plugin
   `udl`, so `__root`'s drawer draws the store's `nav` and a plugin's items sit beside them), `list.ts`
