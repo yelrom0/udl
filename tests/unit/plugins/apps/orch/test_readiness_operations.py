@@ -72,7 +72,12 @@ class FakePull(BaseModel):
     author: str = "deepseek-b"
     html_url: str = PULL
     checks: list[dict[str, Any]] = [
-        {"name": "check", "status": "completed", "conclusion": "success"}
+        {
+            "name": "check",
+            "status": "completed",
+            "conclusion": "success",
+            "started_at": "2026-11-20T09:30:00Z",
+        }
     ]
     comments: list[dict[str, Any]] = [
         {
@@ -284,6 +289,47 @@ async def test_a_held_task_is_not_ready(service: UDLService) -> None:
     assert not found.ready
     assert found.held
     assert found.blockers == ["it is on hold: merge after 27.1"]
+
+
+async def test_when_the_head_was_pushed_reaches_readiness(service: UDLService) -> None:
+    """(27.6's review: `started_at` goes from the integration's `CheckInfo` into readiness through
+    `model_dump`/`model_validate`. Were it dropped, a comment written before the push would pass
+    as one for this head, and every other test would still pass.)"""
+    app = await service.apps.get("github")
+    assert isinstance(app, FakeGitHub)
+    app.pull = FakePull(
+        comments=[
+            {
+                "author": "claude[bot]",
+                "body": "## Review: it (#7)\n\n**Verdict: all clear**\n",
+                "created_at": "2026-11-20T10:00:00Z",
+            }
+        ]
+    )
+    # (Committed at 09:00, pushed at 09:30: the comment at 10:00 is after the push.)
+    assert (await readiness_of(service, key="F-1.1")).ready
+
+    app.pull = FakePull(
+        comments=[
+            {
+                "author": "claude[bot]",
+                "body": "## Review: it (#7)\n\n**Verdict: all clear**\n",
+                "created_at": "2026-11-20T10:00:00Z",
+            }
+        ],
+        checks=[
+            {
+                "name": "check",
+                "status": "completed",
+                "conclusion": "success",
+                "started_at": "2026-11-20T10:30:00Z",
+            }
+        ],
+    )
+    # (Pushed at 10:30: the comment at 10:00 reviewed what was there before this head.)
+    found = await readiness_of(service, key="F-1.1")
+    assert not found.ready
+    assert found.blockers == [f"the review bot's latest comment is not about {HEAD[:7]}"]
 
 
 async def test_a_task_that_is_not_in_progress_cannot_be_made_ready(service: UDLService) -> None:

@@ -133,6 +133,7 @@ def check_run_body(name: str, conclusion: str | None) -> GhCheckRun:
         status="completed" if conclusion else "in_progress",
         conclusion=conclusion,
         html_url=f"https://github.com/acme/widgets/runs/{name}",
+        started_at=datetime.now(UTC),
         completed_at=datetime.now(UTC) if conclusion else None,
     )
 

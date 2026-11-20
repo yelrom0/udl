@@ -211,6 +211,18 @@ async def test_a_pull_is_read_with_when_its_head_was_committed(
     assert found.head_committed_at == committed
 
 
+async def test_a_pull_is_read_with_when_its_checks_started(
+    github: GitHubIntegration, fake: FakeGitHub
+) -> None:
+    """(27.6 needs it: a review bot's first comment counts only if it was written after the head
+    was pushed, and its earliest check's start is when it was.)"""
+    fake.set_checks("abc1234", check_run_body("pytest", "success"))
+
+    found = await github.get_pull(handle(), GetPullRequest(repo=REPO, number=7))
+
+    assert found.checks[0].started_at is not None
+
+
 async def test_a_repository_the_account_does_not_name_is_refused(
     github: GitHubIntegration, fake: FakeGitHub
 ) -> None:
