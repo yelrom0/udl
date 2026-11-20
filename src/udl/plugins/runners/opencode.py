@@ -35,6 +35,8 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
+import shlex
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping, MutableMapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
@@ -67,6 +69,7 @@ from udl.plugins.runners.base import (
     TurnEnded,
     TurnReason,
     Usage,
+    lines,
 )
 
 log = logging.getLogger(__name__)
@@ -105,17 +108,42 @@ _AGENTS: Final = "$HOME/.config/opencode/agents"
 """Where udl's agent files go on a host."""
 _DENIED: Final = ("shell:git push *", "shell:gh pr merge *")
 """What a session may never do, whatever its own rules say (25.9's hard stops)."""
+_BRIEFS: Final[dict[str, str]] = {
+    "implementer": (
+        "You are udl's implementer agent. You build one task at a time, test first, and you"
+        " never merge: the PR is Claude's to review and the user's to merge."
+    ),
+    "reviewer": (
+        "You are udl's reviewer agent. You read the diff against its task card, test first, and"
+        " you say what is wrong; the merge is the user's."
+    ),
+}
+"""What each agent file says, by role (the session's own brief is added to it)."""
 _BRIEF: Final = (
-    "You are udl's {role} agent. You work one task at a time, test first, and you never merge:"
-    " the PR is Claude's to review and the user's to merge."
+    "You are udl's {role} agent. You work one task at a time, test first, and you report what"
+    " you find; the merge is the user's."
 )
-"""What each agent file says (the session's own brief is added to it)."""
+"""What an agent file says for a role udl has no words for yet."""
+_CONFIG: Final[TypeAdapter[dict[str, object]]] = TypeAdapter(dict[str, object])
+"""A service config file, as far as udl keeps it: every key, as it was."""
+_ENTRIES: Final[TypeAdapter[list[dict[str, object]]]] = TypeAdapter(list[dict[str, object]])
+_ANY_LIST: Final[TypeAdapter[list[object]]] = TypeAdapter(list[object])
+"""A config's `policies`, when it is a list of objects."""
+_KEY_NAME: Final = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+"""What a provider's key may be called (it goes into a shell command's word)."""
+
+
 _KEY_VAR: Final = "UDL_PROVIDER_KEY"
 """The variable a provider's key is passed in (never an argv)."""
 _REFUSAL: Final = "Not allowed here: ask with orch_ask."
 """What a refused permission says (so the agent learns the way to ask, not to retry)."""
 _PERMISSIONS: timedelta = timedelta(milliseconds=500)
 """How often a running turn looks for a permission asked (they are not in the durable log)."""
+
+
+def _brief(role: str) -> str:
+    """An agent file's text: the role's own, or a neutral one udl has no words for."""
+    return _BRIEFS[role] if role in _BRIEFS else _BRIEF.format(role=role)
 
 
 class OpenCodeOptions(RunnerOptions):
@@ -358,7 +386,7 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
             )
         return RunnerHealth(
             installed=True,
-            signed_in=True,  # (the API takes the service's own password, never an account)
+            signed_in=bool(accounts),  # (the service's password is not a provider's account)
             version=info.version or version,
             account=accounts[0] if accounts else None,
             plan=None,  # (a provider's plan is not something the service says)
@@ -366,9 +394,9 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
             detail=f"pid {info.pid}",
         )
 
-    async def _accounts(self) -> list[str]:
-        """The accounts its providers are signed in as (`opencode auth list`), in order: an
-        empty list when none is, and when the CLI cannot say."""
+    async def _sign_ins(self) -> list[_Auth]:
+        """What its providers are signed in as (`opencode auth list`), in order: an empty list
+        when none is, and when the CLI cannot say."""
         try:
             said = await self.shell.run([*self.options.cli, "auth", "list", "--format", "json"])
         except ToolUnavailable, PluginFailed:
@@ -377,11 +405,14 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
             listed = _Auths.model_validate_json(said.stdout)
         except ValidationError:
             try:  # (the CLI prints a bare list in some versions)
-                found = TypeAdapter(list[_Auth]).validate_json(said.stdout)
+                return TypeAdapter(list[_Auth]).validate_json(said.stdout)
             except ValidationError:
                 return []
-            return [item.account for item in found if item.account]
-        return [item.account for item in listed.items if item.account]
+        return listed.items
+
+    async def _accounts(self) -> list[str]:
+        """The accounts its providers are signed in as, in order."""
+        return [sign_in.account for sign_in in await self._sign_ins() if sign_in.account]
 
     async def guards(self) -> bool:
         """Whether udl's deny policies are in the service's config on the host (25.9's rules,
@@ -405,8 +436,8 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
 
     async def _install(self, argv: list[str]) -> AsyncIterator[str]:
         """The upgrade's output, then its service restarted."""
-        async for chunk in self.shell.stream(argv):
-            yield chunk.decode(errors="replace")
+        async for said in lines(self.shell.stream(argv)):
+            yield said
         await self.shell.run([*self.options.cli, "service", "restart"])
 
     async def setup(
@@ -415,53 +446,94 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
         env: Mapping[str, str] | None = None,
     ) -> list[str]:
         """Write the deny policies (25.9's) and one agent file per role, then set the service's
-        environment (`env`: a provider's key by variable name, its value never in an argv)."""
+        environment (`env`: a provider's key by variable name).
+
+        The config file is read first and written back with udl's two policies merged into it: a
+        host that already has providers, models or MCP servers keeps every one of them, and a
+        second setup changes nothing. The key's value reaches `opencode` through the shell's
+        environment, never through udl's argv (see the 25.11 card's decisions for what `opencode
+        service set env` does with it on the host)."""
         written: list[str] = []
-        policies = json.dumps(
-            {
-                "$schema": "https://opencode.ai/config.json",
-                "policies": [
-                    {"action": "tool.use", "resource": resource, "effect": "deny"}
-                    for resource in _DENIED
-                ],
-            },
-            indent=2,
-        )
-        await self._write(_POLICIES, policies)
+        await self._write(_POLICIES, json.dumps(await self._merged_policies(), indent=2))
         written.append(_POLICIES)
         for role in roles:
             name = f"{_AGENT}-{role}"
             await self._write(
                 f"{_AGENTS}/{name}.md",
-                f"---\nmode: primary\n---\n\n{_BRIEF.format(role=role)}\n",
+                f"---\nmode: primary\nsteps: 200\n---\n\n{_brief(role)}\n",
             )
             written.append(f"{_AGENTS}/{name}.md")
         for name, value in (env or {}).items():
-            # (The value reaches the command through its environment, never its argv.)
-            await self.shell.run(
-                ["sh", "-c", f'{self.options.cli[0]} service set env {name} "${_KEY_VAR}"'],
-                secret_env={_KEY_VAR: value},
-            )
+            if not _KEY_NAME.fullmatch(name):
+                raise NotAllowed(
+                    f"{name!r} is not an environment variable udl will set",
+                    hint="A provider's key is set as a variable named `[A-Z_][A-Z0-9_]*`.",
+                )
+            setter = f'{shlex.join(self.options.cli)} service set env {name} "${_KEY_VAR}"'
+            await self.shell.run(["sh", "-c", setter], secret_env={_KEY_VAR: value})
         return written
+
+    async def _merged_policies(self) -> dict[str, object]:
+        """The service's config as it is on the host, with udl's deny policies merged in: every
+        other key is kept as it was (a setup never erases a host's own configuration)."""
+        said = await self.shell.run(["sh", "-c", f"cat {_POLICIES} 2>/dev/null"])
+        try:
+            config = _CONFIG.validate_json(said.stdout or "{}")
+        except ValidationError:
+            config = {}
+        merged: dict[str, object] = dict(config)
+        merged.setdefault("$schema", "https://opencode.ai/config.json")
+        kept: list[object] = []
+        existing = merged.get("policies")
+        if isinstance(existing, list):
+            try:
+                entries = _ENTRIES.validate_python(existing)
+            except ValidationError:
+                kept.extend(_ANY_LIST.validate_python(existing))
+                entries = []
+            for entry in entries:
+                ours = (
+                    entry.get("action") == "tool.use"
+                    and entry.get("effect") == "deny"
+                    and entry.get("resource") in _DENIED
+                )
+                if not ours:
+                    kept.append(entry)
+        for resource in _DENIED:
+            kept.append({"action": "tool.use", "resource": resource, "effect": "deny"})
+        merged["policies"] = kept
+        return merged
 
     async def _write(self, path: str, text: str) -> None:
         """Write a file on the host through its shell (0600: a policy and a brief are udl's)."""
-        written = await self.shell.run(
+        # (`run` raises PluginFailed for a command that fails: there is no code to check here.)
+        await self.shell.run(
             ["sh", "-c", f'umask 077 && mkdir -p "$(dirname {path})" && cat > {path}'],
             stdin=text.encode(),
         )
-        if written.returncode != 0:
-            raise PluginFailed(f"{path} cannot be written: {written.stderr.strip()[:200]}")
+
+    @property
+    def sign_in_command(self) -> tuple[str, ...]:
+        """`opencode auth login <provider>`: what a person runs when udl cannot relay it."""
+        return (*self.options.cli, "auth", "login")
 
     async def login(self, provider: str | None = None) -> Interaction:
-        """`opencode auth login [<provider>]`, relayed: it prints a URL and takes the code back."""
-        argv = [*self.options.cli, "auth", "login", *([provider] if provider else [])]
-        return await self.shell.interact(argv)
+        """`opencode auth login <provider>`, relayed: it prints a URL and takes the code back. A
+        provider is named: without one the CLI opens a picker no relay can drive."""
+        if not provider:
+            raise NotAllowed(
+                "opencode needs the provider to sign in to",
+                hint="Name one (`openrouter`), or set a key with `udl orch runners setup`.",
+            )
+        return await self.shell.interact([*self.options.cli, "auth", "login", provider])
 
     async def logout(self) -> None:
-        """`opencode auth logout`, for every account it lists."""
-        for account in await self._accounts():
-            await self.shell.run([*self.options.cli, "auth", "logout", account])
+        """`opencode auth logout <provider> <account>`, for every sign-in it has: the card's
+        argv, so it is the account that goes, never a guess at its provider."""
+        for sign_in in await self._sign_ins():
+            await self.shell.run(
+                [*self.options.cli, "auth", "logout", sign_in.provider, sign_in.account]
+            )
 
     async def models(self) -> list[RunnerModel]:
         try:

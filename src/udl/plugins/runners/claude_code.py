@@ -34,9 +34,9 @@ import logging
 import re
 from collections.abc import AsyncGenerator, AsyncIterator, MutableMapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import ClassVar
+from typing import ClassVar, Final
 from uuid import uuid4
 
 # Package Imports
@@ -62,6 +62,7 @@ from udl.plugins.runners.base import (
     TurnEnded,
     TurnReason,
     Usage,
+    lines,
 )
 
 log = logging.getLogger(__name__)
@@ -196,16 +197,20 @@ class ClaudeCode(AgentRunner[ClaudeCodeOptions]):
         return _health(version.stdout.strip(), status.stdout, problems)
 
     async def _problems(self) -> list[str]:
-        """What `claude doctor` says is wrong (an empty list when it says nothing, or cannot
-        run: a harness with no doctor is not a broken one)."""
+        """What `claude doctor` says is wrong (an empty list when it says nothing, or cannot run:
+        a harness with no doctor is not a broken one).
+
+        Its doctor is an interactive screen in current releases: it gets a short time and no
+        terminal, and one that does not end in time is no problem, so `udl orch runners` never
+        hangs on a host because of it."""
         try:
-            said = await self.shell.run([*self.options.cli, "doctor"])
-        except ToolUnavailable, PluginFailed:
+            said = await self.shell.run([*self.options.cli, "doctor"], within=DOCTOR_WITHIN)
+        except ToolUnavailable, PluginFailed, TimeoutError:
             return []
         return [
             line.strip()
             for line in said.stdout.splitlines()
-            if line.strip() and any(word in line.lower() for word in _TROUBLE)
+            if line.strip() and _TROUBLE.search(line)
         ]
 
     async def models(self) -> list[RunnerModel]:
@@ -219,7 +224,12 @@ class ClaudeCode(AgentRunner[ClaudeCodeOptions]):
             if version is None
             else [*self.options.cli, "install", version]
         )
-        return _lines(self.shell.stream(argv))
+        return lines(self.shell.stream(argv))
+
+    @property
+    def sign_in_command(self) -> tuple[str, ...]:
+        """`claude auth login`: what a person runs on the host when udl cannot relay it."""
+        return (*self.options.cli, "auth", "login")
 
     async def login(self, provider: str | None = None) -> Interaction:
         """`claude auth login`, relayed: it prints a URL and takes the code back."""
@@ -475,8 +485,14 @@ def _mcp_config(spec: SessionSpec) -> str:
     return json.dumps({"mcpServers": {"udl": server}}, indent=2)
 
 
-_TROUBLE: tuple[str, ...] = ("error", "missing", "not found", "problem", "failed")
-"""What a doctor's line says when it is worth showing as a problem."""
+DOCTOR_WITHIN: Final = timedelta(seconds=20)
+"""How long `claude doctor` gets: an interactive screen that has not ended by then is no problem."""
+
+_TROUBLE: Final = re.compile(
+    r"^\s*(?:[✗x]|missing\b|error\b|problem\b|failed\b|not found\b)", re.IGNORECASE
+)
+"""What a doctor's line says when it is worth showing as a problem: a line that *names* one, so
+"No errors found" and "0 errors" are not problems."""
 
 
 def _health(version: str, status: str, problems: list[str]) -> RunnerHealth:
@@ -503,9 +519,3 @@ def _health(version: str, status: str, problems: list[str]) -> RunnerHealth:
         guards=True,
         problems=problems,
     )
-
-
-async def _lines(chunks: AsyncIterator[bytes]) -> AsyncIterator[str]:
-    """A stream's bytes as the text they are (an install's output, as it comes)."""
-    async for chunk in chunks:
-        yield chunk.decode(errors="replace")

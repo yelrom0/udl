@@ -130,12 +130,26 @@ async def _turn(runner: OpenCode, session: SessionRef, prompt: str = "go") -> li
 
 
 async def test_its_health_is_the_service_s_version(service: FakeOpenCode, shell: FakeShell) -> None:
+    shell.auths = '[{"provider": "openrouter", "account": "me@example.com"}]'
+
     health = await _runner(service, shell).health()
 
     assert health.installed
     assert health.signed_in
     assert health.version == "2.1.2"
     assert health.detail == "pid 1234"
+
+
+async def test_a_service_that_is_up_with_no_account_is_not_signed_in(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """The service's own password is not a provider's account: with none signed in, it says so
+    whether or not the API answers."""
+    up = await _runner(service, shell).health()
+
+    assert up.installed is True
+    assert up.signed_in is False
+    assert up.account is None
 
 
 async def test_health_names_the_account_and_whether_the_guards_are_in_place(
@@ -206,6 +220,72 @@ async def test_a_setup_writes_the_policies_and_an_agent_file_per_role(
     )
 
 
+async def test_a_setup_keeps_what_the_host_already_has(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """The config is merged, not replaced: a host's own providers, models and MCP servers stay."""
+    shell.files["$HOME/.config/opencode/opencode.json"] = json.dumps(
+        {
+            "provider": {"openrouter": {"models": {"deepseek/deepseek-v4.1-flash": {}}}},
+            "mcp": {"udl": {"type": "remote", "url": "https://udl.test/mcp"}},
+        }
+    )
+
+    await _runner(service, shell).setup(["implementer"])
+
+    kept = json.loads(shell.files["$HOME/.config/opencode/opencode.json"])
+    assert kept["provider"]["openrouter"]["models"] == {"deepseek/deepseek-v4.1-flash": {}}
+    assert kept["mcp"]["udl"]["url"] == "https://udl.test/mcp"
+    assert [entry["resource"] for entry in kept["policies"]] == [
+        "shell:git push *",
+        "shell:gh pr merge *",
+    ]
+
+
+async def test_a_second_setup_changes_nothing(service: FakeOpenCode, shell: FakeShell) -> None:
+    runner = _runner(service, shell)
+    await runner.setup(["implementer"])
+    once = shell.files["$HOME/.config/opencode/opencode.json"]
+
+    await runner.setup(["implementer"])
+
+    assert shell.files["$HOME/.config/opencode/opencode.json"] == once
+    assert len(json.loads(once)["policies"]) == 2
+
+
+async def test_an_agent_file_says_what_its_role_does(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """Each agent file has the card's frontmatter (`mode`, `steps`) and its own role's brief: a
+    reviewer reviews, so it is not told that it never does."""
+    await _runner(service, shell).setup(["implementer", "reviewer"])
+
+    implementer = shell.files["udl-implementer"]
+    reviewer = shell.files["udl-reviewer"]
+    assert "mode: primary" in implementer
+    assert "steps: 200" in implementer
+    assert "never merge" in implementer
+    assert "never merge" not in reviewer
+    assert "reviewer" in reviewer
+
+
+async def test_a_key_that_is_not_a_variable_name_is_refused(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    with pytest.raises(NotAllowed):
+        await _runner(service, shell).setup([], {"not a name; rm -rf /": "sk-1"})
+
+    assert all("rm -rf" not in " ".join(argv) for argv in shell.runs)
+
+
+async def test_a_sign_in_needs_the_provider(service: FakeOpenCode, shell: FakeShell) -> None:
+    """Without one the CLI opens a picker no relay can drive: udl refuses, and says what to do."""
+    with pytest.raises(NotAllowed):
+        await _runner(service, shell).login()
+
+    assert shell.started == []
+
+
 async def test_its_login_relays_the_provider(service: FakeOpenCode, shell: FakeShell) -> None:
     await _runner(service, shell).login("openrouter")
 
@@ -217,7 +297,7 @@ async def test_its_sign_out_names_every_account(service: FakeOpenCode, shell: Fa
 
     await _runner(service, shell).logout()
 
-    assert ["opencode", "auth", "logout", "me@example.com"] in shell.runs
+    assert ["opencode", "auth", "logout", "openrouter", "me@example.com"] in shell.runs
 
 
 async def test_health_says_a_service_that_is_not_running(service: FakeOpenCode) -> None:

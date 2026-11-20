@@ -17,18 +17,18 @@ the program is here or on another machine.
 # System Imports
 import asyncio
 import re
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from datetime import timedelta
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Final, Literal
 from uuid import uuid4
 
 # Package Imports
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
 
 # Local Imports
-from udl.errors import ConfigError, DoesNotExist, NotAllowed, PluginError
+from udl.errors import ConfigError, DoesNotExist, NotAllowed, PluginError, ToolUnavailable
 from udl.plugins.registry import RUNNERS
-from udl.plugins.runners.base import AnAgentRunner, RunnerHealth, RunnerModel
+from udl.plugins.runners.base import AnAgentRunner, LoginByHand, RunnerHealth, RunnerModel
 
 if TYPE_CHECKING:
     from udl.core.service import UDLService
@@ -52,6 +52,10 @@ __all__ = [
 ]
 
 VERSION = re.compile(r"^[0-9A-Za-z.\-]+$")
+"""What a version udl will install is: letters, digits, dots and dashes (`latest`, `2.1.4`)."""
+
+TAIL: Final = 4_000
+"""How much of an install's output is kept: its end, in characters, where a problem shows."""
 """What a version may be: anything else is refused before a command runs."""
 
 LOGIN_TIMEOUT = timedelta(minutes=10)
@@ -249,6 +253,11 @@ class _Attempt:
         return self.attempt.model_copy(update={"prompt": self.said})
 
 
+_ASK_FAILED = (PluginError, NotAllowed, DoesNotExist, ConfigError, ToolUnavailable)
+"""What asking a harness can fail with: a runner udl cannot make, or one that cannot answer.
+Each becomes a problem in the listing, never the end of it."""
+
+
 class Harnesses:
     """The harnesses of every host: what each one is, and how to install, set up and sign it in."""
 
@@ -277,7 +286,7 @@ class Harnesses:
                     runner = await self.runner(host.name, name)
                     health = await self._health(host.name, name, runner)
                     models = await runner.models()
-                except (PluginError, NotAllowed, DoesNotExist) as failure:
+                except _ASK_FAILED as failure:
                     problems.append(f"{host.name}/{name}: {failure}")
                     continue
                 items.append(
@@ -303,9 +312,14 @@ class Harnesses:
             made = await self._service.plugin_settings(name)
         except DoesNotExist:
             # (A runner's options are its config file table until it declares a settings model.)
-            made = cls.options_model.model_validate(
-                self._service.settings.integrations.get(name, {})
-            )
+            try:
+                made = cls.options_model.model_validate(
+                    self._service.settings.integrations.get(name, {})
+                )
+            except ValidationError as failure:
+                raise ConfigError(
+                    f"The {name} runner's settings do not fit it: {failure}"
+                ) from failure
         if not isinstance(made, cls.options_model):
             raise ConfigError(
                 f"The {name} runner's settings are {type(made).__qualname__}, not its "
@@ -365,7 +379,7 @@ class Harnesses:
             host=request.host,
             runner=request.runner,
             version=health.version,
-            output="".join(output[-TAIL:]),
+            output="".join(output)[-TAIL:],
         )
 
     async def setup(
@@ -392,10 +406,9 @@ class Harnesses:
     async def login(self, request: StartLoginRequest) -> LoginAttempt:
         """Sign a harness in, and relay what it asks: one attempt per (host, runner) at a time.
         Raises NotAllowed while another attempt is running."""
+        self._forget_finished()
         for attempt in self._attempts.values():
-            if (attempt.host, attempt.runner) == (request.host, request.runner) and (
-                not attempt.attempt.done
-            ):
+            if (attempt.host, attempt.runner) == (request.host, request.runner):
                 raise NotAllowed(
                     f"{request.runner} is already signing in on {request.host}",
                     hint=f"Its attempt is {attempt.id}: answer it, or wait for it to end.",
@@ -403,15 +416,17 @@ class Harnesses:
         runner = await self.runner(request.host, request.runner)
         try:
             interaction = await runner.login(request.provider)
-        except PluginError as failure:
-            # (A harness that cannot be driven without a terminal: the command, not a failure.)
+        except LoginByHand as by_hand:
+            # (A harness that cannot be driven without a terminal: the command, not a failure.
+            # Any other error is udl's own, and goes to the caller as it is.)
             attempt = LoginAttempt(
                 id=str(uuid4()),
                 host=request.host,
                 runner=request.runner,
                 done=True,
                 ok=False,
-                command=failure.message,
+                prompt="\n".join(part for part in (by_hand.message, by_hand.hint) if part),
+                command=by_hand.command,
             )
             self._attempts[attempt.id] = _Attempt(
                 id_=attempt.id,
@@ -464,9 +479,15 @@ class Harnesses:
         if found is None:
             raise DoesNotExist(
                 f"No sign-in attempt {id_!r}",
-                hint="An attempt ends after ten minutes, and is forgotten then.",
+                hint="An attempt ends after ten minutes, and is forgotten when the next starts.",
             )
         return found
+
+    def _forget_finished(self) -> None:
+        """Drop the attempts that have ended (they are only kept until the next one starts)."""
+        for id_, running in list(self._attempts.items()):
+            if running.attempt.done and (running.task is None or running.task.done()):
+                del self._attempts[id_]
 
     async def _first(self, running: _Attempt) -> LoginAttempt:
         """What a harness printed as its attempt started (it has a moment to say it)."""
@@ -533,19 +554,16 @@ class _Ended:
         return 1
 
 
-TAIL = 4_000
-"""How much of an install's output is kept (its end, where a problem shows)."""
-
-
 def _expects(said: str) -> Literal["none", "code"]:
-    """What a sign-in wants back: a code, when it says so (the harnesses print "code")."""
-    return "code" if "code" in said.lower() else "none"
+    """What a sign-in wants back: a code, when it asks for one (`paste the code`, `enter code`).
+    A harness's own name is not an ask: "opencode" and "Claude Code" are matched as the words they
+    are, so neither makes every sign-in look like it takes a code."""
+    return "code" if _ASKS.search(said) else "none"
 
 
-async def lines(chunks: AsyncIterator[bytes]) -> AsyncIterator[str]:
-    """A stream's bytes as the lines they are."""
-    async for chunk in chunks:
-        yield chunk.decode(errors="replace")
-
-
-__all__ += ["lines"]
+_ASKS: Final = re.compile(
+    r"\b(?:paste|enter|type|provide|send)\b[^\n]{0,40}?\bcode\b"
+    r"|\bcode\b[^\n]{0,40}?\b(?:here|below)\b",
+    re.IGNORECASE,
+)
+"""What a harness says when it is asking for a code (and nothing it says otherwise)."""

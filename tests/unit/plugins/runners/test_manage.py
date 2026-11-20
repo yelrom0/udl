@@ -27,11 +27,13 @@ from support.engine import settings
 from support.harnesses import ScriptedShell
 from udl.core.operations import Operation, OperationRegistry
 from udl.core.service import UDLService
-from udl.errors import DoesNotExist, NotAllowed
+from udl.errors import DoesNotExist, NotAllowed, ToolUnavailable
 from udl.hosts.shell import Host, HostTransport
 from udl.plugins.apps.orch.plugin import Orch
 from udl.plugins.registry import APPS, PluginRegistry
+from udl.plugins.runners.base import AnAgentRunner, RunnerModel
 from udl.plugins.runners.manage import (
+    TAIL,
     Harnesses,
     InstallRunnerRequest,
     ListRunnersRequest,
@@ -87,7 +89,9 @@ async def hosts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterato
 
     monkeypatch.setattr("udl.hosts.manager.shell_for", shell_for)
     service = UDLService(
-        settings(tmp_path), registry=PluginRegistry.discover(builtin_only=True), clock=FakeClock()
+        settings(tmp_path, integrations={"command": {"argv": ["my-harness", "--chat"]}}),
+        registry=PluginRegistry.discover(builtin_only=True),
+        clock=FakeClock(),
     )
     async with service:
         for name in HOSTS:
@@ -246,6 +250,64 @@ async def test_an_update_is_refused_while_a_session_runs(hosts: Hosts) -> None:
     assert ["claude", "update"] in shell.runs
 
 
+async def test_an_install_s_output_is_kept_by_characters(hosts: Hosts) -> None:
+    """A long install streams thousands of chunks: the tail is the end of what it said, not the
+    last few chunks of it."""
+    shell = hosts.shell("local")
+    script_claude(shell)
+    said = "x" * (TAIL * 2) + "done\n"
+    shell.answer(["claude", "install", "2.0.2"], said)
+
+    installed = await hosts.harnesses.install(
+        InstallRunnerRequest(host="local", runner="claude-code", version="2.0.2")
+    )
+
+    assert len(installed.output) == TAIL
+    assert installed.output.endswith("done\n")
+
+
+async def test_a_runner_udl_cannot_make_is_a_problem_not_the_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A runner whose settings do not fit it is listed as a problem, and the others are still
+    listed."""
+    shells = {name: ScriptedShell(host(name)) for name in HOSTS}
+
+    def shell_for(found: Host) -> ScriptedShell:
+        return shells[found.name]
+
+    monkeypatch.setattr("udl.hosts.manager.shell_for", shell_for)
+    service = UDLService(
+        settings(tmp_path, integrations={"claude-code": {"no_such_option": 1}}),
+        registry=PluginRegistry.discover(builtin_only=True),
+        clock=FakeClock(),
+    )
+    async with service:
+        await service.db.upsert_record(host("local"))
+
+        listed = await Harnesses(service).all(ListRunnersRequest(host="local"))
+
+    assert any("local/claude-code" in problem for problem in listed.problems)
+    assert any(item.runner == "command" for item in listed.items)
+
+
+async def test_a_runner_that_cannot_answer_is_a_problem(
+    hosts: Hosts, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`models()` may raise ToolUnavailable (opencode's API is not up): a problem, not a crash."""
+    script_claude(hosts.shell("local"))
+    runner = await hosts.harnesses.runner("local", "claude-code")
+
+    async def unavailable(_: AnAgentRunner) -> list[RunnerModel]:
+        raise ToolUnavailable("its service is not running")
+
+    monkeypatch.setattr(type(runner), "models", unavailable)
+
+    listed = await hosts.harnesses.all(ListRunnersRequest(host="local"))
+
+    assert any("its service is not running" in problem for problem in listed.problems)
+
+
 # ---------------------------------------------------------------------------------------------
 # Setting up
 # ---------------------------------------------------------------------------------------------
@@ -333,12 +395,14 @@ async def test_a_sign_in_is_relayed_end_to_end(hosts: Hosts) -> None:
 
 
 async def test_a_sign_in_that_is_not_driven_says_the_command(hosts: Hosts) -> None:
+    """A CLI udl does not know signs in its own way: the answer is the exact command, not a
+    failure (and not a substring of the runner's name)."""
     started = await hosts.harnesses.login(StartLoginRequest(host="local", runner="command"))
 
     assert started.done is True
     assert started.ok is False
-    assert started.command is not None
-    assert "command" in started.command
+    assert started.command == "my-harness"
+    assert "my-harness" in started.prompt
 
 
 async def test_one_sign_in_runs_per_host_and_runner(hosts: Hosts) -> None:
@@ -371,6 +435,38 @@ async def test_a_sign_in_that_times_out_is_ended(hosts: Hosts) -> None:
     status = await harnesses.status(LoginStatusRequest(id=started.id))
     assert status.attempt.done is True
     assert status.attempt.ok is False
+
+
+async def test_a_finished_attempt_is_forgotten_when_the_next_starts(hosts: Hosts) -> None:
+    """An attempt ends after ten minutes, and is forgotten: a host can be signed in again
+    without the ended attempt holding its place."""
+    shell = hosts.shell("local")
+    script_claude(shell)
+    harnesses = hosts.harnesses
+    first = await harnesses.login(StartLoginRequest(host="local", runner="claude-code"))
+    shell.interactions[0].exit_code = 0
+    await shell.interactions[0].close()  # (the script ends)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert (await harnesses.status(LoginStatusRequest(id=first.id))).attempt.done is True
+
+    second = await harnesses.login(StartLoginRequest(host="local", runner="claude-code"))
+
+    assert second.id != first.id
+    with pytest.raises(DoesNotExist):
+        await harnesses.status(LoginStatusRequest(id=first.id))
+
+
+async def test_a_prompt_that_names_the_harness_is_not_asking_for_a_code(hosts: Hosts) -> None:
+    """`opencode` and `Claude Code` are not a code: only a harness asking for one says so."""
+    shell = hosts.shell("local")
+    script_claude(shell)
+    shell.says = ("Claude Code is ready. No errors found.\n",)
+
+    started = await hosts.harnesses.login(StartLoginRequest(host="local", runner="claude-code"))
+
+    assert started.expects == "none"
+    await hosts.harnesses.stop()
 
 
 async def test_an_unknown_sign_in_is_refused(hosts: Hosts) -> None:
@@ -409,7 +505,7 @@ async def test_opencode_s_sign_out_names_every_account(hosts: Hosts) -> None:
         LogoutRunnerRequest(host="local", runner="opencode", confirm="local/opencode")
     )
 
-    assert ["opencode", "auth", "logout", "me@example.com"] in shell.runs
+    assert ["opencode", "auth", "logout", "openrouter", "me@example.com"] in shell.runs
 
 
 # ---------------------------------------------------------------------------------------------
