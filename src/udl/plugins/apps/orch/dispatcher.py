@@ -120,6 +120,12 @@ def nudge(task: stored.Task) -> str:
     )
 
 
+def fenced(label: str, text: str) -> str:
+    """`text` from outside, in a fenced block labelled with where it came from: what a session is
+    told is never instructions from the bot or a CI log (as 17.7 passes events' text)."""
+    return f"```{label}\n{text}\n```"
+
+
 def changed(task: stored.Task, what: str) -> str:
     """What a session that is still on its task is told when something did: what changed (the
     pull's checks, the bot's items), and what to do about it."""
@@ -463,10 +469,10 @@ class Dispatcher:
             return "its pull is ready to merge: say so with `orch_ready`"
         parts = [f"its pull is not ready ({'; '.join(found.blockers)})"]
         if found.open_items:
-            items = "; ".join(
+            items = "\n".join(
                 f"{one.text} ({one.status})" if one.status else one.text for one in found.open_items
             )
-            parts.append(f"the review bot still lists: {items}")
+            parts.append(f"the review bot still lists:\n\n{fenced('review-bot', items)}")
         return ". ".join(parts)
 
     async def _stalled(

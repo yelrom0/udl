@@ -157,6 +157,8 @@ SCRIPT: dict[str, Turn] = {}
 """The scripted turns, by prompt: what this test's turns do."""
 STORE: Sessions = Sessions()
 """The sessions the harness has (a fresh one per test)."""
+REVIEWS = Path("tests/fixtures/reviews")
+"""The bot's real review comments (27.6's fixtures)."""
 PROMPTS: list[str] = []
 """Every prompt a session was sent (in order)."""
 SERVICE: list[UDLService] = []
@@ -728,12 +730,25 @@ async def test_a_turn_says_what_its_pull_says(tmp_path: Path) -> None:
 
         github = await running.apps.get("github")
         assert isinstance(github, FakeGitHub)
-        github.pull = FakePull(draft=True, checks=[], comments=[])
+        github.pull = FakePull(
+            draft=True,
+            head_sha="7a09481",
+            checks=[],
+            comments=[
+                {
+                    "author": "claude[bot]",
+                    "body": (REVIEWS / "follow-up-changes.md").read_text(),
+                    "created_at": "2026-11-20T10:00:00Z",
+                }
+            ],
+        )
 
         await ran(running, clock=FakeClock(), turns=2)
 
     assert "What changed on F-1.1: its pull is not ready" in PROMPTS[1]
     assert "it is a draft" in PROMPTS[1]
+    # (what the bot says is outside text: it is fenced and labelled, never instructions)
+    assert "```review-bot" in PROMPTS[1]
 
 
 async def test_only_so_many_agents_are_mid_turn_at_once(tmp_path: Path) -> None:
