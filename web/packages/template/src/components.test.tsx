@@ -6,6 +6,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { Page } from "./page";
+import { ResultView } from "./resultView";
 import { Widget } from "./widget";
 
 let target: HTMLDivElement | null = null;
@@ -43,5 +44,23 @@ describe("the template's contributions", () => {
 
 		expect(drawn.textContent).toContain("A widget");
 		expect(drawn.textContent).toContain("Drawn into the dashboard slot.");
+	});
+
+	it("draws a result it was asked for, in place of udl's table", () => {
+		const drawn = draw(
+			<ResultView
+				operation={{
+					name: "count_things",
+					title: "Count the things",
+					summary: "Counts them.",
+					view: "list",
+					hints: { read_only: true },
+				}}
+				value={{ things: 3 }}
+			/>,
+		);
+
+		expect(drawn.textContent).toContain("Count the things, drawn by this plugin");
+		expect(drawn.textContent).toContain('"things": 3');
 	});
 });
