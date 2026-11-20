@@ -473,9 +473,7 @@ class MongoDBPlugin(DatabasePlugin):
         except _Duplicate as e:
             raise _duplicate(records[-1], e) from e
 
-    async def _store[R: Record](
-        self, record: R, *, session: AsyncClientSession | None = None
-    ) -> R:
+    async def _store[R: Record](self, record: R, *, session: AsyncClientSession | None = None) -> R:
         """Store one record: replaced by id, or inserted, then read back (in `session`)."""
         kind = type(record)
         collection = await self._records_of(kind)

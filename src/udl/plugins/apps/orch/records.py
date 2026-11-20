@@ -851,9 +851,7 @@ class TaskRecords:
         await _scan(self._records, task.project, OwnerKind.TASK, task.key, task.spec)
         return saved
 
-    async def save_all(
-        self, tasks: Sequence[Task], *, also: Sequence[Record] = ()
-    ) -> list[Task]:
+    async def save_all(self, tasks: Sequence[Task], *, also: Sequence[Record] = ()) -> list[Task]:
         """Store tasks as one write — all of them, or none — and `also` in the same write (a
         queue's system note, 26.5), keeping each feature's status in step with its tasks.
 
@@ -886,13 +884,10 @@ class TaskRecords:
             if feature is None or feature.status == "parked":
                 continue
             in_batch = {
-                task.id: task
-                for task in tasks
-                if (task.project, task.feature) == (project, key)
+                task.id: task for task in tasks if (task.project, task.feature) == (project, key)
             }
             states = {
-                in_batch.get(one.id, one).state
-                for one in await self.tasks(project, feature=key)
+                in_batch.get(one.id, one).state for one in await self.tasks(project, feature=key)
             }
             status = _status_of(states)
             if status is not None and status != feature.status:

@@ -181,9 +181,7 @@ class MemoryDatabase(DatabasePlugin):
             existing = self._of(kind)
             if (stored := existing.get(record.id)) is not None:
                 record = record.model_copy(update={"created_at": stored.created_at})
-            others = [
-                one for one in (*existing.values(), *staged.values()) if type(one) is kind
-            ]
+            others = [one for one in (*existing.values(), *staged.values()) if type(one) is kind]
             _check_unique(record, others)
             staged[record.id] = record
             kept.append(record)
