@@ -245,9 +245,9 @@ class ProviderProcess:
         ending = self._ending
         if ending is not None:
             # (A keeper was already stopping the program: it clears its place before it waits,
-            # so this is the stop that is running. A close() must not return before it ends.)
-            with contextlib.suppress(asyncio.CancelledError):
-                await asyncio.shield(ending)
+            # so this is the stop that is running. A close() must not return before it ends —
+            # and a cancel of this caller is its own to hear, so it is not suppressed here.)
+            await asyncio.shield(ending)
 
     def _forget(self, done: asyncio.Future[None]) -> None:
         """Forget the wait for the program once it is over (it is held, and awaited, until)."""
