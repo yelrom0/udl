@@ -33,7 +33,9 @@ INDEX = "<!doctype html><html><body><div id='root'></div></body></html>"
 # Every /ui response carries these: no script or connection but udl's own, no framing, no
 # sniffing, and no referrer to another site.
 HEADERS = {
-    "Content-Security-Policy": "default-src 'self'; connect-src 'self'; frame-ancestors 'none'",
+    "Content-Security-Policy": (
+        "default-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'"
+    ),
     "Referrer-Policy": "same-origin",
     "X-Content-Type-Options": "nosniff",
 }
@@ -88,6 +90,21 @@ async def test_the_shell_is_served_at_ui(served: Harness) -> None:
     # (It is not hashed, so a new build is seen on the next load.)
     assert answer.headers["Cache-Control"] == "no-cache"
     assert_ui_headers(answer)
+
+
+async def test_the_content_security_policy_forbids_inline_code_and_allows_data_images(
+    served: Harness,
+) -> None:
+    # (The shell's styles and a plugin's are adopted stylesheets, never inline ones; daisyUI's
+    # own CSS draws its spinners as `data:` images, which the policy must let through.)
+    async with client_for(served) as client:
+        answer = await client.get("/ui/")
+
+    csp = answer.headers["content-security-policy"]
+    assert "unsafe-inline" not in csp
+    assert "unsafe-eval" not in csp
+    assert "default-src 'self'" in csp
+    assert "img-src 'self' data:" in csp
 
 
 async def test_a_client_route_answers_the_shell(served: Harness) -> None:

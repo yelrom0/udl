@@ -4606,11 +4606,12 @@ timeout: 5m
   a page that throws) — the page draws in a shadow root (its text is not in the shell's DOM), the stylesheet
   applies (`rgb(1, 2, 3)`), the `@property` is in `document.adoptedStyleSheets`, the wrapper's `data-theme` is
   the page's, the widget is on the dashboard, and `boom` is an error card with the shell still working.
-  **CSP, settled:** `udl serve` sends `default-src 'self'; connect-src 'self'; frame-ancestors 'none'`, and
-  under it an adopted `CSSStyleSheet` applies and a same-origin `import()` of a plugin's bundle runs: no
-  `style-src`/`script-src` relaxation is needed (Chromium, both themes). Firefox is not installed on this
-  machine, so its half was not run. A plugin's `@property` cannot be registered from its shadow root, hence
-  the hoist.
+  **CSP, settled:** `ui-plugins.spec.ts` asserts the page's answer carries udl's policy (`default-src 'self'`,
+  no `unsafe-inline`, no `unsafe-eval`), that no `securitypolicyviolation` fires, and that the plugin's
+  adopted style still computes (`rgb(1, 2, 3)`): adopted sheets hold under the CSP in Chromium; Firefox is
+  not installed here. The policy needed one widening — `img-src 'self' data:` — because daisyUI's own CSS
+  draws its spinners as `data:` images (found by the violation assertion). A plugin's `@property` cannot be
+  registered from its shadow root, hence the hoist.
 
 **18.10 The proof, and a template** · needs 18.9
 - Build:

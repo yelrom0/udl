@@ -29,7 +29,18 @@ test("a plugin's nav item is in the drawer, and its page draws in a shadow root"
 test("a plugin's stylesheet is adopted, its @property hoisted, and its theme the page's", async ({
 	page,
 }) => {
-	await page.goto("/ui/p/hello/hello");
+	// (What the CSP blocks, as the page itself says it: nothing here may trip it.)
+	await page.addInitScript(() => {
+		document.addEventListener("securitypolicyviolation", (event) => {
+			const body = document.body;
+			if (body !== null) {
+				body.dataset.cspViolations = `${body.dataset.cspViolations ?? ""}${event.violatedDirective} ${event.blockedURI}\n`;
+			}
+		});
+	});
+	const response = await page.goto("/ui/p/hello/hello");
+	const headers = response === null ? {} : await response.allHeaders();
+	const csp = headers["content-security-policy"] ?? "";
 	const theme = await page.evaluate(() => document.documentElement.dataset.theme);
 
 	const slot = page.locator(".udl-plugin-slot");
@@ -52,6 +63,13 @@ test("a plugin's stylesheet is adopted, its @property hoisted, and its theme the
 			}),
 		)
 		.toBe(`rgb(1, 2, 3)|${theme}|true`);
+
+	// (Settled by 18.9: udl's CSP allows no inline style, and a plugin's stylesheet is not one —
+	// it is adopted into the plugin's root, which the CSP does not govern.)
+	expect(csp).toContain("default-src 'self'");
+	expect(csp).not.toContain("unsafe-inline");
+	expect(csp).not.toContain("unsafe-eval");
+	expect(await page.evaluate(() => document.body.dataset.cspViolations ?? "")).toBe("");
 });
 
 test("a plugin's widget is on the dashboard", async ({ page }) => {
