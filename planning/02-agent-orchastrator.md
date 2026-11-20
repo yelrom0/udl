@@ -268,6 +268,64 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - Bump `SDK_VERSION`'s minor.
 - Tests first: `tests/unit/plugins/test_ui.py` (a `hide` glob matching nothing and an `operationViews` key naming no operation are problems, not errors); Vitest for precedence.
 - Done when: the template plugin (18.10) hides one operation and replaces one result view in six lines of manifest.
+- **Built (deepseek-a, 2026-11-21, PR #55):** `UIManifest.generated` — `nav` (a title and icon of its own,
+  or `false` for no drawer entry), `tabs`, `hide`, `groups`, `order`, `labels` — validated in
+  `udl/plugins/ui/base.py` (`guidance_problems`: a `hide` glob matching nothing and an `operationViews`
+  key naming no operation are **problems, not errors**, so a page still opens and says what its guidance
+  names that the plugin has not), served in `/ui/plugins.json` as `generated`, and read by the shell's
+  `generated/guidance.ts` (`guidanceOf`, merging every manifest in order — the last to say something wins
+  — then `guided()`, `tabsOfGuided`, `navOfGuided`). `SDK_VERSION` is 1.1.0 (the minor bump, with the
+  `@udl/ui-sdk` package and `manifest.schema.json`). The three points joined the closed set with the SDK's
+  prop types: `operationViews` (`{operation, schema, run}`), `resultViews` (`{operation, value}`) and
+  `fieldWidgets` (`{field, value, onChange}`); the generated page draws them through the same
+  `<PluginSlot>`, and `PluginPage` now takes `manifests` and `registry` (the `/p/$plugin/$` route passes
+  the plugins store, which it was not doing — the first e2e run is what found it). A field asks for a
+  plugin's widget with `x-udl-ui.widget`, so `FieldSpec` gained `asked` (the name, when it is not one of
+  udl's own) and `SchemaForm` prefers `widgets[asked]` over `widgets[field.widget]`. Precedence is stated
+  once in `docs/ui-plugins.md` (new; 21.4 grows it): what a plugin contributes replaces that part of the
+  generated page and everything else stays generated. Tests: `tests/unit/plugins/test_ui.py` (the
+  guidance is read whole, its problems, the drawer's `false`), Vitest `guidance.test.ts` (the merge, the
+  tabs, the labels, the groups, the order, the drawer), `PluginPage.test.tsx` (8 precedence tests: a
+  hidden operation gone, a label and a group applied, the tabs it names, the problems said, a contributed
+  operation panel / result view / settings panel / account setup drawn instead), `widgets.test.tsx`,
+  `schema.test.ts` and `SchemaForm.test.tsx` for `asked`, and e2e `generated.spec.ts` — "another plugin's
+  manifest guides the page (24.7)", both themes. **Done when, met:** `web/packages/template`'s manifest
+  hides one operation and contributes one result view in six lines (`"generated": {"hide": ["fake_ping"]}`
+  and `"resultViews": ["fake_count_things"]`), drawn by `src/resultView.tsx`. **Two things to know:** the
+  template is a UI-only plugin, so its guidance names the e2e fake's operations — the fake gained
+  `count_things` and `ping` for it (guidance names operations, and the page it guides is udl's); and
+  24.8's `generated-guided.spec.ts` is still the browser proof the phase card describes, with the shadcn
+  example's own `resultViews`. **Red first:** the Python guidance tests in `test_ui.py` and the Vitest
+  cases in `guidance.test.ts` were written before `guidance_problems` and `guidanceOf` and failed on
+  them; the template's `resultView` test came after the coverage gate named the file uncovered (it is
+  the test that found the gap, not one written with the design).
+
+- **Review round (deepseek-a, 2026-11-21, PR #55):** six items, all test-first. (1) A global
+  manifest's guidance reaches every page, so it is now checked against every operation udl knows and its
+  problems are served on the bundle: `UIPluginInfo.problems` (`list[str]`, from `guidance_problems`
+  against `ops.names()` for a UI-only bundle and the plugin's own for the others), `ui_plugins()` takes
+  the operations registry, and the Plugins page says each one under the bundle's "What it adds".
+  (2) `docs/ui-plugins.md` states whose page guidance reaches, that the plugin's own applies after a
+  UI-only one's, and that `sdk: ^1.1` is what a manifest needs for guidance. (3) A group two manifests
+  name now keeps both sets of members (`guidanceOf` appends rather than replaces). (4) The template's
+  `sdk` is `^1.1`. (5) A point that replaces one thing draws only the last contribution: `<PluginSlot
+  replace>`, on `operationViews`, `resultViews`, `settings`, `accountSetup` and `fieldWidgets`. (6)
+  `tabs: []` (what udl serves for a guidance that names none) means all of them, on both sides, and
+  `SettingsProps.save`'s doc says the shell leaves out a file-only field and an unchanged value. Tests:
+  `test_ui.py` (a UI-only bundle's guidance against another plugin's operation is no problem; a name
+  matching nothing is a problem on the bundle), `guidance.test.ts` (two manifests' members of one group;
+  an empty `tabs`), `slot.test.tsx` (the last of two contributions to a replacing point), `PluginList.test.tsx`
+  (the bundle's problems said) and `Settings.test.tsx` (a contributed panel's save sends only what
+  changed, never the file-only field or the secret's mask). **Second round** (three items from the
+  follow-up review, test-first again): (7) guidance is scoped as `docs/ui-plugins.md` says —
+  `guidanceOf(manifests, plugin)` keeps a bound manifest for its own plugin's page only and applies it
+  after the UI-only ones (so its labels and hides win), and `generatedNav` asks per plugin; (8) `replace`
+  with `match="prefix"` takes the exact key, then the longest wildcard, then the last registered
+  (`oneOf`), so a UI-only `resultViews: ["*"]` cannot take a plugin's own view; (9) the Built note above
+  says which tests ran red first. Tests: `guidance.test.ts` (a bound manifest's guidance reaches its
+  page only; its labels beat a UI-only one's; the UI-only ones come first), `nav.test.ts` (another
+  plugin's guidance leaves this one's entry) and `slot.test.tsx` (the exact key over `gmail_*` over `*`;
+  the longest wildcard when no key is exact).
 
 **24.8 Proof** · needs 24.7
 - Build: `web/e2e/generated-guided.spec.ts`: the shadcn example (18.10) gains a `resultViews` contribution for one fake operation; the rest of that plugin's page stays generated. Both themes.

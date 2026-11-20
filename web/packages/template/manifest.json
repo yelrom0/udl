@@ -1,13 +1,17 @@
 {
 	"name": "template",
 	"version": "0.1.0",
-	"sdk": "^1.0",
+	"sdk": "^1.1",
 	"entry": "index.js",
 	"styles": ["index.css"],
 	"isolation": "shadow",
 	"contributes": {
 		"nav": [{ "title": "Template", "route": "index" }],
 		"routes": ["index"],
-		"widgets": [{ "slot": "dashboard", "id": "template" }]
+		"widgets": [{ "slot": "dashboard", "id": "template" }],
+		"resultViews": ["fake_count_things"]
+	},
+	"generated": {
+		"hide": ["fake_ping"]
 	}
 }

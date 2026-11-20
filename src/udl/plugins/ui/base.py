@@ -14,6 +14,12 @@ points are a closed set, its entry and styles are files of its own folder, and i
 `^MAJOR.MINOR` range the shell's SDK has) and published as a JSON Schema
 (`python -m udl.plugins.ui --schema`), which `json-schema-to-typescript` turns into the TypeScript
 type the SDK is written against.
+
+Since 24.7 a manifest may also guide the page udl generates for its plugin (`generated`: which
+tabs stay, what to hide, regroup, rename and reorder, and its own drawer entry), and contribute
+three points that replace part of it (`operationViews`, `resultViews`, `fieldWidgets`). Guidance
+that names no operation is a problem, not an error: the bundle is still served, and the page
+ignores what matches nothing (`guidance_problems`).
 """
 
 # System Imports
@@ -21,6 +27,7 @@ import json
 import logging
 import re
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Final, Literal
@@ -33,7 +40,7 @@ from udl.errors import PluginError
 
 log = logging.getLogger(__name__)
 
-SDK_VERSION: Final = "1.0.0"
+SDK_VERSION: Final = "1.1.0"
 """The @udl/ui-sdk version the shell provides (`web/packages/sdk/package.json`'s)."""
 
 SCHEMA: Final = (
@@ -57,6 +64,10 @@ POINTS: Final = frozenset(
         "actionEditors",
         "widgets",
         "themes",
+        # (24.7: what a plugin replaces in the page udl generates.)
+        "operationViews",
+        "resultViews",
+        "fieldWidgets",
     }
 )
 """Every contribution point the shell has: a manifest naming another is a problem."""
@@ -91,6 +102,13 @@ class Widget(_Frozen):
     """Which of the plugin's widgets it is (what its entry's `widgets` is keyed by)."""
 
 
+TABS: Final = ("operations", "settings", "accounts", "events")
+"""The tabs a generated page has, in the order udl lists them."""
+
+Tab = Literal["operations", "settings", "accounts", "events"]
+"""One of them."""
+
+
 class Contributions(_Frozen):
     """What a bundle adds to the shell, by point (each a closed set: see POINTS)."""
 
@@ -112,6 +130,39 @@ class Contributions(_Frozen):
     """What it puts in the shell's slots."""
     themes: list[str] = Field(default_factory=list[str])
     """The daisyUI themes it adds."""
+    operation_views: list[str] = Field(default_factory=list[str], alias="operationViews")
+    """The operations whose panel it replaces (a mount of its own)."""
+    result_views: list[str] = Field(default_factory=list[str], alias="resultViews")
+    """The operations whose result it draws itself (a name, or a `*` prefix)."""
+    field_widgets: list[str] = Field(default_factory=list[str], alias="fieldWidgets")
+    """The field widgets it adds, by the name a field's `x-udl-ui.widget` asks for."""
+
+
+class GeneratedNav(_Frozen):
+    """What the drawer's entry for its plugin says, when the page is generated (24.7)."""
+
+    title: str = Field(min_length=1)
+    """What it says."""
+    icon: str | None = None
+    """The icon's name (the shell maps it to lucide's)."""
+
+
+class Generated(_Frozen):
+    """How a UI plugin guides the page udl generates for its plugin (24.7): everything here is
+    optional, and what it does not say stays as udl answered it."""
+
+    nav: GeneratedNav | Literal[False] | None = None
+    """Its drawer entry: a title and an icon of its own, or False for no entry."""
+    tabs: list[Tab] = Field(default_factory=list[Tab])
+    """Which tabs stay, in this order (all of them, as udl lists them, when this is empty)."""
+    hide: list[str] = Field(default_factory=list[str])
+    """The operations not to show (a name, or a `*` prefix: `gmail_send_*`)."""
+    groups: dict[str, list[str]] = Field(default_factory=dict[str, list[str]])
+    """The operations to move under a group of this name (the group's own order is the dict's)."""
+    order: list[str] = Field(default_factory=list[str])
+    """The operations to put first, in this order."""
+    labels: dict[str, str] = Field(default_factory=dict[str, str])
+    """What to call an operation, instead of its title."""
 
 
 class UIManifest(_Frozen):
@@ -131,6 +182,8 @@ class UIManifest(_Frozen):
     """`shadow` (its own root, the default) or `none` (light DOM, the shell's CSS)."""
     contributes: Contributions = Field(default_factory=Contributions)
     """What it adds to the shell."""
+    generated: Generated | None = None
+    """How it guides the page udl generates for its plugin (24.7)."""
 
 
 @dataclass(frozen=True)
@@ -194,10 +247,17 @@ class UIPluginInfo(_Frozen):
     """What it adds to the shell."""
     plugin: str | None = None
     """The plugin it belongs to (None for a UI-only plugin)."""
+    generated: Generated | None = None
+    """How it guides the page udl generates (24.7)."""
+    problems: list[str] = Field(default_factory=list[str])
+    """What its guidance names that no operation it reaches has (24.7): said, never fatal."""
 
     @classmethod
-    def of(cls, found: UIBundle, *, plugin: str | None) -> UIPluginInfo:
-        """`found`'s entry in the list, as the shell asks for it."""
+    def of(
+        cls, found: UIBundle, *, plugin: str | None, problems: Iterable[str] = ()
+    ) -> UIPluginInfo:
+        """`found`'s entry in the list, as the shell asks for it, and what its guidance names
+        that no operation it reaches has."""
         base = f"/ui/plugins/{found.name}/"
         return cls(
             name=found.name,
@@ -208,6 +268,8 @@ class UIPluginInfo(_Frozen):
             isolation=found.manifest.isolation,
             contributes=found.manifest.contributes,
             plugin=plugin,
+            generated=found.manifest.generated,
+            problems=list(problems),
         )
 
 
@@ -227,6 +289,48 @@ class UIPluginList(_Frozen):
     """The valid ones, by name."""
     problems: list[UIBundleProblem] = Field(default_factory=list[UIBundleProblem])
     """The bundles that failed their checks (they are not served)."""
+
+
+def guidance_problems(manifest: UIManifest, operations: Iterable[str]) -> list[str]:
+    """What `manifest`'s guidance names that `operations` have not: a `hide` that matches none,
+    or a label, a group, an order, an operation view or a result view for an operation it has
+    not. `operations` is its own plugin's, or (a UI-only bundle's, whose guidance every page
+    takes) every operation udl knows. They are problems, not errors: the bundle is still
+    served, and the page ignores what matches nothing."""
+    names = set(operations)
+    guidance = manifest.generated
+    contributes = manifest.contributes
+    problems: list[str] = []
+    if guidance is not None:
+        for pattern in guidance.hide:
+            if not any(matches(pattern, name) for name in names):
+                problems.append(f'its guidance hides "{pattern}", and no operation matches')
+        for what, named in [
+            ("labels", guidance.labels),
+            ("groups", [one for group in guidance.groups.values() for one in group]),
+            ("orders", guidance.order),
+        ]:
+            for name in named:
+                if name not in names:
+                    problems.append(_names_nothing(f"its guidance {what}", name))
+    for point, keys in [
+        ("operationViews", contributes.operation_views),
+        ("resultViews", contributes.result_views),
+    ]:
+        for key in keys:
+            if not any(matches(key, name) for name in names):
+                problems.append(_names_nothing(f"its {point} names", key))
+    return problems
+
+
+def matches(pattern: str, name: str) -> bool:
+    """Whether `pattern` names `name`: itself, or its prefix when it ends with `*`."""
+    return name.startswith(pattern[:-1]) if pattern.endswith("*") else pattern == name
+
+
+def _names_nothing(what: str, name: str) -> str:
+    """The problem of a guidance (or a point) that names no operation."""
+    return f'{what} "{name}", and it has no operation of that name'
 
 
 def _check_sdk(manifest: UIManifest, where: Path) -> None:

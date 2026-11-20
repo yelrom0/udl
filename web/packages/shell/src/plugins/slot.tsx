@@ -6,7 +6,7 @@
  */
 
 import type { Mount, UIPluginSpec } from "@udl/ui-sdk";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { ErrorCard } from "../components/ErrorCard";
 import { addError, plugins, type UIPluginInfo } from "../stores/plugins";
 import { shownTheme, theme as themeStore } from "../stores/theme";
@@ -29,6 +29,9 @@ const RECORDS: {
 	filterEditors: (spec) => spec.filterEditors,
 	actionEditors: (spec) => spec.actionEditors,
 	widgets: (spec) => spec.widgets,
+	operationViews: (spec) => spec.operationViews,
+	resultViews: (spec) => spec.resultViews,
+	fieldWidgets: (spec) => spec.fieldWidgets,
 };
 
 /** What a slot is told: the point, the props that point's contributions take, and how it is
@@ -43,6 +46,16 @@ export type PluginSlotProps<P extends Point> = {
 	readonly lookup?: string;
 	/** How a bundle is imported (the browser's `import()`, unless a test has its own). */
 	readonly importer?: Importer;
+	/** What to draw when nothing is registered for the key (the page's own, before 24.7). */
+	readonly fallback?: ReactNode;
+	/** How the key matches: itself (the default), or a manifest's `*` prefix too (24.7's
+	 * `resultViews`). */
+	readonly match?: "exact" | "prefix";
+	/** Draw only the last matching contribution: the point replaces one thing (24.7's operation
+	 * and result views, its settings and account panels, a field's widget), so two of them for
+	 * one key would draw two. The last one registered wins, as the last manifest to speak does
+	 * for guidance. */
+	readonly replace?: boolean;
 };
 
 /** `contribution`'s mount, from its plugin's bundle (imported once per bundle). */
@@ -195,6 +208,17 @@ function SlotItem<P extends Point>(props: {
 	return <Draw key={attempt} {...props} onFailure={setFailure} />;
 }
 
+/** The one of `found` that replaces the thing named `key`: an exact key first, then the longest
+ * wildcard that reaches it (`gmail_list_*` over `*`), then the last one registered. */
+function oneOf<P>(found: readonly Contribution<P>[], key: string): readonly Contribution<P>[] {
+	const exact = found.filter((one) => one.key === key);
+	if (exact.length > 0) {
+		return exact.slice(-1);
+	}
+	const longest = found.reduce((size, one) => Math.max(size, one.key.length), 0);
+	return found.filter((one) => one.key.length === longest).slice(-1);
+}
+
 /** What the shell's own contribution is, as the shape a mount's context takes. */
 function ownInfo<P>(contribution: Contribution<P>): UIPluginInfo {
 	return {
@@ -219,13 +243,18 @@ export function PluginSlot<P extends Point>({
 	registry = shellRegistry,
 	lookup,
 	importer,
+	fallback = null,
+	match = "exact",
+	replace = false,
 }: PluginSlotProps<P>) {
 	const { key, of } = keyOf(point, props, lookup);
-	const found = registry.point(point).at(key);
-	const chosen = of === undefined ? found : found.filter((one) => one.plugin.name === of);
+	const at = registry.point(point);
+	const found = match === "prefix" ? at.prefixed(key) : at.at(key);
+	const scoped = of === undefined ? found : found.filter((one) => one.plugin.name === of);
+	const chosen = replace ? oneOf(scoped, key) : scoped;
 
 	if (chosen.length === 0) {
-		return null;
+		return fallback;
 	}
 	return (
 		<ErrorBoundary>

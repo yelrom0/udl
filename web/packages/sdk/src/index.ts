@@ -11,8 +11,17 @@
  * and a plugin built with anything else (or plain DOM) writes a `Mount` itself.
  */
 
-export type { Contributions, NavItem, UIManifest, Widget } from "./manifest";
-export type { FieldOption, FieldSpec, FieldWidget } from "./schema";
+import type { FieldWidgetProps } from "./schema";
+
+export type {
+	Contributions,
+	Generated,
+	GeneratedNav,
+	NavItem,
+	UIManifest,
+	Widget,
+} from "./manifest";
+export type { FieldOption, FieldSpec, FieldWidget, FieldWidgetProps } from "./schema";
 export {
 	fieldsOf,
 	fieldWidgets,
@@ -24,7 +33,7 @@ export {
 } from "./schema";
 
 /** The SDK's version: what a manifest's `sdk` range (`^MAJOR.MINOR`) is checked against. */
-export const version = "1.0.0";
+export const version = "1.1.0";
 
 /** JSON, as the API sends it. */
 export type JsonValue =
@@ -114,7 +123,10 @@ export type SettingsProps = {
 	plugin: string;
 	/** What `get_plugin_settings` answers: the values, where each comes from, and their schema. */
 	info: JsonObject;
-	/** Saves the values (a secret's goes to the secret store, never to a database). */
+	/** Saves these values (a secret's goes to the secret store, never to a database). The shell
+	 * leaves out what must not be sent, as its own form does: a field `info.file_only` names
+	 * (udl refuses it, and it is the config file's), and a value it did not change (a secret it
+	 * gave as a mask). */
 	save(values: JsonObject): Promise<void>;
 };
 
@@ -160,6 +172,36 @@ export type WidgetProps = {
 	plugin: PluginIdentity;
 };
 
+/** An operation, as a UI plugin that replaces part of its page is shown it (24.7). */
+export type GuidedOperation = {
+	/** Its name (the API's operationId). */
+	name: string;
+	title: string;
+	summary: string;
+	/** Where it opens: a list runs itself, a form waits for Run. */
+	view: "list" | "detail" | "form" | "action";
+	/** What it does to the world (udl's hints: read-only, destructive, admin...). */
+	hints: Readonly<Record<string, boolean>>;
+};
+
+/** An operation's panel, replaced by a plugin's own (`operationViews`, 24.7). */
+export type OperationViewProps = {
+	/** The operation it stands for. */
+	operation: GuidedOperation;
+	/** Its request's JSON Schema (what a form would be drawn from). */
+	schema: JsonValue;
+	/** Runs it with these values, and answers what udl answered. */
+	run(values: JsonObject): Promise<JsonValue>;
+};
+
+/** An operation's result, drawn by a plugin of its own (`resultViews`, 24.7). */
+export type ResultViewProps = {
+	/** The operation whose result this is. */
+	operation: GuidedOperation;
+	/** What it answered. */
+	value: JsonValue;
+};
+
 /** What a UI plugin's entry exports: its contributions, by point. */
 export type UIPluginSpec = {
 	routes?: Record<string, Mount<RouteProps>>;
@@ -169,6 +211,12 @@ export type UIPluginSpec = {
 	filterEditors?: Record<string, Mount<FilterEditorProps>>;
 	actionEditors?: Record<string, Mount<ActionEditorProps>>;
 	widgets?: Record<string, Mount<WidgetProps>>;
+	/** The operations whose panel it replaces (its manifest's `operationViews`, 24.7). */
+	operationViews?: Record<string, Mount<OperationViewProps>>;
+	/** The operations whose result it draws (its manifest's `resultViews`, a `*` prefix too). */
+	resultViews?: Record<string, Mount<ResultViewProps>>;
+	/** Its field widgets, by the name a field's `x-udl-ui.widget` asks for (24.7). */
+	fieldWidgets?: Record<string, Mount<FieldWidgetProps>>;
 };
 
 /**

@@ -90,6 +90,8 @@ export interface GeneratedPlugin {
 	readonly accounts: GeneratedAccounts | null;
 	/** The event types it publishes. */
 	readonly event_types: readonly string[];
+	/** What its UI plugin's guidance names that it has not (24.7): said, never fatal. */
+	readonly problems?: readonly string[];
 }
 
 /** Everything the page generates from: udl's own operations, then each plugin's. */
@@ -163,7 +165,8 @@ function isPlugin(value: unknown): value is GeneratedPlugin {
 		value.operations.every(isOperation) &&
 		(value.settings === null || isForm(value.settings)) &&
 		(value.accounts === null || isAccounts(value.accounts)) &&
-		isStringArray(value.event_types)
+		isStringArray(value.event_types) &&
+		(value.problems === undefined || isStringArray(value.problems))
 	);
 }
 
@@ -180,8 +183,16 @@ export function pluginNamed(ui: GeneratedUI, name: string): GeneratedPlugin | un
 	return ui.plugins.find((plugin) => plugin.name === name);
 }
 
-/** The operations a page shows: not the hidden ones, in their groups. */
-export function groupsOf(plugin: GeneratedPlugin): readonly OperationGroup[] {
+/**
+ * The operations a page shows: not the hidden ones, in their groups.
+ *
+ * `groupOrder` is the order the page's guidance asks for (`Mail` before `Drafts`, 24.7): a group
+ * it does not name comes after, by name.
+ */
+export function groupsOf(
+	plugin: GeneratedPlugin,
+	groupOrder: readonly string[] = [],
+): readonly OperationGroup[] {
 	const shown = plugin.operations.filter((operation) => !operation.ui.hidden);
 	const groups = new Map<string | null, GeneratedOperation[]>();
 	for (const operation of shown) {
@@ -194,11 +205,16 @@ export function groupsOf(plugin: GeneratedPlugin): readonly OperationGroup[] {
 	}
 	// (The ungrouped operations first — a plugin's own, before a group's — then the groups by
 	// name; each in `order`, then by title, as the card says.)
+	// (A group the guidance does not name comes after the ones it does, by name.)
+	const asked = (name: string): number => {
+		const at = groupOrder.indexOf(name);
+		return at === -1 ? groupOrder.length : at;
+	};
 	const ordered = [...groups.entries()].sort(([left], [right]) => {
 		if (left === right) return 0;
 		if (left === null) return -1;
 		if (right === null) return 1;
-		return left.localeCompare(right);
+		return asked(left) - asked(right) || left.localeCompare(right);
 	});
 	return ordered.map(([group, operations]) => ({
 		group,

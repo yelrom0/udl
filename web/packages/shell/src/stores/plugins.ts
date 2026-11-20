@@ -4,7 +4,7 @@
  * load in this browser.
  */
 
-import type { Contributions } from "@udl/ui-sdk";
+import type { Contributions, Generated } from "@udl/ui-sdk";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import { ownNav } from "../plugins/own";
@@ -25,6 +25,10 @@ export interface UIPluginInfo {
 	readonly contributes: Contributions;
 	/** The plugin it belongs to (`null` for a UI-only plugin). */
 	readonly plugin: string | null;
+	/** How it guides the page udl generates for its plugin (24.7); absent when it does not. */
+	readonly generated?: Generated | null;
+	/** What its guidance names that no operation it reaches has (24.7): said, never fatal. */
+	readonly problems?: readonly string[];
 }
 
 /** A bundle udl refused: where it was, and what was wrong with it. */

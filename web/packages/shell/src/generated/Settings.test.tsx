@@ -11,7 +11,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { components } from "@udl/api";
 import { FakeUdl } from "@udl/api/testing";
-import { describe, expect, it } from "vitest";
+import type { JsonObject } from "@udl/ui-sdk";
+import { act } from "react";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { Registry } from "../plugins/registry";
+import { startFakingMatchMedia, stopFakingMatchMedia } from "../test-setup";
 import { SettingsTab } from "./Settings";
 import type { GeneratedPlugin } from "./spec";
 
@@ -59,6 +63,15 @@ function info(): components["schemas"]["PluginSettingsInfo"] {
 	};
 }
 
+beforeEach(() => {
+	// (A contribution is drawn in a slot, which asks the theme what to draw it as.)
+	startFakingMatchMedia();
+});
+
+afterEach(() => {
+	stopFakingMatchMedia();
+});
+
 describe("a plugin's settings", () => {
 	it("draws the form udl's schema says, its file-only field set elsewhere", async () => {
 		const fake = new FakeUdl().handle("get_plugin_settings", () => info());
@@ -101,6 +114,49 @@ describe("a plugin's settings", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
 		await waitFor(() => expect(sent).not.toBeNull());
+		expect(sent).toEqual({ values: { label: "inbox" } });
+	});
+
+	it("gives a contributed panel the save, and sends only what it changed", async () => {
+		// (The panel draws its own form, so it is the shell that leaves out the file-only field
+		// and the secret's mask, as its own form does: udl refuses the first and would store
+		// the mask as the secret.)
+		const fake = new FakeUdl().handle("get_plugin_settings", () => ({
+			...info(),
+			values: {
+				client_id: "the-one-the-config-file-sets",
+				label: "the inbox",
+				token: "********",
+			},
+		}));
+		let sent: unknown = null;
+		fake.handle("set_plugin_settings", ({ body }) => {
+			sent = body;
+			return info();
+		});
+		const given: { save?: (values: JsonObject) => Promise<void> } = {};
+		const registry = new Registry();
+		registry.point("settings").add("gmail", {
+			plugin: { name: "gmail", version: "0.1.0", baseUrl: "/ui/plugins/gmail/" },
+			key: "gmail",
+			entry: "gmail",
+			mount: (_target, props) => {
+				given.save = props.save;
+				return { update: () => {}, unmount: () => {} };
+			},
+		});
+
+		render(<SettingsTab plugin={plugin()} api={fake.api()} registry={registry} />);
+
+		await waitFor(() => expect(given.save).toBeDefined());
+		await act(async () => {
+			await given.save?.({
+				client_id: "the-one-the-config-file-sets",
+				label: "inbox",
+				token: "********",
+			});
+		});
+
 		expect(sent).toEqual({ values: { label: "inbox" } });
 	});
 

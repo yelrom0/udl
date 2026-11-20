@@ -12,10 +12,13 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import type { components, UdlApi } from "@udl/api";
 import { FakeUdl } from "@udl/api/testing";
 import type { JsonObject } from "@udl/ui-sdk";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfirmHost } from "../components/ConfirmHost";
+import { type Point, type Points, Registry } from "../plugins/registry";
 import { confirms } from "../stores/confirms";
 import { generated, setGenerated } from "../stores/generated";
+import type { UIPluginInfo } from "../stores/plugins";
+import { startFakingMatchMedia, stopFakingMatchMedia } from "../test-setup";
 import { PluginPage } from "./PluginPage";
 import type { GeneratedOperation, GeneratedPlugin, GeneratedUISpec } from "./spec";
 
@@ -122,6 +125,72 @@ function draw(one: GeneratedPlugin, fake = new FakeUdl(), api?: UdlApi) {
 	render(
 		<>
 			<PluginPage plugin={one} api={api ?? fake.api()} />
+			<ConfirmHost />
+		</>,
+	);
+	return fake;
+}
+
+/** A UI plugin's identity, as a contribution is registered under one. */
+const IDENTITY = { name: "templar", version: "0.1.0", baseUrl: "/ui/plugins/templar/" };
+
+/** Register a contribution at `point`, drawn by `mount`, in `registry` (24.7). */
+function add<P extends Point>(
+	registry: Registry,
+	point: P,
+	key: string,
+	mount: (target: HTMLElement, props: Points[P]) => { update(): void; unmount(): void },
+): Registry {
+	registry.point(point).add(key, { plugin: IDENTITY, key, mount });
+	return registry;
+}
+
+/** A mount that writes `said(props)` into the page, so a test reads what it was given. */
+function saying<P extends Point>(said: (props: Points[P]) => string) {
+	return (target: HTMLElement, props: Points[P]) => {
+		target.textContent = said(props);
+		return { update: () => undefined, unmount: () => undefined };
+	};
+}
+
+/** A UI plugin as `/ui/plugins.json` lists it, with `generated` as its guidance. */
+function ui(
+	generated: NonNullable<UIPluginInfo["generated"]>,
+	plugin: string | null = null,
+): UIPluginInfo {
+	return {
+		name: "templar",
+		version: "0.1.0",
+		base_url: "/ui/plugins/templar/",
+		entry_url: "/ui/plugins/templar/index.js",
+		styles: [],
+		isolation: "shadow",
+		contributes: {},
+		plugin,
+		generated,
+	};
+}
+
+/** Draw `one`'s page with the guidance and contributions a UI plugin gives it (24.7). */
+function drawGuided(
+	one: GeneratedPlugin,
+	options: {
+		readonly manifests?: readonly UIPluginInfo[];
+		readonly registry?: Registry;
+		readonly api?: UdlApi;
+		readonly fake?: FakeUdl;
+	} = {},
+) {
+	const fake = options.fake ?? new FakeUdl();
+	setGenerated({ plugins: [one] }, null);
+	render(
+		<>
+			<PluginPage
+				plugin={one}
+				api={options.api ?? fake.api()}
+				manifests={options.manifests ?? []}
+				registry={options.registry ?? new Registry()}
+			/>
 			<ConfirmHost />
 		</>,
 	);
@@ -583,5 +652,157 @@ describe("a plugin's generated page", () => {
 			"operations",
 			"events",
 		]);
+	});
+});
+
+describe("a page its UI plugin guides (24.7)", () => {
+	// (A contribution's context asks the OS which theme it is; jsdom has no `matchMedia`.)
+	beforeEach(startFakingMatchMedia);
+	afterEach(stopFakingMatchMedia);
+
+	it("hides the operation its guidance hides", () => {
+		drawGuided(
+			plugin({
+				operations: [
+					operation("fake_list_things", { title: "List the things" }),
+					operation("fake_ping", { title: "Ping" }),
+				],
+			}),
+			{ manifests: [ui({ hide: ["fake_ping"] })] },
+		);
+
+		expect(screen.getByText("List the things")).toBeDefined();
+		expect(screen.queryByText("Ping")).toBeNull();
+	});
+
+	it("calls an operation what it says, and puts it in the group it says", () => {
+		drawGuided(plugin({ operations: [operation("fake_list_things", { title: "List" })] }), {
+			manifests: [
+				ui({ labels: { fake_list_things: "Inbox" }, groups: { Mail: ["fake_list_things"] } }),
+			],
+		});
+
+		expect(screen.getByText("Inbox")).toBeDefined();
+		expect(screen.getByRole("heading", { level: 3, name: "Mail" })).toBeDefined();
+	});
+
+	it("keeps only the tabs it names, in its order", () => {
+		drawGuided(
+			plugin({
+				operations: [operation("fake_list_things")],
+				settings: { json_schema: {}, read_only: [], secret: [] },
+			}),
+			{ manifests: [ui({ tabs: ["settings"] }, "fakes")] },
+		);
+
+		expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["settings"]);
+	});
+
+	it("says what its guidance names that the plugin has not", () => {
+		drawGuided(
+			plugin({
+				operations: [operation("fake_list_things")],
+				problems: ['its guidance hides "fake_nope", and no operation matches'],
+			}),
+		);
+
+		expect(screen.getByRole("alert").textContent).toContain(
+			'its guidance hides "fake_nope", and no operation matches',
+		);
+	});
+
+	it("draws the operation's panel itself when it has one", () => {
+		const registry = add(
+			new Registry(),
+			"operationViews",
+			"fake_list_things",
+			saying<"operationViews">(
+				(props) => `own panel for ${props.operation.name} of ${props.operation.view}`,
+			),
+		);
+		drawGuided(plugin({ operations: [operation("fake_list_things")] }), { registry });
+
+		return waitFor(() => {
+			expect(screen.getByText("own panel for fake_list_things of list")).toBeDefined();
+			// (udl's own form and Run are not drawn at all.)
+			expect(screen.queryByRole("button", { name: "Run" })).toBeNull();
+		});
+	});
+
+	it("draws the result itself when it has a view for it", async () => {
+		const fake = new FakeUdl();
+		const api: UdlApi = {
+			...fake.api(),
+			callAt: () => Promise.resolve([{ name: "one" }]),
+		};
+		const registry = add(
+			new Registry(),
+			"resultViews",
+			"fake_list_things",
+			saying<"resultViews">((props) => `own result of ${props.operation.name}`),
+		);
+		drawGuided(
+			plugin({
+				operations: [
+					operation("fake_list_things", {
+						title: "List the things",
+						method: "POST",
+						path: "/integrations/fake/list_things",
+						response_schema: tableSchema("fakes"),
+					}),
+				],
+			}),
+			{ registry, api },
+		);
+
+		expect(await screen.findByText("own result of fake_list_things")).toBeDefined();
+		// (24.5's table is not drawn for it.)
+		expect(screen.queryByText("one")).toBeNull();
+	});
+
+	it("draws its own settings panel instead of the generated form", async () => {
+		const registry = add(
+			new Registry(),
+			"settings",
+			"fakes",
+			saying<"settings">((props) => `own settings of ${props.plugin}`),
+		);
+		const fake = new FakeUdl();
+		fake.handle("get_plugin_settings", () => ({
+			name: "fakes",
+			kind: "udl.integrations",
+			json_schema: { type: "object", properties: {} },
+			values: {},
+			sources: {},
+			file_only: [],
+			secrets: [],
+		}));
+		drawGuided(plugin({ settings: { json_schema: {}, read_only: [], secret: [] } }), {
+			registry,
+			fake,
+		});
+		await screen.findByRole("tab", { name: "settings" }).then((tab) => tab.click());
+
+		expect(await screen.findByText("own settings of fakes")).toBeDefined();
+		expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+	});
+
+	it("draws its own account setup instead of the generated form", async () => {
+		const registry = add(
+			new Registry(),
+			"accountSetup",
+			"fakes",
+			saying<"accountSetup">((props) => `own setup for ${props.integration}`),
+		);
+		drawGuided(
+			plugin({
+				accounts: { connect: ["tokens"], access_levels: ["read"], options_schema: {} },
+			}),
+			{ registry },
+		);
+		await screen.findByRole("tab", { name: "accounts" }).then((tab) => tab.click());
+
+		expect(await screen.findByText("own setup for fakes")).toBeDefined();
+		expect(screen.queryByText("Connect an account")).toBeNull();
 	});
 });

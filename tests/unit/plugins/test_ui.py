@@ -18,13 +18,21 @@ from typing import Any, Final
 import pytest
 
 # Local Imports
+from support.actions import with_chores
 from support.api import client_for
 from support.engine import settings
 from support.interfaces import Harness
 from udl.config import WebSettings
 from udl.errors import PluginError
 from udl.plugins.registry import UI, PluginRegistry
-from udl.plugins.ui import SDK_VERSION, UIBundle, UIManifest, UIPlugin
+from udl.plugins.ui import (
+    SDK_VERSION,
+    GeneratedNav,
+    UIBundle,
+    UIManifest,
+    UIPlugin,
+    guidance_problems,
+)
 from udl.plugins.ui.discovery import ui_plugins
 
 MANIFEST: Final[dict[str, Any]] = {
@@ -80,6 +88,9 @@ def test_the_points_are_the_manifest_s_and_a_closed_set(tmp_path: Path) -> None:
                 "actionEditors": [],
                 "widgets": [{"slot": "dashboard", "id": "unread"}],
                 "themes": ["gmail-dark"],
+                "operationViews": ["gmail_list"],
+                "resultViews": ["gmail_*"],
+                "fieldWidgets": ["rating"],
             },
         )
     )
@@ -87,6 +98,10 @@ def test_the_points_are_the_manifest_s_and_a_closed_set(tmp_path: Path) -> None:
     assert found.manifest.contributes.event_views == ["gmail.*"]
     assert found.manifest.contributes.account_setup == ["gmail"]
     assert [widget.id for widget in found.manifest.contributes.widgets] == ["unread"]
+    # (24.7's three: what replaces a generated panel, a result, and a field.)
+    assert found.manifest.contributes.operation_views == ["gmail_list"]
+    assert found.manifest.contributes.result_views == ["gmail_*"]
+    assert found.manifest.contributes.field_widgets == ["rating"]
 
 
 def test_a_point_the_shell_does_not_know_is_a_problem(tmp_path: Path) -> None:
@@ -96,7 +111,7 @@ def test_a_point_the_shell_does_not_know_is_a_problem(tmp_path: Path) -> None:
         of(folder)
 
 
-@pytest.mark.parametrize("sdk", ["^2.0", "^1.1", "1.0", ">=1.0", "^0.9"])
+@pytest.mark.parametrize("sdk", ["^2.0", "^1.2", "1.0", ">=1.0", "^0.9"])
 def test_an_sdk_range_the_shell_does_not_have_is_a_problem(tmp_path: Path, sdk: str) -> None:
     folder = bundle(tmp_path, sdk=sdk)
 
@@ -104,7 +119,7 @@ def test_an_sdk_range_the_shell_does_not_have_is_a_problem(tmp_path: Path, sdk: 
         of(folder)
 
 
-@pytest.mark.parametrize("sdk", ["^1.0", "^1.0.0", "^1.0.7"])
+@pytest.mark.parametrize("sdk", ["^1.0", "^1.0.0", "^1.0.7", "^1.1"])
 def test_an_sdk_range_the_shell_has_is_taken(tmp_path: Path, sdk: str) -> None:
     assert of(bundle(tmp_path, sdk=sdk)).manifest.sdk == sdk
 
@@ -143,6 +158,108 @@ def test_a_manifest_that_is_not_json_is_a_problem(tmp_path: Path) -> None:
 def test_an_isolation_the_shell_does_not_do_is_a_problem(tmp_path: Path) -> None:
     with pytest.raises(PluginError, match="isolation"):
         of(bundle(tmp_path, isolation="iframe"))
+
+
+# ---------------------------------------------------------------------------------------------
+# How it guides the page udl generates (24.7)
+# ---------------------------------------------------------------------------------------------
+
+
+def test_guidance_is_read_whole(tmp_path: Path) -> None:
+    found = of(
+        bundle(
+            tmp_path,
+            generated={
+                "nav": {"title": "Mail", "icon": "mail"},
+                "tabs": ["accounts", "operations"],
+                "hide": ["gmail_send_*"],
+                "groups": {"Mail": ["gmail_list"]},
+                "order": ["gmail_list"],
+                "labels": {"gmail_list": "Inbox"},
+            },
+        )
+    )
+
+    guidance = found.manifest.generated
+    assert guidance is not None
+    assert isinstance(guidance.nav, GeneratedNav)
+    assert (guidance.nav.title, guidance.nav.icon) == ("Mail", "mail")
+    assert guidance.tabs == ["accounts", "operations"]
+    assert guidance.hide == ["gmail_send_*"]
+    assert guidance.groups == {"Mail": ["gmail_list"]}
+    assert guidance.order == ["gmail_list"]
+    assert guidance.labels == {"gmail_list": "Inbox"}
+
+
+def test_a_manifest_without_guidance_has_none(tmp_path: Path) -> None:
+    assert of(bundle(tmp_path)).manifest.generated is None
+
+
+def test_guidance_can_turn_the_drawer_s_entry_off(tmp_path: Path) -> None:
+    # (A UI plugin that brings no nav of its own, and whose page should not be in the drawer.)
+    found = of(bundle(tmp_path, generated={"nav": False}))
+
+    assert found.manifest.generated is not None
+    assert found.manifest.generated.nav is False
+
+
+def test_a_tab_the_page_does_not_have_is_a_problem(tmp_path: Path) -> None:
+    with pytest.raises(PluginError, match="tabs"):
+        of(bundle(tmp_path, generated={"tabs": ["inbox"]}))
+
+
+def test_a_guidance_field_the_shell_does_not_know_is_a_problem(tmp_path: Path) -> None:
+    with pytest.raises(PluginError, match="generated"):
+        of(bundle(tmp_path, generated={"sidebar": True}))
+
+
+def test_guidance_that_names_nothing_is_a_problem_not_an_error(tmp_path: Path) -> None:
+    # (A typo in guidance is said, not refused: the bundle is still served, and the page ignores
+    # what matches no operation.)
+    found = of(
+        bundle(
+            tmp_path,
+            generated={
+                "hide": ["gmail_send_*"],
+                "labels": {"gmail_sned": "Sent"},
+                "groups": {"Mail": ["gmail_sned"]},
+                "order": ["gmail_sned"],
+            },
+            contributes={"operationViews": ["gmail_sned"], "resultViews": ["gmail_sned"]},
+        )
+    )
+
+    assert guidance_problems(found.manifest, ["gmail_list", "gmail_send"]) == [
+        'its guidance hides "gmail_send_*", and no operation matches',
+        'its guidance labels "gmail_sned", and it has no operation of that name',
+        'its guidance groups "gmail_sned", and it has no operation of that name',
+        'its guidance orders "gmail_sned", and it has no operation of that name',
+        'its operationViews names "gmail_sned", and it has no operation of that name',
+        'its resultViews names "gmail_sned", and it has no operation of that name',
+    ]
+
+
+def test_guidance_that_names_an_operation_is_no_problem(tmp_path: Path) -> None:
+    found = of(
+        bundle(
+            tmp_path,
+            generated={
+                "hide": ["gmail_send", "gmail_send_*"],
+                "labels": {"gmail_list": "Inbox"},
+                "groups": {"Mail": ["gmail_list"]},
+                "order": ["gmail_list"],
+            },
+            contributes={"operationViews": ["gmail_list"], "resultViews": ["gmail_send_*"]},
+        )
+    )
+
+    # (A `*` is a prefix: `gmail_send_*` names `gmail_send_all`, and `gmail_send` itself is named
+    # by its own name.)
+    assert guidance_problems(found.manifest, ["gmail_list", "gmail_send", "gmail_send_all"]) == []
+
+
+def test_a_manifest_without_guidance_has_no_problems(tmp_path: Path) -> None:
+    assert guidance_problems(of(bundle(tmp_path)).manifest, []) == []
 
 
 # ---------------------------------------------------------------------------------------------
@@ -218,6 +335,51 @@ def test_a_ui_only_plugin_is_named_after_its_manifest(tmp_path: Path) -> None:
     assert [plugin.name for plugin in found.plugins] == ["mailbox"]
 
 
+async def test_a_ui_only_bundle_s_guidance_is_checked_against_every_operation(
+    tmp_path: Path,
+) -> None:
+    """Its guidance reaches every page, so it is checked against every operation udl knows: a
+    hide that names another plugin's operation is no problem, one that names nothing is said on
+    the bundle (which is still served)."""
+    harness = with_chores(
+        Harness(
+            tmp_path,
+            web=WebSettings(
+                ui_plugin_dirs=[
+                    bundle(tmp_path, name="mailbox", generated={"hide": ["chores_nope"]}).parent
+                ]
+            ),
+        )
+    )
+
+    async with client_for(harness) as client:
+        answer = await client.get("/ui/plugins.json")
+
+    [plugin] = answer.json()["plugins"]
+    assert plugin["problems"] == ['its guidance hides "chores_nope", and no operation matches']
+
+
+async def test_a_ui_only_bundle_that_hides_another_plugin_s_operation_is_no_problem(
+    tmp_path: Path,
+) -> None:
+    harness = with_chores(
+        Harness(
+            tmp_path,
+            web=WebSettings(
+                ui_plugin_dirs=[
+                    bundle(tmp_path, name="mailbox", generated={"hide": ["chores_do"]}).parent
+                ]
+            ),
+        )
+    )
+
+    async with client_for(harness) as client:
+        answer = await client.get("/ui/plugins.json")
+
+    [plugin] = answer.json()["plugins"]
+    assert plugin["problems"] == []
+
+
 # ---------------------------------------------------------------------------------------------
 # The list, and the plugins that have one
 # ---------------------------------------------------------------------------------------------
@@ -233,6 +395,20 @@ async def test_the_api_lists_the_ui_plugins(tmp_path: Path) -> None:
     [plugin] = answer.json()["plugins"]
     assert (plugin["name"], plugin["entry_url"]) == ("gmail", "/ui/plugins/gmail/index.js")
     assert answer.json()["problems"] == []
+
+
+async def test_the_api_lists_the_guidance_a_bundle_gives(tmp_path: Path) -> None:
+    # (The shell reads the guidance from here, beside the page udl generates.)
+    folder = bundle(tmp_path, generated={"nav": False, "tabs": ["operations"]})
+    harness = Harness(tmp_path, web=WebSettings(ui_plugin_dirs=[folder.parent]))
+
+    async with client_for(harness) as client:
+        answer = await client.get("/ui/plugins.json")
+
+    guidance = answer.json()["plugins"][0]["generated"]
+    assert guidance["nav"] is False
+    assert guidance["tabs"] == ["operations"]
+    assert (guidance["hide"], guidance["labels"]) == ([], {})
 
 
 async def test_a_plugins_bundle_is_served(tmp_path: Path) -> None:
