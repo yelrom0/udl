@@ -66,6 +66,7 @@ __all__ = [
     "FinishActionRequest",
     "Gate",
     "GateArg",
+    "GateRun",
     "GitHubAccount",
     "GitHubSlug",
     "HostName",
@@ -79,10 +80,13 @@ __all__ = [
     "MyTaskResponse",
     "NoteKind",
     "OwnerKind",
+    "PrStatusRequest",
     "Principal",
     "Project",
     "Promotion",
     "PullState",
+    "PushRequest",
+    "PushResult",
     "QueueEntry",
     "QueueRequest",
     "ReorderQueueRequest",
@@ -719,6 +723,46 @@ class QueueEntry(_Model):
     """The repo it is done in, or None."""
 
 
+class PushRequest(_Model):
+    """Push a task's work (27.5): its branch to origin, then its pull request."""
+
+    key: Key
+    """The task whose work it is."""
+    title: Title | None = None
+    """The pull's title (None: the task's own)."""
+    body: Text | None = None
+    """What the pull says, as markdown (the task's key is added to it)."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class GateRun(_Model):
+    """The gate a push ran: how it ended, and the end of what it printed."""
+
+    exit_code: int
+    """Its exit code (0: it passed, which is the only way a push goes on)."""
+    output: str
+    """The last of its output (the end, which is where a failure says why)."""
+    seconds: float
+    """How long it took, in seconds."""
+
+
+class PushResult(_Model):
+    """What a push did: the branch it pushed, the gate it passed, and the pull it opened (or
+    updated)."""
+
+    project: Name
+    """The project the task is of."""
+    key: Key
+    """The task whose work it is."""
+    branch: BranchName
+    """The branch it pushed."""
+    gate: GateRun
+    """The gate it passed first."""
+    pull: str
+    """The pull request's URL."""
+
+
 class TaskQueue(_Model):
     """One agent's queue: the tasks it is on, in the order it works them."""
 
@@ -907,7 +951,14 @@ class Readiness(_Model):
     blockers: list[str] = Field(default_factory=list[str])
     """Why it may not be merged, in the order a person would look at them (empty: it may)."""
     open_items: list[ReviewItem] = Field(default_factory=list[ReviewItem])
-    """The review bot's items that are not fixed, for the task's note."""
+    """The review bot's items it still lists as open (empty: nothing)."""
+    waited: float = 0.0
+    """How long the answer waited for GitHub's checks and the review bot, in seconds (0: it did
+    not: `orch_pr_status` without `wait`, 27.5)."""
+    pending: list[str] = Field(default_factory=list[str])
+    """The blockers that are only a matter of time (the checks still running, the review bot not
+    done with this head, GitHub not knowing yet): what a wait can change, and the rest of
+    `blockers` cannot (27.5)."""
 
 
 class ReadinessRequest(_Model):
@@ -915,6 +966,21 @@ class ReadinessRequest(_Model):
 
     key: Key
     """The task whose pull is asked about (`27.6`)."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class PrStatusRequest(_Model):
+    """Asking whether a task's pull is ready, and holding until it is (27.5)."""
+
+    key: Key
+    """The task whose pull is asked about."""
+    wait: bool = False
+    """Whether to hold until GitHub's checks and the review bot have finished with this head
+    (an answer that is not ready for another reason comes at once: waiting would not change
+    it)."""
+    minutes: PositiveInt | None = None
+    """How long the wait may take, in minutes (None: orch's `wait_minutes`)."""
     project: Name | None = None
     """The project it is in (None: the only one, while udl has one)."""
 

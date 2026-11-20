@@ -216,15 +216,22 @@ class HostShell(Protocol):
         stdin: bytes | None = None,
         within: timedelta | None = None,
         cancel: CancelToken | None = None,
+        check: bool = True,
+        tail: bool = False,
     ) -> Awaitable[ProcessResult]:
         """Run a program to completion: its exit code and what it printed (the start of its
-        stdout and the end of its stderr, when it printed more than udl keeps).
+        stdout and the end of its stderr, when it printed more than udl keeps; with `tail`, the
+        end of its stdout too).
 
         `cwd` is the folder it runs in, `env` its environment (over the host's), `secret_env`
         secrets for its environment (never in an argv), `stdin` what it reads, `within` how long
-        it gets, and `cancel` a CancelToken that stops it. Raises ToolUnavailable when it is not
-        installed, PluginFailed when it exits with an error, Cancelled when it is stopped, and
-        TimeoutError when it runs past the time it gets."""
+        it gets, `cancel` a CancelToken that stops it, `check` whether a non-zero exit is an
+        error (False: its code and output come back, for a caller that reads a failure as an
+        answer — a repo's gate, 27.5), and `tail` whether to keep the end of its stdout rather
+        than the start (what such a caller reads: a failure says it at the end). Raises
+        ToolUnavailable when it is not installed, PluginFailed when it exits with an error and
+        `check` is set, Cancelled when it is stopped, and TimeoutError when it runs past the
+        time it gets."""
         ...
 
     def stream(
@@ -685,14 +692,21 @@ class LocalShell:
         stdin: bytes | None = None,
         within: timedelta | None = None,
         cancel: CancelToken | None = None,
+        check: bool = True,
+        tail: bool = False,
     ) -> Awaitable[ProcessResult]:
-        return self._run(_command(argv, cwd, env, secret_env, stdin), within, cancel)
+        return self._run(
+            _command(argv, cwd, env, secret_env, stdin), within, cancel, check=check, tail=tail
+        )
 
     async def _run(
         self,
         command: Command,
         within: timedelta | None,
         cancel: CancelToken | None,
+        *,
+        check: bool = True,
+        tail: bool = False,
     ) -> ProcessResult:
         _check_cwd(command)
         result = await _timed(
@@ -704,10 +718,11 @@ class LocalShell:
                 cwd=None if command.cwd is None else Path(command.cwd),
                 max_output=KEPT,
                 cancelled=STOPPED,
+                tail=tail,
             ),
             within,
         )
-        return _checked(result, program=command.argv[0])
+        return _checked(result, program=command.argv[0]) if check else result
 
     def stream(
         self,
@@ -790,14 +805,21 @@ class SshShell:
         stdin: bytes | None = None,
         within: timedelta | None = None,
         cancel: CancelToken | None = None,
+        check: bool = True,
+        tail: bool = False,
     ) -> Awaitable[ProcessResult]:
-        return self._run(_command(argv, cwd, env, secret_env, stdin), within, cancel)
+        return self._run(
+            _command(argv, cwd, env, secret_env, stdin), within, cancel, check=check, tail=tail
+        )
 
     async def _run(
         self,
         command: Command,
         within: timedelta | None,
         cancel: CancelToken | None,
+        *,
+        check: bool = True,
+        tail: bool = False,
     ) -> ProcessResult:
         result = await _timed(
             run_process(
@@ -806,10 +828,11 @@ class SshShell:
                 stdin=remote_stdin(command),
                 max_output=KEPT,
                 cancelled=STOPPED,
+                tail=tail,
             ),
             within,
         )
-        return _checked(result, program=command.argv[0], via_ssh=True)
+        return _checked(result, program=command.argv[0], via_ssh=True) if check else result
 
     def stream(
         self,

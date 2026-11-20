@@ -920,6 +920,59 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - `orch_pr_status` (`task`, `wait: bool`, `timeout`): the readiness of 27.6; with `wait`, it returns when the head's checks and the bot's comment for that head are both in, or at the timeout.
 - Tests first: `tests/integration/plugins/apps/orch/test_workspace.py` on a temp git repo with a local bare `origin` and `FakeGitHub`: a failing gate pushes nothing; a pass pushes and opens the PR once, and a second push updates it; the lane serialises two pushes.
 - Done when: the agent's whole path to a PR is `orch_push`.
+- **Built (deepseek-b, 20 Nov, PR #52):** `workspace.py` — `prepare()` (fetch, `worktree add -b
+  <branch> origin/<base>`, or `origin/<the stacked task's branch>` — off origin, since the needed
+  task's worktree is on another host; an existing worktree reused, and with `tasks=` the branch
+  and path saved on the task), `remove()` (worktree and local branch, and nothing when they are
+  already gone), `GateLane` (a `Lease` `orch-gate:<host>`: one gate at a time per host, its lease
+  as long as the gate may run plus 10 minutes and renewed every third of that while it runs, and
+  a holder unique per push — `assignee:key:8 hex` — so two pushes never take each other's lease
+  for granted) and `push()`: uncommitted work refused with `git status`'s summary, and nothing on
+  the branch that the worktree does not have refused (`git pull --rebase origin <branch>` in its
+  hint) unless it is what the task itself pushed last — kept under `refs/udl/pushed/<branch>`,
+  written after each push and taken away by `remove()`, since the tracking ref is shared and any
+  fetch moves it — so someone else's commits are never overwritten while a rebase, amend or
+  squash of its own still pushes; the lease pinned to origin's tip as just fetched, so the same
+  holds for a push while the gate runs, and a push after the agent's own pull goes through; a
+  rebase on what the branch is built on when that moved (the repo's base, or the needed task's branch while
+  its pull is open; a conflict is `NotAllowed` with git's hint and nothing is pushed), the repo's
+  `gate` run in the lane under `[apps.orch] gate_minutes` (60) — read, not raised on, so the
+  agent gets its real exit code and the last 200 lines of its output (each stream's own end: the
+  last 100 of stdout and of stderr, since a suite's summary is on one and a compiler's error on
+  the other, and `HostShell.run(tail=True)` keeps stdout's end rather than its first 64 KiB) — and
+  a gate that runs past its time or is not installed is `NotAllowed` — then `git push
+  --force-with-lease=<branch>:<the sha we saw>`, `github_open_pull` (as udl, not as the agent: an
+  implementer may not call it) with the body's "Task: `<key>`" and "Merge after #N" for each
+  needed task that has a pull, and the `pull` link on the task. A second push sends the title and
+  body only when it was given them, so what a person wrote in the description is not wiped
+  (`OpenPullRequest.title` is now optional for that: an update leaves it, an open falls back to
+  the head branch's name). `orch_push` refuses an agent that is not the task's assignee (an owner
+  may push any), and `orch_pr_status` wraps 27.6's `readiness` with `wait`: `readiness` now also
+  answers `pending`, the blockers that are only a matter of time (the checks running, the bot not
+  done with this head, GitHub not knowing yet), and the wait holds while every blocker is one of
+  them, polling `poll_seconds` (20) up to `wait_minutes` (60) or the request's `minutes`, and
+  answers with `Readiness.waited` (seconds). The tests: 7 in `test_workspace.py`, 6 in
+  `test_gate_lane.py` (two lanes on one host serialise, another host does not wait, an expired
+  lease is taken, a gate longer than its lease keeps the lane, two holders of one name are two
+  lanes, a failing gate still releases), 16 in `test_orch_push.py` (on a real temp repo with a
+  bare `origin` and a fake `github`: a failing gate pushes nothing, a long one says its code and
+  the end of its output, a gate that prints more than udl keeps still says its summary, a second
+  push with no body leaves the description, a branch someone else moved is refused and their
+  commit stays even when a fetch moved the tracking ref first, and the pull that follows lets the
+  push through, a branch udl never pushed is not overwritten either, a task that rewrote its own
+  pushed commits pushes again, a stacked task's body says what it merges after) and 6 in `test_pr_status.py` (on a `FakeClock`), plus
+  `HostShell.run(check=False)` in `test_host_shell.py` (both shells give a failure back).
+  Names, as the card's differ: the operation is `orch_pr_status`, the request field is `key` (not
+  `task`), the setting is `gate_minutes` (not `gate_timeout`) and the wait's is `minutes` (not
+  `timeout`); `PushResult.pull` is a URL string, and a pull is read through a `PullLike` protocol
+  (`html_url`) rather than importing the github plugin's model. Differences from the card: a
+  failing gate raises `NotAllowed` with the run in its hint rather than returning a `PushResult`
+  (nothing is pushed, so there is no result), and the "lane serialises two pushes" test is on
+  `GateLane` itself. Not built here: the dispatcher that calls `prepare()` before an agent works
+  (27.7); a stacked task whose base was squash-merged rebases onto the repo's base branch, so the
+  agent resolves the replay's conflicts (a `--onto` needs the pre-squash sha, which the
+  dispatcher will have); and `oc.py`'s `agent-push`/`pr-status` as thin clients of these two
+  operations (they live in `oc-guard`, outside this repo).
 
 **27.6 Readiness** · needs 25.5, 26.4
 - Build: `readiness.py`: `readiness(pull: PullDetail, *, bot: str | None, task, tasks) -> Readiness`, pure. `Readiness`: `ready: bool`, `blockers: list[str]`, `open_items: list[ReviewItem]`.

@@ -322,6 +322,27 @@ def test_a_failed_check_is_not_ready(conclusion: str) -> None:
     assert found.blockers == ["its checks failed: check"]
 
 
+def test_only_the_blockers_a_wait_can_change_are_pending() -> None:
+    """(27.5's wait holds while everything in the way is a matter of time, and a failed check is
+    not: it will not pass by waiting.)"""
+    running = [Check(name="check", status="in_progress", conclusion=None)]
+    found = readiness(_pull(checks=running), bot=BOT, task=_task(), tasks={})
+
+    assert found.blockers == ["its checks are still running: check"]
+    assert found.pending == found.blockers
+
+    failed = [Check(name="check", status="completed", conclusion="failure")]
+    other = readiness(_pull(checks=failed), bot=BOT, task=_task(), tasks={})
+
+    assert other.blockers == ["its checks failed: check"]
+    assert other.pending == []
+
+
+def test_a_draft_is_never_pending() -> None:
+    found = readiness(_pull(draft=True), bot=BOT, task=_task(), tasks={})
+    assert found.pending == []
+
+
 @pytest.mark.parametrize("conclusion", ["success", "neutral", "skipped"])
 def test_a_check_that_passed_is_ready(conclusion: str) -> None:
     checks = [Check(name="check", status="completed", conclusion=conclusion)]

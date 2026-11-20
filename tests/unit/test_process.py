@@ -184,6 +184,16 @@ async def test_it_keeps_the_first_of_stdout_and_the_last_of_stderr() -> None:
     assert result.truncated is True
 
 
+async def test_with_tail_it_keeps_the_end_of_stdout() -> None:
+    """(A gate is read by what it said last, 27.5.)"""
+    code = "import sys; sys.stdout.write('START' + 'a' * 5000 + 'END')"
+
+    result = await run_process(python(code), cancel=CancelToken(), max_output=1000, tail=True)
+
+    assert result.stdout == "a" * 997 + "END"
+    assert result.truncated is True
+
+
 async def test_output_within_its_limit_is_whole() -> None:
     result = await run_process(python("print('ok')"), cancel=CancelToken(), max_output=1000)
 

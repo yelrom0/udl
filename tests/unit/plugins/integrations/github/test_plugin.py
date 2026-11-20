@@ -278,6 +278,19 @@ async def test_a_pull_already_open_for_that_head_is_updated(
     assert len(fake.pulls[REPO]) == 2  # (no second pull for the same head)
 
 
+async def test_an_update_that_names_no_title_or_body_leaves_them(
+    github: GitHubIntegration, fake: FakeGitHub
+) -> None:
+    """(A second push is not a reason to wipe what a person wrote in the description, 27.5.)"""
+    before = fake.pull_of(REPO, 7)
+
+    found = await github.open_pull(handle(), OpenPullRequest(repo=REPO, head="feat/widgets"))
+
+    assert found.number == 7
+    assert found.title == before.title
+    assert fake.pull_of(REPO, 7).body == before.body
+
+
 async def test_a_pull_is_commented_on(github: GitHubIntegration, fake: FakeGitHub) -> None:
     found = await github.comment(handle(), CommentRequest(repo=REPO, number=7, body="Looks good"))
 

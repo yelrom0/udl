@@ -216,7 +216,7 @@ def readiness(
     head concluded `success`, `neutral` or `skipped`; when `bot` is set, its latest comment is
     for this head and clean; every task in `task.needs` merged or done; and `task` not held.
     `tasks` is each task's state by key (a need that is not in it is not merged)."""
-    blockers = _blockers(pull, bot=bot, needs=list(task.needs), tasks=tasks)
+    blockers, pending = _blockers(pull, bot=bot, needs=list(task.needs), tasks=tasks)
     held = task.hold is not None and not blockers
     if task.hold is not None:
         blockers = [*blockers, f"it is on hold: {task.hold}"]
@@ -224,58 +224,68 @@ def readiness(
         ready=not blockers,
         held=held,
         blockers=blockers,
+        pending=pending,
         open_items=_open_items(pull, bot=bot),
     )
 
 
 def _blockers(
     pull: Pull, *, bot: str | None, needs: list[str], tasks: Mapping[str, str]
-) -> list[str]:
+) -> tuple[list[str], list[str]]:
     """Why `pull` may not be merged, in the order a person would look at them (before the
-    hold, which is udl's own decision and not GitHub's)."""
+    hold, which is udl's own decision and not GitHub's), and which of them are only a matter of
+    time (what `orch_pr_status`'s wait can change, 27.5)."""
     found: list[str] = []
+    waiting: list[str] = []
     if pull.draft:
         found.append("it is a draft")
     if pull.mergeable is None:
         found.append("GitHub has not worked out whether it merges yet")
+        waiting.append(found[-1])
     elif not pull.mergeable:
         found.append(f"it does not merge cleanly ({pull.mergeable_state or 'dirty'})")
     elif pull.mergeable_state and pull.mergeable_state != "clean":
         found.append(f"GitHub says it is {pull.mergeable_state}, not clean")
-    pending = [check.name for check in pull.checks if check.status != "completed"]
+    running = [check.name for check in pull.checks if check.status != "completed"]
     failed = [
         check.name
         for check in pull.checks
         if check.status == "completed" and (check.conclusion or "") not in _OK_CONCLUSIONS
     ]
-    if pending:
-        found.append(f"its checks are still running: {', '.join(pending)}")
+    if running:
+        found.append(f"its checks are still running: {', '.join(running)}")
+        waiting.append(found[-1])
     if failed:
         found.append(f"its checks failed: {', '.join(failed)}")
     if bot is not None:
-        found += _bot_blockers(pull, bot=bot)
+        theirs, later = _bot_blockers(pull, bot=bot)
+        found += theirs
+        waiting += later
     for key in needs:
         state = tasks.get(key)
         if state not in (MERGED, DONE):
             found.append(f"it waits on {key}, which is {state or 'not a task'}")
-    return found
+    return found, waiting
 
 
-def _bot_blockers(pull: Pull, *, bot: str) -> list[str]:
-    """What the review bot says about the head, if it has said anything about it."""
+def _bot_blockers(pull: Pull, *, bot: str) -> tuple[list[str], list[str]]:
+    """What the review bot says about the head, if it has said anything about it, and which of
+    those are only a matter of the bot finishing."""
     comment = _latest(pull, bot=bot)
     if comment is None:
-        return [f"the review bot ({bot}) has not commented on it"]
+        alone = f"the review bot ({bot}) has not commented on it"
+        return [alone], [alone]
     verdict = parse_review(comment.body)
     if not for_head(verdict, comment, pull):
-        return [f"the review bot's latest comment is not about {pull.head_sha[:7] or 'this head'}"]
+        alone = f"the review bot's latest comment is not about {pull.head_sha[:7] or 'this head'}"
+        return [alone], [alone]
     found: list[str] = []
     if verdict.assessment is Assessment.REQUEST_CHANGES:
         found.append("the review bot asks for changes")
     open_items = [item for item in verdict.items if item.status is not ReviewStatus.FIXED]
     if open_items:
         found.append(f"the review bot lists {len(open_items)} open item(s)")
-    return found
+    return found, []
 
 
 def _open_items(pull: Pull, *, bot: str | None) -> list[ReviewItem]:

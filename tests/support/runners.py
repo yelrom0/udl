@@ -123,6 +123,8 @@ class RecordingShell:
         stdin: bytes | None = None,
         within: timedelta | None = None,
         cancel: CancelToken | None = None,
+        check: bool = True,
+        tail: bool = False,
     ) -> ProcessResult:
         self.calls.append(list(argv))
         self.secret_envs.append(dict(secret_env or {}))
