@@ -301,6 +301,73 @@ async def test_a_passing_gate_pushes_and_opens_the_pull(
     assert [(link.link_kind, link.url) for link in links] == [("pull", found.pull)]
 
 
+async def test_prepare_saves_the_branch_and_the_path_on_the_task(
+    service: UDLService, home: Path
+) -> None:
+    """(What 27.7's dispatcher does: prepare, then the agent pushes what it made.)"""
+    records = AppRecords(service.db)
+    tasks = TaskRecords(records)
+    await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.2", title="Later"))
+    later = await tasks.task("udl", "F-1.2")
+    assert later is not None
+    repo = await RepoRecords(records).repo("udl", "udl")
+    assert repo is not None
+
+    found = await prepare(
+        later,
+        repo=repo,
+        host=Host.local(str(home / "work")),
+        shell=await service.hosts.shell("local"),
+        tasks=tasks,
+    )
+
+    saved = await tasks.task("udl", "F-1.2")
+    assert saved is not None
+    assert (saved.branch, saved.worktree) == (found.branch, found.path)
+
+
+async def test_a_stacked_task_s_pull_says_what_it_merges_after(
+    service: UDLService, home: Path, as_agent: None
+) -> None:
+    """(The card's body: the task's key, then the pull it waits for.)"""
+    await pushed(service, key="F-1.1", title="It")
+    records = AppRecords(service.db)
+    tasks = TaskRecords(records)
+    await tasks.save_task(
+        Task(
+            project="udl",
+            feature="F-1",
+            key="F-1.2",
+            title="On top",
+            repo="udl",
+            assignee=AGENT,
+            needs=["F-1.1"],
+        )
+    )
+    on_top = await tasks.task("udl", "F-1.2")
+    assert on_top is not None
+    repo = await RepoRecords(records).repo("udl", "udl")
+    assert repo is not None
+    found = await prepare(
+        on_top,
+        repo=repo,
+        host=Host.local(str(home / "work")),
+        shell=await service.hosts.shell("local"),
+        tasks=tasks,
+    )
+    (Path(found.path) / "work.txt").write_text("on top\n")  # noqa: ASYNC240
+    git("add", "work.txt", cwd=Path(found.path))
+    git("commit", "-m", "feat: on top", cwd=Path(found.path))
+
+    await pushed(service, key="F-1.2", title="On top")
+
+    app = await service.apps.get("github")
+    assert isinstance(app, FakeGitHub)
+    body = str(app.opened[-1]["body"])
+    assert "Task: `F-1.2`" in body
+    assert "Merge after #7" in body
+
+
 async def test_a_second_push_updates_the_same_pull(
     service: UDLService, worktree: Path, as_agent: None
 ) -> None:

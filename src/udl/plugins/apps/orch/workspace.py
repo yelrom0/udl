@@ -30,8 +30,9 @@ from udl.errors import ConfigError, NotAllowed, PluginFailed
 from udl.hosts import Host, HostName, HostShell
 from udl.interfaces.security import current_principal
 from udl.plugins.apps.base import AppRecords
+from udl.plugins.apps.orch.links import pull_ref
 from udl.plugins.apps.orch.models import GateRun, OwnerKind, PushResult, render_branch
-from udl.plugins.apps.orch.records import LinkRecords, Task
+from udl.plugins.apps.orch.records import LinkRecords, Task, TaskRecords
 from udl.process import ProcessResult
 
 __all__ = ["GateLane", "Worktree", "prepare", "push", "remove"]
@@ -79,13 +80,15 @@ async def prepare(
     host: Host,
     shell: HostShell,
     stacked_on: str | None = None,
+    tasks: TaskRecords | None = None,
 ) -> Worktree:
     """`task`'s worktree on `host`, made off `stacked_on` (or the repo's base branch).
 
     The task's branch is its own (`task.branch`), or the repo's pattern with the task's key and
-    title in it. An existing worktree of the task's is reused as it is. Raises ConfigError when
-    the repo has no checkout on `host`, and NotAllowed when the branch is already there without
-    the task's worktree (its commits are not the task's, so udl does not take it over)."""
+    title in it. An existing worktree of the task's is reused as it is. With `tasks`, the branch
+    and the path are saved on the task (what a push then reads). Raises ConfigError when the
+    repo has no checkout on `host`, and NotAllowed when the branch is already there without the
+    task's worktree (its commits are not the task's, so udl does not take it over)."""
     checkout = repo.checkouts.get(host.name)
     if checkout is None:
         raise ConfigError(
@@ -97,8 +100,9 @@ async def prepare(
     )
     base = stacked_on or repo.base_branch
     path = f"{host.work_dir.rstrip('/')}/{task.project}/{task.key}-{repo.name}"
+    found = Worktree(host=host.name, path=path, branch=branch, base=base)
     if await _branch_of(shell, path) == branch:
-        return Worktree(host=host.name, path=path, branch=branch, base=base)
+        return await _saved(found, task=task, tasks=tasks)
     await _git(shell, ["-C", checkout, "fetch", "origin"])
     if await _has_branch(shell, checkout, branch):
         raise NotAllowed(
@@ -108,7 +112,16 @@ async def prepare(
     await _git(
         shell, ["-C", checkout, "worktree", "add", path, "-b", branch, _off(stacked_on, base)]
     )
-    return Worktree(host=host.name, path=path, branch=branch, base=base)
+    return await _saved(found, task=task, tasks=tasks)
+
+
+async def _saved(found: Worktree, *, task: Task, tasks: TaskRecords | None) -> Worktree:
+    """`found`, saved on `task` when the records are given (a push reads them there)."""
+    if tasks is not None and (task.branch, task.worktree) != (found.branch, found.path):
+        await tasks.save_task(
+            task.model_copy(update={"branch": found.branch, "worktree": found.path})
+        )
+    return found
 
 
 async def remove(found: Worktree, *, repo: RepoLike, shell: HostShell) -> None:
@@ -271,7 +284,7 @@ async def push(
             "head": branch,
             "title": title or task.title,
             "base": repo.base_branch,
-            "body": _body(task, body),
+            "body": await _body(task, body, records=records),
         },
     )
     url = str(getattr(pull, "html_url", "") or "")
@@ -297,11 +310,29 @@ async def _as_udl(service: UDLService, name: str, request: dict[str, object]) ->
         current_principal.reset(token)
 
 
-def _body(task: Task, body: str) -> str:
-    """What the pull says: `body`, then the task it is for (and, when it is stacked, what it
-    merges after)."""
+async def _body(task: Task, body: str, *, records: AppRecords) -> str:
+    """What the pull says: `body`, then the task it is for, and what it merges after when it is
+    stacked on another task's pull."""
     lines = [body.strip(), "", f"Task: `{task.key}`"] if body.strip() else [f"Task: `{task.key}`"]
+    lines += await _merge_after(task, records=records)
     return "\n".join(lines)
+
+
+async def _merge_after(task: Task, *, records: AppRecords) -> list[str]:
+    """`Merge after #N` for each task `task` needs that has a pull (an empty list when it needs
+    none, or none of them has one yet)."""
+    links = LinkRecords(records)
+    found: list[str] = []
+    for key in task.needs:
+        urls = [
+            link.url
+            for link in await links.for_owner(task.project, OwnerKind.TASK, key)
+            if link.link_kind == "pull"
+        ]
+        ref = pull_ref(urls[0]) if urls else None
+        if ref is not None:
+            found.append(f"Merge after #{ref[1]}")
+    return found
 
 
 def _summary(dirty: str) -> str:
