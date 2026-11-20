@@ -60,7 +60,7 @@ Alongside it come three things the notes ask for: a bot workspace on this machin
 | **O-C8** | **`main`'s ruleset has no bypass, the admin included:** PR only, CI and the review job required, signed commits, linear history, no force-push or delete | "Branch locking" that the owner can skip isn't locking; a hotfix is still a PR |
 | **O-C9** | Drag and drop uses `@dnd-kit` (keyboard-usable), and every drag has an operation and a CLI command behind it | The drag is a convenience over `orch_assign`, not a web-only feature |
 | **O-C10** | The Stitch screens are **references**: each UI task builds its screen in React and daisyUI against the screenshot, and never pastes Stitch's HTML | The shell's stack, typing and tests are fixed (18.1) |
-| **O-C13** (21 Nov) | **The merger is an agent with role `reviewer` or `manager`, never an implementer, and never merges a task it is the assignee of.** Auto merge is turned on, off or given another merger only by an owner. With it on, the merger may call `orch_merge` on its project's `ready` tasks, and `orch_merge` re-checks readiness for the current head (28.3) whoever calls it. O-C7 stands for implementers | Auto merge is O-D13's; who may hold it, and what it may not do, keeps a prompt-injected agent from merging, as O-C7 does |
+| **O-C13** (21 Nov) | **The merger is an agent with role `reviewer` or `manager`, never an implementer.** It merges a task it is the assignee of only when the project has a review bot, whose clean verdict on that head is then the review by someone else; without one, its own tasks wait for a person. Auto merge, and who the merger is, are set only by an owner, and only through `orch_set_auto_merge`. With auto merge on, the merger may call `orch_merge` on its project's `ready` tasks, and `orch_merge` re-checks readiness for the current head (28.3), whoever calls it. O-C7 stands for implementers | Auto merge is O-D13's. Who may hold it, and what it may not do, keeps a prompt-injected agent from merging, as O-C7 does. The bot's verdict is what lets Claude merge its own docs PRs today | Auto merge is O-D13's; who may hold it, and what it may not do, keeps a prompt-injected agent from merging, as O-C7 does |
 | **O-C14** (21 Nov) | **A task's size is set by whoever plans it** (the user, Claude, or a manager with `plan`), never by the agent doing it. The importer reads it from a card's header (`**27.3 Queues** · needs 27.1 · size L`). **Working time** is the time a task spent `in_progress`, less the time its agent waited on CI or the review bot or sat out a usage limit: what the agent spent, not what the calendar did | An agent sizing its own task would grade its own estimate |
 | **O-C15** (21 Nov) | **A chat runs the user's own harness, as the user.** The `claude` CLI (or `codex`) runs on the chosen host with the user's own settings and permission rules: udl adds its MCP server and nothing else, so whatever the harness would ask in a terminal, it asks in the sidebar (Allow once, Allow for this chat, Deny), and udl never passes a flag that skips permissions. The session calls udl with a chat token of its own, which is the owner's powers minus making tokens and opening chats, and ends with the chat | O-D15 gives a chat the harness's powers; the harness's own permission prompts are then the guard the user already relies on in a terminal, and a token per chat can be revoked |
 | **O-C16** (21 Nov) | **The chat sidebar is a new contribution point of the shell, `panels`** (a panel on the right of every page, with a button in the navbar), and `orch`'s UI plugin contributes the chat to it. It sits over the page, docks beside it on a window 1600 px or wider, and is a full-height sheet on a phone | The chat needs `orch`'s sessions and tokens, but belongs on every page, not only `orch`'s |
@@ -1078,7 +1078,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - **`forecast(project, now) -> Forecast`** (pure):
     - It takes the open, sized work per agent in queue order: what is left of its current task's estimate, then each queued task's estimate.
     - Unassigned tasks are spread over the project's enabled implementers in suggestion order (27.4).
-    - An agent's hours become days at its own working hours per day over the last 7 days (default 8).
+    - An agent's hours become days at its own working hours per day over the last 7 days. Below 1 h a day (a new or idle agent), the project's agents' average is used, then 8 h.
     - `likely` is when the last agent finishes; `early` and `late` come from the spread. The same is done per feature.
     - Unsized tasks are left out, and counted.
   - **`orch_progress`** (read-only; `project`, `since?`) → `Progress`:
@@ -1092,6 +1092,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - waits taken off, including one across a state change, and a moved task split between two models;
   - a model with fewer than five samples falls back, and says so;
   - the forecast for two agents whose rates are known;
+  - an agent with no working hours in the last 7 days, and a project with none at all, still forecast (no division by zero);
   - a property test: a forecast never ends before `now`, and `early ≤ likely ≤ late`.
 
   `test_progress_operations.py` goes through the service.
@@ -1109,13 +1110,13 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - **Permission prompts reach the sidebar.**
     - **`claude-code`:** `--permission-prompt-tool mcp__udl__orch_chat_ask_permission`, an MCP-only tool (not on the CLI or the API). The harness calls it, with the tool and its input, whenever the user's settings say to ask.
     - udl then records a `PermissionRequest` (`chat`, `id`, `tool`, `input` kept as data, `state`) and publishes `orch.chat.permission`. It waits up to 10 min, then denies, for `orch_chat_permission` (`chat`, `request`, `decision: allow_once | allow_chat | deny`, `message?`).
-    - `allow_chat` remembers the tool, and a command's first word, for the rest of the chat, and answers the next such request itself.
+    - `allow_chat` remembers that exact request (the tool and its exact input: the whole command, or the same file) for the rest of the chat, and answers it itself when it comes again. Nothing is matched by prefix. A shell command that chains or nests others (`&&`, `||`, `;`, `|`, `$(…)`, backticks), or runs a shell or `env`, is never remembered, so Allow for this chat on one is Allow once.
     - **`codex`:** drive `codex app-server`, the JSON-RPC protocol over stdio that OpenAI's IDE extension uses. Its approval requests become the same `PermissionRequest`s. Read its methods from the installed version (`codex app-server generate-json-schema --out <dir>`, committed as fixtures).
-    - Without `app-server`, a Codex chat runs `codex exec` with approvals `never`, inside the `workspace-write` sandbox, and the sidebar says it won't ask.
+    - Without `app-server`, a Codex chat isn't started: `orch_chat_start` refuses it (`NotAllowed`: "this Codex can't relay its approvals; update it"), since running without approvals would break O-C15. A Codex agent (25.12) is another matter: it works in a worktree, under its command rules.
   - **The chat's token** (O-C15): a `ChatToken`.
     - It has the `udl_chat_` prefix. The record keeps its SHA-256; the token itself is in the secret store at `apps/orch/chats/<id>/token`, and reaches the harness in its environment.
     - 27.2's `authenticate` reads it as `Principal(kind="owner", name=<owner>, via=f"chat:{id}")`.
-    - `UDLService.call` refuses it `orch_issue_token`, every `orch_chat_*` operation, `orch_set_auto_merge` (28.7) and the secret store's writes.
+    - `UDLService.call` refuses it `orch_issue_token`, `orch_set_auto_merge` (28.7), the secret store's writes, and every `orch_chat_*` operation but one: `orch_chat_ask_permission`, the prompt tool its harness calls. For that one, the chat is the token's own (taken from its `via`, never from the request), and `orch_chat_permission` stays refused, so a chat can't answer its own prompts.
     - It is deleted when the chat is stopped or deleted, or has been idle for `[apps.orch] chat_idle` (default 24 h). Every call made with it is logged with its `via`.
   - **Operations,** owner only (an agent's token is refused, `NotAllowed`):
     - `orch_chat_start` (`runner`, `host`, `directory?`, `model?`, `text`);
@@ -1129,9 +1130,9 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - **Text from outside:** what a chat reads (PR comments, bot reviews, pages) is its harness's business, as it is in a terminal. udl's own messages to it never carry text from outside.
 - Tests first: `tests/integration/plugins/apps/orch/test_chat.py`, with `FakeRunner` and a fake `claude` that asks for one permission:
   - the request reaches `orch.chat.permission`;
-  - Allow once runs it, Deny stops it, Allow for this chat answers the second one by itself, and no answer in 10 min denies;
+  - Allow once runs it, Deny stops it, Allow for this chat answers the same request by itself the second time but asks again for `git push` after `git status` and for `ls && rm x` after `ls`, and no answer in 10 min denies;
   - the argv never has a flag that skips permissions;
-  - the chat's token is refused `orch_issue_token` and `orch_chat_start`, works for `orch_assign`, and stops working after `orch_chat_stop`;
+  - the chat's token is refused `orch_issue_token`, `orch_chat_start` and `orch_chat_permission`, can call `orch_chat_ask_permission` for its own chat only, works for `orch_assign`, and stops working after `orch_chat_stop`;
   - an agent's token can't start a chat.
 - Done when: an opt-in smoke test on `local`, with the real `claude`, starts a chat that asks to run `ls`; it is allowed through `orch_chat_permission`, and its answer names a file.
 
@@ -1200,22 +1201,30 @@ This is human-comms.md as data. Its three sections become three lists with the s
     - Turning auto merge on needs a merger.
     - `merge = human | agent` is unchanged: auto merge sits beside it, and wins while it is on.
   - **`orch_set_auto_merge`** (`project`, `on`, `merger?`), owner only. An agent's or a chat's token is refused, so no model can give itself the merge. It publishes `orch.project.changed`. CLI: `udl orch projects auto-merge udl --on --merger claude`.
+  - **It is the only writer of `auto_merge` and `merger`.** `orch_set_project`, the importer and every other write keep both as stored: a change to either through them is refused (`NotAllowed`, naming `orch_set_auto_merge`). Otherwise a chat's owner-level token could turn auto merge on through `orch_set_project`.
   - **The merger's turn.**
     - The merger's standing session (27.8's; a reviewer gets one too) is prompted with each task of the project that becomes `ready`, in Ready to merge's order (28.3). The task comes as data: its spec, the PR's URL, the head SHA and the diff's stat.
     - It reviews the diff against the task's spec and the project's rules.
     - Then it calls `orch_merge` (`task`, `confirm`), or `orch_review_task` with `changes` and its reasons. That moves the task back to `in_progress`, and the reasons go to its agent as a note.
-    - One PR at a time per project: the next is prompted after the merge.
+    - One PR at a time per project, and the queue always moves on:
+      - after a merge, the next ready task is prompted;
+      - after `changes`, the task has left `ready`, so the next ready task that isn't stacked on it is prompted at once (one stacked on it waits for it, as it would for a person);
+      - the merger's own task (O-C13) is merged by it only when the project has a review bot. Without one, it is skipped: it stays under Ready now marked "waiting for a person: the merger's own task", and the next one not stacked on it is prompted.
+    - A merger may call `orch_review_task` on any of its project's `ready` tasks, outside its own subtree too, so a `manager` merger isn't refused the review it needs.
   - **`orch_merge` for the merger** (it widens 28.3's rule). The merger may merge when:
     - it is the project's merger and auto merge is on;
     - the task is `ready`;
-    - it is not the task's assignee.
+    - it is not the task's assignee, or the project has a review bot (O-C13).
 
     Readiness is re-checked for the current head, as it is for anyone. The merge's note and `orch.task.merged` carry `by` and `auto: true`.
   - **The lists:** `orch_merge_list` and `orch_inbox` carry `auto_merge` and `merger`, and each ready row carries what the merger is doing with it (`reviewing`, `next`, `changes asked`).
   - **udl's own project** (30.3) turns it on, with `claude` as its merger. That is the user's standing rule since 17 Nov 2026: Claude merges a PR once CI is green and the review bot has nothing open.
 - Tests first: `tests/integration/plugins/apps/orch/test_auto_merge.py`:
   - with auto merge on, the merger merges two stacked PRs in order, with nobody else acting; with it off, nothing is merged;
-  - the merger can't merge its own task, another project's, or one whose head moved;
+  - the merger can't merge another project's task, or one whose head moved;
+  - the merger's own task: merged by it with a review bot set; without one, skipped and marked, with the next one merged;
+  - a `changes` verdict moves on to the next ready task that isn't stacked on it, and a `manager` merger can review a task outside its subtree;
+  - `orch_set_project` can't change `auto_merge` or `merger`;
   - an implementer's token is refused `orch_merge` while auto merge is on;
   - `orch_set_auto_merge` is refused to an agent's token and to a chat's;
   - a merger that isn't a reviewer or a manager can't be saved.
@@ -1268,7 +1277,7 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
   - **How:** these were edits to each screen's own HTML, not new Stitch generations, so nothing the user had already seen moved. The two new screens were drawn the same way, in the Feature and Board screens' shells. The re-theme and the renders are as before (RETHEME.md). Each screen keeps its Stitch id: the light and dark copies were updated in place, and the new ones are four more pairs. [`DESIGN.md`](../web/plugins/orch/design/DESIGN.md) gained the card edge, sizes, PR chips, auto merge and the chat.
   - **Left in Stitch:** the generations that made the new screens' slots, and an extra first try at one of them, sit in the project under their own titles, unused. The MCP can't delete screens.
 
-**29.2 The UI plugin's skeleton** · needs 24.7, 28.4
+**29.2 The UI plugin's skeleton** · needs 24.7, 28.4, 26.8
 - Build: `web/plugins/orch/` (React, daisyUI, the SDK), built into `src/udl/plugins/apps/orch/ui/`.
   - Manifest: nav "Work" (Inbox, Board, Agents, Q&A, Merge, To action); routes `inbox`, `board`, `features/$key`, `tasks/$key`, `agents`, `agents/$name`, `questions`, `questions/$key`, `merge`, `actions`; a dashboard widget (the inbox's counts); `generated: { tabs: ["settings"], hide: ["orch_*"] }` so the generated page keeps only Settings.
   - Stores (vanilla Zustand): `inbox`, `board` (features, tasks, agents, suggestions), `sessions`; each refetches on the `orch.*` events it cares about through `ctx.events.subscribe`.
@@ -1277,15 +1286,15 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 - Dependencies: `@dnd-kit/core`, `@dnd-kit/sortable`, `marked`, `dompurify`.
 - Tests first: stores against `FakeUdl`; `<Markdown>`'s sanitising (the phase's third bullet).
 - Done when: every route renders a heading inside the shell, isolated in its shadow root.
-- **Q-8 (user, 21 Nov 2026):** the manifest's nav gets "Progress" after Board (route `progress`, 29.11). `<LinkChip>` for an open PR is a real link to it (`target="_blank"`, `rel="noopener"`): the checks dot, `#n`, and an icon that says it opens GitHub. A `<SizeChip>` shows `S`/`M`/`L`/`XL`, with the points in its tooltip. And the shell's navbar gains the Chat button (29.12).
+- **Q-8 (user, 21 Nov 2026):** the manifest's nav gets "Progress" after Board (route `progress`, 29.11). `<LinkChip>` for an open PR is a real link to it (`target="_blank"`, `rel="noopener"`): the checks dot, `#n`, and an icon that says it opens GitHub. A `<SizeChip>` shows `S`/`M`/`L`/`XL`, with the points in its tooltip. (The navbar's Chat button is 29.12's.)
 
-**29.3 Inbox** · needs 29.2
+**29.3 Inbox** · needs 29.2, 28.7
 - Build: the home route: the three sections of `orch_inbox` as cards with counts, the agents strip (status dots, the task each is on), blocking questions pinned on top. Answering a question with `options` is one click; others open the thread.
 - Done when: its e2e test answers a question from the inbox and sees it leave.
 - **Screens (29.1, Google Stitch):** **Inbox**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=4fbab1751017480cacc6609079604f69) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=fddee541cf074971aec7566bd70cf58a), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=6c577ec04aa5438a903a91626e61388f) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=ebfcc3fa8f2d426a99640ee1e0a0c652); `web/plugins/orch/design/inbox-{light,dark}-{desktop,phone}.png`.
 - **Q-8 (user, 21 Nov 2026):** the Ready to merge card says whether auto merge is on, and who the merger is (28.7). Every PR number on it is a link to the PR.
 
-**29.4 Board** · needs 29.2
+**29.4 Board** · needs 29.2, 26.8, 27.10
 - Build: three panes: **features** (collapsible, each with its tasks as cards showing key, title, state and link chips; filters by project, state and text, kept in the URL), **agents** (a column per agent: its queue as a sortable list, its current task on top, its status), and **suggested** (from `orch_suggest`, each card showing its reasons and the agent it suits; "Queue" on a card accepts the suggestion).
   - Drags: a task or a suggestion onto an agent → `orch_assign` (at the drop position); within a queue → `orch_reorder_queue`; from a queue back to the features pane → `orch_unassign`. A drop the server refuses (a `human` task onto an agent, unmet `needs`) snaps back with the error's hint as a toast. Dropping a task whose `needs` are only `ready` asks "stack on #N?".
   - The keyboard path and the menu path ("Assign to…") call the same functions.
@@ -1293,13 +1302,13 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 - **Screens (29.1, Google Stitch):** **Board**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=a01ede4ba0104abf9ad5eb2765efda0d) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=7051af8570a747ab841bc745f8ec20c2), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=714267e7946f417488a3f789e8f42688) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=35c29045a2ba4d27844663b7aa1044bd); `web/plugins/orch/design/board-{light,dark}-{desktop,phone}.png`.
 - **Q-8 (user, 21 Nov 2026):** each task card shows its size and, while its PR is open, the PR's chip (a link to it). Each feature's bar is its points merged out of its points. Each agent's column gives the points queued and their estimate in hours (27.10).
 
-**29.5 Feature and task pages** · needs 29.2
+**29.5 Feature and task pages** · needs 29.2, 26.8, 27.10
 - Build: **Feature:** spec (markdown, editable), its tasks in order with states, links, notes, "Add task", "Split". **Task:** breadcrumb back to its feature, spec, state with the moves this user may make, assignee, needs and what it unblocks (as links), every link by kind, the PR's readiness with its blockers, notes as a timeline with an "Add note" box, its questions, its session (a link to the agent's page at that session).
 - Done when: every key and URL on both pages is a link, and a task's page reaches its feature and back.
 - **Screens (29.1, Google Stitch):** **Feature**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=d2657d70cd2d41f29da24fb19918b6cf) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=4dc4588af1d843e8820efd62c771d5cc), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=1d4c2ed96c2a4aa189e87ef8718fccf9) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=51abd9cf242f4b79abe75aa577dddcd2); `web/plugins/orch/design/feature-{light,dark}-{desktop,phone}.png`; **Task**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=6423d930355047cb84df2a85eaaca868) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=bd90d38f4a3b449495a9f43bff0fa93b), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=22c404ee1d564a5a8e72da8d588f5cd4) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=b4dd135234bd406fab8a0321554992a3); `web/plugins/orch/design/task-{light,dark}-{desktop,phone}.png`.
 - **Q-8 (user, 21 Nov 2026):** **Feature:** each card has a clear edge in both themes (DESIGN.md's card rule: a `base-content` 20 % border and a shadow), and tasks get a Size column. An open PR is a chip that links to it. A Progress card shows the points merged, the feature's burn-up, its forecast, and the rate behind it (27.10). **Task:** its size, its estimate and the time worked so far (`orch_estimate`), and its PR as a link.
 
-**29.6 Agents** · needs 29.2
+**29.6 Agents** · needs 29.2, 26.8
 - Build: **Agents:** the hierarchy as a tree (humans at the root); dragging an agent onto a manager sets `manager` ("assign models to models"), refused with a reason for a cycle or a non-manager; an editor for an agent (runner, model from `orch_list_runners`' list for its host, host, role, brief, and a manager's four powers as switches). **Agent:** status, queue (sortable), token rotate, pause / resume / stop, and the session: a live transcript from the SSE stream (text, tool calls collapsed to a line, usage and cost), a box to send it a message (owner only).
 - Done when: its e2e test builds a manager with two reports by dragging, and watches a fake session stream.
 - **Screens (29.1, Google Stitch):** **Agents**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=7791ff8dfd96441a8f407efbda0f23b5) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=d17fed4e665c45a880b2114968ccdcb3), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=ddefdd0cfbfb4718a0a6d7650b5754f1) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=0e287012078b43938fff6f0b4b492fa8); `web/plugins/orch/design/agents-{light,dark}-{desktop,phone}.png`; **Agent**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=da1624bace6c4b98a0d64c45d05165a0) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=fa261cca352745de8be29520980348ed), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=e4a4d6e0423e4ce989f0222376cac769) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=27ecbc8414ca40a091f73a3dac131dc2); `web/plugins/orch/design/agent-{light,dark}-{desktop,phone}.png`.
@@ -1310,7 +1319,7 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 - Done when: its e2e test sees a question arrive, answers it, and finds the decision on the task's page.
 - **Screens (29.1, Google Stitch):** **Q&A**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=47ac5610e253455c9b7f4ad2b27f6828) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=bcb6abba194a4d818f16dbbf0488fcf2), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=efa3ed1403154b6faf6f655196af030b) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=cb6281e6a610495a94e0ac79aabf46cf); `web/plugins/orch/design/qa-{light,dark}-{desktop,phone}.png`; **Q&A thread**: phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=39735072e25c4bf08794d011655189f8) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=046e8294e25c40b9b1c3ff330ec361db); `web/plugins/orch/design/qa-thread-{light,dark}-phone.png`.
 
-**29.8 Ready to merge, To action** · needs 29.2
+**29.8 Ready to merge, To action** · needs 29.2, 28.7
 - Build: **Merge:** Ready now (per repo, numbered in merge order, each with its PR link, checks, the bot's verdict and a Merge button that asks for the `owner/repo#n` confirmation), Coming soon (with blockers), Held (with reasons), Done (with what followed). **To action:** Now / After / Later, each with a result box and Done.
 - Done when: its e2e test merges a ready PR on `FakeGitHub` and sees the next in the stack flagged for rebase.
 - **Screens (29.1, Google Stitch):** **Ready to merge**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=dad3482589b143abb7c0266c6562e6bc) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=2584378a5ef04df0a0e8f045046b3b6b), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=529dd7d5434a491c82404792620125bd) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=48bf3cac921645f28f8a45e23e97fc56); `web/plugins/orch/design/merge-{light,dark}-{desktop,phone}.png`; **To action**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=0c0b84dc96674e279f156dce50032e96) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=0fd28d661b034e41b6abd24c82305a09), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=f55c20038eff4331a1ea94f4b4254a54) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=d79a7ae6f71940d79d37fa5b8244a3d1); `web/plugins/orch/design/actions-{light,dark}-{desktop,phone}.png`.
@@ -1321,7 +1330,7 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 - Done when: a 1Password token, an OpenRouter key by `op://` reference, a GitHub account, a host and a project with a repo can all be set up from the web alone.
 - **Screens (29.1, Google Stitch):** **Connections: a generated page**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=126785af99b04553983316310fb2fd68) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=b4193d88b702431088fb00a576accdd4), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=7272b669d4e243529dc6dd6406ee8579) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=80b6bb3f19c449829bd03c30c808b326); `web/plugins/orch/design/connections-{light,dark}-{desktop,phone}.png`.
 
-**29.10 End to end** · needs 29.3–29.9
+**29.10 End to end** · needs 29.3–29.9, 29.11, 29.12
 - Build: `web/e2e/orch.spec.ts`: 28.6's story through the web UI only, with `tests/support/e2e.py` extended to start `FakeGitHub`, a `FakeRunner` plugin and a temp git repo.
 - Done when: `make e2e` passes in both themes.
 - **Q-8 (user, 21 Nov 2026):** it covers 29.11 and 29.12 too: the Progress page for a fixture history, and a chat that allows a permission and assigns a task.
@@ -1366,7 +1375,7 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 
 **30.1 Security review** · needs Phase 29
 - Check, each with a test where one is missing: agent tokens (27.2) can't reach admin operations or another agent's work; an agent can't merge except under `merge = agent` on its own ready PR; text from PRs, bots and CI reaches a model only as fenced data; `HostShell` never builds a command from unquoted input; secrets (the 1Password token, agent tokens, the OpenCode password, `op://` values) appear in no record, log, `argv`, event or transcript; the generated UI never echoes a stored secret; markdown is sanitised. Findings are fixed test-first and listed here.
-- **Q-8 (user, 21 Nov 2026):** also check, each with a test: no model can turn auto merge on or name itself the merger, and a merger can't merge its own task or another project's (O-C13); a chat never gets a flag that skips permissions, its token can't make tokens, open chats or change auto merge, and the token is gone when the chat ends (O-C15); udl never opens `~/.codex/auth.json` (25.12).
+- **Q-8 (user, 21 Nov 2026):** also check, each with a test: no model can turn auto merge on or name itself the merger, through `orch_set_auto_merge` or any other write, and a merger merges its own task only on a review bot's clean verdict, and never another project's (O-C13); a chat never gets a flag that skips permissions, its token can't make tokens, open chats or change auto merge, and the token is gone when the chat ends (O-C15); udl never opens `~/.codex/auth.json` (25.12).
 
 **30.2 Docs** · needs 30.1
 - Build: README (a "Work" section, the connections), `docs/orchestrator.md` (concepts, a walkthrough from import to merge, agent roles and powers, running agents on another host, the events), `docs/plugins.md` (writing an app plugin and a runner; what the generated UI reads and how to guide it), a config example for `[apps.orch]` and `[secrets.onepassword]`.
