@@ -52,11 +52,10 @@ __all__ = [
 ]
 
 VERSION = re.compile(r"^[0-9A-Za-z.\-]+$")
-"""What a version udl will install is: letters, digits, dots and dashes (`latest`, `2.1.4`)."""
+"""What a version may be (`latest`, `2.1.4`): anything else is refused before a command runs."""
 
 TAIL: Final = 4_000
 """How much of an install's output is kept: its end, in characters, where a problem shows."""
-"""What a version may be: anything else is refused before a command runs."""
 
 LOGIN_TIMEOUT = timedelta(minutes=10)
 """How long a relayed sign-in gets before it is ended."""
@@ -563,7 +562,8 @@ def _expects(said: str) -> Literal["none", "code"]:
 
 _ASKS: Final = re.compile(
     r"\b(?:paste|enter|type|provide|send)\b[^\n]{0,40}?\bcode\b"
-    r"|\bcode\b[^\n]{0,40}?\b(?:here|below)\b",
+    r"|\b(?:the|your|this|that)\s+code\b"
+    r"|\bcode\s*[:?]",
     re.IGNORECASE,
 )
 """What a harness says when it is asking for a code (and nothing it says otherwise)."""

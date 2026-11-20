@@ -476,7 +476,9 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
     async def _merged_policies(self) -> dict[str, object]:
         """The service's config as it is on the host, with udl's deny policies merged in: every
         other key is kept as it was (a setup never erases a host's own configuration)."""
-        said = await self.shell.run(["sh", "-c", f"cat {_POLICIES} 2>/dev/null"])
+        # (A host with no config yet is the usual case: `cat` on a missing file is not a failure
+        # here, so it is guarded rather than left to exit 1 and stop the setup.)
+        said = await self.shell.run(["sh", "-c", f"cat {_POLICIES} 2>/dev/null || true"])
         try:
             config = _CONFIG.validate_json(said.stdout or "{}")
         except ValidationError:

@@ -112,9 +112,14 @@ class ScriptedShell(HostShell):
             self.files[path] = (stdin or b"").decode()
             return ProcessResult(returncode=0, stdout="", stderr="")
         if argv[0] == "sh" and "cat " in command:
-            # (A file read back through the shell: its text, or nothing when there is no file.)
-            path = command.split("cat ", 1)[1].split(" 2>", 1)[0].strip()
-            return ProcessResult(returncode=0, stdout=self.files.get(path, ""), stderr="")
+            # (A file read back through the shell, as `cat` does it: a file that is not there is
+            # a failure, which is what a setup on a fresh host meets.)
+            path = command.split("cat ", 1)[1].split(" 2>", 1)[0].split(" ||", 1)[0].strip()
+            if path not in self.files:
+                return ProcessResult(
+                    returncode=FAILED, stdout="", stderr=f"cat: {path}: no such file"
+                )
+            return ProcessResult(returncode=0, stdout=self.files[path], stderr="")
         found = self.answers.get(command)
         if found is None:
             return ProcessResult(returncode=FAILED, stdout="", stderr=f"{argv[0]}: not found")

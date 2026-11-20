@@ -457,15 +457,45 @@ async def test_a_finished_attempt_is_forgotten_when_the_next_starts(hosts: Hosts
         await harnesses.status(LoginStatusRequest(id=first.id))
 
 
-async def test_a_prompt_that_names_the_harness_is_not_asking_for_a_code(hosts: Hosts) -> None:
+@pytest.mark.parametrize(
+    "said",
+    [
+        "Claude Code is ready. No errors found.\n",
+        "Claude Code \u2014 sign in here:\n",
+        "opencode 2.1.4: signed in.\n",
+    ],
+)
+async def test_a_prompt_that_names_the_harness_is_not_asking_for_a_code(
+    hosts: Hosts, said: str
+) -> None:
     """`opencode` and `Claude Code` are not a code: only a harness asking for one says so."""
     shell = hosts.shell("local")
     script_claude(shell)
-    shell.says = ("Claude Code is ready. No errors found.\n",)
+    shell.says = (said,)
 
     started = await hosts.harnesses.login(StartLoginRequest(host="local", runner="claude-code"))
 
     assert started.expects == "none"
+    await hosts.harnesses.stop()
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "Paste the code here:\n",
+        "Enter code: ",
+        "your code: ",
+        "Code: ",
+    ],
+)
+async def test_a_harness_asking_for_a_code_says_so(hosts: Hosts, said: str) -> None:
+    shell = hosts.shell("local")
+    script_claude(shell)
+    shell.says = (said,)
+
+    started = await hosts.harnesses.login(StartLoginRequest(host="local", runner="claude-code"))
+
+    assert started.expects == "code"
     await hosts.harnesses.stop()
 
 

@@ -220,6 +220,23 @@ async def test_a_setup_writes_the_policies_and_an_agent_file_per_role(
     )
 
 
+async def test_a_setup_on_a_host_with_no_config_writes_the_policies(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """A fresh host has no `opencode.json` at all, and `cat` on it fails: the setup still goes on
+    and writes the policies (the fake's `cat` fails as the real one does)."""
+    assert "$HOME/.config/opencode/opencode.json" not in shell.files
+
+    written = await _runner(service, shell).setup(["implementer"])
+
+    assert written[0] == "$HOME/.config/opencode/opencode.json"
+    config = json.loads(shell.files["$HOME/.config/opencode/opencode.json"])
+    assert [entry["resource"] for entry in config["policies"]] == [
+        "shell:git push *",
+        "shell:gh pr merge *",
+    ]
+
+
 async def test_a_setup_keeps_what_the_host_already_has(
     service: FakeOpenCode, shell: FakeShell
 ) -> None:
