@@ -465,6 +465,9 @@ async def test_a_push_whose_branch_someone_else_moved_is_refused(
     git("push", "origin", "feat/F-1.1-it", cwd=elsewhere)
     theirs = git("rev-parse", "HEAD", cwd=elsewhere)
 
+    # (A fetch in the main checkout moves the tracking ref every worktree shares, as another
+    # task's push or an agent's own fetch would: the check does not lean on it.)
+    git("fetch", "origin", cwd=home / "checkout")
     (worktree / "work.txt").write_text("the work, again\n")
     git("commit", "-am", "fix: the work again", cwd=worktree)
 

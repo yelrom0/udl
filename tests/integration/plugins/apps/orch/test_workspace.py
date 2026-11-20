@@ -164,11 +164,23 @@ async def test_remove_takes_the_worktree_and_its_branch_away(
 ) -> None:
     found = await prepare(task, repo=repo, host=host, shell=shell_for(host))
 
+    # (What a push of it wrote about the branch.)
+    git("update-ref", f"refs/udl/pushed/{found.branch}", "HEAD", cwd=home / "checkout")
     await remove(found, repo=repo, shell=shell_for(host))
 
     assert not Path(found.path).exists()  # noqa: ASYNC240
     branches = git("branch", "--list", cwd=home / "checkout")
     assert found.branch not in branches
+    # (And what its pushes wrote about the branch: nothing of the task is left.)
+    assert (
+        subprocess.run(  # noqa: S603, ASYNC221 - (a test's own argv, a git that ends at once)
+            [*GIT, "show-ref", "--verify", f"refs/udl/pushed/{found.branch}"],
+            cwd=home / "checkout",
+            capture_output=True,
+            check=False,
+        ).returncode
+        != 0
+    )
 
 
 async def test_remove_is_happy_when_the_worktree_is_already_gone(
