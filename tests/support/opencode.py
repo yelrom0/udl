@@ -273,6 +273,8 @@ class FakeOpenCode:
     """The permissions waiting for an answer (what `GET /api/session/{id}/permission` lists)."""
     variables: dict[str, str] = field(default_factory=dict[str, str])
     """The environment sessions were given (`PUT /api/session/{id}/environment`)."""
+    credentials: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
+    """The credentials stored (`POST /api/credential`), as they were given."""
     pending_outcome: str | None = None
     """How the turn whose events the stream is serving ended (published with its last event)."""
     silent_reads: int = 0
@@ -328,6 +330,7 @@ class FakeOpenCode:
                 Route(
                     "/api/experimental/session/{session_id}/log", self._read_log, methods=["GET"]
                 ),
+                Route("/api/credential", self._credential, methods=["POST"]),
                 Route("/api/experimental/mcp/{server}", self._mcp, methods=["PUT"]),
             ]
         )
@@ -391,6 +394,24 @@ class FakeOpenCode:
             {
                 "location": {"directory": request.query_params.get("location[directory]")},
                 "data": self.models,
+            }
+        )
+
+    async def _credential(self, request: Request) -> Response:
+        if not self._allowed(request):
+            return JSONResponse({"message": "unauthorized"}, status_code=401)
+        body = await request.json()
+        self.calls.append(("POST", "/api/credential", body))
+        self.credentials.append(body)
+        return JSONResponse(
+            {
+                "data": {
+                    "id": f"cred_{len(self.credentials)}",
+                    "integrationID": body.get("integrationID"),
+                    "label": body.get("label", ""),
+                    "active": True,
+                    "value": body.get("value", {}),
+                }
             }
         )
 

@@ -222,13 +222,16 @@ async def test_opencode_s_install_restarts_its_service(hosts: Hosts) -> None:
     assert ["opencode", "service", "restart"] in shell.runs
 
 
-async def test_a_bad_version_is_refused_before_anything_runs(hosts: Hosts) -> None:
+@pytest.mark.parametrize("version", ["1.2; rm -rf /", "--help", "-rf", "1.2 3", ""])
+async def test_a_bad_version_is_refused_before_anything_runs(hosts: Hosts, version: str) -> None:
+    """A version is letters, digits, dots and dashes, and it starts with one of the first two: a
+    leading dash is an option to the harness's own program, never a version."""
     shell = hosts.shell("local")
     script_claude(shell)
 
     with pytest.raises(NotAllowed):
         await hosts.harnesses.install(
-            InstallRunnerRequest(host="local", runner="claude-code", version="1.2; rm -rf /")
+            InstallRunnerRequest(host="local", runner="claude-code", version=version)
         )
 
     assert shell.runs == []
@@ -335,15 +338,20 @@ async def test_a_setup_writes_the_policies_and_the_agent_files(hosts: Hosts) -> 
 
 
 async def test_a_setup_keeps_a_provider_key_out_of_every_argv(hosts: Hosts) -> None:
+    """A key goes to the service's own credential store, so no command on the host carries it: not
+    even when the service cannot be reached and the setup fails."""
     shell = hosts.shell("local")
     script_opencode(shell)
 
-    await hosts.harnesses.setup(
-        SetupRunnerRequest(host="local", runner="opencode"), env={"OPENROUTER_API_KEY": "sk-secret"}
-    )
+    with pytest.raises(ToolUnavailable, match="service is not running"):
+        await hosts.harnesses.setup(
+            SetupRunnerRequest(host="local", runner="opencode"),
+            env={"OPENROUTER_API_KEY": "sk-secret"},
+        )
 
+    assert shell.runs  # (the files were written before the key was tried)
     assert all("sk-secret" not in " ".join(argv) for argv in shell.runs)
-    assert {"UDL_PROVIDER_KEY": "sk-secret"} in shell.secret_envs
+    assert all(not secrets for secrets in shell.secret_envs)  # (no key is handed to a command)
 
 
 async def test_a_harness_that_enforces_its_own_guards_needs_no_files(hosts: Hosts) -> None:

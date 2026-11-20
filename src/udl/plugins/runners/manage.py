@@ -51,8 +51,10 @@ __all__ = [
     "StartLoginRequest",
 ]
 
-VERSION = re.compile(r"^[0-9A-Za-z.\-]+$")
-"""What a version may be (`latest`, `2.1.4`): anything else is refused before a command runs."""
+VERSION = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.\-]*$")
+"""What a version may be (`latest`, `2.1.4`): letters, digits, dots and dashes, and it starts with a
+letter or a digit — a leading dash would be an option to the harness's own program, never a
+version. Anything else is refused before a command runs."""
 
 TAIL: Final = 4_000
 """How much of an install's output is kept: its end, in characters, where a problem shows."""

@@ -213,11 +213,16 @@ async def test_a_setup_writes_the_policies_and_an_agent_file_per_role(
     ]
     assert "shell:git push *" in shell.files["$HOME/.config/opencode/opencode.json"]
     assert "udl's implementer agent" in shell.files["udl-implementer"]
-    # (The key reaches the command through its environment, never an argv.)
+    # (The key goes to the service's own credential store: it is in no command at all.)
     assert all("sk-1" not in " ".join(argv) for argv in shell.runs)
-    assert ["sh", "-c", 'opencode service set env OPENROUTER_API_KEY "$UDL_PROVIDER_KEY"'] in (
-        shell.runs
-    )
+    assert service.credentials == [
+        {
+            "integrationID": "openrouter",
+            "value": {"type": "key", "key": "sk-1"},
+            "activate": True,
+            "label": "udl",
+        }
+    ]
 
 
 async def test_a_setup_on_a_host_with_no_config_writes_the_policies(
@@ -293,6 +298,29 @@ async def test_a_key_that_is_not_a_variable_name_is_refused(
         await _runner(service, shell).setup([], {"not a name; rm -rf /": "sk-1"})
 
     assert all("rm -rf" not in " ".join(argv) for argv in shell.runs)
+
+
+async def test_a_provider_key_is_stored_under_the_provider_its_variable_names(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """`ANTHROPIC_API_KEY` is OpenCode's `anthropic`, and `GROQ_KEY` its `groq`."""
+    await _runner(service, shell).setup([], {"ANTHROPIC_API_KEY": "sk-a", "GROQ_KEY": "sk-g"})
+
+    assert [(cred["integrationID"], cred["value"]) for cred in service.credentials] == [
+        ("anthropic", {"type": "key", "key": "sk-a"}),
+        ("groq", {"type": "key", "key": "sk-g"}),
+    ]
+    # (No command on the host carries either key.)
+    assert all("sk-a" not in " ".join(argv) and "sk-g" not in " ".join(argv) for argv in shell.runs)
+
+
+async def test_a_key_whose_variable_names_no_provider_is_refused(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    with pytest.raises(NotAllowed, match="which provider"):
+        await _runner(service, shell).setup([], {"_API_KEY": "sk-1"})
+
+    assert service.credentials == []
 
 
 async def test_a_sign_in_needs_the_provider(service: FakeOpenCode, shell: FakeShell) -> None:

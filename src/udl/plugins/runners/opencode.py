@@ -36,7 +36,6 @@ import hashlib
 import json
 import logging
 import re
-import shlex
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping, MutableMapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
@@ -130,11 +129,16 @@ _ENTRIES: Final[TypeAdapter[list[dict[str, object]]]] = TypeAdapter(list[dict[st
 _ANY_LIST: Final[TypeAdapter[list[object]]] = TypeAdapter(list[object])
 """A config's `policies`, when it is a list of objects."""
 _KEY_NAME: Final = re.compile(r"^[A-Z_][A-Z0-9_]*$")
-"""What a provider's key may be called (it goes into a shell command's word)."""
+_KEY_SUFFIX: Final = re.compile(r"_(?:API_KEY|KEY)$")
 
 
-_KEY_VAR: Final = "UDL_PROVIDER_KEY"
-"""The variable a provider's key is passed in (never an argv)."""
+def _integration(name: str) -> str:
+    """The provider an environment variable names: `OPENROUTER_API_KEY` and `OPENROUTER_KEY` are
+    OpenCode's `openrouter`, and `ANTHROPIC_API_KEY` its `anthropic` (the service's integration
+    ids are lower case). An empty string when the name says no provider at all."""
+    return _KEY_SUFFIX.sub("", name).lower().replace("_", "-")
+
+
 _REFUSAL: Final = "Not allowed here: ask with orch_ask."
 """What a refused permission says (so the agent learns the way to ask, not to retry)."""
 _PERMISSIONS: timedelta = timedelta(milliseconds=500)
@@ -463,15 +467,43 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
                 f"---\nmode: primary\nsteps: 200\n---\n\n{_brief(role)}\n",
             )
             written.append(f"{_AGENTS}/{name}.md")
-        for name, value in (env or {}).items():
+        if env:
+            await self._set_keys(env)
+        return written
+
+    async def _set_keys(self, env: Mapping[str, str]) -> None:
+        """Store each provider key as the service's own credential (`POST /api/credential`).
+
+        The key never reaches a command: not udl's argv, not an `sh -c` line on the host, and so
+        never the host's process list. The service keeps it (its credential store is what
+        `opencode auth list` reads), and `activate` makes it the one its sessions use."""
+        wanted: dict[str, str] = {}
+        for name, value in env.items():
             if not _KEY_NAME.fullmatch(name):
                 raise NotAllowed(
                     f"{name!r} is not an environment variable udl will set",
                     hint="A provider's key is set as a variable named `[A-Z_][A-Z0-9_]*`.",
                 )
-            setter = f'{shlex.join(self.options.cli)} service set env {name} "${_KEY_VAR}"'
-            await self.shell.run(["sh", "-c", setter], secret_env={_KEY_VAR: value})
-        return written
+            integration = _integration(name)
+            if not integration:
+                raise NotAllowed(
+                    f"{name!r} does not say which provider its key is for",
+                    hint="Name it as a provider's key: `OPENROUTER_API_KEY`, `ANTHROPIC_KEY`.",
+                )
+            wanted[integration] = value
+        async with self._api() as api:
+            for integration, value in wanted.items():
+                await self._call(
+                    api,
+                    "POST",
+                    "/api/credential",
+                    json={
+                        "integrationID": integration,
+                        "value": {"type": "key", "key": value},
+                        "activate": True,
+                        "label": "udl",
+                    },
+                )
 
     async def _merged_policies(self) -> dict[str, object]:
         """The service's config as it is on the host, with udl's deny policies merged in: every

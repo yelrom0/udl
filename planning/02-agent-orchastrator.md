@@ -529,7 +529,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - **Permissions.** V2's are an ordered list of `{action, resource, effect}` (`allow`, `ask`, `deny`), last match wins, and an unmatched request **asks**. The session's `permissions` are therefore: `{"action": "*", "resource": "*", "effect": "allow"}` first, then a `deny` for each of `SessionSpec.deny` as `{"action": "shell", "resource": "git push *"}` (a pattern ending in ` *` also matches the bare command), then `deny` for `edit` and `external_directory` outside the worktree, and for `question` (an agent asks through `orch_ask`, never the harness's own question tool). A `permission.asked` that still arrives is answered `reject` with "Not allowed here: ask with orch_ask", so a session can never hang on a prompt nobody sees.
   - **Hard stops are policies, on the host.** A session's rules can be widened by a project's `opencode.json`; a `policies` entry can't be. 25.11's setup writes `/etc/opencode/opencode.json` (or, without root, the user's global config) with `{"action": "tool.use", "resource": "shell:git push *", "effect": "deny"}` and the same for `shell:gh pr merge *`. The runner's `health()` reports whether they are in place, and the dispatcher refuses to start an implementer on a host where they aren't.
   - **The agent.** One OpenCode agent file per role, written to the host's `~/.config/opencode/agents/udl-<role>.md` (frontmatter `mode: primary`, `steps`; the body is the system text). The session names it in `agent`. V1's `tools`, `prompt`, `maxSteps` and `permission` keys are not used.
-  - **Providers.** OpenRouter's key reaches OpenCode on the host as `opencode service set env OPENROUTER_API_KEY <value>` (25.11), read from udl's secret store (so it may be an `op://` reference); model ids then start `openrouter/`.
+  - **Providers.** OpenRouter's key reaches OpenCode through the service's own API, `POST /api/credential` (`{integrationID, value: {type: key, key}, activate: true}`), read from udl's secret store (so it may be an `op://` reference); the variable's name says the provider (`OPENROUTER_API_KEY` → `openrouter`), and model ids then start `openrouter/`.
   - `tests/support/runners.py`: `FakeOpenCode`, an ASGI app serving those calls with the same shapes (validated against the committed OpenAPI document), Basic auth, and a log that a test can cut and resume.
 - Tests first: the contract over `FakeOpenCode`; `tests/unit/plugins/runners/test_opencode.py`: the ruleset built from a `deny` list; the log resumed from the stored sequence after a dropped connection, with no event lost or repeated; a `permission.asked` rejected; the password in no log line.
 - Done when: an opt-in smoke test runs one prompt on an OpenRouter model (ERNIE or DeepSeek) through OpenRouter, here and on thevault.
@@ -651,7 +651,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
     |---|---|---|
     | status | `claude --version`, `claude auth status` (JSON), `claude doctor` for `problems` | `opencode --version`, `opencode service status`, `GET /api/info`, `opencode auth list --format json` |
     | install / update | `claude install [stable\|latest\|<version>]`; `claude update` | `opencode upgrade [<version>]`, then `opencode service restart` only while no session is running on that host |
-    | sign in | `claude auth login`, relayed | a provider key: `opencode service set env <NAME> <value>` from udl's secret store; an OAuth provider: `opencode auth login <provider>`, relayed |
+    | sign in | `claude auth login`, relayed | a provider key: `POST /api/credential` from udl's secret store (never a command); an OAuth provider: `opencode auth login <provider>`, relayed |
     | sign out | `claude auth logout` | `opencode auth logout <provider> <account>` |
 
   - **Relayed sign-in** (O-C12): `login()` returns the shell's `Interaction`. `orch_runner_login` (`host`, `runner`, `provider?`) starts it and answers a `LoginAttempt` (`id`, `prompt`: the text and the URL the harness printed, `expects: none | code`); `orch_runner_login_reply` (`id`, `text`) writes a line to it; `orch_runner_login_status` says whether it finished. Attempts live in memory, end after 10 minutes, and one runs per (host, runner). Where a harness's login can't be driven without a terminal, the answer is the exact command to run in an SSH session on that host; say so in the phase's decisions.
@@ -692,11 +692,11 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   `/etc/opencode/opencode.json` (which a project cannot widen) is *not* written: udl may not be
   root on that host, and the file is not there yet, so the user's global config is where the
   policies go until a host has a system one.
-- **`opencode service set env` has no stdin path,** so a provider key does reach `opencode`'s own
-  argv on the host (visible to `ps` there for the moment it runs). udl keeps it out of its own
-  argv and the SSH command line (`secret_env` → `$UDL_PROVIDER_KEY`), and the runner's key is set
-  at setup, not at every session. If OpenCode grows a file or stdin way to set it, that replaces
-  this.
+- **A provider key is a credential on the service, never a command.** `opencode service set env`
+  takes the value in its argv, so it would show in the host's process list; `POST /api/credential`
+  (OpenCode 2.1.2's own API, in the committed OpenAPI document) stores it instead, and `activate`
+  makes it the one sessions use. The key is in no argv on either machine, and it is set at setup,
+  not at every session.
 - **A runner's quota is the dispatcher's to record:** `Harnesses.limited(host, runner, until)` is
   what 27.7 calls; `RunnerHealth.limited_until` reads it back. Nothing polls a provider's quota.
 - **`claude doctor` is an interactive screen:** it gets 20 seconds and no terminal, and one that
