@@ -13,18 +13,23 @@ remade: an agent's uncommitted work is never thrown away by asking where it work
 """
 
 # System Imports
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import timedelta
+from typing import Final
 
 # Package Imports
 from pydantic import BaseModel, ConfigDict
 
 # Local Imports
+from udl.clock import Clock, pause
+from udl.db.manager import DBManager
 from udl.errors import ConfigError, NotAllowed, PluginFailed
 from udl.hosts import Host, HostName, HostShell
 from udl.plugins.apps.orch.models import Repo
 from udl.plugins.apps.orch.records import Task
 
-__all__ = ["Worktree", "prepare", "remove"]
+__all__ = ["GateLane", "Worktree", "prepare", "remove"]
 
 GIT: timedelta = timedelta(minutes=5)
 """How long one git command gets: a fetch of a big repo is the slow one."""
@@ -134,3 +139,54 @@ async def _has_branch(shell: HostShell, checkout: str, branch: str) -> bool:
     return await _succeeds(
         shell, ["-C", checkout, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"]
     )
+
+
+class GateLane:
+    """One gate run at a time per host: a `Lease` named `orch-gate:<host>`, so two agents' test
+    runs on one machine never fight for it (and a run that dies still lets the next in, once its
+    lease expires).
+
+    The lane is taken with `take()` (which waits for it) and given back with `release()`, or
+    both with `held()`, which gives it back however the gate ends."""
+
+    RETRY: Final = timedelta(seconds=2)
+    """How long to wait before asking for the lane again (a gate is minutes long: twice a
+    second would be noise on the database)."""
+
+    def __init__(
+        self,
+        database: DBManager,
+        *,
+        host: str,
+        holder: str,
+        clock: Clock,
+        ttl: timedelta = timedelta(minutes=5),
+    ) -> None:
+        self._db = database
+        self._name = f"orch-gate:{host}"
+        self._holder = holder
+        self._clock = clock
+        self._ttl = ttl
+
+    @property
+    def name(self) -> str:
+        """The lease it takes (what a stuck gate's lane is, when it is looked for)."""
+        return self._name
+
+    async def take(self) -> None:
+        """Wait until this lane is the holder's (however long the gate before it runs)."""
+        while await self._db.claim_lease(self._name, self._holder, self._ttl) is None:
+            await pause(self._clock, self.RETRY)
+
+    async def release(self) -> None:
+        """Give the lane back (nothing when it is not the holder's any more)."""
+        await self._db.release_lease(self._name, self._holder)
+
+    @asynccontextmanager
+    async def held(self) -> AsyncGenerator[None]:
+        """The lane, for as long as the block runs: given back however it ends."""
+        await self.take()
+        try:
+            yield
+        finally:
+            await self.release()
