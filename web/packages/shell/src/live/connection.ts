@@ -8,6 +8,7 @@
  * the connection state the navbar shows.
  */
 
+import { publishEvent } from "../plugins/events";
 import { clear, pushEvent, setConnection, setJob, setRun } from "../stores/live";
 
 /** How long the first retry waits, and the longest one. */
@@ -243,6 +244,8 @@ export function startLive(options: LiveOptions = {}): Live {
 	connection.watch(EVENTS_STREAM, EVENT_TYPES, (name, data) => {
 		if (name === "event") {
 			pushEvent({ name, at: now(), data });
+			// (A plugin that subscribed to it hears it too: the page's events are one stream.)
+			publishEvent(data);
 			return;
 		}
 		if (name === "run") {

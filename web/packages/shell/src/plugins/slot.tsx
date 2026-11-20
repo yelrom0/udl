@@ -9,7 +9,7 @@ import type { Mount, UIPluginSpec } from "@udl/ui-sdk";
 import { useEffect, useRef, useState } from "react";
 import { ErrorCard } from "../components/ErrorCard";
 import { addError, plugins, type UIPluginInfo } from "../stores/plugins";
-import { systemTheme, theme as themeStore } from "../stores/theme";
+import { shownTheme, theme as themeStore } from "../stores/theme";
 import { contextOf } from "./context";
 import { prepare } from "./dom";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -30,12 +30,6 @@ const RECORDS: {
 	actionEditors: (spec) => spec.actionEditors,
 	widgets: (spec) => spec.widgets,
 };
-
-/** What the page is showing: daisyUI's light or dark. */
-function mode(): "light" | "dark" {
-	const chosen = themeStore.getState().current;
-	return chosen === "system" ? systemTheme() : chosen;
-}
 
 /** What a slot is told: the point, the props that point's contributions take, and how it is
  * looked up (`lookup`: the plugin a route belongs to, the integration an editor is for). */
@@ -104,11 +98,13 @@ function Draw<P extends Point>({
 					.getState()
 					.manifests.find((one) => one.name === name);
 				const mount = contribution.mount ?? (await bundleMount(point, contribution, importer));
-				const place = await prepare(element, info, { theme: mode() });
-				wrapper.current = place.wrapper;
+				const place = await prepare(element, info, { theme: shownTheme() });
 				if (!live) {
+					// (Gone before its bundle arrived: the wrapper is not the page's to keep.)
+					place.wrapper.remove();
 					return;
 				}
+				wrapper.current = place.wrapper;
 				mounted.current = mount(
 					place.target,
 					latest.current,
@@ -128,7 +124,13 @@ function Draw<P extends Point>({
 		})();
 		return () => {
 			live = false;
-			mounted.current?.unmount();
+			try {
+				mounted.current?.unmount();
+			} catch (error) {
+				// (A plugin's own teardown failing is its error, and not the page's: it is said,
+				// and the slot still goes.)
+				addError(name, error instanceof Error ? error.message : String(error));
+			}
 			mounted.current = null;
 			wrapper.current?.remove();
 			wrapper.current = null;
@@ -136,15 +138,22 @@ function Draw<P extends Point>({
 	}, [contribution, point, importer, name, onFailure]);
 
 	// (Every render: the props may be new ones (a route's path, a widget's slot), and the mount
-	// takes them as one update rather than a fresh mount.)
+	// takes them as one update rather than a fresh mount. An update that throws is that
+	// contribution's failure, so it is a card in its place, not the page's error.)
 	useEffect(() => {
-		mounted.current?.update(latest.current);
+		try {
+			mounted.current?.update(latest.current);
+		} catch (error) {
+			const said = error instanceof Error ? error.message : String(error);
+			addError(name, said);
+			onFailure(`The ${name} UI failed: ${said}`);
+		}
 	});
 
 	useEffect(() => {
 		return themeStore.subscribe(() => {
 			if (wrapper.current !== null) {
-				wrapper.current.dataset.theme = mode();
+				wrapper.current.dataset.theme = shownTheme();
 			}
 		});
 	}, []);

@@ -1,6 +1,7 @@
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { onNavigate, routerNavigation } from "./plugins/navigation";
 import { OWN_NAV, registerPlugins } from "./plugins/shell";
 import { routeTree } from "./routeTree.gen";
 import { clear, pushEvent, setRun } from "./stores/live";
@@ -43,6 +44,31 @@ function udl({ signedIn = true }: { signedIn?: boolean } = {}): void {
 	);
 }
 
+/** What a bundle's page does in a test: a page test cannot import one from a URL. */
+type Page = (
+	target: HTMLElement,
+	props: unknown,
+	ctx: { navigate: (to: string) => void },
+) => { update(props: unknown): void; unmount(): void };
+
+/** The page the mocked bundle's `inbox` is (each test says what it does). */
+const bundle = vi.hoisted(() => ({ page: null as Page | null }));
+
+// (A plugin's bundle is an ES module of the page's; here it is the mount the test gives it.)
+vi.mock("./plugins/load", () => ({
+	forgetPlugins: () => {},
+	loadPlugin: async () => ({
+		routes: {
+			inbox: (target: HTMLElement, props: unknown, ctx: { navigate: (to: string) => void }) => {
+				if (bundle.page === null) {
+					throw new Error("the test gave no page");
+				}
+				return bundle.page(target, props, ctx);
+			},
+		},
+	}),
+}));
+
 /** The page at `path` (`/ui` is its base, as udl serves it). */
 function draw(path: string) {
 	const router = createRouter({
@@ -50,6 +76,8 @@ function draw(path: string) {
 		basepath: "/ui",
 		history: createMemoryHistory({ initialEntries: [path] }),
 	});
+	// (As `main.tsx` does it: a plugin's `ctx.navigate` moves the router.)
+	onNavigate(routerNavigation(router.history));
 	render(<RouterProvider router={router} />);
 	return router;
 }
@@ -267,7 +295,7 @@ describe("the shell", () => {
 		expect(screen.getByText(/No UI plugin named "nobody"/)).toBeTruthy();
 	});
 
-	it("shows a plugin's page in its own shadow root, and an error card when it fails", async () => {
+	it("shows a plugin's page, and an error card in its place when it fails", async () => {
 		udl();
 		const gmail = {
 			name: "gmail",
@@ -281,15 +309,42 @@ describe("the shell", () => {
 		};
 		setPlugins([gmail], []);
 		registerPlugins([gmail]);
+		bundle.page = () => {
+			throw new Error("its page fails");
+		};
 		draw("/ui/p/gmail/inbox");
 
-		// (A page test cannot import a bundle: what it can check is that the failure is one
-		// card in the plugin's place, and the shell's own pages are still there.)
+		// (One card in the plugin's place, and the shell's own pages are still there.)
 		expect(await screen.findByRole("alert")).toHaveProperty(
 			"textContent",
-			expect.stringContaining("The gmail UI failed"),
+			expect.stringContaining("its page fails"),
 		);
 		expect(screen.getAllByRole("link", { name: "Dashboard" }).length).toBeGreaterThan(0);
+	});
+
+	it("moves the shell when a plugin's page navigates", async () => {
+		udl();
+		const gmail = {
+			name: "gmail",
+			version: "0.1.0",
+			base_url: "/ui/plugins/gmail/",
+			entry_url: "/ui/plugins/gmail/index.js",
+			styles: [],
+			isolation: "shadow" as const,
+			contributes: { routes: ["inbox"] },
+			plugin: "gmail",
+		};
+		setPlugins([gmail], []);
+		registerPlugins([gmail]);
+		bundle.page = (_target, _props, ctx) => {
+			ctx.navigate("/sites");
+			return { update: () => {}, unmount: () => {} };
+		};
+
+		draw("/ui/p/gmail/inbox");
+
+		// (The router's own navigation, with the page's base: no reload, no `/sites` from udl.)
+		expect(await screen.findByRole("heading", { level: 1, name: "Sites" })).toBeTruthy();
 	});
 
 	it("says where the live connection is: connecting until its stream opens", async () => {

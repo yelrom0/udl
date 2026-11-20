@@ -21,8 +21,9 @@ export interface PrepareOptions {
 	readonly fetch?: typeof globalThis.fetch;
 }
 
-/** The one document-level sheet a plugin's `@property` rules were hoisted to, by plugin. */
-const hoisted = new Map<string, CSSStyleSheet>();
+/** The one document-level sheet a plugin's `@property` rules were hoisted to, by plugin: the
+ * sheet, and the rules it already has (a second stylesheet adds to it, never replaces it). */
+const hoisted = new Map<string, { sheet: CSSStyleSheet; rules: string[] }>();
 
 /** The `@property` rules in `css` (`@property --x { ... }`, with its braces). */
 export function propertyRules(css: string): string[] {
@@ -56,12 +57,18 @@ function hoist(info: UIPluginInfo, text: string): void {
 		return;
 	}
 	const known = hoisted.get(info.name);
-	if (known !== undefined) {
+	if (known === undefined) {
+		const sheet = sheetOf(rules.join("\n"));
+		hoisted.set(info.name, { sheet, rules });
+		document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
 		return;
 	}
-	const sheet = sheetOf(rules.join("\n"));
-	hoisted.set(info.name, sheet);
-	document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+	const fresh = rules.filter((rule) => !known.rules.includes(rule));
+	if (fresh.length === 0) {
+		return;
+	}
+	known.rules = [...known.rules, ...fresh];
+	known.sheet.replaceSync(known.rules.join("\n"));
 }
 
 /** What a stylesheet says, as udl reads it (`its text`), or an error naming the file. */

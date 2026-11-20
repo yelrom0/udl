@@ -10,7 +10,7 @@ import { ask } from "../stores/confirms";
 import { live } from "../stores/live";
 import type { UIPluginInfo } from "../stores/plugins";
 import { plugins } from "../stores/plugins";
-import { systemTheme, theme } from "../stores/theme";
+import { shownTheme, theme } from "../stores/theme";
 import { toast as say, toasts } from "../stores/toasts";
 import { callOperation } from "./call";
 import { eventsOf } from "./events";
@@ -47,12 +47,6 @@ export const TOKENS: readonly string[] = [
 	"--noise",
 ];
 
-/** What the page is showing: daisyUI's light or dark (`system` is whichever the system is). */
-export function mode(): "light" | "dark" {
-	const chosen = theme.getState().current;
-	return chosen === "system" ? systemTheme() : chosen;
-}
-
 /** The theme as a plugin reads it: the mode, its name, its tokens, and when it changes. */
 function themeOf(): Theme {
 	const tokens: Record<string, string> = {};
@@ -60,7 +54,7 @@ function themeOf(): Theme {
 	for (const token of TOKENS) {
 		tokens[token] = style.getPropertyValue(token).trim();
 	}
-	const shown = mode();
+	const shown = shownTheme();
 	return {
 		mode: shown,
 		name: shown,

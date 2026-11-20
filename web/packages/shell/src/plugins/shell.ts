@@ -4,13 +4,13 @@
  */
 
 import { plugins, type UIPluginInfo } from "../stores/plugins";
+import { OWN_NAV, UDL } from "./own";
 import { Registry } from "./registry";
+
+export { OWN_NAV, UDL } from "./own";
 
 /** The page's registry: what the shell and its plugins contribute. */
 export const shellRegistry = new Registry();
-
-/** What the shell itself contributes: its name, as a plugin's is. */
-export const UDL = { name: "udl", version: "0.0.0", baseUrl: "/ui/" } as const;
 
 /**
  * Register `info`'s contributions, as its manifest says they are: the navigation's pages, and
@@ -61,7 +61,8 @@ export function registerPlugin(info: UIPluginInfo): void {
 
 /**
  * Replace the plugins the page knows: the registry is emptied of every plugin's contributions
- * and filled with what udl lists now (the shell's own stay: they are registered once).
+ * and filled with what udl lists now. The shell's own pages are put back every time
+ * (`registerOwn`), so the drawer never loses them, and the store's `nav` is the registry's.
  */
 export function registerPlugins(infos: readonly UIPluginInfo[]): void {
 	shellRegistry.clear();
@@ -81,21 +82,3 @@ export function registerOwn(registry: Registry): void {
 		registry.nav.push({ plugin: UDL, title: item.title, to: item.to });
 	}
 }
-
-/** The shell's own pages: what `__root`'s drawer used to hold as one list. */
-export const OWN_NAV: readonly { readonly title: string; readonly to: string }[] = [
-	{ to: "/", title: "Dashboard" },
-	{ to: "/downloads", title: "Downloads" },
-	{ to: "/sites", title: "Sites" },
-	{ to: "/chains", title: "Chains" },
-	{ to: "/events", title: "Events" },
-	{ to: "/subscriptions", title: "Subscriptions" },
-	{ to: "/actions", title: "Actions" },
-	{ to: "/runs", title: "Runs" },
-	{ to: "/schedules", title: "Schedules" },
-	{ to: "/ai", title: "AI" },
-	{ to: "/accounts", title: "Accounts" },
-	{ to: "/plugins", title: "Plugins" },
-	{ to: "/databases", title: "Databases" },
-	{ to: "/settings", title: "Settings" },
-];

@@ -79,6 +79,35 @@ describe("preparing where a plugin draws", () => {
 		]);
 	});
 
+	it("hoists a second stylesheet's @property rules to the same plugin's sheet", async () => {
+		const two = [
+			'@property --angle { syntax: "<angle>"; inherits: false; initial-value: 0deg; }',
+			'@property --tint { syntax: "<color>"; inherits: false; initial-value: red; }',
+		];
+		const fetch = vi.fn(
+			async (input: RequestInfo | URL) =>
+				new Response(String(input).endsWith("two.css") ? two[1] : two[0], { status: 200 }),
+		);
+
+		await prepare(
+			document.createElement("div"),
+			{ ...GMAIL, styles: ["/ui/plugins/gmail/one.css"] },
+			{ theme: "dark", fetch },
+		);
+		await prepare(
+			document.createElement("div"),
+			{ ...GMAIL, styles: ["/ui/plugins/gmail/two.css"] },
+			{ theme: "dark", fetch },
+		);
+
+		const sheets = document.adoptedStyleSheets
+			.map(cssOf)
+			.filter((css) => css.includes("@property"));
+		expect(sheets).toHaveLength(1);
+		expect(sheets[0]).toContain("--angle");
+		expect(sheets[0]).toContain("--tint");
+	});
+
 	it("hoists nothing when a plugin has no @property rules", async () => {
 		await prepare(document.createElement("div"), GMAIL, {
 			theme: "dark",

@@ -31,7 +31,13 @@ export function matchRoute(routes: readonly string[], asked: string): MatchedRou
 		for (const [index, part] of parts.entries()) {
 			const given = wanted[index] ?? "";
 			if (part.startsWith("$")) {
-				params[part.slice(1)] = decodeURIComponent(given);
+				const decoded = decode(given);
+				if (decoded === null) {
+					// (Not a URL's text at all — a stray `%` — so it is nobody's page.)
+					matched = false;
+					break;
+				}
+				params[part.slice(1)] = decoded;
 				continue;
 			}
 			if (part !== given) {
@@ -44,6 +50,16 @@ export function matchRoute(routes: readonly string[], asked: string): MatchedRou
 		}
 	}
 	return null;
+}
+
+/** `part` as a URL's text, or `null` when it is not one (a `%` with nothing valid after it). */
+function decode(part: string): string | null {
+	try {
+		return decodeURIComponent(part);
+	} catch {
+		// (`decodeURIComponent` throws a `URIError` on a malformed escape: the path is not a page.)
+		return null;
+	}
 }
 
 /** A query, as the strings a contribution is given (only the ones that are strings). */

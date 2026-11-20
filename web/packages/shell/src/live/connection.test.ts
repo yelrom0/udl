@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { eventsOf, forgetListeners } from "../plugins/events";
 import { clear, live } from "../stores/live";
 import {
 	EVENTS_STREAM,
@@ -80,6 +81,7 @@ function fakeTimers(): Timers & { waits: number[]; fire: () => void } {
 beforeEach(() => {
 	FakeSource.made = [];
 	clear();
+	forgetListeners();
 });
 
 afterEach(() => {
@@ -210,6 +212,20 @@ describe("the live connection", () => {
 		connection.stop("/nope");
 
 		expect(FakeSource.made).toHaveLength(0);
+	});
+
+	it("hands the events it brings to the plugins that subscribed", () => {
+		const heard: unknown[] = [];
+		eventsOf().subscribe({ type: "gmail.message" }, (event) => heard.push(event));
+		const live500 = startLive({ source: FakeSource, timers: fakeTimers(), now: () => "12:00" });
+		const source = FakeSource.made[0];
+		source?.open();
+
+		source?.send("event", { type: "gmail.message", id: "m-1" });
+		source?.send("event", { type: "slack.message", id: "m-2" });
+
+		expect(heard).toEqual([{ type: "gmail.message", id: "m-1" }]);
+		live500.stop();
 	});
 
 	it("keeps the last 500 events, and a run and a job by id", () => {

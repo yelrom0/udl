@@ -482,6 +482,102 @@ describe("a plugin slot", () => {
 		await waitFor(() => expect(drawn.mount).toHaveBeenCalled());
 	});
 
+	it("leaves no wrapper behind when it goes before its bundle has loaded", async () => {
+		plugins.setState({ manifests: [GMAIL], problems: [], errors: [] });
+		let finish: (module: unknown) => void = () => {};
+		const importer = () =>
+			new Promise<unknown>((resolve) => {
+				finish = resolve;
+			});
+		const view = render(
+			<PluginSlot
+				point="routes"
+				props={ROUTE}
+				registry={registryWith(GMAIL)}
+				lookup="gmail"
+				importer={importer}
+			/>,
+		);
+		const host = view.container.querySelector(".udl-plugin-slot");
+		view.unmount();
+		finish({ default: { routes: { inbox: recording().mount } } });
+
+		await act(async () => {});
+		// (Its wrapper was made, then dropped: nothing of it is left in the slot's own root.)
+		expect(host?.shadowRoot?.childElementCount).toBe(0);
+		expect(host?.shadowRoot?.querySelector(".udl-plugin")).toBeNull();
+	});
+
+	it("shows a card when a contribution throws while it updates", async () => {
+		plugins.setState({ manifests: [GMAIL], problems: [], errors: [] });
+		const mount = () => ({
+			update: () => {
+				throw new Error("its update fails");
+			},
+			unmount: () => {},
+		});
+		// (One registry and one importer for both renders: a new one would be a fresh mount,
+		// and it is the update that fails here.)
+		const registry = registryWith(GMAIL);
+		const importer = async () => ({ default: { routes: { inbox: mount } } });
+
+		const view = render(
+			<PluginSlot
+				point="routes"
+				props={ROUTE}
+				registry={registry}
+				lookup="gmail"
+				importer={importer}
+			/>,
+		);
+		await waitFor(() =>
+			expect(view.container.querySelector(".udl-plugin-slot")?.shadowRoot?.innerHTML).toContain(
+				"udl-plugin",
+			),
+		);
+		view.rerender(
+			<PluginSlot
+				point="routes"
+				props={{ ...ROUTE, search: { q: "1" } }}
+				registry={registry}
+				lookup="gmail"
+				importer={importer}
+			/>,
+		);
+
+		expect(await screen.findByRole("alert")).toHaveProperty(
+			"textContent",
+			expect.stringContaining("its update fails"),
+		);
+	});
+
+	it("says an error, and still goes, when a contribution throws while it unmounts", async () => {
+		plugins.setState({ manifests: [GMAIL], problems: [], errors: [] });
+		const mount = () => ({
+			update: () => {},
+			unmount: () => {
+				throw new Error("its unmount fails");
+			},
+		});
+		const view = render(
+			<PluginSlot
+				point="routes"
+				props={ROUTE}
+				registry={registryWith(GMAIL)}
+				lookup="gmail"
+				importer={async () => ({ default: { routes: { inbox: mount } } })}
+			/>,
+		);
+		await waitFor(() =>
+			expect(view.container.querySelector(".udl-plugin-slot")?.shadowRoot?.innerHTML).toContain(
+				"udl-plugin",
+			),
+		);
+
+		expect(() => view.unmount()).not.toThrow();
+		expect(plugins.getState().errors).toEqual([{ name: "gmail", message: "its unmount fails" }]);
+	});
+
 	it("draws the shell's own contribution without importing anything", async () => {
 		const own = recording();
 		const registry = new Registry();

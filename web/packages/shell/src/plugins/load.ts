@@ -1,7 +1,7 @@
 /**
  * Loading a UI plugin's bundle: its entry's ES module, imported once however many of its
- * contributions the page draws, and remembered when it fails too (a broken bundle is not asked
- * again on every route change).
+ * contributions the page draws. A failed import is dropped from the cache, so the error card's
+ * retry asks again instead of replaying the failure.
  */
 
 import type { UIPluginSpec } from "@udl/ui-sdk";
@@ -29,8 +29,8 @@ function specOf(module: unknown, url: string): UIPluginSpec {
 
 /**
  * `info`'s bundle, as its contributions. It is imported once: a second call (another slot
- * drawing another of its contributions) gets the same promise, and a bundle that failed stays
- * failed until the page is reloaded (`forgetPlugins()`).
+ * drawing another of its contributions) gets the same promise. A failure is not remembered: the
+ * entry is dropped from the cache, so a retry (the error card's) can work.
  */
 export function loadPlugin(
 	info: UIPluginInfo,
@@ -40,7 +40,13 @@ export function loadPlugin(
 	if (found !== undefined) {
 		return found;
 	}
-	const loading = importer(info.entry_url).then((module) => specOf(module, info.entry_url));
+	const loading = importer(info.entry_url)
+		.then((module) => specOf(module, info.entry_url))
+		.catch((error: unknown) => {
+			// (A bundle that failed once may be fixed by a retry; the page is not the thing to reload.)
+			cache.delete(info.entry_url);
+			throw error;
+		});
 	cache.set(info.entry_url, loading);
 	return loading;
 }

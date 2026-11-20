@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { navigate, onNavigate } from "./navigation";
+import { navigate, onNavigate, routerNavigation } from "./navigation";
 
 describe("a plugin's navigation", () => {
 	it("goes through the browser's own history before the page says otherwise", () => {
@@ -27,5 +27,15 @@ describe("a plugin's navigation", () => {
 		navigate("/p/gmail/inbox");
 
 		expect(go).toHaveBeenCalledWith("/p/gmail/inbox");
+	});
+
+	it("puts the page's base in front of the path, so the router moves and the server is not asked", () => {
+		const pushed: string[] = [];
+		const go = routerNavigation({ push: (path: string) => pushed.push(path) });
+
+		go("/sites");
+		go("p/gmail/inbox");
+
+		expect(pushed).toEqual(["/ui/sites", "/ui/p/gmail/inbox"]);
 	});
 });

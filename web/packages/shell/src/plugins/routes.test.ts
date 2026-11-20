@@ -8,6 +8,10 @@ import { describe, expect, it } from "vitest";
 import { matchRoute, searchOf } from "./routes";
 
 describe("matching a plugin's page", () => {
+	it("has no page for a part that is not a URL's text", () => {
+		expect(matchRoute(["message/$id"], "message/%E0%A4%A")).toBeNull();
+	});
+
 	it("finds the path a plain one names", () => {
 		expect(matchRoute(["inbox", "compose"], "inbox")).toEqual({
 			route: "inbox",

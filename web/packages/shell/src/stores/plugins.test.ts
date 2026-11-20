@@ -72,4 +72,9 @@ describe("the plugins store", () => {
 		expect(manifests.result.current).toEqual([GMAIL]);
 		expect(errors.result.current).toEqual([{ name: "gmail", message: "its bundle 404s" }]);
 	});
+
+	it("starts with the shell's own pages in the navigation", () => {
+		expect(plugins.getState().nav.map((item) => item.to)).toContain("/sites");
+		expect(plugins.getState().nav[0]).toMatchObject({ title: "Dashboard", to: "/" });
+	});
 });

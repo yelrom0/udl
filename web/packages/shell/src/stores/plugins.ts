@@ -7,6 +7,7 @@
 import type { Contributions } from "@udl/ui-sdk";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
+import { ownNav } from "../plugins/own";
 import type { NavEntry } from "../plugins/registry";
 
 /** A UI plugin the shell can load: where its files are, and what it adds (18.7's
@@ -44,7 +45,7 @@ export const plugins = createStore<{
 	errors: readonly PluginError[];
 	/** The navigation's pages: the shell's own, then each plugin's (18.9's registry fills it). */
 	nav: readonly NavEntry[];
-}>(() => ({ manifests: [], problems: [], errors: [], nav: [] }));
+}>(() => ({ manifests: [], problems: [], errors: [], nav: ownNav() }));
 
 /** Replace what the page knows about the plugins (after `GET /ui/plugins.json`). */
 export function setPlugins(

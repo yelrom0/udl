@@ -71,3 +71,23 @@ it("says so when udl cannot be reached at all", async () => {
 		{ origin: "/ui/plugins.json", error: "Failed to fetch" },
 	]);
 });
+
+it("says so when the answer is not a plugin list", async () => {
+	plugins.setState({ manifests: [], problems: [], errors: [] });
+
+	await loadPlugins(answering({ plugins: "everything", problems: [] }));
+
+	expect(plugins.getState().manifests).toEqual([]);
+	expect(plugins.getState().problems).toEqual([
+		{ origin: "/ui/plugins.json", error: "udl answered something that is not a plugin list" },
+	]);
+});
+
+it("says which plugin in the answer is not one", async () => {
+	plugins.setState({ manifests: [], problems: [], errors: [] });
+
+	await loadPlugins(answering({ plugins: [{ ...GMAIL, entry_url: 7 }], problems: [] }));
+
+	expect(plugins.getState().manifests).toEqual([]);
+	expect(plugins.getState().problems[0]?.error).toContain("not a plugin list");
+});

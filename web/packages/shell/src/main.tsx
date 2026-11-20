@@ -7,6 +7,7 @@ import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { loadPlugins } from "./plugins/list";
+import { onNavigate, routerNavigation } from "./plugins/navigation";
 import { router } from "./router";
 import { applyTheme, followSystem, theme } from "./stores/theme";
 import "./index.css";
@@ -21,6 +22,9 @@ followSystem();
 // plugin's nav item is there from the start. A list that cannot be read is a problem the
 // Plugins page shows, never a page that fails to open.)
 void loadPlugins();
+// (A plugin's `ctx.navigate("/sites")` is a path of the page's: the router moves, with its
+// basepath, instead of the browser loading `/sites` from udl.)
+onNavigate(routerNavigation(router.history));
 createRoot(root).render(
 	<StrictMode>
 		<RouterProvider router={router} />

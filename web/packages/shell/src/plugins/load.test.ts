@@ -24,6 +24,17 @@ const spec = { routes: { inbox: () => ({ update: () => {}, unmount: () => {} }) 
 beforeEach(forgetPlugins);
 
 describe("loading a plugin", () => {
+	it("tries again after an import that failed, so a retry can recover", async () => {
+		const importer = vi
+			.fn<() => Promise<unknown>>()
+			.mockRejectedValueOnce(new TypeError("Failed to fetch dynamically imported module"))
+			.mockResolvedValueOnce({ default: spec });
+
+		await expect(loadPlugin(GMAIL, importer)).rejects.toThrow("Failed to fetch");
+		await expect(loadPlugin(GMAIL, importer)).resolves.toBe(spec);
+		expect(importer).toHaveBeenCalledTimes(2);
+	});
+
 	it("imports the entry the manifest names", async () => {
 		const importer = vi.fn(async () => ({ default: spec }));
 
@@ -43,16 +54,6 @@ describe("loading a plugin", () => {
 
 		expect(importer).toHaveBeenCalledTimes(1);
 		expect(first).toBe(second);
-	});
-
-	it("remembers a bundle that failed, so it is not asked again", async () => {
-		const importer = vi.fn(async () => {
-			throw new TypeError("Failed to fetch dynamically imported module");
-		});
-
-		await expect(loadPlugin(GMAIL, importer)).rejects.toThrow("Failed to fetch");
-		await expect(loadPlugin(GMAIL, importer)).rejects.toThrow("Failed to fetch");
-		expect(importer).toHaveBeenCalledTimes(1);
 	});
 
 	it("refuses a module that exports no plugin", async () => {
