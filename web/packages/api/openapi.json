@@ -5086,6 +5086,18 @@
               }
             ],
             "description": "The project it is in (None: the only one, while udl has one)."
+          },
+          "sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The head the caller saw (`orch_merge_list`'s row): a pull that moved since is refused,\nrather than merged blind (None: whatever head it has now).",
+            "title": "Sha"
           }
         },
         "required": [

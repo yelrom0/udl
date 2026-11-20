@@ -13,7 +13,7 @@ these tests register a fake `github` app that answers both (the real integration
 
 # System Imports
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -22,10 +22,11 @@ import pytest
 from pydantic import BaseModel
 
 # Local Imports
+from support.clock import FakeClock
 from support.engine import registry, settings
 from udl.core.operations import OperationHints
 from udl.core.service import UDLService
-from udl.errors import ConfigError, DoesNotExist, NotAllowed
+from udl.errors import ConfigError, DoesNotExist, NotAllowed, PluginError
 from udl.interfaces.security import Principal as Caller
 from udl.interfaces.security import PrincipalKind, current_principal
 from udl.plugins.apps.base import AppPlugin, AppRecords, AppSettings
@@ -137,6 +138,8 @@ class FakeGitHub(AppPlugin[AppSettings]):
         super().__init__(settings_ or AppSettings(), **kwargs)  # pyright: ignore[reportArgumentType]
         self.pulls: dict[int, FakePull] = {}
         self.merged: list[MergePullRequest] = []
+        self.fail_for: int | None = None
+        """A pull number `get_pull` refuses with a plugin error (the others answer)."""
 
     @classmethod
     def operations(cls) -> list[Any]:
@@ -163,6 +166,8 @@ class FakeGitHub(AppPlugin[AppSettings]):
 
     async def get_pull(self, request: GetPullRequest) -> FakePull:
         """The pull the test set for that number (a clean one when it set none)."""
+        if self.fail_for == request.number:
+            raise PluginError(f"pull {request.number} is gone")
         return self.pulls.get(request.number) or self.pull(request.number)
 
     async def merge_pull(self, request: MergePullRequest) -> MergeResult:
@@ -190,9 +195,7 @@ def test_the_operations_and_their_hints() -> None:
     assert offered["merge_list"].hints == OperationHints(read_only=True, open_world=True)
     assert offered["merge_list"].request is MergeListRequest
     assert offered["merge_list"].response is MergeList
-    assert offered["merge"].hints == OperationHints(
-        destructive=True, open_world=True, admin=True, mcp=False
-    )
+    assert offered["merge"].hints == OperationHints(destructive=True, open_world=True, admin=True)
     assert offered["merge"].request is MergeRequest
     assert offered["merge"].response is Merged
     assert offered["promotion"].hints == OperationHints(read_only=True)
@@ -288,6 +291,22 @@ async def test_a_ready_task_is_listed_with_its_pull(service: UDLService) -> None
     assert row.blockers == []
 
 
+async def test_a_pull_that_cannot_be_read_is_that_row_s_own_blocker(
+    service: UDLService,
+) -> None:
+    """(One pull udl cannot read does not hide the others.)"""
+    await add_task(service, "F-1.2", number=2)
+    app = await service.apps.get("github")
+    assert isinstance(app, FakeGitHub)
+    app.fail_for = 2
+
+    found = await listed(service)
+
+    assert [one.task for one in found.ready] == ["F-1.1"]
+    assert [one.task for one in found.coming] == ["F-1.2"]
+    assert "its pull could not be read" in found.coming[0].blockers[0]
+
+
 async def test_the_head_listed_is_the_one_linked(service: UDLService) -> None:
     """(A row says the commit it read: the pull's head, as its link keeps it.)"""
     await service.call("orch_readiness", {"key": "F-1.1"})
@@ -334,6 +353,29 @@ async def test_what_merged_lately_says_what_followed_it(service: UDLService) -> 
 
     assert [one.task for one in listed_now.done] == ["F-1.1"]
     assert listed_now.done[0].followed == ["F-1.2"]
+
+
+async def test_what_merged_more_than_fourteen_days_ago_leaves_the_list(
+    tmp_path: Path,
+) -> None:
+    """(The list is what merged lately: the card's 14 days.)"""
+    clock = FakeClock()
+    async with UDLService(settings(tmp_path), registry=orch_registry(), clock=clock) as running:
+        records = AppRecords(running.db)
+        await ProjectRecords(records).save_project(Project(name="udl", title="udl"))
+        await FeatureRecords(records).save_feature(Feature(project="udl", key="F-1", title="It"))
+        await add_task(running, "F-1.1", number=1, state=READY)
+        tasks = TaskRecords(records)
+        found = await tasks.task("udl", "F-1.1")
+        assert found is not None
+        await tasks.move(found, MERGED, by=Principal(kind="system", role="merge"))
+
+        fresh = await listed(running)
+        await clock.advance(timedelta(days=15))
+        later = await listed(running)
+
+    assert [one.task for one in fresh.done] == ["F-1.1"]
+    assert later.done == []
 
 
 async def test_a_stack_of_three_is_listed_in_merge_order(service: UDLService) -> None:
@@ -384,6 +426,22 @@ async def test_a_ready_task_is_merged_at_its_head(service: UDLService) -> None:
     assert [(one.number, one.sha, one.confirm) for one in app.merged] == [
         (1, HEAD, "yelrom0/udl#1")
     ]
+
+
+async def test_a_pull_that_moved_since_it_was_listed_is_refused(service: UDLService) -> None:
+    """(The card's third test: the head the caller saw is the one merged, or nothing is.)"""
+    with pytest.raises(NotAllowed, match="has moved since it was listed"):
+        await merged(service, key="F-1.1", confirm="yelrom0/udl#1", sha=NEXT)
+
+    app = await service.apps.get("github")
+    assert isinstance(app, FakeGitHub)
+    assert app.merged == []
+
+
+async def test_the_head_that_was_listed_is_the_one_merged(service: UDLService) -> None:
+    found = await merged(service, key="F-1.1", confirm="yelrom0/udl#1", sha=HEAD)
+
+    assert found.sha == HEAD
 
 
 async def test_a_merge_that_is_not_confirmed_merges_nothing(service: UDLService) -> None:
@@ -538,6 +596,9 @@ async def test_ready_merges_where_the_project_says_agent_and_the_caller_holds_it
     moved = await tasks.task("udl", "F-1.1")
     assert moved is not None
     assert moved.state == MERGED
+    app = await service.apps.get("github")
+    assert isinstance(app, FakeGitHub)
+    assert [(one.number, one.sha) for one in app.merged] == [(1, HEAD)]
 
 
 async def test_ready_only_marks_ready_where_a_person_merges(service: UDLService) -> None:
@@ -600,6 +661,32 @@ async def test_promote_marks_them_done_with_its_note(service: UDLService) -> Non
 
 async def test_promote_refuses_a_task_that_is_not_merged(service: UDLService) -> None:
     with pytest.raises(NotAllowed, match="is not merged: it is 'ready'"):
+        await service.call("orch_promote", PromoteRequest(tasks=["F-1.1"]))
+
+
+async def test_promote_writes_nothing_when_one_of_them_is_refused(service: UDLService) -> None:
+    """(All or nothing: the merged one is not done because a later key was wrong.)"""
+    tasks = TaskRecords(AppRecords(service.db))
+    found = await tasks.task("udl", "F-1.1")
+    assert found is not None
+    await tasks.move(found, MERGED, by=Principal(kind="system", role="merge"))
+
+    with pytest.raises(DoesNotExist, match=r"F-1\.9"):
+        await service.call("orch_promote", PromoteRequest(tasks=["F-1.1", "F-1.9"]))
+
+    untouched = await tasks.task("udl", "F-1.1")
+    assert untouched is not None
+    assert untouched.state == MERGED
+
+
+async def test_promote_refuses_a_project_with_nothing_after_the_base(service: UDLService) -> None:
+    await set_project(service, promotion=[])
+    tasks = TaskRecords(AppRecords(service.db))
+    found = await tasks.task("udl", "F-1.1")
+    assert found is not None
+    await tasks.move(found, MERGED, by=Principal(kind="system", role="merge"))
+
+    with pytest.raises(NotAllowed, match="no branches after its base"):
         await service.call("orch_promote", PromoteRequest(tasks=["F-1.1"]))
 
 

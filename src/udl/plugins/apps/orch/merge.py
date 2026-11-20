@@ -39,10 +39,10 @@ _UDL: Final = Principal(kind="system", role="merge")
 """udl itself moving a task: the watcher saw the merge, or its pull closed."""
 
 _REVIEWER: Final = Principal(kind="agent", name="reviewer", role="review")
+"""The reviewer's merge is its review: it is what reaches `done`."""
 
 _BACK: Final = Principal(kind="system", role="move")
 """udl itself moving a task back to work: its pull was closed without merging."""
-"""The reviewer's merge is its review: it is what reaches `done`."""
 
 DAYS: Final = 14
 """How long a merged task stays in the list: what merged lately (the card's 14 days)."""
@@ -105,12 +105,14 @@ async def after_merge(
     found = await tasks.task(project, key)
     if found is None:
         raise DoesNotExist(f"There is no task called {key!r} in {project!r}")
+    if found.state in (MERGED, DONE):
+        # (A merge udl made itself is also one the watcher sees: the second pass writes nothing,
+        # so the notes and the rebase prompts are written once.)
+        return [found]
     notes = NoteRecords(records)
-    moved = found
-    if found.state not in (MERGED, DONE):
-        moved = await tasks.move(found, MERGED, by=_UDL)
+    moved = await tasks.move(found, MERGED, by=_UDL)
     done = reviewed and not promoted
-    if done and moved.state == MERGED:
+    if done:
         moved = await tasks.move(moved, DONE, by=_REVIEWER)
     await notes.add(
         Note(

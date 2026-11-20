@@ -212,6 +212,30 @@ async def test_an_action_waiting_after_it_is_now(service: UDLService) -> None:
     assert [(one.when, one.after) for one in waiting] == [(ActionWhen.NOW, None)]
 
 
+async def test_a_merge_seen_twice_writes_its_notes_once(service: UDLService) -> None:
+    """(A merge udl made is also seen by the watcher: the second pass changes nothing, and the
+    stacked tasks are told once.)"""
+    await add_task(service, "F-1.2", needs=["F-1.1"])
+
+    first = await after_merge(
+        records_of(service), project="udl", key="F-1.1", by="yelrom0", reviewed=False, promoted=True
+    )
+    second = await after_merge(
+        records_of(service), project="udl", key="F-1.1", by="yelrom0", reviewed=False, promoted=True
+    )
+
+    found = await TaskRecords(records_of(service)).task("udl", "F-1.1")
+    assert found is not None
+    assert [one.key for one in first] == ["F-1.1", "F-1.2"]
+    assert [one.key for one in second] == ["F-1.1"]
+    notes = await NoteRecords(records_of(service)).notes("task", found.id)
+    assert len([one for one in notes if one.text.startswith("Merged by")]) == 1
+    stacked_task = await TaskRecords(records_of(service)).task("udl", "F-1.2")
+    assert stacked_task is not None
+    stacked_notes = await NoteRecords(records_of(service)).notes("task", stacked_task.id)
+    assert len([one for one in stacked_notes if "Rebase" in one.text]) == 1
+
+
 async def test_a_pull_closed_without_merging_sends_the_task_back_to_work(
     service: UDLService,
 ) -> None:

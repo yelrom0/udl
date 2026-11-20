@@ -162,6 +162,12 @@ async def app_of(service: UDLService) -> Orch:
 
 
 async def test_a_merge_seen_on_github_moves_the_task(service: UDLService) -> None:
+    """(With promotion branches after the base, a merge stops at `merged`.)"""
+    projects = ProjectRecords(AppRecords(service.db))
+    project = await projects.project("udl")
+    assert project is not None
+    await projects.save_project(project.model_copy(update={"promotion": ["rc", "main"]}))
+
     await (await app_of(service)).pull_happened(merged_event(), PULL, service=service)
 
     found = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
@@ -175,6 +181,16 @@ async def test_a_merge_the_review_bot_made_is_done_at_once(service: UDLService) 
     await (await app_of(service)).pull_happened(
         merged_event(merged_by="claude[bot]"), PULL, service=service
     )
+
+    found = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
+
+    assert found is not None
+    assert found.state == DONE
+
+
+async def test_a_person_s_merge_on_github_is_done_at_once_too(service: UDLService) -> None:
+    """(Its merge is a review as well: nothing follows udl's base, so it is done.)"""
+    await (await app_of(service)).pull_happened(merged_event(), PULL, service=service)
 
     found = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
 

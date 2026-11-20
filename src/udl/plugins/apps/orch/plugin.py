@@ -39,6 +39,7 @@ from udl.plugins.apps.base import (
     AppRecords,
 )
 from udl.plugins.apps.orch import actions as acted
+from udl.plugins.apps.orch import merge as merged
 from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch import records as stored
 from udl.plugins.apps.orch import suggest as suggested
@@ -357,7 +358,7 @@ class Orch(AppPlugin[OrchSettings]):
             cls.operation(
                 "merge",
                 title="Merge a task's pull",
-                hints=OperationHints(destructive=True, open_world=True, admin=True, mcp=False),
+                hints=OperationHints(destructive=True, open_world=True, admin=True),
             ),
             cls.operation(
                 "promotion",
@@ -569,7 +570,9 @@ class Orch(AppPlugin[OrchSettings]):
                     project=found.project,
                     key=task.key,
                     by=by or "someone",
-                    reviewed=bool(by) and by == project.review_bot,
+                    # (Anyone who merges on GitHub is the review bot — its merge is the review —
+                    # or a person, whose merge is the review too: an agent cannot merge there.)
+                    reviewed=True,
                     promoted=bool(project.promotion),
                 )
             else:
@@ -711,11 +714,18 @@ class Orch(AppPlugin[OrchSettings]):
             and task.assignee == who.name
         ):
             # (27.6's deferred branch: where a project lets its own agent merge, an agent that
-            # marks its pull ready merges it, through 28.3's merge, and the task goes `merged`.)
-            await self._after_merge(
+            # marks its pull ready merges it, through the same merge `orch_merge` makes.)
+            link = await self._pull_url(project, request.key)
+            ref = pull_ref(link)
+            if ref is None:
+                raise NotAllowed(f"{request.key!r} has no pull to merge")
+            repo, number = ref
+            await self._merge_now(
                 service,
                 project=project,
-                key=request.key,
+                task=task,
+                pull=pull,
+                confirm=f"{repo}#{number}",
                 by=who.name,
                 reviewed=False,
                 promoted=bool(merging.promotion),
@@ -754,12 +764,22 @@ class Orch(AppPlugin[OrchSettings]):
         if found is None:
             raise DoesNotExist(f"There is no project called {project!r}")
         tasks = await stored.TaskRecords(self.records).tasks(project)
-        rows = [row for one in tasks if (row := await self._merge_row(service, found, one, tasks))]
+        # (One read per task, all at once: a list of ten pulls must not take ten round trips. A
+        # pull that cannot be read is that row's blocker, not the whole list's failure.)
+        read = await asyncio.gather(*(self._merge_row(service, found, one, tasks) for one in tasks))
+        rows = [row for row in read if row is not None]
+        since = self.clock.now() - timedelta(days=merged.DAYS)
         return MergeList(
             ready=order([one for one in rows if one.state == READY and not one.hold]),
             coming=[one for one in rows if one.state not in (READY, MERGED, DONE) and not one.hold],
             held=[one for one in rows if one.hold],
-            done=order([one for one in rows if one.state in (MERGED, DONE)]),
+            done=order(
+                [
+                    one
+                    for one in rows
+                    if one.state in (MERGED, DONE) and (one.since is None or one.since >= since)
+                ]
+            ),
         )
 
     async def _merge_row(
@@ -786,9 +806,13 @@ class Orch(AppPlugin[OrchSettings]):
         repo, number = ref
         blockers: list[str] = []
         if task.state not in (MERGED, DONE) and service is not None:
-            detail = await service.call("github_get_pull", {"repo": repo, "number": number})
-            pull = Pull.model_validate(detail.model_dump())
-            blockers = (await self._assess(task, pull, project.name)).blockers
+            try:
+                detail = await service.call("github_get_pull", {"repo": repo, "number": number})
+                pull = Pull.model_validate(detail.model_dump())
+                blockers = (await self._assess(task, pull, project.name)).blockers
+            except (DoesNotExist, PluginError, UDLError, ValidationError) as error:
+                # (That row's blocker: one pull udl cannot read does not hide the others.)
+                blockers = [f"its pull could not be read: {error}"]
         if task.hold is not None:
             blockers = [f"it is on hold: {task.hold}"]
         return MergeRow(
@@ -842,6 +866,12 @@ class Orch(AppPlugin[OrchSettings]):
                     "caller is the task's own assignee."
                 ),
             )
+        if request.sha is not None and request.sha != pull.head_sha:
+            raise NotAllowed(
+                f"{request.key!r} has moved since it was listed: {request.sha[:7]} is now "
+                f"{pull.head_sha[:7]}",
+                hint="Ask for the merge list again, and merge what it now says.",
+            )
         ready = await self._assess(task, pull, project)
         if not ready.ready:
             raise NotAllowed(
@@ -859,25 +889,57 @@ class Orch(AppPlugin[OrchSettings]):
                 f"Merging {expected} is confirmed by confirm={expected}",
                 hint=f"Say which pull it is: confirm={expected}.",
             )
+        return await self._merge_now(
+            service,
+            project=project,
+            task=task,
+            pull=pull,
+            confirm=expected,
+            by=who.name if who is not None else "udl",
+            reviewed=who is None or not who.is_agent,
+            promoted=bool(found.promotion),
+        )
+
+    async def _merge_now(
+        self,
+        service: UDLService,
+        *,
+        project: str,
+        task: stored.Task,
+        pull: Pull,
+        confirm: str,
+        by: str,
+        reviewed: bool,
+        promoted: bool,
+    ) -> Merged:
+        """Merge `task`'s pull at `pull.head_sha` and do what a merge sets off: the one place a
+        merge is made, whether a person asked for it or its own agent marked it ready."""
+        link = await self._pull_url(project, task.key)
+        ref = pull_ref(link)
+        if ref is None:
+            raise NotAllowed(f"{task.key!r} has no pull to merge")
+        repo, number = ref
         # (The merge is udl's on the caller's behalf: `github_merge_pull` is not an agent's to
-        # call, and who may merge at all is decided above.)
+        # call, and who may merge at all is decided by the caller.)
+        from udl.interfaces.security import current_principal
+
         calling = current_principal.set(None)
         try:
             await service.call(
                 "github_merge_pull",
-                {"repo": repo, "number": number, "sha": pull.head_sha, "confirm": expected},
+                {"repo": repo, "number": number, "sha": pull.head_sha, "confirm": confirm},
             )
         finally:
             current_principal.reset(calling)
         moved = await self._after_merge(
             service,
             project=project,
-            key=request.key,
-            by=who.name if who is not None else "udl",
-            reviewed=who is None or not who.is_agent,
-            promoted=bool(found.promotion),
+            key=task.key,
+            by=by,
+            reviewed=reviewed,
+            promoted=promoted,
         )
-        return Merged(task=request.key, url=link, sha=pull.head_sha, state=moved.state)
+        return Merged(task=task.key, url=link, sha=pull.head_sha, state=moved.state)
 
     async def promotion(self, request: PromotionRequest) -> PromotionList:
         """What a promotion would carry (28.3): the tasks merged and not done, per repo, for a
@@ -896,34 +958,45 @@ class Orch(AppPlugin[OrchSettings]):
             rows=order([one for one in rows if one is not None]),
         )
 
-    async def promote(self, request: PromoteRequest, *, service: UDLService) -> Promoted:
+    async def promote(self, request: PromoteRequest) -> Promoted:
         """Mark the tasks a promotion carried done (28.3), after its pull merged: `note` is written
         on each as a `progress` note. A task that is not `merged` is refused."""
         project = await self._project(request.project)
+        found = await stored.ProjectRecords(self.records).project(project)
+        if found is None:
+            raise DoesNotExist(f"There is no project called {project!r}")
+        if not found.promotion:
+            raise NotAllowed(
+                f"{project!r} has no branches after its base: nothing is promoted",
+                hint="A project with no `promotion` merges straight to `done` (28.3).",
+            )
         tasks = stored.TaskRecords(self.records)
-        notes = stored.NoteRecords(self.records)
-        done: list[str] = []
+        # (All or nothing: every task is checked before one is written, so a mistyped key in the
+        # list does not leave half a promotion done.)
+        checked: list[stored.Task] = []
         for key in request.tasks:
-            found = await tasks.task(project, key)
-            if found is None:
+            task = await tasks.task(project, key)
+            if task is None:
                 raise DoesNotExist(f"There is no task called {key!r} in {project!r}")
-            if found.state != MERGED:
+            if task.state != MERGED:
                 raise NotAllowed(
-                    f"{key!r} is not merged: it is {found.state!r}",
+                    f"{key!r} is not merged: it is {task.state!r}",
                     hint="Only what a promotion carried (merged, not done) is marked done.",
                 )
-            moved = await tasks.move(found, DONE, by=_REVIEWER)
-            await notes.add(
-                stored.Note(
-                    owner_kind=OwnerKind.TASK,
-                    owner=moved.id,
-                    note_kind=NoteKind.PROGRESS,
-                    text=request.note or "Promoted: it is done.",
-                    author=_REVIEWER.who,
-                )
+            checked.append(task)
+        moved = [transitions.move(one, DONE, by=_REVIEWER) for one in checked]
+        notes = [
+            stored.Note(
+                owner_kind=OwnerKind.TASK,
+                owner=one.id,
+                note_kind=NoteKind.PROGRESS,
+                text=request.note or "Promoted: it is done.",
+                author=_REVIEWER.who,
             )
-            done.append(key)
-        return Promoted(tasks=done)
+            for one in moved
+        ]
+        await tasks.save_all(moved, also=notes)
+        return Promoted(tasks=[one.key for one in moved])
 
     async def _after_merge(
         self,

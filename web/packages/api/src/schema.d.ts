@@ -4706,6 +4706,12 @@ export interface components {
             key: string;
             /** @description The project it is in (None: the only one, while udl has one). */
             project?: components["schemas"]["Name"] | null;
+            /**
+             * Sha
+             * @description The head the caller saw (`orch_merge_list`'s row): a pull that moved since is refused,
+             *     rather than merged blind (None: whatever head it has now).
+             */
+            sha?: string | null;
         };
         /**
          * MergeResult
