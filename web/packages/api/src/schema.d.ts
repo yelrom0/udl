@@ -979,6 +979,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/drop_action": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Drop something that is not going to be done, with the reason.
+         * @description Drop something that is not going to be done, with the reason.
+         */
+        post: operations["orch_drop_action"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/finish_action": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Finish something only a person could do: the result is written as a note on the task
+         * @description Finish something only a person could do: the result is written as a note on the task
+         *     it is about, and that task, when it is a person's, is `merged`.
+         */
+        post: operations["orch_finish_action"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/orch/get_queue": {
         parameters: {
             query?: never;
@@ -1020,6 +1061,26 @@ export interface paths {
          *     the owner's, so a token would limit nothing.
          */
         post: operations["orch_issue_token"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/list_actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What is to be done, in the order it is due: now, then after, then later.
+         * @description What is to be done, in the order it is due: now, then after, then later.
+         */
+        post: operations["orch_list_actions"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1211,6 +1272,28 @@ export interface paths {
          *     the provider keys it needs.
          */
         post: operations["orch_runner_setup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/set_action": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add something only a person can do: now, after a task merges, or later.
+         * @description Add something only a person can do: now, after a task merges, or later.
+         *
+         *     An action `after` a task names it, and becomes `now` when that task merges (28.3).
+         */
+        post: operations["orch_set_action"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1900,6 +1983,64 @@ export interface components {
          */
         AccountStatus: "pending" | "connected" | "needs_reauth" | "error";
         /**
+         * Action
+         * @description Something only a person can do, with a result line (human-comms.md's "To action").
+         *
+         *     `when` is `now`, `after` a task (it becomes `now` when that task merges), or `later`; `task`
+         *     is the task it is about, when it is about one, and the result of finishing it is written
+         *     there as a note.
+         */
+        Action: {
+            /**
+             * After
+             * @description The task it waits for, while `when` is `after` (it becomes `now` when that one merges).
+             */
+            after?: string | null;
+            /**
+             * Assignee
+             * @description The person it is for (`human:<name>`), or None for whoever picks it up.
+             */
+            assignee?: string | null;
+            /**
+             * Key
+             * @description Its key within the project (`A-<n>`).
+             */
+            key: string;
+            /** @description The project it belongs to. */
+            project: components["schemas"]["Name"];
+            /**
+             * Result
+             * @description What came of it: the result of finishing it, or why it was dropped.
+             */
+            result?: string | null;
+            /**
+             * @description Where it is: open, done or dropped.
+             * @default open
+             */
+            state: components["schemas"]["ActionState"];
+            /**
+             * Task
+             * @description The task it is about, when it is about one (the result is written there).
+             */
+            task?: string | null;
+            /**
+             * Text
+             * @description What it says, as markdown (what to do, and why).
+             * @default
+             */
+            text: string;
+            /**
+             * Title
+             * @description What is to be done, in a line.
+             */
+            title: string;
+            /**
+             * @description When it is due: now, after a task, or later.
+             * @default now
+             */
+            when: components["schemas"]["ActionWhen"];
+        };
+        /**
          * ActionInfo
          * @description An action (its secrets hidden: each kept secret shows where the store keeps it).
          */
@@ -1990,6 +2131,31 @@ export interface components {
              * @description The actions, by name.
              */
             actions: components["schemas"]["ActionInfo"][];
+        };
+        /**
+         * ActionState
+         * @description Where an action is: still to do, done (with its result), or dropped.
+         * @enum {string}
+         */
+        ActionState: "open" | "done" | "dropped";
+        /**
+         * ActionWhen
+         * @description When a person's action is due (28.2): now, after a task merges, or later.
+         * @enum {string}
+         */
+        ActionWhen: "now" | "after" | "later";
+        /**
+         * Actions
+         * @description What is to be done, in the order it is due (28.2).
+         */
+        Actions: {
+            /**
+             * Actions
+             * @description The actions, now first, then after, then later (empty: nothing to do).
+             */
+            actions?: components["schemas"]["Action"][];
+            /** @description The project they are of. */
+            project: components["schemas"]["Name"];
         };
         /**
          * AllOf
@@ -2788,6 +2954,25 @@ export interface components {
              */
             urls: components["schemas"]["RequestURL"][];
         };
+        /**
+         * DropActionRequest
+         * @description Dropping something that is not going to be done, with the reason.
+         */
+        DropActionRequest: {
+            /**
+             * Key
+             * @description The action to drop (`A-<n>`).
+             */
+            key: string;
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /**
+             * Reason
+             * @description Why it is dropped.
+             * @default
+             */
+            reason: string;
+        };
         /** Format: duration */
         "Duration-Input": string;
         "Duration-Output": string;
@@ -3532,6 +3717,24 @@ export interface components {
         FilterField: string | components["schemas"]["Filter-Input"];
         FilterValue: components["schemas"]["Scalar"] | components["schemas"]["Scalar"][];
         /**
+         * FinishActionRequest
+         * @description Finishing something only a person could do, with what came of it.
+         */
+        FinishActionRequest: {
+            /**
+             * Key
+             * @description The action to finish (`A-<n>`).
+             */
+            key: string;
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /**
+             * Result
+             * @description What came of it (written as a note on the task it is about).
+             */
+            result: string;
+        };
+        /**
          * FollowStep
          * @description Open the URL the step before found (relative to its document), and go on on that
          *     document.
@@ -4077,6 +4280,23 @@ export interface components {
         };
         JsonValue: unknown;
         Length: components["schemas"]["Duration-Input"];
+        /**
+         * ListActionsRequest
+         * @description Asking what is to be done, in the order it is due.
+         */
+        ListActionsRequest: {
+            /**
+             * Assignee
+             * @description Only the actions of this person (`human:<name>`).
+             */
+            assignee?: string | null;
+            /** @description The project they are of (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /** @description Only the actions in this state (None: the open ones). */
+            state?: components["schemas"]["ActionState"] | null;
+            /** @description Only the actions due at this time (None: now, after and later). */
+            when?: components["schemas"]["ActionWhen"] | null;
+        };
         /**
          * ListRunnersRequest
          * @description Which harnesses to show.
@@ -5716,6 +5936,45 @@ export interface components {
             enabled?: boolean | null;
             /** @description Options to set, over those it has (null takes one away). */
             options?: components["schemas"]["JsonObject"];
+        };
+        /**
+         * SetActionRequest
+         * @description Adding something only a person can do (28.2).
+         */
+        SetActionRequest: {
+            /**
+             * After
+             * @description The task it waits for (only while `when` is `after`).
+             */
+            after?: string | null;
+            /**
+             * Assignee
+             * @description The person it is for (`human:<name>`).
+             */
+            assignee?: string | null;
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /**
+             * Task
+             * @description The task it is about, when it is about one.
+             */
+            task?: string | null;
+            /**
+             * Text
+             * @description What it says, as markdown.
+             * @default
+             */
+            text: string;
+            /**
+             * Title
+             * @description What is to be done, in a line.
+             */
+            title: string;
+            /**
+             * @description When it is due: now, after a task, or later.
+             * @default now
+             */
+            when: components["schemas"]["ActionWhen"];
         };
         /** SetActionRequestBody */
         SetActionRequestBody: {
@@ -10371,6 +10630,162 @@ export interface operations {
             };
         };
     };
+    orch_drop_action: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DropActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Action"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_finish_action: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FinishActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Action"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
     orch_get_queue: {
         parameters: {
             query?: never;
@@ -10469,6 +10884,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IssueTokenResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_list_actions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ListActionsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Actions"];
                 };
             };
             /** @description Bad Request */
@@ -11171,6 +11664,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunnerSetup"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_set_action: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Action"];
                 };
             };
             /** @description Bad Request */

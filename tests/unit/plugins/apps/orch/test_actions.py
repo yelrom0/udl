@@ -491,7 +491,7 @@ async def test_a_person_s_task_and_its_action_are_one_write(tmp_path: Path) -> N
     and the action was missing (two writes, the gap 27.3a closed)."""
     working, tasks = await _a_store_that_cannot_write_actions(tmp_path)
     await TaskRecords(working).save_task(
-        Task(project="udl", feature="F-1", key="F-1.1", title="Merge it", task_kind="human")  # pyright: ignore[reportArgumentType]
+        Task(project="udl", feature="F-1", key="F-1.1", title="Merge it", task_kind="human")
     )
 
     with pytest.raises(DatabaseError, match="the action could not be written"):
@@ -503,12 +503,14 @@ async def test_a_person_s_task_and_its_action_are_one_write(tmp_path: Path) -> N
     assert await ActionRecords(working).actions("udl", state=None) == []
 
 
-async def test_unassigning_a_person_s_task_writes_the_action_off_them_with_it(tmp_path: Path) -> None:
+async def test_unassigning_a_person_s_task_writes_the_action_off_them_with_it(
+    tmp_path: Path,
+) -> None:
     """The action's `assignee` is cleared in the same write as the queue's (one write, or none)."""
     working, tasks = await _a_store_that_cannot_write_actions(tmp_path)
     mine = TaskRecords(working)
     await mine.save_task(
-        Task(project="udl", feature="F-1", key="F-1.1", title="Merge it", task_kind="human")  # pyright: ignore[reportArgumentType]
+        Task(project="udl", feature="F-1", key="F-1.1", title="Merge it", task_kind="human")
     )
     await queues.assign(mine, "F-1.1", "human:claude", project="udl")
 
