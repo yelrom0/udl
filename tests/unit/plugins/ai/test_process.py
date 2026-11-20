@@ -476,6 +476,33 @@ async def test_a_stop_that_is_cancelled_still_ends_and_reaps_its_program(
     assert not process.running
 
 
+async def test_a_close_waits_for_a_program_the_idle_keeper_is_stopping(
+    stubborn: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (The keeper clears its place before it waits for the program, so a pool's close() has no
+    # keeper to cancel: it must wait for the stop that is already running, or return while the
+    # program still lives.)
+    monkeypatch.setattr("udl.plugins.ai.process.GRACE", 1.0)
+    clock = FakeClock()
+    processes = pool(stubborn)
+    provider = Tiny(
+        options(stubborn, idle_timeout=timedelta(seconds=30)), clock=clock, pool=processes
+    )
+    process = started(provider)
+    await process.ensure()
+    pid = process.pid
+    assert pid is not None
+
+    await clock.advance(timedelta(seconds=31))
+    await asyncio.sleep(0.1)  # (the keeper has sent SIGTERM and is waiting the grace out)
+    assert not _gone(pid), "the stubborn program took the SIGTERM"
+
+    await processes.close()
+
+    assert _gone(pid), "close() returned while the program was still ending"
+    assert not process.running
+
+
 async def test_it_is_stopped_at_the_first_look_past_the_idle_timeout(script: Path) -> None:
     # (The keeper pauses for what is left of idle_timeout, so a use halfway through does not buy
     # it another full one: stopped at 20 + 30, not at 20 + 60.)
