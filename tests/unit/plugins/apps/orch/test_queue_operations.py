@@ -65,6 +65,7 @@ def test_orch_offers_the_queue_s_operations() -> None:
     offered = {op.name: op for op in Orch.operations()}
 
     assert list(offered) == [
+        "issue_token",
         "assign",
         "reorder_queue",
         "unassign",
@@ -90,6 +91,7 @@ async def test_the_operations_are_offered_as_orch_s(tmp_path: Path) -> None:
         names = [op.name for op in service.operations.in_namespace("orch")]
 
     assert names == [
+        "orch_issue_token",
         "orch_assign",
         "orch_reorder_queue",
         "orch_unassign",

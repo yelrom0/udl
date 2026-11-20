@@ -4,12 +4,14 @@
 --------------------
 
 What the API and the MCP server allow: output dirs only under api.allowed_output_roots (for the
-operations they call: current_caller), and only requests with the API key when one is set
+operations they call: current_caller), and who a request is — the server's owner (its API key,
+or nothing when it has none) or an agent with its own token
 """
 
 # System Imports
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Final
 
 # Package Imports
 import pytest
@@ -20,7 +22,7 @@ from udl.config import APISettings, Settings
 from udl.core.operations import Caller, current_caller
 from udl.core.paths import check_output_dir
 from udl.errors import NotAllowed, Unauthorized
-from udl.interfaces.security import check_api_key
+from udl.interfaces.security import OWNER, Principal, PrincipalKind, authenticate
 
 
 def roots(*paths: Path) -> Settings:
@@ -110,15 +112,73 @@ def keyed(key: str | None) -> Settings:
 
 
 @pytest.mark.parametrize("given", [None, "", "anything"])
-def test_without_an_api_key_every_request_is_allowed(given: str | None) -> None:
-    check_api_key(keyed(None), given)
+async def test_without_an_api_key_every_request_is_the_owner(given: str | None) -> None:
+    assert await authenticate(keyed(None), given) == OWNER
 
 
-def test_with_an_api_key_a_request_with_it_is_allowed() -> None:
-    check_api_key(keyed("s3cret"), "s3cret")
+async def test_the_owner_is_the_api_key() -> None:
+    assert await authenticate(keyed("s3cret"), "s3cret") == OWNER
 
 
 @pytest.mark.parametrize("given", [None, "", "S3CRET", "s3cret ", "s3cre"])
-def test_with_an_api_key_a_request_without_it_is_unauthorized(given: str | None) -> None:
+async def test_with_an_api_key_anything_else_is_unauthorized(given: str | None) -> None:
     with pytest.raises(Unauthorized, match="X-API-Key"):
-        check_api_key(keyed("s3cret"), given)
+        await authenticate(keyed("s3cret"), given)
+
+
+# ---------------------------------------------------------------------------------------------
+# An agent's token
+# ---------------------------------------------------------------------------------------------
+
+TOKEN: Final = "udl_agent_not-a-real-token"  # noqa: S105 - (a fake's own)
+"""An agent's token, as its runner would send it."""
+AGENT: Final = Principal(kind=PrincipalKind.AGENT, name="deepseek-a", role="implementer")
+
+
+class Book:
+    """A token book that knows one token (orch's records stand in)."""
+
+    def __init__(self, token: str = TOKEN, principal: Principal | None = AGENT) -> None:
+        self.token = token
+        self.principal = principal
+        self.asked: list[str] = []
+
+    async def principal_for(self, token: str) -> Principal | None:
+        """The agent whose token this is (it hashes and looks it up, as orch does)."""
+        self.asked.append(token)
+        return self.principal if token == self.token else None
+
+
+async def test_an_agent_s_token_is_the_agent_it_belongs_to() -> None:
+    book = Book()
+
+    assert await authenticate(keyed(None), TOKEN, book) == AGENT
+    assert await authenticate(keyed("s3cret"), TOKEN, book) == AGENT
+    assert book.asked == [TOKEN, TOKEN]  # (the book is asked for the token itself)
+
+
+async def test_an_agent_s_token_udl_does_not_know_is_unauthorized() -> None:
+    with pytest.raises(Unauthorized, match="does not know that agent token"):
+        await authenticate(keyed(None), TOKEN, Book(principal=None))
+
+
+async def test_an_agent_s_token_with_nowhere_to_look_is_unauthorized() -> None:
+    with pytest.raises(Unauthorized, match="keeps none"):
+        await authenticate(keyed(None), TOKEN)
+
+
+async def test_an_agents_token_is_not_the_api_key() -> None:
+    with pytest.raises(Unauthorized, match="X-API-Key"):
+        await authenticate(keyed("s3cret"), "s3cret-not", Book())
+
+
+def test_an_agents_token_is_hashed_the_way_the_book_does_it() -> None:
+    """(orch's AgentToken keeps the SHA-256, so the same token is looked up by the same hash.)"""
+    from udl.plugins.apps.orch.records import hash_token
+
+    digest = hash_token(TOKEN)
+
+    assert digest == hash_token(TOKEN)
+    assert digest != hash_token(f"{TOKEN} ")
+    assert len(digest) == 64
+    assert TOKEN not in digest

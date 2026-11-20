@@ -32,7 +32,16 @@ from starlette.routing import Route
 # Local Imports
 from udl.config import Settings
 from udl.errors import NotAllowed, RateLimited, Unauthorized
-from udl.interfaces.security import API_KEY_HEADER, check_api_key
+from udl.interfaces.security import (
+    API_KEY_HEADER,
+    OWNER,
+    AgentTokens,
+    Principal,
+    current_principal,
+)
+from udl.interfaces.security import (
+    authenticate as authenticate_request,
+)
 
 # The cookie the browser keeps, and the header a script must add to a write that uses it.
 SESSION_COOKIE: Final = "udl_session"
@@ -181,7 +190,7 @@ def add_session_routes(app: FastAPI, settings: Settings) -> None:
             given = SignInRequest.model_validate_json(await request.body()).api_key
         except ValueError:
             return JSONResponse({"detail": 'A sign-in is {"api_key": "..."}'}, 400)
-        check_api_key(settings, given.get_secret_value())
+        await authenticate_request(settings, given.get_secret_value())
         # (Without a key the server is open: there is nothing to sign in to, so no cookie.)
         if settings.api.api_key is None:
             return Response(status_code=204)
@@ -210,16 +219,25 @@ def add_session_routes(app: FastAPI, settings: Settings) -> None:
         app.router.routes.insert(0, route)
 
 
-def authenticate(settings: Settings, request: Request, *, given: str | None = None) -> None:
-    """Who a request is: the API key, or a live session's cookie — and a write needs the CSRF
-    header with the cookie. A write from another origin is refused, whoever it is."""
+async def authenticate(
+    settings: Settings,
+    request: Request,
+    *,
+    given: str | None = None,
+    tokens: AgentTokens | None = None,
+) -> Principal:
+    """Who a request is: the API key or an agent's token, or a live session's cookie — and a
+    write needs the CSRF header with the cookie. A write from another origin is refused, whoever
+    it is. Who it is is set in current_principal, for the operations it runs."""
     check_write_origin(settings, request.method, request.headers)
     given = given if given is not None else request.headers.get(API_KEY_HEADER)
     if given is not None:
-        check_api_key(settings, given)
-        return
+        principal = await authenticate_request(settings, given, tokens)
+        current_principal.set(principal)
+        return principal
     if settings.api.api_key is None:
-        return  # (no key: the server is open, as it was before the UI)
+        current_principal.set(OWNER)  # (no key: the server is open, as it was before the UI)
+        return OWNER
     store: SessionStore = request.app.state.sessions
     if not store.is_live(request.cookies.get(SESSION_COOKIE)):
         raise Unauthorized(
@@ -235,6 +253,8 @@ def authenticate(settings: Settings, request: Request, *, given: str | None = No
         # (A browser sends Origin on every write: a cookie write that names none is not udl's
         # own page, so it is refused like one from elsewhere.)
         check_write_origin(settings, request.method, request.headers, required=True)
+    current_principal.set(OWNER)  # (a session is the person's own)
+    return OWNER
 
 
 def check_write_origin(

@@ -43,7 +43,14 @@ from udl.integrations.accounts import CALLBACK_PATH
 from udl.interfaces.adapters import add_routes
 from udl.interfaces.api.routes import accounts, chains, downloads, events, sites, system
 from udl.interfaces.mcp.server import create_server
-from udl.interfaces.security import API_KEY_HEADER, check_api_key
+from udl.interfaces.security import (
+    API_KEY_HEADER,
+    AgentTokens,
+    current_principal,
+)
+from udl.interfaces.security import (
+    authenticate as authenticate_request,
+)
 from udl.interfaces.web.app import add_web_routes
 from udl.interfaces.web.sessions import (
     add_session_routes,
@@ -95,7 +102,11 @@ _api_key = APIKeyHeader(
 async def require_api_key(request: Request, key: Annotated[str | None, Security(_api_key)]) -> None:
     # (The key's header, or a live session's cookie: udl.interfaces.web.sessions. The header is
     # asked for here as well as read there, so the schema documents it.)
-    authenticate(request.app.state.settings, request, given=key)
+    service: UDLService = request.app.state.service
+    from udl.plugins.apps.orch.tokens import tokens_for
+
+    # (Which sets current_principal as well: the operations the request runs are held to it.)
+    await authenticate(request.app.state.settings, request, given=key, tokens=tokens_for(service))
 
 
 def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService) -> FastAPI:
@@ -132,7 +143,9 @@ def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService)
         app.include_router(router)
     add_routes(app, service.operations)  # (the operations plugins add)
     # (A route rather than a mount, which would answer only /mcp/...)
-    app.router.routes.append(Route(MCP_PATH, KeyRequired(mcp_app, settings)))
+    from udl.plugins.apps.orch.tokens import tokens_for
+
+    app.router.routes.append(Route(MCP_PATH, KeyRequired(mcp_app, settings, tokens_for(service))))
     # (Before /accounts/{account}; and a route of Starlette's, so no API key is asked for: the
     # authorization's one-time state is what it is checked by.)
     app.router.routes.insert(0, Route(CALLBACK_PATH, accounts.callback, methods=["GET"]))
@@ -167,17 +180,21 @@ def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService)
 class KeyRequired:
     """An ASGI app (the MCP server) behind the API key, when the server has one."""
 
-    def __init__(self, app: ASGIApp, settings: Settings) -> None:
+    def __init__(self, app: ASGIApp, settings: Settings, tokens: AgentTokens | None = None) -> None:
         self.app = app
         self.settings = settings
+        self.tokens = tokens
+        """The book of agent tokens, so an agent may call the tools its role allows."""
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         headers = Headers(scope=scope)
         try:
-            # (The key alone: no page speaks MCP with a cookie. A write's origin is still
-            # checked, as everywhere.)
+            # (The key alone, or an agent's own token: no page speaks MCP with a cookie. A
+            # write's origin is still checked, as everywhere.)
             check_write_origin(self.settings, scope["method"], headers)
-            check_api_key(self.settings, headers.get(API_KEY_HEADER))
+            principal = await authenticate_request(
+                self.settings, headers.get(API_KEY_HEADER), self.tokens
+            )
         except Unauthorized as e:
             refused = JSONResponse(
                 e.to_info().model_dump(mode="json"), 401, {"WWW-Authenticate": API_KEY_HEADER}
@@ -189,7 +206,11 @@ class KeyRequired:
             refused = JSONResponse(e.to_info().model_dump(mode="json"), 403)
             await refused(scope, receive, send)
             return
-        await self.app(scope, receive, send)
+        called = current_principal.set(principal)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            current_principal.reset(called)
 
 
 def is_local(host: str) -> bool:

@@ -437,6 +437,32 @@ class Operation:
         return replace(self, name=f"{namespace}_{self.name}", namespace=namespace, kind=kind)
 
 
+def _role_bound(method: OperationMethod, name: str, hints: OperationHints) -> OperationMethod:
+    """`method`, refusing an agent any operation its role does not allow. The table is orch's
+    (27.2); this is the only thing that reads it for a call. It is the decorator's own wrapper
+    (so a service's method is bound once, and `UDLService.download` is the guarded method), and
+    UDLService.call checks too, before it validates a request.
+
+    Whatever else the method takes (an operation may have keyword-only parameters of its own,
+    such as download's on_event) is passed through untouched."""
+    if getattr(method, "_udl_role_bound", False):
+        return method
+
+    @functools.wraps(method)
+    async def refuse(service: UDLService, request: BaseModel, **extra: object) -> BaseModel:
+        from udl.interfaces.security import current_principal
+
+        who = current_principal.get()
+        if who is not None and who.is_agent:
+            from udl.plugins.apps.orch.tokens import refused
+
+            refused(who, name, admin=hints.admin)
+        return await method(service, request, **extra)
+
+    setattr(refuse, "_udl_role_bound", True)  # noqa: B010  (a marker, so it is not wrapped twice)
+    return refuse
+
+
 def _person_only(method: OperationMethod, name: str) -> OperationMethod:
     """`method`, refusing an MCP or automation caller: the operation is no MCP tool (a merge, a
     power command), and a prompt-injected agent must not reach it through an action either."""
@@ -551,8 +577,11 @@ def operation[**P, R: BaseModel](
     def register(method: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
         if any(registered.name == name for registered in _registered):
             raise ValueError(f"There already is an operation called {name!r}")
-        _registered.append(_Registered(name, title, hints, cli, api, ui, method))
-        return method
+        # (Bound here, so a caller that runs the service's own method — a route of the API's,
+        # which does not go through UDLService.call — is held to the same rule.)
+        bound = _role_bound(method, name, hints or OperationHints())
+        _registered.append(_Registered(name, title, hints, cli, api, ui, bound))
+        return cast("Callable[P, Awaitable[R]]", bound)
 
     return register
 

@@ -193,6 +193,7 @@ from udl.integrations.models import (
     SetAccountRequest,
 )
 from udl.integrations.watchers import WatcherSupervisor
+from udl.interfaces.security import Principal, current_principal
 from udl.plugins.ai.process import close_default_pool
 from udl.plugins.downloaders.auth import AuthCookies
 from udl.plugins.downloaders.base import Cookie, ProbeContext, ProbeResult
@@ -408,8 +409,10 @@ class UDLService:
 
     async def call(self, name: str, request: BaseModel | Mapping[str, Any]) -> BaseModel:
         """Run the operation called `name` (udl's own, or a plugin's) with `request`: its request
-        model, or plain data that is validated into one (raising ValidationError)."""
+        model, or plain data that is validated into one (raising ValidationError). An agent may
+        only call what its role allows (27.2), and is refused before its request is read."""
         op = self.operations.get(name)  # (raises DoesNotExist)
+        _refuse_an_agent(principal(), name, admin=op.hints.admin)
         if isinstance(request, Mapping):
             request = op.request.model_validate(request)
         elif not isinstance(request, op.request):
@@ -1927,3 +1930,19 @@ async def _resolver_status(resolver: SecretResolver) -> ResolverStatus:
         problems=health.problems,
         vaults=health.vaults,
     )
+
+
+def principal() -> Principal | None:
+    """Who the operation that runs is for (an owner, or an agent with its own token), or None
+    for udl's own Python."""
+    return current_principal.get()
+
+
+def _refuse_an_agent(who: Principal | None, name: str, *, admin: bool) -> None:
+    """Refuse an agent any operation its role does not allow. The table is orch's (27.2), read
+    here so that nothing else has to know a role."""
+    if who is None or not who.is_agent:
+        return
+    from udl.plugins.apps.orch.tokens import refused  # (orch's role table)
+
+    refused(who, name, admin=admin)
