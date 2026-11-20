@@ -25,7 +25,8 @@ from pydantic import BaseModel, ValidationError
 
 # Local Imports
 from udl.automations.events import EventType
-from udl.core.operations import Operation, OperationHints
+from udl.clock import Clock
+from udl.core.operations import CLISpec, Operation, OperationHints
 from udl.db.models import JsonObject
 from udl.db.records import Record
 from udl.errors import DoesNotExist, NotAllowed, PluginError, UDLError
@@ -39,6 +40,7 @@ from udl.plugins.apps.base import (
 from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch import records as stored
 from udl.plugins.apps.orch import suggest as suggested
+from udl.plugins.apps.orch.agents import AgentRole
 from udl.plugins.apps.orch.links import LINK_CHANGED, LinkChanged, LinkRecords, event_url
 from udl.plugins.apps.orch.models import (
     AssignTaskRequest,
@@ -61,6 +63,22 @@ from udl.plugins.apps.orch.tokens import (
 )
 from udl.plugins.apps.orch.tokens import (
     issue_token as issue,
+)
+from udl.plugins.runners.manage import (
+    Harnesses,
+    InstallRunnerRequest,
+    ListRunnersRequest,
+    LoginAttempt,
+    LoginReplyRequest,
+    LoginStatus,
+    LoginStatusRequest,
+    LogoutRunnerRequest,
+    RunnerInstalled,
+    RunnerSetup,
+    RunnerSignedOut,
+    RunnerStatusList,
+    SetupRunnerRequest,
+    StartLoginRequest,
 )
 
 if TYPE_CHECKING:
@@ -124,6 +142,12 @@ class OrchContext(Protocol):
         ...
 
 
+_RUNNERS: tuple[str, ...] = ("orch", "runners")
+"""The CLI words a harness's operations live under: `udl orch runners [install]`."""
+
+__all__ = ["Orch"]
+
+
 class Orch(AppPlugin[OrchSettings]):
     """udl's orchestrator: the projects and repos it tracks, and the agents that work them.
 
@@ -171,10 +195,27 @@ class Orch(AppPlugin[OrchSettings]):
         """The events orch publishes: its links' changes (26.4), and its tasks' from 26.6 on."""
         return (LINK_CHANGED,)
 
+    def __init__(
+        self, settings: OrchSettings, *, clock: Clock, records: AppRecords | None = None
+    ) -> None:
+        super().__init__(settings, clock=clock, records=records)
+        self._harnesses: Harnesses | None = None
+
+    @property
+    def harnesses(self) -> Harnesses:
+        """The harnesses of every host (25.11): what its runner operations act on. One manager
+        per app, so a relayed sign-in outlives the call that started it."""
+        if self._harnesses is None:
+            service = self.service
+            if service is None:
+                raise PluginError("The orch app is not running on a service")
+            self._harnesses = Harnesses(service)
+        return self._harnesses
+
     @classmethod
     def operations(cls) -> list[Operation]:
-        """The operations it adds: the queue's (27.3), what to do next (27.4) and the agent
-        token's (27.2), each one of its methods (the rest are 26.6's)."""
+        """The operations it adds: the queue's (27.3), what to do next (27.4), the agent token's
+        (27.2) and the harnesses' (25.11), each one of its methods (the rest are 26.6's)."""
         return [
             cls.operation(
                 "issue_token",
@@ -207,7 +248,99 @@ class Orch(AppPlugin[OrchSettings]):
                 title="What to do next",
                 hints=OperationHints(read_only=True),
             ),
+            cls.operation(
+                "list_runners",
+                title="List the harnesses",
+                hints=OperationHints(read_only=True, open_world=True),
+                cli=CLISpec(path=_RUNNERS, options={"host": "--host"}),
+            ),
+            cls.operation(
+                "runner_install",
+                title="Install or update a harness",
+                hints=OperationHints(admin=True, open_world=True),
+                cli=CLISpec(
+                    path=(*_RUNNERS, "install"),
+                    arguments=("host", "runner"),
+                    options={"version": "--version"},
+                ),
+            ),
+            cls.operation(
+                "runner_setup",
+                title="Set a harness up",
+                hints=OperationHints(admin=True, idempotent=True),
+                cli=CLISpec(path=(*_RUNNERS, "setup"), arguments=("host", "runner")),
+            ),
+            cls.operation(
+                "runner_login",
+                title="Sign a harness in",
+                hints=OperationHints(admin=True, open_world=True, mcp=False),
+                cli=CLISpec(
+                    path=(*_RUNNERS, "login"),
+                    arguments=("host", "runner"),
+                    options={"provider": "--provider"},
+                ),
+            ),
+            cls.operation(
+                "runner_login_reply",
+                title="Answer a sign-in",
+                hints=OperationHints(admin=True, open_world=True, mcp=False),
+                cli=CLISpec(path=(*_RUNNERS, "login-reply"), arguments=("id", "text")),
+            ),
+            cls.operation(
+                "runner_login_status",
+                title="Check a sign-in",
+                hints=OperationHints(admin=True, open_world=True, mcp=False),
+                cli=CLISpec(path=(*_RUNNERS, "login-status"), arguments=("id",)),
+            ),
+            cls.operation(
+                "runner_logout",
+                title="Sign a harness out",
+                hints=OperationHints(admin=True, destructive=True),
+                cli=CLISpec(path=(*_RUNNERS, "logout"), arguments=("host", "runner", "confirm")),
+            ),
         ]
+
+    # -- the harnesses (25.11) -----------------------------------------------------------------
+
+    async def list_runners(self, request: ListRunnersRequest) -> RunnerStatusList:
+        """Every harness on every host: its version, whether it is signed in and on which plan,
+        what it can run there, and what its own doctor says is wrong."""
+        return await self.harnesses.all(request)
+
+    async def runner_install(self, request: InstallRunnerRequest) -> RunnerInstalled:
+        """Install or update a harness on a host: only its own fixed argv, and never while a
+        session is running there."""
+        return await self.harnesses.install(request)
+
+    async def runner_setup(self, request: SetupRunnerRequest) -> RunnerSetup:
+        """Write a harness's deny policies and its agent files on a host (idempotent), and set
+        the provider keys it needs."""
+        return await self.harnesses.setup(
+            request, roles=[role.value for role in AgentRole], env=self._provider_keys(request)
+        )
+
+    async def runner_login(self, request: StartLoginRequest) -> LoginAttempt:
+        """Sign a harness in, and relay what it asks: the URL it prints, then the code it takes.
+        One attempt per host and runner; it ends after ten minutes."""
+        return await self.harnesses.login(request)
+
+    async def runner_login_reply(self, request: LoginReplyRequest) -> LoginAttempt:
+        """Give a running sign-in what it asked for (a code, or a line)."""
+        return await self.harnesses.reply(request)
+
+    async def runner_login_status(self, request: LoginStatusRequest) -> LoginStatus:
+        """How a sign-in is going, and whether it ended signed in."""
+        return await self.harnesses.status(request)
+
+    async def runner_logout(self, request: LogoutRunnerRequest) -> RunnerSignedOut:
+        """Sign a harness out (its `confirm` names `<host>/<runner>`, so it is never a typo)."""
+        return await self.harnesses.logout(request)
+
+    def _provider_keys(self, request: SetupRunnerRequest) -> dict[str, str]:
+        """The provider keys the service's environment is given when it is set up: none yet
+        (the AI integration's secrets are 24.x's), so a setup writes only the policies and the
+        agent files."""
+        return {}
 
     async def serve(self, ctx: AppContext) -> None:
         """Orch's service: it keeps its pull links current (26.4), until the dispatcher

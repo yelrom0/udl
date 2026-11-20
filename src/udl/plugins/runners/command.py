@@ -141,6 +141,12 @@ class CommandRunner(AgentRunner[CommandRunnerOptions]):
         resume = self.options.resume_argv
         return tuple(dict.fromkeys([self.program, *(resume[:1] if resume else [])]))
 
+    @property
+    def sign_in_command(self) -> tuple[str, ...]:
+        """The program itself, run in a shell on the host: a CLI udl does not know signs itself
+        in its own way, and 25.11 answers with that command."""
+        return (self.program,) if self.program else ()
+
     async def health(self) -> RunnerHealth:
         if not self.program:
             return RunnerHealth(installed=False, detail="No argv is set: nothing to run.")

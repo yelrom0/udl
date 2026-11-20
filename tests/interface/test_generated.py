@@ -93,6 +93,8 @@ def test_every_plugin_operation_has_its_cli_command(harness: Harness) -> None:
     things = groups["gizmo"].commands["things"]
     assert isinstance(things, TyperGroup)
     assert operation_of(inspect.unwrap(things.commands["find"].callback or print)) == "gizmo_find"
+    # (every_thing's path is the group's own: it is the group's callback, not a command of it.)
+    assert operation_of(inspect.unwrap(things.callback or print)) == "gizmo_every_thing"
 
 
 def test_every_plugin_operation_has_its_api_route(harness: Harness) -> None:
@@ -399,6 +401,18 @@ def test_a_command_s_spec_gives_its_path_arguments_options_and_rendering(cli: CL
     assert json.loads(as_json.stdout) == {"key": "door", "said": ""}
     assert "--shout" in help_text.stdout
     assert "KEY" in help_text.stdout
+
+
+def test_an_operation_at_a_group_s_own_path_runs_when_no_subcommand_is_given(cli: CLI) -> None:
+    """`udl gizmo things` runs the operation whose path is the group's own, with its options —
+    as `udl orch runners --host local` does — and `--help` still shows what is under it."""
+    run = cli("gizmo", "things", "--count", "3", "--json")
+    helped = cli("gizmo", "things", "--help")
+
+    assert run.exit_code == 0, run.output
+    assert json.loads(run.stdout) == {"key": "things", "said": "0, 1, 2"}
+    assert "find" in helped.stdout
+    assert "--count" in helped.stdout
 
 
 def test_a_dict_can_be_given_as_key_value_pairs(cli: CLI) -> None:

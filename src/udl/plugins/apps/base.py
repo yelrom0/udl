@@ -376,6 +376,10 @@ class AppPlugin[S: AppSettings](ABC):
     # (24.3-24.6) as every other plugin does.
     ui: ClassVar[UIBundle | None] = None
 
+    service: UDLService | None = None
+    """The service this app runs on, set by the supervisor when it makes it: what its operations
+    reach udl through (a host's shell, the runners, the secret store)."""
+
     def __init__(self, settings: S, *, clock: Clock, records: AppRecords | None = None) -> None:
         self.settings = settings
         self.clock = clock

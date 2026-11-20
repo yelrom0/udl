@@ -2006,7 +2006,8 @@
           "in_use",
           "ambiguous_account",
           "challenge_required",
-          "provider_unavailable"
+          "provider_unavailable",
+          "login_by_hand"
         ],
         "title": "ErrorCode",
         "type": "string"
@@ -4135,6 +4136,40 @@
         "title": "ImportedCookies",
         "type": "object"
       },
+      "InstallRunnerRequest": {
+        "additionalProperties": false,
+        "description": "Install or update a harness.",
+        "properties": {
+          "host": {
+            "description": "The host to install it on.",
+            "title": "Host",
+            "type": "string"
+          },
+          "runner": {
+            "description": "The runner's name.",
+            "title": "Runner",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The version to install (None: the newest).",
+            "title": "Version"
+          }
+        },
+        "required": [
+          "host",
+          "runner"
+        ],
+        "title": "InstallRunnerRequest",
+        "type": "object"
+      },
       "Interval-Input": {
         "$ref": "#/components/schemas/Duration-Input"
       },
@@ -4398,6 +4433,181 @@
       "JsonValue": {},
       "Length": {
         "$ref": "#/components/schemas/Duration-Input"
+      },
+      "ListRunnersRequest": {
+        "additionalProperties": false,
+        "description": "Which harnesses to show.",
+        "properties": {
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only this host's (None: every host).",
+            "title": "Host"
+          }
+        },
+        "title": "ListRunnersRequest",
+        "type": "object"
+      },
+      "LoginAttempt": {
+        "additionalProperties": false,
+        "description": "A sign-in that is running, and what it asks for.",
+        "properties": {
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The command to run on the host, when the harness cannot be driven without a terminal.",
+            "title": "Command"
+          },
+          "done": {
+            "default": false,
+            "description": "Whether it has ended.",
+            "title": "Done",
+            "type": "boolean"
+          },
+          "expects": {
+            "default": "none",
+            "description": "What it wants back: nothing, or a code.",
+            "enum": [
+              "none",
+              "code"
+            ],
+            "title": "Expects",
+            "type": "string"
+          },
+          "host": {
+            "description": "The host it is on.",
+            "title": "Host",
+            "type": "string"
+          },
+          "id": {
+            "description": "What a reply and a status name it by.",
+            "title": "Id",
+            "type": "string"
+          },
+          "ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whether it ended signed in (None: it has not ended).",
+            "title": "Ok"
+          },
+          "prompt": {
+            "default": "",
+            "description": "What the harness printed: the text, and the URL to open.",
+            "title": "Prompt",
+            "type": "string"
+          },
+          "runner": {
+            "description": "The runner's name.",
+            "title": "Runner",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "host",
+          "runner"
+        ],
+        "title": "LoginAttempt",
+        "type": "object"
+      },
+      "LoginReplyRequest": {
+        "additionalProperties": false,
+        "description": "Give a running sign-in what it asked for.",
+        "properties": {
+          "id": {
+            "description": "The attempt's id.",
+            "title": "Id",
+            "type": "string"
+          },
+          "text": {
+            "description": "What the person typed (a code, or a line).",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ],
+        "title": "LoginReplyRequest",
+        "type": "object"
+      },
+      "LoginStatus": {
+        "additionalProperties": false,
+        "description": "How a sign-in is going.",
+        "properties": {
+          "attempt": {
+            "$ref": "#/components/schemas/LoginAttempt",
+            "description": "The attempt as it is now."
+          }
+        },
+        "required": [
+          "attempt"
+        ],
+        "title": "LoginStatus",
+        "type": "object"
+      },
+      "LoginStatusRequest": {
+        "additionalProperties": false,
+        "description": "Ask how a sign-in is going.",
+        "properties": {
+          "id": {
+            "description": "The attempt's id.",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "LoginStatusRequest",
+        "type": "object"
+      },
+      "LogoutRunnerRequest": {
+        "additionalProperties": false,
+        "description": "Sign a harness out.",
+        "properties": {
+          "confirm": {
+            "description": "`<host>/<runner>`, so a sign-out is never a typo away.",
+            "title": "Confirm",
+            "type": "string"
+          },
+          "host": {
+            "description": "The host it is on.",
+            "title": "Host",
+            "type": "string"
+          },
+          "runner": {
+            "description": "The runner's name.",
+            "title": "Runner",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "runner",
+          "confirm"
+        ],
+        "title": "LogoutRunnerRequest",
+        "type": "object"
       },
       "MediaCandidate": {
         "additionalProperties": false,
@@ -6281,6 +6491,312 @@
         "title": "RunStatus",
         "type": "string"
       },
+      "RunnerHealth": {
+        "additionalProperties": false,
+        "description": "Whether a harness is there, and signed in: what `udl orch runners` says about it (25.11).",
+        "properties": {
+          "account": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The account it is signed in as (shown, never logged).",
+            "title": "Account"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Anything else worth showing (a missing sign-in's hint).",
+            "title": "Detail"
+          },
+          "guards": {
+            "default": false,
+            "description": "Whether the deny policies are in place: always true for a runner that enforces them per\nsession (25.9's `deny`), else whether 25.11's setup wrote them on the host.",
+            "title": "Guards",
+            "type": "boolean"
+          },
+          "installed": {
+            "description": "Whether its program is on the host.",
+            "title": "Installed",
+            "type": "boolean"
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The newest version there is, when udl can tell.",
+            "title": "Latest"
+          },
+          "limited_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When its quota is back, if the dispatcher last saw it out of quota (27.7).",
+            "title": "Limited Until"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The plan its account is on, when the harness says.",
+            "title": "Plan"
+          },
+          "problems": {
+            "description": "What the harness's own doctor says is wrong, when it says anything.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Problems",
+            "type": "array"
+          },
+          "signed_in": {
+            "default": false,
+            "description": "Whether its account is signed in.",
+            "title": "Signed In",
+            "type": "boolean"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its version, when it says.",
+            "title": "Version"
+          }
+        },
+        "required": [
+          "installed"
+        ],
+        "title": "RunnerHealth",
+        "type": "object"
+      },
+      "RunnerInstalled": {
+        "additionalProperties": false,
+        "description": "What installing one did.",
+        "properties": {
+          "host": {
+            "description": "The host it was done on.",
+            "title": "Host",
+            "type": "string"
+          },
+          "output": {
+            "default": "",
+            "description": "The end of what the install printed.",
+            "title": "Output",
+            "type": "string"
+          },
+          "runner": {
+            "description": "The runner's name.",
+            "title": "Runner",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The version it is now, when it says.",
+            "title": "Version"
+          }
+        },
+        "required": [
+          "host",
+          "runner"
+        ],
+        "title": "RunnerInstalled",
+        "type": "object"
+      },
+      "RunnerModel": {
+        "additionalProperties": false,
+        "description": "A model a runner can run on this host.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What it is for, when the runner says.",
+            "title": "Description"
+          },
+          "id": {
+            "description": "What it is called in a SessionSpec (what the harness takes).",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "description": "What a person reads.",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "RunnerModel",
+        "type": "object"
+      },
+      "RunnerSetup": {
+        "additionalProperties": false,
+        "description": "What setting one up wrote.",
+        "properties": {
+          "files": {
+            "description": "The files it wrote, in the order it wrote them.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "guards": {
+            "description": "Whether the deny policies are in place afterwards.",
+            "title": "Guards",
+            "type": "boolean"
+          },
+          "host": {
+            "description": "The host it was done on.",
+            "title": "Host",
+            "type": "string"
+          },
+          "runner": {
+            "description": "The runner's name.",
+            "title": "Runner",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "runner",
+          "guards"
+        ],
+        "title": "RunnerSetup",
+        "type": "object"
+      },
+      "RunnerSignedOut": {
+        "additionalProperties": false,
+        "description": "What signing one out did.",
+        "properties": {
+          "host": {
+            "description": "The host it was done on.",
+            "title": "Host",
+            "type": "string"
+          },
+          "runner": {
+            "description": "The runner's name.",
+            "title": "Runner",
+            "type": "string"
+          },
+          "signed_out": {
+            "default": true,
+            "description": "Whether it is signed out now.",
+            "title": "Signed Out",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "host",
+          "runner"
+        ],
+        "title": "RunnerSignedOut",
+        "type": "object"
+      },
+      "RunnerStatus": {
+        "additionalProperties": false,
+        "description": "One harness on one host: what it is, whether it is signed in, and what it can run.",
+        "properties": {
+          "health": {
+            "$ref": "#/components/schemas/RunnerHealth",
+            "description": "Whether it is there, its version and account, and what is wrong."
+          },
+          "host": {
+            "description": "The host it is on.",
+            "title": "Host",
+            "type": "string"
+          },
+          "models": {
+            "description": "What it can run there (empty: it could not say).",
+            "items": {
+              "$ref": "#/components/schemas/RunnerModel"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "runner": {
+            "description": "The runner's name (`claude-code`, `opencode`, \u2026).",
+            "title": "Runner",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "runner",
+          "health"
+        ],
+        "title": "RunnerStatus",
+        "type": "object"
+      },
+      "RunnerStatusList": {
+        "additionalProperties": false,
+        "description": "Every harness on every host.",
+        "properties": {
+          "items": {
+            "description": "One per (host, runner), by host then runner.",
+            "items": {
+              "$ref": "#/components/schemas/RunnerStatus"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "problems": {
+            "description": "The (host, runner) pairs that could not be asked, and why.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Problems",
+            "type": "array"
+          }
+        },
+        "title": "RunnerStatusList",
+        "type": "object"
+      },
       "RuntimeStatus": {
         "additionalProperties": false,
         "description": "Who runs the automations, and what waits.",
@@ -7270,6 +7786,28 @@
         "title": "Settings",
         "type": "object"
       },
+      "SetupRunnerRequest": {
+        "additionalProperties": false,
+        "description": "Write a harness's policies and agent files on a host.",
+        "properties": {
+          "host": {
+            "description": "The host to set up.",
+            "title": "Host",
+            "type": "string"
+          },
+          "runner": {
+            "description": "The runner's name.",
+            "title": "Runner",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "runner"
+        ],
+        "title": "SetupRunnerRequest",
+        "type": "object"
+      },
       "Site": {
         "description": "A website, identified by its key: the registrable domain (eTLD+1), e.g. `example.co.uk`.",
         "properties": {
@@ -7537,6 +8075,40 @@
           "waiting"
         ],
         "title": "SolveReport",
+        "type": "object"
+      },
+      "StartLoginRequest": {
+        "additionalProperties": false,
+        "description": "Sign a harness in.",
+        "properties": {
+          "host": {
+            "description": "The host it is on.",
+            "title": "Host",
+            "type": "string"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The provider to sign in to (an OAuth one), when the runner has several.",
+            "title": "Provider"
+          },
+          "runner": {
+            "description": "The runner's name.",
+            "title": "Runner",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "runner"
+        ],
+        "title": "StartLoginRequest",
         "type": "object"
       },
       "State": {
@@ -13975,6 +14547,103 @@
         ]
       }
     },
+    "/plugins/orch/list_runners": {
+      "post": {
+        "description": "Every harness on every host: its version, whether it is signed in and on which plan,\nwhat it can run there, and what its own doctor says is wrong.",
+        "operationId": "orch_list_runners",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListRunnersRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerStatusList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Every harness on every host: its version, whether it is signed in and on which plan,",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
     "/plugins/orch/my_task": {
       "post": {
         "description": "What an agent is to work next: the task it is in progress on, else the first on its\nqueue, and nothing when it has none.\n\nThe dispatcher asks this when it starts a session (27.7); an agent asks it when it is\ntold to go on.",
@@ -14164,6 +14833,588 @@
           }
         ],
         "summary": "Set an agent's queue to exactly these keys, in this order.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/runner_install": {
+      "post": {
+        "description": "Install or update a harness on a host: only its own fixed argv, and never while a\nsession is running there.",
+        "operationId": "orch_runner_install",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallRunnerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerInstalled"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Install or update a harness on a host: only its own fixed argv, and never while a",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/runner_login": {
+      "post": {
+        "description": "Sign a harness in, and relay what it asks: the URL it prints, then the code it takes.\nOne attempt per host and runner; it ends after ten minutes.",
+        "operationId": "orch_runner_login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginAttempt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Sign a harness in, and relay what it asks: the URL it prints, then the code it takes.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/runner_login_reply": {
+      "post": {
+        "description": "Give a running sign-in what it asked for (a code, or a line).",
+        "operationId": "orch_runner_login_reply",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginReplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginAttempt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Give a running sign-in what it asked for (a code, or a line).",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/runner_login_status": {
+      "post": {
+        "description": "How a sign-in is going, and whether it ended signed in.",
+        "operationId": "orch_runner_login_status",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "How a sign-in is going, and whether it ended signed in.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/runner_logout": {
+      "post": {
+        "description": "Sign a harness out (its `confirm` names `<host>/<runner>`, so it is never a typo).",
+        "operationId": "orch_runner_logout",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LogoutRunnerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerSignedOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Sign a harness out (its `confirm` names `<host>/<runner>`, so it is never a typo).",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/runner_setup": {
+      "post": {
+        "description": "Write a harness's deny policies and its agent files on a host (idempotent), and set\nthe provider keys it needs.",
+        "operationId": "orch_runner_setup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupRunnerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerSetup"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Write a harness's deny policies and its agent files on a host (idempotent), and set",
         "tags": [
           "orch"
         ]

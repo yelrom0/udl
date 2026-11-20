@@ -189,6 +189,7 @@ class AppSupervisor:
                 f"settings_model's ({plugin.settings_model.__qualname__})"
             )
         app: AnApp = plugin(made, clock=self._service.clock, records=AppRecords(self._service.db))
+        app.service = self._service
         self._apps[name] = app
         return app
 

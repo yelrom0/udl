@@ -47,6 +47,7 @@ class ErrorCode(StrEnum):
     AMBIGUOUS_ACCOUNT = "ambiguous_account"
     CHALLENGE_REQUIRED = "challenge_required"
     PROVIDER_UNAVAILABLE = "provider_unavailable"
+    LOGIN_BY_HAND = "login_by_hand"
 
 
 class ErrorInfo(BaseModel):

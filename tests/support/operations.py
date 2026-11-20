@@ -151,6 +151,18 @@ async def find(service: UDLService, request: ThingRequest) -> Thing:
     return Thing(key=request.key, said=said.upper() if request.loud else said)
 
 
+class Things(_Model):
+    """Every thing."""
+
+    count: int = 2
+    """How many."""
+
+
+async def every_thing(service: UDLService, request: Things) -> Thing:
+    """Every thing there is (the command `udl gizmo things` runs on its own)."""
+    return Thing(key="things", said=", ".join(str(n) for n in range(request.count)))
+
+
 async def keep(service: UDLService, request: ThingRequest) -> Thing:
     """Keep a thing."""
     return Thing(key=request.key, said="kept")
@@ -217,6 +229,15 @@ class Gizmo(SitePlugin):
                     render=shown,
                 ),
                 api=APISpec(method="GET", path="/gizmo/things/{key}"),
+            ),
+            Operation.of(
+                every_thing,
+                name="every_thing",
+                title="Every thing",
+                hints=OperationHints(read_only=True),
+                # (A group's own path: `udl gizmo things` runs it, `udl gizmo things find` is
+                # still its subcommand.)
+                cli=CLISpec(path=("gizmo", "things"), options={"count": "--count"}),
             ),
             Operation.of(
                 keep,

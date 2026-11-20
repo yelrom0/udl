@@ -61,18 +61,22 @@ def orch_registry() -> PluginRegistry:
 # ---------------------------------------------------------------------------------------------
 
 
+QUEUE_OPERATIONS: list[str] = [
+    "issue_token",
+    "assign",
+    "reorder_queue",
+    "unassign",
+    "get_queue",
+    "my_task",
+    "suggest",
+]
+"""What comes before the harnesses' (25.11): the token's, the queue's and what to do next."""
+
+
 def test_orch_offers_the_queue_s_operations() -> None:
     offered = {op.name: op for op in Orch.operations()}
 
-    assert list(offered) == [
-        "issue_token",
-        "assign",
-        "reorder_queue",
-        "unassign",
-        "get_queue",
-        "my_task",
-        "suggest",
-    ]
+    assert list(offered)[: len(QUEUE_OPERATIONS)] == QUEUE_OPERATIONS
     # (Reading a queue changes nothing; the ones that move a task are idempotent, and a task
     # that leaves one is not destructive: it is open again.)
     assert offered["get_queue"].hints == OperationHints(read_only=True)
@@ -90,15 +94,7 @@ async def test_the_operations_are_offered_as_orch_s(tmp_path: Path) -> None:
     async with UDLService(settings(tmp_path), registry=orch_registry()) as service:
         names = [op.name for op in service.operations.in_namespace("orch")]
 
-    assert names == [
-        "orch_issue_token",
-        "orch_assign",
-        "orch_reorder_queue",
-        "orch_unassign",
-        "orch_get_queue",
-        "orch_my_task",
-        "orch_suggest",
-    ]
+    assert names[: len(QUEUE_OPERATIONS)] == [f"orch_{name}" for name in QUEUE_OPERATIONS]
 
 
 # ---------------------------------------------------------------------------------------------

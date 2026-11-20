@@ -1026,6 +1026,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/list_runners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Every harness on every host: its version, whether it is signed in and on which plan,
+         * @description Every harness on every host: its version, whether it is signed in and on which plan,
+         *     what it can run there, and what its own doctor says is wrong.
+         */
+        post: operations["orch_list_runners"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/orch/my_task": {
         parameters: {
             query?: never;
@@ -1067,6 +1088,129 @@ export interface paths {
          *     move, and one left out would be lost. The answer is the queue as it now is.
          */
         post: operations["orch_reorder_queue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/runner_install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Install or update a harness on a host: only its own fixed argv, and never while a
+         * @description Install or update a harness on a host: only its own fixed argv, and never while a
+         *     session is running there.
+         */
+        post: operations["orch_runner_install"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/runner_login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign a harness in, and relay what it asks: the URL it prints, then the code it takes.
+         * @description Sign a harness in, and relay what it asks: the URL it prints, then the code it takes.
+         *     One attempt per host and runner; it ends after ten minutes.
+         */
+        post: operations["orch_runner_login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/runner_login_reply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Give a running sign-in what it asked for (a code, or a line).
+         * @description Give a running sign-in what it asked for (a code, or a line).
+         */
+        post: operations["orch_runner_login_reply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/runner_login_status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * How a sign-in is going, and whether it ended signed in.
+         * @description How a sign-in is going, and whether it ended signed in.
+         */
+        post: operations["orch_runner_login_status"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/runner_logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign a harness out (its `confirm` names `<host>/<runner>`, so it is never a typo).
+         * @description Sign a harness out (its `confirm` names `<host>/<runner>`, so it is never a typo).
+         */
+        post: operations["orch_runner_logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/runner_setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Write a harness's deny policies and its agent files on a host (idempotent), and set
+         * @description Write a harness's deny policies and its agent files on a host (idempotent), and set
+         *     the provider keys it needs.
+         */
+        post: operations["orch_runner_setup"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2670,7 +2814,7 @@ export interface components {
          * @description A stable, machine-readable code for each error type.
          * @enum {string}
          */
-        ErrorCode: "udl_error" | "config_error" | "plugin_error" | "plugin_failed" | "database_error" | "duplicate_key" | "download_error" | "unsupported_url" | "extraction_failed" | "auth_required" | "rate_limited" | "network_error" | "not_found" | "tool_unavailable" | "no_strategy_found" | "cancelled" | "interrupted" | "does_not_exist" | "not_allowed" | "unauthorized" | "secret_store_error" | "template_failed" | "reauth_required" | "invalid_filter" | "already_exists" | "action_failed" | "in_use" | "ambiguous_account" | "challenge_required" | "provider_unavailable";
+        ErrorCode: "udl_error" | "config_error" | "plugin_error" | "plugin_failed" | "database_error" | "duplicate_key" | "download_error" | "unsupported_url" | "extraction_failed" | "auth_required" | "rate_limited" | "network_error" | "not_found" | "tool_unavailable" | "no_strategy_found" | "cancelled" | "interrupted" | "does_not_exist" | "not_allowed" | "unauthorized" | "secret_store_error" | "template_failed" | "reauth_required" | "invalid_filter" | "already_exists" | "action_failed" | "in_use" | "ambiguous_account" | "challenge_required" | "provider_unavailable" | "login_by_hand";
         /**
          * ErrorInfo
          * @description A UDLError as data, for API / MCP responses and --json output.
@@ -3798,6 +3942,27 @@ export interface components {
              */
             user_agent: boolean;
         };
+        /**
+         * InstallRunnerRequest
+         * @description Install or update a harness.
+         */
+        InstallRunnerRequest: {
+            /**
+             * Host
+             * @description The host to install it on.
+             */
+            host: string;
+            /**
+             * Runner
+             * @description The runner's name.
+             */
+            runner: string;
+            /**
+             * Version
+             * @description The version to install (None: the newest).
+             */
+            version?: string | null;
+        };
         "Interval-Input": components["schemas"]["Duration-Input"];
         "Interval-Output": components["schemas"]["Duration-Output"];
         /**
@@ -3912,6 +4077,123 @@ export interface components {
         };
         JsonValue: unknown;
         Length: components["schemas"]["Duration-Input"];
+        /**
+         * ListRunnersRequest
+         * @description Which harnesses to show.
+         */
+        ListRunnersRequest: {
+            /**
+             * Host
+             * @description Only this host's (None: every host).
+             */
+            host?: string | null;
+        };
+        /**
+         * LoginAttempt
+         * @description A sign-in that is running, and what it asks for.
+         */
+        LoginAttempt: {
+            /**
+             * Command
+             * @description The command to run on the host, when the harness cannot be driven without a terminal.
+             */
+            command?: string | null;
+            /**
+             * Done
+             * @description Whether it has ended.
+             * @default false
+             */
+            done: boolean;
+            /**
+             * Expects
+             * @description What it wants back: nothing, or a code.
+             * @default none
+             * @enum {string}
+             */
+            expects: "none" | "code";
+            /**
+             * Host
+             * @description The host it is on.
+             */
+            host: string;
+            /**
+             * Id
+             * @description What a reply and a status name it by.
+             */
+            id: string;
+            /**
+             * Ok
+             * @description Whether it ended signed in (None: it has not ended).
+             */
+            ok?: boolean | null;
+            /**
+             * Prompt
+             * @description What the harness printed: the text, and the URL to open.
+             * @default
+             */
+            prompt: string;
+            /**
+             * Runner
+             * @description The runner's name.
+             */
+            runner: string;
+        };
+        /**
+         * LoginReplyRequest
+         * @description Give a running sign-in what it asked for.
+         */
+        LoginReplyRequest: {
+            /**
+             * Id
+             * @description The attempt's id.
+             */
+            id: string;
+            /**
+             * Text
+             * @description What the person typed (a code, or a line).
+             */
+            text: string;
+        };
+        /**
+         * LoginStatus
+         * @description How a sign-in is going.
+         */
+        LoginStatus: {
+            /** @description The attempt as it is now. */
+            attempt: components["schemas"]["LoginAttempt"];
+        };
+        /**
+         * LoginStatusRequest
+         * @description Ask how a sign-in is going.
+         */
+        LoginStatusRequest: {
+            /**
+             * Id
+             * @description The attempt's id.
+             */
+            id: string;
+        };
+        /**
+         * LogoutRunnerRequest
+         * @description Sign a harness out.
+         */
+        LogoutRunnerRequest: {
+            /**
+             * Confirm
+             * @description `<host>/<runner>`, so a sign-out is never a typo away.
+             */
+            confirm: string;
+            /**
+             * Host
+             * @description The host it is on.
+             */
+            host: string;
+            /**
+             * Runner
+             * @description The runner's name.
+             */
+            runner: string;
+        };
         /**
          * MediaCandidate
          * @description A piece of media a probe found.
@@ -4926,6 +5208,200 @@ export interface components {
          */
         RunStatus: "queued" | "running" | "awaiting_approval" | "succeeded" | "failed" | "cancelled" | "skipped";
         /**
+         * RunnerHealth
+         * @description Whether a harness is there, and signed in: what `udl orch runners` says about it (25.11).
+         */
+        RunnerHealth: {
+            /**
+             * Account
+             * @description The account it is signed in as (shown, never logged).
+             */
+            account?: string | null;
+            /**
+             * Detail
+             * @description Anything else worth showing (a missing sign-in's hint).
+             */
+            detail?: string | null;
+            /**
+             * Guards
+             * @description Whether the deny policies are in place: always true for a runner that enforces them per
+             *     session (25.9's `deny`), else whether 25.11's setup wrote them on the host.
+             * @default false
+             */
+            guards: boolean;
+            /**
+             * Installed
+             * @description Whether its program is on the host.
+             */
+            installed: boolean;
+            /**
+             * Latest
+             * @description The newest version there is, when udl can tell.
+             */
+            latest?: string | null;
+            /**
+             * Limited Until
+             * @description When its quota is back, if the dispatcher last saw it out of quota (27.7).
+             */
+            limited_until?: string | null;
+            /**
+             * Plan
+             * @description The plan its account is on, when the harness says.
+             */
+            plan?: string | null;
+            /**
+             * Problems
+             * @description What the harness's own doctor says is wrong, when it says anything.
+             */
+            problems?: string[];
+            /**
+             * Signed In
+             * @description Whether its account is signed in.
+             * @default false
+             */
+            signed_in: boolean;
+            /**
+             * Version
+             * @description Its version, when it says.
+             */
+            version?: string | null;
+        };
+        /**
+         * RunnerInstalled
+         * @description What installing one did.
+         */
+        RunnerInstalled: {
+            /**
+             * Host
+             * @description The host it was done on.
+             */
+            host: string;
+            /**
+             * Output
+             * @description The end of what the install printed.
+             * @default
+             */
+            output: string;
+            /**
+             * Runner
+             * @description The runner's name.
+             */
+            runner: string;
+            /**
+             * Version
+             * @description The version it is now, when it says.
+             */
+            version?: string | null;
+        };
+        /**
+         * RunnerModel
+         * @description A model a runner can run on this host.
+         */
+        RunnerModel: {
+            /**
+             * Description
+             * @description What it is for, when the runner says.
+             */
+            description?: string | null;
+            /**
+             * Id
+             * @description What it is called in a SessionSpec (what the harness takes).
+             */
+            id: string;
+            /**
+             * Name
+             * @description What a person reads.
+             */
+            name: string;
+        };
+        /**
+         * RunnerSetup
+         * @description What setting one up wrote.
+         */
+        RunnerSetup: {
+            /**
+             * Files
+             * @description The files it wrote, in the order it wrote them.
+             */
+            files?: string[];
+            /**
+             * Guards
+             * @description Whether the deny policies are in place afterwards.
+             */
+            guards: boolean;
+            /**
+             * Host
+             * @description The host it was done on.
+             */
+            host: string;
+            /**
+             * Runner
+             * @description The runner's name.
+             */
+            runner: string;
+        };
+        /**
+         * RunnerSignedOut
+         * @description What signing one out did.
+         */
+        RunnerSignedOut: {
+            /**
+             * Host
+             * @description The host it was done on.
+             */
+            host: string;
+            /**
+             * Runner
+             * @description The runner's name.
+             */
+            runner: string;
+            /**
+             * Signed Out
+             * @description Whether it is signed out now.
+             * @default true
+             */
+            signed_out: boolean;
+        };
+        /**
+         * RunnerStatus
+         * @description One harness on one host: what it is, whether it is signed in, and what it can run.
+         */
+        RunnerStatus: {
+            /** @description Whether it is there, its version and account, and what is wrong. */
+            health: components["schemas"]["RunnerHealth"];
+            /**
+             * Host
+             * @description The host it is on.
+             */
+            host: string;
+            /**
+             * Models
+             * @description What it can run there (empty: it could not say).
+             */
+            models?: components["schemas"]["RunnerModel"][];
+            /**
+             * Runner
+             * @description The runner's name (`claude-code`, `opencode`, …).
+             */
+            runner: string;
+        };
+        /**
+         * RunnerStatusList
+         * @description Every harness on every host.
+         */
+        RunnerStatusList: {
+            /**
+             * Items
+             * @description One per (host, runner), by host then runner.
+             */
+            items?: components["schemas"]["RunnerStatus"][];
+            /**
+             * Problems
+             * @description The (host, runner) pairs that could not be asked, and why.
+             */
+            problems?: string[];
+        };
+        /**
          * RuntimeStatus
          * @description Who runs the automations, and what waits.
          */
@@ -5484,6 +5960,22 @@ export interface components {
             web?: components["schemas"]["WebSettings"];
         };
         /**
+         * SetupRunnerRequest
+         * @description Write a harness's policies and agent files on a host.
+         */
+        SetupRunnerRequest: {
+            /**
+             * Host
+             * @description The host to set up.
+             */
+            host: string;
+            /**
+             * Runner
+             * @description The runner's name.
+             */
+            runner: string;
+        };
+        /**
          * Site
          * @description A website, identified by its key: the registrable domain (eTLD+1), e.g. `example.co.uk`.
          */
@@ -5629,6 +6121,27 @@ export interface components {
              * @description The sites still waiting (the window closed, or the time was up).
              */
             waiting: string[];
+        };
+        /**
+         * StartLoginRequest
+         * @description Sign a harness in.
+         */
+        StartLoginRequest: {
+            /**
+             * Host
+             * @description The host it is on.
+             */
+            host: string;
+            /**
+             * Provider
+             * @description The provider to sign in to (an OAuth one), when the runner has several.
+             */
+            provider?: string | null;
+            /**
+             * Runner
+             * @description The runner's name.
+             */
+            runner: string;
         };
         /** @enum {string} */
         State: "open" | "queued" | "in_progress" | "blocked" | "ready" | "merged" | "done" | "moved" | "cancelled";
@@ -10014,6 +10527,84 @@ export interface operations {
             };
         };
     };
+    orch_list_runners: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ListRunnersRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerStatusList"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
     orch_my_task: {
         parameters: {
             query?: never;
@@ -10112,6 +10703,474 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskQueue"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_runner_install: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstallRunnerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerInstalled"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_runner_login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartLoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginAttempt"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_runner_login_reply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginReplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginAttempt"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_runner_login_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginStatusRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginStatus"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_runner_logout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LogoutRunnerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerSignedOut"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_runner_setup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetupRunnerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerSetup"];
                 };
             };
             /** @description Bad Request */

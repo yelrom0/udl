@@ -43,6 +43,7 @@ GIZMO = [
     "gizmo_echo",
     "gizmo_lookup",
     "gizmo_find",
+    "gizmo_every_thing",
     "gizmo_keep",
     "gizmo_caller",
     "gizmo_label",

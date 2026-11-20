@@ -58,6 +58,8 @@ class FakeShell:
         self.streams: list[tuple[list[str], bytes | None, Mapping[str, str]]] = []
         self.files: dict[str, str] = {}
         self.answers: dict[str, str] = {}
+        self.timeouts: set[str] = set()
+        """The commands that never end (what a `within` runs out on)."""
 
     async def run(
         self,
@@ -78,7 +80,10 @@ class FakeShell:
             return ProcessResult(returncode=0, stdout="", stderr="")
         if argv[0] == "sh" and "info/exclude" in argv[2]:
             return ProcessResult(returncode=0, stdout="", stderr="")
-        answer = self.answers.get(" ".join(argv[1:]), "")
+        command = " ".join(argv[1:])
+        if command in self.timeouts:
+            raise TimeoutError(f"{command} did not end")
+        answer = self.answers.get(command, "")
         return ProcessResult(returncode=0, stdout=answer, stderr="")
 
     def stream(
@@ -380,6 +385,62 @@ async def test_health_reads_the_version_and_the_auth_status(spec: SessionSpec) -
     assert health.account == "someone@example.invalid"
     # (udl never opens Claude Code's own credential files.)
     assert not any(".claude" in " ".join(argv) for argv, _ in shell.runs)
+
+
+async def test_health_reads_its_plan_and_what_its_doctor_says(spec: SessionSpec) -> None:
+    shell = FakeShell()
+    shell.answers = {
+        "--version": "2.1.306 (Claude Code)\n",
+        "auth status": json.dumps({"loggedIn": True, "subscriptionType": "max"}),
+        "doctor": "Everything is fine\nmissing: ripgrep\n",
+    }
+    runner = _runner(shell)
+
+    health = await runner.health()
+
+    assert health.plan == "max"
+    assert health.guards is True  # (its deny list is a settings file per session)
+    assert health.problems == ["missing: ripgrep"]
+
+
+async def test_a_clean_doctor_is_no_problem(spec: SessionSpec) -> None:
+    """`claude doctor` says what is wrong, not the word "error" in "No errors found"."""
+    shell = FakeShell()
+    shell.answers = {
+        "--version": "2.1.306",
+        "auth status": json.dumps({"loggedIn": True}),
+        "doctor": "No errors found\n0 errors, 0 warnings\nAll checks passed\n",
+    }
+    runner = _runner(shell)
+
+    health = await runner.health()
+
+    assert health.problems == []
+
+
+async def test_a_doctor_that_never_ends_is_no_problem(spec: SessionSpec) -> None:
+    """Its doctor is an interactive screen: one that does not end in time must not hang the
+    listing."""
+    shell = FakeShell()
+    shell.answers = {"--version": "2.1.306", "auth status": json.dumps({"loggedIn": True})}
+    shell.timeouts.add("doctor")
+    runner = _runner(shell)
+
+    health = await runner.health()
+
+    assert health.problems == []
+    assert health.installed is True
+
+
+async def test_a_doctor_that_cannot_run_is_not_a_problem(spec: SessionSpec) -> None:
+    shell = FakeShell()
+    shell.answers = {"--version": "2.1.306", "auth status": json.dumps({"loggedIn": True})}
+    shell.answers["doctor"] = ""  # (it answers nothing: no problem either)
+    runner = _runner(shell)
+
+    health = await runner.health()
+
+    assert health.problems == []
 
 
 async def test_health_says_a_signed_out_harness(spec: SessionSpec) -> None:

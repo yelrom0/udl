@@ -35,7 +35,8 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping, MutableMapping
+import re
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping, MutableMapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -45,12 +46,12 @@ from urllib.parse import urlparse
 
 # Package Imports
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 # Local Imports
 from udl.clock import Clock
 from udl.errors import NotAllowed, PluginFailed, ToolUnavailable
-from udl.hosts.shell import HostShell
+from udl.hosts.shell import HostShell, Interaction
 from udl.plugins.requirements import Requirement
 from udl.plugins.runners.base import (
     AgentEvent,
@@ -67,6 +68,7 @@ from udl.plugins.runners.base import (
     TurnEnded,
     TurnReason,
     Usage,
+    lines,
 )
 
 log = logging.getLogger(__name__)
@@ -99,10 +101,48 @@ _WRITE_AGENT: Final = (
     'mkdir -p "$HOME/.config/opencode/agents" && cat > "$HOME/.config/opencode/agents/{name}.md"'
 )
 """Write an agent file on the host, its text on the command's stdin (in no argv)."""
+_POLICIES: Final = "$HOME/.config/opencode/opencode.json"
+"""Where udl's deny policies go on a host (the service's own global config)."""
+_AGENTS: Final = "$HOME/.config/opencode/agents"
+"""Where udl's agent files go on a host."""
+_DENIED: Final = ("shell:git push *", "shell:gh pr merge *")
+"""What a session may never do, whatever its own rules say (25.9's hard stops)."""
+_BRIEFS: Final[dict[str, str]] = {
+    "implementer": (
+        "You are udl's implementer agent. You build one task at a time, test first, and you"
+        " never merge: the PR is Claude's to review and the user's to merge."
+    ),
+    "reviewer": (
+        "You are udl's reviewer agent. You read the diff against its task card, test first, and"
+        " you say what is wrong; the merge is the user's."
+    ),
+}
+"""What each agent file says, by role (the session's own brief is added to it)."""
+_BRIEF: Final = (
+    "You are udl's {role} agent. You work one task at a time, test first, and you report what"
+    " you find; the merge is the user's."
+)
+"""What an agent file says for a role udl has no words for yet."""
+_CONFIG: Final[TypeAdapter[dict[str, object]]] = TypeAdapter(dict[str, object])
+"""A service config file, as far as udl keeps it: every key, as it was."""
+_ENTRIES: Final[TypeAdapter[list[dict[str, object]]]] = TypeAdapter(list[dict[str, object]])
+_ANY_LIST: Final[TypeAdapter[list[object]]] = TypeAdapter(list[object])
+"""A config's `policies`, when it is a list of objects."""
+_KEY_NAME: Final = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+"""What a provider's key may be called: the variable the service reads it from."""
+_CREDENTIAL: Final = "udl"
+"""The prefix of the credentials udl stores, so a setup replaces its own and no one else's."""
+
+
 _REFUSAL: Final = "Not allowed here: ask with orch_ask."
 """What a refused permission says (so the agent learns the way to ask, not to retry)."""
 _PERMISSIONS: timedelta = timedelta(milliseconds=500)
 """How often a running turn looks for a permission asked (they are not in the durable log)."""
+
+
+def _brief(role: str) -> str:
+    """An agent file's text: the role's own, or a neutral one udl has no words for."""
+    return _BRIEFS[role] if role in _BRIEFS else _BRIEF.format(role=role)
 
 
 class OpenCodeOptions(RunnerOptions):
@@ -148,6 +188,67 @@ class _Models(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     data: list[_ModelInfo] = Field(default_factory=lambda: list[_ModelInfo]())
+
+
+class _Method(BaseModel):
+    """One way an integration takes its credential (`Integration.Method`, as udl reads it)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    type: str = ""
+    names: list[str] = []
+
+
+class _Integration(BaseModel):
+    """One provider `GET /api/integration` lists."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = ""
+    methods: list[_Method] = []
+
+
+class _Integrations(BaseModel):
+    """`GET /api/integration`."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    data: list[_Integration] = []
+
+
+class _Auth(BaseModel):
+    """One account `opencode auth list` names."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    provider: str = ""
+    account: str = ""
+
+
+class _Auths(BaseModel):
+    """`opencode auth list --format json`."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    items: list[_Auth] = Field(default_factory=lambda: list[_Auth]())
+
+
+class _Policy(BaseModel):
+    """One entry of the service's config: what a tool may do, and to what."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    action: str = ""
+    resource: str = ""
+    effect: str = ""
+
+
+class _Config(BaseModel):
+    """The service's own config on a host (`opencode.json`), as far as udl reads it."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    policies: list[_Policy] = Field(default_factory=lambda: list[_Policy]())
 
 
 class _When(BaseModel):
@@ -294,17 +395,255 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
         except (ToolUnavailable, PluginFailed) as failure:
             return RunnerHealth(installed=False, detail=str(failure))
         version = said.stdout.strip() or None
+        accounts = await self._accounts()
+        guards = await self.guards()
         try:
             async with self._api() as api:
                 info = await self._get(api, "/api/info", _Info)
         except (ToolUnavailable, PluginFailed) as failure:
-            return RunnerHealth(installed=True, version=version, detail=str(failure))
+            return RunnerHealth(
+                installed=True,
+                version=version,
+                detail=str(failure),
+                account=accounts[0] if accounts else None,
+                signed_in=bool(accounts),
+                guards=guards,
+            )
         return RunnerHealth(
             installed=True,
-            signed_in=True,  # (the API takes the service's own password, never an account)
+            signed_in=bool(accounts),  # (the service's password is not a provider's account)
             version=info.version or version,
+            account=accounts[0] if accounts else None,
+            plan=None,  # (a provider's plan is not something the service says)
+            guards=guards,
             detail=f"pid {info.pid}",
         )
+
+    async def _sign_ins(self) -> list[_Auth]:
+        """What its providers are signed in as (`opencode auth list`), in order: an empty list
+        when none is, and when the CLI cannot say."""
+        try:
+            said = await self.shell.run([*self.options.cli, "auth", "list", "--format", "json"])
+        except ToolUnavailable, PluginFailed:
+            return []
+        try:
+            listed = _Auths.model_validate_json(said.stdout)
+        except ValidationError:
+            try:  # (the CLI prints a bare list in some versions)
+                return TypeAdapter(list[_Auth]).validate_json(said.stdout)
+            except ValidationError:
+                return []
+        return listed.items
+
+    async def _accounts(self) -> list[str]:
+        """The accounts its providers are signed in as, in order."""
+        return [sign_in.account for sign_in in await self._sign_ins() if sign_in.account]
+
+    async def guards(self) -> bool:
+        """Whether udl's deny policies are in the service's config on the host (25.9's rules,
+        written there by setup)."""
+        try:
+            said = await self.shell.run(["sh", "-c", f"cat {_POLICIES} 2>/dev/null"])
+        except ToolUnavailable, PluginFailed:
+            return False
+        try:
+            config = _Config.model_validate_json(said.stdout or "{}")
+        except ValidationError:
+            return False
+        resources = {policy.resource for policy in config.policies if policy.effect == "deny"}
+        return all(resource in resources for resource in _DENIED)
+
+    def install(self, version: str | None = None) -> AsyncIterator[str]:
+        """Install or update it: `opencode upgrade [<version>]`, then restart its service (the
+        caller refuses while a session is running)."""
+        argv = [*self.options.cli, "upgrade", *([version] if version is not None else [])]
+        return self._install(argv)
+
+    async def _install(self, argv: list[str]) -> AsyncIterator[str]:
+        """The upgrade's output, then its service restarted."""
+        async for said in lines(self.shell.stream(argv)):
+            yield said
+        await self.shell.run([*self.options.cli, "service", "restart"])
+
+    async def setup(
+        self,
+        roles: Sequence[str] = (),
+        env: Mapping[str, str] | None = None,
+    ) -> list[str]:
+        """Write the deny policies (25.9's) and one agent file per role, then store the provider
+        keys it is given (`env`: a key by the variable its provider takes it in).
+
+        The config file is read first and written back with udl's two policies merged into it: a
+        host that already has providers, models or MCP servers keeps every one of them, and a
+        second setup changes nothing. A key goes to the service's own credential API
+        (`POST /api/credential`, `_set_keys`): it never reaches a command line, so it is never in
+        udl's argv or in the host's process list."""
+        written: list[str] = []
+        await self._write(_POLICIES, json.dumps(await self._merged_policies(), indent=2))
+        written.append(_POLICIES)
+        for role in roles:
+            name = f"{_AGENT}-{role}"
+            await self._write(
+                f"{_AGENTS}/{name}.md",
+                f"---\nmode: primary\nsteps: 200\n---\n\n{_brief(role)}\n",
+            )
+            written.append(f"{_AGENTS}/{name}.md")
+        if env:
+            await self._set_keys(env)
+        return written
+
+    async def _set_keys(self, env: Mapping[str, str]) -> None:
+        """Store each provider key as the service's own credential (`POST /api/credential`).
+
+        The key never reaches a command: not udl's argv, not an `sh -c` line on the host, and so
+        never the host's process list. The service keeps it (its credential store is what
+        `opencode auth list` reads), and `activate` makes it the one its sessions use. A setup run
+        again replaces the credential it wrote the first time instead of adding another."""
+        for name in env:
+            if not _KEY_NAME.fullmatch(name):
+                raise NotAllowed(
+                    f"{name!r} is not an environment variable udl will set",
+                    hint="A provider's key is set as a variable named `[A-Z_][A-Z0-9_]*`.",
+                )
+        async with self._api() as api:
+            by_env = await self._providers(api)
+            for name, value in env.items():
+                providers = by_env.get(name, ())
+                if len(providers) > 1:
+                    raise NotAllowed(
+                        f"{name!r} is the key of more than one provider: {' and '.join(providers)}",
+                        hint="Set the key with the CLI (`opencode auth login <provider>`) instead.",
+                    )
+                if not providers:
+                    known = ", ".join(sorted(by_env)) or "none"
+                    raise NotAllowed(
+                        f"opencode has no provider whose key is called {name!r}",
+                        hint=f"Its providers take: {known}.",
+                    )
+                await self._credential(api, providers[0], value)
+
+    async def _providers(self, api: httpx.AsyncClient) -> dict[str, tuple[str, ...]]:
+        """Every provider the service offers, by the variable its key is given in
+        (`GET /api/integration`: `OPENROUTER_API_KEY` is `openrouter`, `TOGETHER_API_KEY` is
+        `togetherai` — the service's own ids, never a guess from the name).
+
+        A variable two providers take keeps both, in the order they were listed: a key stored under
+        whichever came last would be on the wrong provider, so the caller refuses it."""
+        listed = await self._get(api, "/api/integration", _Integrations)
+        found: dict[str, list[str]] = {}
+        for integration in listed.data:
+            for method in integration.methods:
+                if method.type == "env":
+                    for name in method.names:
+                        found.setdefault(name, []).append(integration.id)
+        return {name: tuple(ids) for name, ids in found.items()}
+
+    async def _credential(self, api: httpx.AsyncClient, integration: str, key: str) -> None:
+        """`key` as `integration`'s credential, replacing the one udl stored before.
+
+        The answer's body is never in a failure: a service that repeats what it was sent would put
+        the key in udl's log."""
+        credential = f"{_CREDENTIAL}-{integration}"
+        body: dict[str, object] = {
+            "id": credential,
+            "integrationID": integration,
+            "value": {"type": "key", "key": key},
+            "activate": True,
+            "label": "udl",
+        }
+        status = await self._status(api, "POST", "/api/credential", json=body)
+        if status == 409:  # (the one udl wrote before: replaced, not added to)
+            removed = await self._status(api, "DELETE", f"/api/credential/{credential}")
+            if removed >= httpx.codes.BAD_REQUEST and removed != 400:  # (400: it is gone)
+                raise PluginFailed(
+                    f"opencode said {removed} to DELETE /api/credential/{credential}",
+                    hint="Its answer is not shown: it may repeat the key.",
+                )
+            status = await self._status(api, "POST", "/api/credential", json=body)
+        if status >= httpx.codes.BAD_REQUEST:
+            raise PluginFailed(
+                f"opencode said {status} to POST /api/credential for {integration}",
+                hint="Its answer is not shown: it may repeat the key.",
+            )
+
+    async def _status(
+        self,
+        api: httpx.AsyncClient,
+        method: str,
+        path: str,
+        *,
+        json: Mapping[str, object] | None = None,
+    ) -> int:
+        """One call whose status is the answer (its body is left out, as it may hold a secret)."""
+        try:
+            answer = await api.request(method, path, json=json)
+        except httpx.HTTPError as failure:
+            raise PluginFailed(f"opencode could not be reached: {failure}") from failure
+        return answer.status_code
+
+    async def _merged_policies(self) -> dict[str, object]:
+        """The service's config as it is on the host, with udl's deny policies merged in: every
+        other key is kept as it was (a setup never erases a host's own configuration)."""
+        # (A host with no config yet is the usual case: `cat` on a missing file is not a failure
+        # here, so it is guarded rather than left to exit 1 and stop the setup.)
+        said = await self.shell.run(["sh", "-c", f"cat {_POLICIES} 2>/dev/null || true"])
+        try:
+            config = _CONFIG.validate_json(said.stdout or "{}")
+        except ValidationError:
+            config = {}
+        merged: dict[str, object] = dict(config)
+        merged.setdefault("$schema", "https://opencode.ai/config.json")
+        kept: list[object] = []
+        existing = merged.get("policies")
+        if isinstance(existing, list):
+            try:
+                entries = _ENTRIES.validate_python(existing)
+            except ValidationError:
+                kept.extend(_ANY_LIST.validate_python(existing))
+                entries = []
+            for entry in entries:
+                ours = (
+                    entry.get("action") == "tool.use"
+                    and entry.get("effect") == "deny"
+                    and entry.get("resource") in _DENIED
+                )
+                if not ours:
+                    kept.append(entry)
+        for resource in _DENIED:
+            kept.append({"action": "tool.use", "resource": resource, "effect": "deny"})
+        merged["policies"] = kept
+        return merged
+
+    async def _write(self, path: str, text: str) -> None:
+        """Write a file on the host through its shell (0600: a policy and a brief are udl's)."""
+        # (`run` raises PluginFailed for a command that fails: there is no code to check here.)
+        await self.shell.run(
+            ["sh", "-c", f'umask 077 && mkdir -p "$(dirname {path})" && cat > {path}'],
+            stdin=text.encode(),
+        )
+
+    @property
+    def sign_in_command(self) -> tuple[str, ...]:
+        """`opencode auth login <provider>`: what a person runs when udl cannot relay it."""
+        return (*self.options.cli, "auth", "login")
+
+    async def login(self, provider: str | None = None) -> Interaction:
+        """`opencode auth login <provider>`, relayed: it prints a URL and takes the code back. A
+        provider is named: without one the CLI opens a picker no relay can drive."""
+        if not provider:
+            raise NotAllowed(
+                "opencode needs the provider to sign in to",
+                hint="Name one (`openrouter`), or set a key with `udl orch runners setup`.",
+            )
+        return await self.shell.interact([*self.options.cli, "auth", "login", provider])
+
+    async def logout(self) -> None:
+        """`opencode auth logout <provider> <account>`, for every sign-in it has: the card's
+        argv, so it is the account that goes, never a guess at its provider."""
+        for sign_in in await self._sign_ins():
+            await self.shell.run(
+                [*self.options.cli, "auth", "logout", sign_in.provider, sign_in.account]
+            )
 
     async def models(self) -> list[RunnerModel]:
         try:
@@ -370,14 +709,11 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
         if not spec.instructions:
             return self.options.agent
         name = f"{_AGENT}-{hashlib.sha256(spec.instructions.encode()).hexdigest()[:12]}"
-        written = await self.shell.run(
+        # (A failed write is the shell's PluginFailed, not a result to check here.)
+        await self.shell.run(
             ["sh", "-c", _WRITE_AGENT.format(name=name)],
             stdin=f"---\nmode: primary\n---\n\n{spec.instructions}\n".encode(),
         )
-        if written.returncode != 0:
-            raise PluginFailed(
-                f"opencode's agent file cannot be written: {written.stderr.strip()[:200]}"
-            )
         return name
 
     def _variables(self, spec: SessionSpec) -> dict[str, str]:

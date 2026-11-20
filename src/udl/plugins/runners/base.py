@@ -22,8 +22,9 @@ tests/contract/test_runner_contract.py is the behaviour every runner must have.
 """
 
 # System Imports
+import shlex
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping, Sequence
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, ClassVar, Literal
@@ -33,7 +34,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, NonNegativeInt
 
 # Local Imports
 from udl.clock import Clock
-from udl.errors import PluginError
+from udl.errors import ErrorCode, PluginError, UDLError
 from udl.hosts.shell import HostShell, Interaction
 from udl.plugins.requirements import Requirement
 from udl.plugins.ui.base import UIBundle
@@ -42,6 +43,7 @@ __all__ = [
     "AgentEvent",
     "AgentRunner",
     "AnAgentRunner",
+    "LoginByHand",
     "McpEndpoint",
     "RunnerFailed",
     "RunnerHealth",
@@ -56,6 +58,7 @@ __all__ = [
     "TurnEnded",
     "TurnReason",
     "Usage",
+    "lines",
 ]
 
 
@@ -163,6 +166,30 @@ class Usage(AgentEvent):
     """What it cost, when the harness says (a subscription's turns cost nothing to count)."""
 
 
+class LoginByHand(UDLError):
+    """A harness whose sign-in cannot be driven from udl: what a person runs on the host instead.
+
+    A harness that needs a terminal of its own (any CLI udl does not know) says so with this, and
+    the caller answers with the command rather than a failure (25.11's relayed sign-in)."""
+
+    code = ErrorCode.LOGIN_BY_HAND
+
+    def __init__(self, argv: Sequence[str] = (), *, why: str = "", hint: str | None = None) -> None:
+        self.argv = tuple(argv)
+        self.why = why or "its sign-in needs a terminal"
+        told = hint or (
+            f"Run `{shlex.join(self.argv)}` in a shell on that host."
+            if self.argv
+            else "Sign it in on that host, in a shell."
+        )
+        super().__init__(self.why, hint=told)
+
+    @property
+    def command(self) -> str | None:
+        """The command a person runs instead (None: the runner cannot say which)."""
+        return shlex.join(self.argv) if self.argv else None
+
+
 class TurnEnded(AgentEvent):
     """A turn ended."""
 
@@ -194,18 +221,29 @@ class RunnerFailed(AgentEvent):
 
 
 class RunnerHealth(_Model):
-    """Whether a harness is there, and signed in: what `udl runners` says about it (25.11)."""
+    """Whether a harness is there, and signed in: what `udl orch runners` says about it (25.11)."""
 
     installed: bool
     """Whether its program is on the host."""
-    signed_in: bool = False
-    """Whether its account is signed in."""
     version: str | None = None
     """Its version, when it says."""
+    latest: str | None = None
+    """The newest version there is, when udl can tell."""
+    signed_in: bool = False
+    """Whether its account is signed in."""
     account: str | None = None
     """The account it is signed in as (shown, never logged)."""
+    plan: str | None = None
+    """The plan its account is on, when the harness says."""
+    limited_until: AwareDatetime | None = None
+    """When its quota is back, if the dispatcher last saw it out of quota (27.7)."""
+    guards: bool = False
+    """Whether the deny policies are in place: always true for a runner that enforces them per
+    session (25.9's `deny`), else whether 25.11's setup wrote them on the host."""
+    problems: list[str] = Field(default_factory=lambda: list[str]())
+    """What the harness's own doctor says is wrong, when it says anything."""
     detail: str | None = None
-    """Anything else worth showing (a limit, a missing sign-in's hint)."""
+    """Anything else worth showing (a missing sign-in's hint)."""
 
 
 class RunnerModel(_Model):
@@ -263,10 +301,32 @@ class AgentRunner[O: RunnerOptions](ABC):
         install itself says so, rather than pretending it did."""
         return self._refuse(f"{self.name} cannot be installed by udl")
 
-    async def login(self) -> Interaction:
+    async def setup(
+        self,
+        roles: Sequence[str] = (),
+        env: Mapping[str, str] | None = None,
+    ) -> list[str]:
+        """Write its deny policies and one agent file per role on the host, set the service's
+        environment (`env`: a provider's key by variable name), and give the files it wrote
+        (25.11). A runner that enforces its deny list per session (as Claude Code's settings file
+        does) has nothing to write."""
+        return []
+
+    @property
+    def sign_in_command(self) -> tuple[str, ...]:
+        """The argv a person runs on the host to sign this harness in by hand (25.11)."""
+        return ()
+
+    async def login(self, provider: str | None = None) -> Interaction:
         """Its own sign-in, relayed to the person (25.11). A runner that cannot sign in itself
-        says so."""
-        raise PluginError(f"{self.name} cannot sign in by itself")
+        says so with `LoginByHand`, carrying the command to run on the host instead."""
+        raise LoginByHand(
+            self.sign_in_command, why=f"{self.name} cannot sign in from udl by itself"
+        )
+
+    async def logout(self) -> None:
+        """Sign its account out (25.11). A runner that cannot sign out itself says so."""
+        raise PluginError(f"{self.name} cannot sign out by itself")
 
     @abstractmethod
     async def start(self, spec: SessionSpec) -> SessionRef:
@@ -289,3 +349,10 @@ class AgentRunner[O: RunnerOptions](ABC):
 type AnAgentRunner = AgentRunner[Any]
 """A runner of any options, as the registry and the API hold it (not AgentRunner[RunnerOptions]:
 O is invariant, so an AgentRunner[FakeRunnerOptions] is not one)."""
+
+
+async def lines(chunks: AsyncIterator[bytes]) -> AsyncIterator[str]:
+    """A command's output as the lines it is: what a harness's install prints, decoded once here
+    (a chunk that ends mid-character is replaced, never fatal)."""
+    async for chunk in chunks:
+        yield chunk.decode(errors="replace")

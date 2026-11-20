@@ -27,19 +27,44 @@ from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext, suppress
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Final
+from typing import Final, Literal
 
 # Package Imports
 import httpx
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 # Local Imports
+from udl.errors import PluginFailed
 from udl.hosts.shell import Host, HostShell, Interaction
 from udl.process import CancelToken, ProcessResult
+
+
+class _CredentialKey(BaseModel):
+    """`Credential.Key`, as the committed document has it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["key"]
+    key: str
+    metadata: dict[str, object] = Field(default_factory=dict[str, object])
+
+
+class CreateInput(BaseModel):
+    """`Credential.CreateInput`, as the committed document has it: a test compares the two, so the
+    fake and the document cannot drift apart."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    integrationID: str  # noqa: N815 - (the API's own name)
+    value: _CredentialKey
+    activate: bool = True
+    id: str | None = None
+    label: str = ""
+
 
 USER: Final = "opencode"
 """The service's Basic auth user (the password is the one in its `service.json`)."""
@@ -103,6 +128,14 @@ class FakeShell(HostShell):
         """The files written through the shell (an agent file, by its name)."""
         self.writes_fail = False
         """Whether writing a file fails."""
+        self.auths = "[]"
+        """What `opencode auth list --format json` prints."""
+        self.streams: list[tuple[list[str], str]] = []
+        """Every argv it was asked to stream, and what it answered (an install's output)."""
+        self.started: list[list[str]] = []
+        """Every argv it started as a sign-in."""
+        self.interactions: list[FakeInteraction] = []
+        """Every sign-in it started, in order."""
 
     async def run(
         self,
@@ -116,18 +149,55 @@ class FakeShell(HostShell):
         cancel: CancelToken | None = None,
     ) -> ProcessResult:
         self.runs.append(list(argv))
+        answered = self._answer(argv, stdin=stdin)
+        if answered.returncode != 0:
+            # (As the real shell does: a command that fails is PluginFailed, not a result.)
+            raise PluginFailed(
+                f"{argv[0]} failed with exit code {answered.returncode}: {answered.stderr.strip()}"
+            )
+        return answered
+
+    def _answer(self, argv: Sequence[str], *, stdin: bytes | None = None) -> ProcessResult:
+        """What this fake says to `argv` (before the shell's own failure rule is applied)."""
+        if argv[1:4] == ["auth", "list", "--format"]:
+            return ProcessResult(returncode=0, stdout=self.auths, stderr="")
         if argv[-1] == "status":
             return ProcessResult(returncode=0, stdout=f"{self.status}\n", stderr="")
         if argv[-1] == "--version":
             return ProcessResult(returncode=0, stdout="2.1.2\n", stderr="")
-        if argv[0] == "sh" and "agents" in argv[-1]:
+        if argv[0] == "sh" and "cat > " in argv[-1]:
+            # (A file written through the shell: an agent file by its name, else by its path.)
             if self.writes_fail:
                 return ProcessResult(returncode=1, stdout="", stderr="no permission")
-            found = _AGENT_FILE.search(argv[-1])
-            assert found is not None, "the shell command names the agent file"
-            name = found.group(1)
-            self.files[name] = (stdin or b"").decode()
+            path = argv[-1].split("cat > ", 1)[1].split(" 2>", 1)[0].strip().strip('"')
+            found = _AGENT_FILE.search(path)
+            key = found.group(1) if found is not None else path
+            self.files[key] = (stdin or b"").decode()
             return ProcessResult(returncode=0, stdout="", stderr="")
+        if (
+            argv[0] == "sh"
+            and "cat " in argv[-1]
+            and "service.json" not in argv[-1]
+            and ".config/opencode" in argv[-1]
+        ):
+            # (A config file read back through the shell, as `cat` does it: a file that is not
+            # there is a failure, which is what a setup on a fresh host meets.)
+            path = (
+                argv[-1]
+                .split("cat ", 1)[1]
+                .split(" 2>", 1)[0]
+                .split(" ||", 1)[0]
+                .strip()
+                .strip('"')
+            )
+            found = _AGENT_FILE.search(path)
+            key = found.group(1) if found is not None else path
+            if key not in self.files and "|| true" in argv[-1]:
+                # (The command says a missing file is not a failure: it exits 0, as `sh` does.)
+                return ProcessResult(returncode=0, stdout="", stderr="")
+            if key not in self.files:
+                return ProcessResult(returncode=1, stdout="", stderr=f"cat: {path}: No such file")
+            return ProcessResult(returncode=0, stdout=self.files[key], stderr="")
         if argv[0] == "sh":
             return ProcessResult(returncode=0, stdout=self.service, stderr="")
         return ProcessResult(returncode=0, stdout="", stderr="")
@@ -142,10 +212,23 @@ class FakeShell(HostShell):
         stdin: bytes | None = None,
         within: timedelta | None = None,
     ) -> AsyncIterator[bytes]:
-        raise NotImplementedError
+        self.runs.append(list(argv))
+        said = next((text for found, text in self.streams if found == list(argv)), "")
+        return _chunks(said)
 
-    async def interact(self, *args: object, **kwargs: object) -> Interaction:
-        raise NotImplementedError
+    async def interact(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        secret_env: Mapping[str, str] | None = None,
+        within: timedelta | None = None,
+    ) -> Interaction:
+        self.started.append(list(argv))
+        started = FakeInteraction()
+        self.interactions.append(started)
+        return started
 
     def forward(self, port: int) -> AbstractAsyncContextManager[str]:
         return nullcontext("http://opencode.test")
@@ -214,6 +297,39 @@ class FakeOpenCode:
     """The permissions waiting for an answer (what `GET /api/session/{id}/permission` lists)."""
     variables: dict[str, str] = field(default_factory=dict[str, str])
     """The environment sessions were given (`PUT /api/session/{id}/environment`)."""
+    credentials: dict[str, dict[str, object]] = field(default_factory=dict[str, dict[str, object]])
+    """The credentials stored (`POST /api/credential`), by id."""
+    integrations: list[dict[str, object]] = field(
+        default_factory=lambda: [
+            {
+                "id": "openrouter",
+                "name": "OpenRouter",
+                "methods": [{"type": "env", "names": ["OPENROUTER_API_KEY"]}],
+                "connections": [],
+            },
+            {
+                "id": "anthropic",
+                "name": "Anthropic",
+                "methods": [{"type": "env", "names": ["ANTHROPIC_API_KEY"]}],
+                "connections": [],
+            },
+            {
+                "id": "togetherai",
+                "name": "Together AI",
+                "methods": [{"type": "env", "names": ["TOGETHER_API_KEY"]}],
+                "connections": [],
+            },
+        ]
+    )
+    """What `GET /api/integration` lists (the provider ids a key's variable can be found under)."""
+    credential_bodies: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
+    """Every body `POST /api/credential` was sent, as it was sent."""
+    delete_status: int = 204
+    """What `DELETE /api/credential/{id}` answers (204: it is gone; a test's own failure)."""
+    credential_status: int = 200
+    """What `POST /api/credential` answers (200: it stores it; a test's own failure)."""
+    credential_says: str = ""
+    """What that failure says (a test's own text, which may repeat what it was sent)."""
     pending_outcome: str | None = None
     """How the turn whose events the stream is serving ended (published with its last event)."""
     silent_reads: int = 0
@@ -269,6 +385,9 @@ class FakeOpenCode:
                 Route(
                     "/api/experimental/session/{session_id}/log", self._read_log, methods=["GET"]
                 ),
+                Route("/api/integration", self._integration, methods=["GET"]),
+                Route("/api/credential", self._credential, methods=["GET", "POST"]),
+                Route("/api/credential/{credential_id}", self._credential_one, methods=["DELETE"]),
                 Route("/api/experimental/mcp/{server}", self._mcp, methods=["PUT"]),
             ]
         )
@@ -334,6 +453,58 @@ class FakeOpenCode:
                 "data": self.models,
             }
         )
+
+    async def _integration(self, request: Request) -> Response:
+        if not self._allowed(request):
+            return JSONResponse({"message": "unauthorized"}, status_code=401)
+        self.calls.append(("GET", "/api/integration", dict(request.query_params)))
+        return JSONResponse(
+            {
+                "location": {"directory": request.query_params.get("location[directory]")},
+                "data": self.integrations,
+            }
+        )
+
+    async def _credential(self, request: Request) -> Response:
+        if not self._allowed(request):
+            return JSONResponse({"message": "unauthorized"}, status_code=401)
+        if request.method == "GET":
+            self.calls.append(("GET", "/api/credential", None))
+            return JSONResponse({"data": list(self.credentials.values())})
+        body = await request.json()
+        self.calls.append(("POST", "/api/credential", body))
+        if self.credential_status != 200:
+            return JSONResponse(
+                {"message": self.credential_says}, status_code=self.credential_status
+            )
+        try:
+            made = CreateInput.model_validate(body)  # (the document's shape, as a model)
+        except ValidationError as failure:
+            return JSONResponse({"message": str(failure)}, status_code=400)
+        self.credential_bodies.append(made.model_dump())
+        if made.id is not None and made.id in self.credentials:
+            return JSONResponse({"message": "that credential exists"}, status_code=409)
+        credential_id = made.id if made.id is not None else f"cred_{len(self.credentials) + 1}"
+        stored: dict[str, object] = {
+            "id": credential_id,
+            "integrationID": made.integrationID,
+            "label": made.label,
+            "active": made.activate,
+            "value": {"type": "key", "key": made.value.key},
+        }
+        self.credentials[credential_id] = stored
+        return JSONResponse({"data": stored})
+
+    async def _credential_one(self, request: Request) -> Response:
+        if not self._allowed(request):
+            return JSONResponse({"message": "unauthorized"}, status_code=401)
+        credential_id = request.path_params["credential_id"]
+        self.calls.append(("DELETE", f"/api/credential/{credential_id}", None))
+        if self.delete_status != 204:
+            return JSONResponse({"message": "cannot delete"}, status_code=self.delete_status)
+        if self.credentials.pop(credential_id, None) is None:
+            return JSONResponse({"message": "no such credential"}, status_code=400)
+        return Response(status_code=204)
 
     def _tick(self) -> int:
         """A millisecond that always moves on (a real clock can repeat within one turn)."""
@@ -637,3 +808,46 @@ def _sse(item: dict[str, object]) -> bytes:
 def as_sequence(events: Sequence[dict[str, object]]) -> list[dict[str, object]]:
     """Events as a test scripts them, in order."""
     return list(events)
+
+
+async def _chunks(text: str) -> AsyncIterator[bytes]:
+    """A stream's text, a line at a time."""
+    for line in text.splitlines(keepends=True):
+        yield line.encode()
+
+
+class FakeInteraction:
+    """A sign-in that is running: what it says, what it is told, and how it ends."""
+
+    def __init__(self, says: Sequence[str] = (), exit_code: int = 0) -> None:
+        self._says = list(says)
+        self._ended = asyncio.Event()
+        self.exit_code = exit_code
+        """What it exits with (0: signed in)."""
+        self.written: list[str] = []
+        """Every line it was given, in order."""
+        self.closed = False
+        """Whether it was ended."""
+        self.running = True
+        """Whether it is still running."""
+
+    async def read(self) -> str:
+        """What it has printed since the last read."""
+        return self._says.pop(0) if self._says else ""
+
+    async def write(self, text: str) -> None:
+        """Give it a line (it ends once it has what it asked for)."""
+        self.written.append(text)
+        self._ended.set()
+
+    async def close(self) -> None:
+        """End it."""
+        self.closed = True
+        self.running = False
+        self._ended.set()
+
+    async def wait(self) -> int:
+        """Wait for it to end."""
+        await self._ended.wait()
+        self.running = False
+        return self.exit_code

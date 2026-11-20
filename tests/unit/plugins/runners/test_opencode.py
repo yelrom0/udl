@@ -26,7 +26,15 @@ from pydantic import BaseModel, ConfigDict, SecretStr, TypeAdapter
 
 # Local Imports
 from support.clock import T0, FakeClock
-from support.opencode import PASSWORD, BusyHost, FakeOpenCode, FakeShell, as_sequence, event
+from support.opencode import (
+    PASSWORD,
+    BusyHost,
+    CreateInput,
+    FakeOpenCode,
+    FakeShell,
+    as_sequence,
+    event,
+)
 from udl.errors import NotAllowed, PluginFailed, ToolUnavailable
 from udl.plugins.runners import opencode
 from udl.plugins.runners.base import (
@@ -72,6 +80,23 @@ class _Document(BaseModel):
     """The OpenAPI document OpenCode serves, as far as its paths go."""
 
     paths: dict[str, object]
+
+
+class _Schema(BaseModel):
+    """What a JSON schema says of a body: its fields, and the ones it requires."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    properties: dict[str, object] = {}
+    required: list[str] = []
+
+
+class _Components(BaseModel):
+    """A document's `components` (its schemas, as far as a test reads them)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    schemas: dict[str, _Schema] = {}
 
 
 class _Rule(BaseModel):
@@ -130,12 +155,306 @@ async def _turn(runner: OpenCode, session: SessionRef, prompt: str = "go") -> li
 
 
 async def test_its_health_is_the_service_s_version(service: FakeOpenCode, shell: FakeShell) -> None:
+    shell.auths = '[{"provider": "openrouter", "account": "me@example.com"}]'
+
     health = await _runner(service, shell).health()
 
     assert health.installed
     assert health.signed_in
     assert health.version == "2.1.2"
     assert health.detail == "pid 1234"
+
+
+async def test_a_service_that_is_up_with_no_account_is_not_signed_in(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """The service's own password is not a provider's account: with none signed in, it says so
+    whether or not the API answers."""
+    up = await _runner(service, shell).health()
+
+    assert up.installed is True
+    assert up.signed_in is False
+    assert up.account is None
+
+
+async def test_health_names_the_account_and_whether_the_guards_are_in_place(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    shell.auths = '[{"provider": "openrouter", "account": "me@example.com"}]'
+
+    health = await _runner(service, shell).health()
+
+    assert health.account == "me@example.com"
+    assert health.guards is False  # (no policies file on the host yet)
+
+
+async def test_the_guards_are_in_place_once_the_policies_are(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    shell.files["$HOME/.config/opencode/opencode.json"] = json.dumps(
+        {
+            "policies": [
+                {"action": "tool.use", "resource": "shell:git push *", "effect": "deny"},
+                {"action": "tool.use", "resource": "shell:gh pr merge *", "effect": "deny"},
+            ]
+        }
+    )
+
+    health = await _runner(service, shell).health()
+
+    assert health.guards is True
+
+
+async def test_a_policies_file_without_the_denials_is_no_guard(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    shell.files["$HOME/.config/opencode/opencode.json"] = json.dumps({"policies": []})
+
+    health = await _runner(service, shell).health()
+
+    assert health.guards is False
+
+
+async def test_its_install_upgrades_and_restarts_the_service(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    shell.streams.append((["opencode", "upgrade", "2.1.5"], "upgraded to 2.1.5\n"))
+
+    said = [chunk async for chunk in _runner(service, shell).install("2.1.5")]
+
+    assert "upgraded to 2.1.5" in "".join(said)
+    assert ["opencode", "upgrade", "2.1.5"] in shell.runs
+    assert ["opencode", "service", "restart"] in shell.runs
+
+
+async def test_a_setup_writes_the_policies_and_an_agent_file_per_role(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    written = await _runner(service, shell).setup(["implementer"], {"OPENROUTER_API_KEY": "sk-1"})
+
+    assert written == [
+        "$HOME/.config/opencode/opencode.json",
+        "$HOME/.config/opencode/agents/udl-implementer.md",
+    ]
+    assert "shell:git push *" in shell.files["$HOME/.config/opencode/opencode.json"]
+    assert "udl's implementer agent" in shell.files["udl-implementer"]
+    # (The key goes to the service's own credential store: it is in no command at all.)
+    assert all("sk-1" not in " ".join(argv) for argv in shell.runs)
+    assert service.credentials == {
+        "udl-openrouter": {
+            "id": "udl-openrouter",
+            "integrationID": "openrouter",
+            "label": "udl",
+            "active": True,
+            "value": {"type": "key", "key": "sk-1"},
+        }
+    }
+
+
+async def test_a_setup_on_a_host_with_no_config_writes_the_policies(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """A fresh host has no `opencode.json` at all, and `cat` on it fails: the setup still goes on
+    and writes the policies (the fake's `cat` fails as the real one does)."""
+    assert "$HOME/.config/opencode/opencode.json" not in shell.files
+
+    written = await _runner(service, shell).setup(["implementer"])
+
+    assert written[0] == "$HOME/.config/opencode/opencode.json"
+    config = json.loads(shell.files["$HOME/.config/opencode/opencode.json"])
+    assert [entry["resource"] for entry in config["policies"]] == [
+        "shell:git push *",
+        "shell:gh pr merge *",
+    ]
+
+
+async def test_a_setup_keeps_what_the_host_already_has(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """The config is merged, not replaced: a host's own providers, models and MCP servers stay."""
+    shell.files["$HOME/.config/opencode/opencode.json"] = json.dumps(
+        {
+            "provider": {"openrouter": {"models": {"deepseek/deepseek-v4.1-flash": {}}}},
+            "mcp": {"udl": {"type": "remote", "url": "https://udl.test/mcp"}},
+        }
+    )
+
+    await _runner(service, shell).setup(["implementer"])
+
+    kept = json.loads(shell.files["$HOME/.config/opencode/opencode.json"])
+    assert kept["provider"]["openrouter"]["models"] == {"deepseek/deepseek-v4.1-flash": {}}
+    assert kept["mcp"]["udl"]["url"] == "https://udl.test/mcp"
+    assert [entry["resource"] for entry in kept["policies"]] == [
+        "shell:git push *",
+        "shell:gh pr merge *",
+    ]
+
+
+async def test_a_second_setup_changes_nothing(service: FakeOpenCode, shell: FakeShell) -> None:
+    runner = _runner(service, shell)
+    await runner.setup(["implementer"])
+    once = shell.files["$HOME/.config/opencode/opencode.json"]
+
+    await runner.setup(["implementer"])
+
+    assert shell.files["$HOME/.config/opencode/opencode.json"] == once
+    assert len(json.loads(once)["policies"]) == 2
+
+
+async def test_an_agent_file_says_what_its_role_does(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """Each agent file has the card's frontmatter (`mode`, `steps`) and its own role's brief: a
+    reviewer reviews, so it is not told that it never does."""
+    await _runner(service, shell).setup(["implementer", "reviewer"])
+
+    implementer = shell.files["udl-implementer"]
+    reviewer = shell.files["udl-reviewer"]
+    assert "mode: primary" in implementer
+    assert "steps: 200" in implementer
+    assert "never merge" in implementer
+    assert "never merge" not in reviewer
+    assert "reviewer" in reviewer
+
+
+async def test_a_key_that_is_not_a_variable_name_is_refused(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    with pytest.raises(NotAllowed):
+        await _runner(service, shell).setup([], {"not a name; rm -rf /": "sk-1"})
+
+    assert all("rm -rf" not in " ".join(argv) for argv in shell.runs)
+
+
+async def test_a_provider_key_is_stored_under_the_provider_its_variable_names(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """`ANTHROPIC_API_KEY` is the service's `anthropic`, and `TOGETHER_API_KEY` its `togetherai`
+    (both read from `GET /api/integration`, not guessed from the name)."""
+    await _runner(service, shell).setup(
+        [], {"ANTHROPIC_API_KEY": "sk-a", "TOGETHER_API_KEY": "sk-t"}
+    )
+
+    assert service.credentials == {
+        "udl-anthropic": {
+            "id": "udl-anthropic",
+            "integrationID": "anthropic",
+            "label": "udl",
+            "active": True,
+            "value": {"type": "key", "key": "sk-a"},
+        },
+        "udl-togetherai": {
+            "id": "udl-togetherai",
+            "integrationID": "togetherai",
+            "label": "udl",
+            "active": True,
+            "value": {"type": "key", "key": "sk-t"},
+        },
+    }
+    # (No command on the host carries either key.)
+    assert all("sk-a" not in " ".join(argv) and "sk-t" not in " ".join(argv) for argv in shell.runs)
+
+
+async def test_a_second_setup_replaces_the_credential_it_wrote(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """A key is stored once per provider: the second setup replaces it, so a host does not
+    collect one credential per run (and no stale secret is left behind)."""
+    runner = _runner(service, shell)
+    await runner.setup([], {"OPENROUTER_API_KEY": "sk-first"})
+    await runner.setup([], {"OPENROUTER_API_KEY": "sk-second"})
+
+    assert list(service.credentials) == ["udl-openrouter"]
+    assert service.credentials["udl-openrouter"]["value"] == {"type": "key", "key": "sk-second"}
+
+
+async def test_a_key_the_service_does_not_know_is_refused(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    with pytest.raises(NotAllowed, match="no provider whose key"):
+        await _runner(service, shell).setup([], {"GEMINI_API_KEY": "sk-1"})
+
+    assert service.credentials == {}
+
+
+async def test_a_variable_two_providers_take_is_refused(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """Storing it under whichever integration happened to be listed last would put the key on the
+    wrong provider, so an ambiguous name is refused and both providers are named."""
+    service.integrations.append(
+        {
+            "id": "cloudflare",
+            "name": "Cloudflare",
+            "methods": [{"type": "env", "names": ["OPENROUTER_API_KEY"]}],
+            "connections": [],
+        }
+    )
+
+    with pytest.raises(NotAllowed, match="openrouter and cloudflare"):
+        await _runner(service, shell).setup([], {"OPENROUTER_API_KEY": "sk-1"})
+
+    assert service.credentials == {}
+
+
+async def test_a_credential_that_cannot_be_replaced_says_which_call_failed(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """A delete that fails is the delete's failure, not a misleading 409 on the post after it."""
+    await _runner(service, shell).setup([], {"OPENROUTER_API_KEY": "sk-1"})
+    service.delete_status = 500
+
+    with pytest.raises(PluginFailed, match="DELETE /api/credential/udl-openrouter"):
+        await _runner(service, shell).setup([], {"OPENROUTER_API_KEY": "sk-2"})
+
+
+@pytest.mark.parametrize("status", [401, 403, 404, 500])
+async def test_a_delete_the_service_refuses_is_the_delete_s_failure(
+    service: FakeOpenCode, shell: FakeShell, status: int
+) -> None:
+    """Only a 400 (already gone) is the post's to carry on from; anything else is said as what it
+    was, not as a misleading 409 on the post after it."""
+    await _runner(service, shell).setup([], {"OPENROUTER_API_KEY": "sk-1"})
+    service.delete_status = status
+
+    with pytest.raises(PluginFailed, match=f"said {status} to DELETE"):
+        await _runner(service, shell).setup([], {"OPENROUTER_API_KEY": "sk-2"})
+
+
+async def test_a_key_never_appears_in_the_failure_it_causes(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """A service that repeats what it was sent must not put the key in udl's log."""
+    service.credential_status = 400
+    service.credential_says = "invalid key sk-1"
+
+    with pytest.raises(PluginFailed) as failure:
+        await _runner(service, shell).setup([], {"OPENROUTER_API_KEY": "sk-1"})
+
+    assert "sk-1" not in str(failure.value)
+    assert "400" in str(failure.value)
+
+
+async def test_a_sign_in_needs_the_provider(service: FakeOpenCode, shell: FakeShell) -> None:
+    """Without one the CLI opens a picker no relay can drive: udl refuses, and says what to do."""
+    with pytest.raises(NotAllowed):
+        await _runner(service, shell).login()
+
+    assert shell.started == []
+
+
+async def test_its_login_relays_the_provider(service: FakeOpenCode, shell: FakeShell) -> None:
+    await _runner(service, shell).login("openrouter")
+
+    assert shell.started == [["opencode", "auth", "login", "openrouter"]]
+
+
+async def test_its_sign_out_names_every_account(service: FakeOpenCode, shell: FakeShell) -> None:
+    shell.auths = json.dumps([{"provider": "openrouter", "account": "me@example.com"}])
+
+    await _runner(service, shell).logout()
+
+    assert ["opencode", "auth", "logout", "openrouter", "me@example.com"] in shell.runs
 
 
 async def test_health_says_a_service_that_is_not_running(service: FakeOpenCode) -> None:
@@ -392,16 +711,35 @@ async def test_every_call_it_makes_is_in_the_openapi_document_it_was_written_aga
     await _turn(runner, session)
     await runner.models()
     await runner.health()
+    await runner.setup([], {"OPENROUTER_API_KEY": "sk-1"})
+    await runner.setup([], {"OPENROUTER_API_KEY": "sk-2"})  # (the replace: a delete, then a post)
     await runner.stop(session)
 
     made = {
         "/api/session/{sessionID}/permission/{requestID}/reply"
         if "/permission/" in path
-        else path.replace(session.id, "{sessionID}")
+        else path.replace(session.id, "{sessionID}").replace("udl-openrouter", "{credentialID}")
         for _, path, _ in service.calls
     }
     assert made
     assert made <= known, made - known
+
+
+async def test_the_fake_takes_what_the_document_says_a_credential_is(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """The fake's `Credential.CreateInput` is the committed document's: its fields and the ones it
+    requires, so the fake and the service cannot drift apart (and a setup's body is that shape)."""
+    components = _Components.model_validate(_document()["components"])
+    schema = components.schemas["Credential.CreateInput"]
+
+    fields = set(CreateInput.model_fields)
+    assert fields == set(schema.properties)
+    assert {name for name, field in CreateInput.model_fields.items() if field.is_required()} == set(
+        schema.required
+    )
+    await _runner(service, shell).setup([], {"OPENROUTER_API_KEY": "sk-1"})
+    assert set(service.credential_bodies[0]) <= fields
 
 
 async def test_a_turn_is_a_prompt_and_the_log_from_the_sequence_udl_stored(
@@ -667,7 +1005,7 @@ async def test_a_brief_that_cannot_be_written_is_not_run(service: FakeOpenCode) 
     shell = FakeShell()
     shell.writes_fail = True
 
-    with pytest.raises(PluginFailed, match="agent file"):
+    with pytest.raises(PluginFailed, match="no permission"):
         await _runner(service, shell).start(SessionSpec(cwd="/w", instructions="a brief"))
 
     assert service.calls == []  # (no session was created)
