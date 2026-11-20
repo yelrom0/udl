@@ -3,6 +3,8 @@
  * startup) and each UI plugin udl lists (from its manifest, before any bundle is imported).
  */
 
+import { generatedNav } from "../generated/nav";
+import type { GeneratedUI } from "../generated/spec";
 import { plugins, type UIPluginInfo } from "../stores/plugins";
 import { OWN_NAV, UDL } from "./own";
 import { Registry } from "./registry";
@@ -11,6 +13,9 @@ export { OWN_NAV, UDL } from "./own";
 
 /** The page's registry: what the shell and its plugins contribute. */
 export const shellRegistry = new Registry();
+
+/** What udl says a page generates from (24.3), as last read: the drawer's generated entries. */
+let generatedUI: GeneratedUI | null = null;
 
 /**
  * Register `info`'s contributions, as its manifest says they are: the navigation's pages, and
@@ -70,7 +75,22 @@ export function registerPlugins(infos: readonly UIPluginInfo[]): void {
 	for (const info of infos) {
 		registerPlugin(info);
 	}
-	plugins.setState({ nav: [...shellRegistry.nav] });
+	applyNav();
+}
+
+/** Keep what udl says a page generates from (`null` when it answered nothing usable), and put
+ * the generated plugins' entries in the drawer. */
+export function registerGenerated(ui: GeneratedUI | null): void {
+	generatedUI = ui;
+	applyNav();
+}
+
+/** The drawer's list: the shell's own pages, the UI plugins' navigation, then the generated
+ * plugins' — whichever of the two lists was read last. */
+function applyNav(): void {
+	plugins.setState({
+		nav: [...shellRegistry.nav, ...generatedNav(generatedUI, plugins.getState().manifests)],
+	});
 }
 
 /** The shell's own pages in the navigation (they are part of the shell, not a bundle). */

@@ -39,6 +39,28 @@ function draw(value: FormValue = {}, onChange = vi.fn()) {
 	return onChange;
 }
 
+describe("two forms on one page", () => {
+	it("labels each form's own field, not the other's", () => {
+		// (A page can hold two forms with a field of the same name — a plugin's operations page
+		// draws one per operation — so their ids must not collide.)
+		const schema = {
+			type: "object",
+			properties: { account: { type: "string", title: "account" } },
+		};
+
+		render(
+			<>
+				<SchemaForm schema={schema} value={{}} onChange={() => undefined} />
+				<SchemaForm schema={schema} value={{}} onChange={() => undefined} />
+			</>,
+		);
+
+		const boxes = screen.getAllByLabelText("account");
+		expect(boxes).toHaveLength(2);
+		expect(new Set(boxes.map((box) => box.id)).size).toBe(2);
+	});
+});
+
 describe("the fields", () => {
 	it("are drawn one per property, with their titles", () => {
 		draw();

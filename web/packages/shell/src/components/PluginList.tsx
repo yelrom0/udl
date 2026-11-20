@@ -4,6 +4,9 @@
  * web UI is not a problem: it is used through the CLI, the API and MCP.
  */
 
+import { Link } from "@tanstack/react-router";
+import { hasSomething } from "../generated/nav";
+import { useGenerated, useGeneratedError } from "../stores/generated";
 import { usePluginErrors, usePlugins, useProblems } from "../stores/plugins";
 
 /** What a plugin adds, in a line each (`routes: 3`, `settings: gmail`). */
@@ -41,14 +44,74 @@ function adds(contributes: {
 	return said;
 }
 
+/** What a plugin has to show, in a line (`operations: 4`, `settings`, `accounts`, `events: 2`). */
+function whatItHas(plugin: {
+	readonly operations: readonly { readonly ui: { readonly hidden: boolean } }[];
+	readonly settings: unknown;
+	readonly accounts: unknown;
+	readonly event_types: readonly string[];
+}): string {
+	const shown = plugin.operations.filter((operation) => !operation.ui.hidden).length;
+	const said: string[] = [];
+	if (shown > 0) said.push(`operations: ${shown}`);
+	if (plugin.settings !== null) said.push("settings");
+	if (plugin.accounts !== null) said.push("accounts");
+	if (plugin.event_types.length > 0) said.push(`events: ${plugin.event_types.length}`);
+	return said.length === 0 ? "nothing to show" : said.join(", ");
+}
+
 export function PluginList() {
 	const manifests = usePlugins();
 	const problems = useProblems();
 	const errors = usePluginErrors();
 
+	const generated = useGenerated();
+	const generatedError = useGeneratedError();
+
 	return (
 		<>
-			<h2 className="mt-6 text-xl font-semibold">Web UIs</h2>
+			<h2 className="mt-6 text-xl font-semibold">Plugins</h2>
+			{generated === null ? (
+				<p className="mt-2 opacity-70">
+					{generatedError ?? "udl has not said what its plugins have to show yet."}
+				</p>
+			) : (
+				<table className="table mt-2">
+					<thead>
+						<tr>
+							<th>Plugin</th>
+							<th>What it has</th>
+							<th />
+						</tr>
+					</thead>
+					<tbody>
+						{generated.plugins.map((plugin) => {
+							// (A string route, as the drawer's entries are: the plugin's name is udl's.)
+							const to: string = `/p/${plugin.name}/`;
+							return (
+								<tr key={plugin.name}>
+									<td>
+										<Link to={to} className="link font-semibold">
+											{plugin.title}
+										</Link>
+										<div className="font-mono text-xs opacity-60">{plugin.name}</div>
+									</td>
+									<td className="text-sm">{whatItHas(plugin)}</td>
+									<td>
+										{hasSomething(plugin) ? (
+											<Link to={to} className="btn btn-xs">
+												Open
+											</Link>
+										) : null}
+									</td>
+								</tr>
+							);
+						})}
+					</tbody>
+				</table>
+			)}
+
+			<h2 className="mt-8 text-xl font-semibold">Web UIs</h2>
 			{manifests.length === 0 ? (
 				<p className="mt-2 opacity-70">
 					No plugin brings a web UI. A plugin without one is used through the CLI, the API and MCP.

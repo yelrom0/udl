@@ -96,7 +96,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 24.3 `GET /ui/generated.json`: every plugin's operations, settings, accounts and event types, with their schemas
   - [x] 24.4 `<SchemaForm>`: a form from any request model's JSON Schema
   - [x] 24.5 `<ResultView>`: a table, a detail list or a tree from any response
-  - [ ] 24.6 The generated plugin page (`/ui/p/<plugin>`): Operations, Settings, Accounts, Events; nav for every plugin
+  - [~] 24.6 The generated plugin page (`/ui/p/<plugin>`): Operations, Settings, Accounts, Events; nav for every plugin
   - [ ] 24.7 UI plugins guide the generated UI: `generated` in the manifest, and the `operationViews`, `resultViews` and `fieldWidgets` points
   - [ ] 24.8 Proof (e2e): a plugin with no UI plugin is fully usable on the web; a UI plugin reshapes its generated page
   - [ ] 24.9 planning.md amended: requirement 5d, "Without a UI plugin", Phases 19–20's plugin tasks

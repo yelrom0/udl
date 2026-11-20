@@ -270,7 +270,13 @@ def nothing() -> Generator[None]:
     yield None
 
 
-def test_main_stops_itself_when_nothing_else_stops_it() -> None:
+def test_main_stops_itself_when_nothing_else_stops_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (Whether this checkout's web tree happens to be built is not this test's subject: a
+    # half-built one is refused, so the harness is told nothing is built.)
+    monkeypatch.setattr("support.e2e.SHELL_DIST", tmp_path / "no-shell")
+
     assert main(port=free_port(), self_stop=0.3, make_site=nothing) == 0
 
 
@@ -321,8 +327,16 @@ def test_the_default_port_is_a_free_one(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_main_stops_on_sigterm() -> None:
     port = free_port()
+    # (Run as a script rather than `-m`, so the harness is told this checkout's web tree is not
+    # built: a half-built one is refused, which is another test's subject.)
+    script = (
+        "import pathlib\n"
+        "import support.e2e as e2e\n"
+        "e2e.SHELL_DIST = pathlib.Path('/nonexistent')\n"
+        f"raise SystemExit(e2e.main(port={port}))\n"
+    )
     started = subprocess.Popen(  # noqa: S603 - the module under test
-        [sys.executable, "-m", "support.e2e", "--port", str(port)],
+        [sys.executable, "-c", script],
         cwd=ROOT,
         env=environment_for_the_test(),
         stdout=subprocess.PIPE,

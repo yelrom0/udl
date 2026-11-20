@@ -62,11 +62,27 @@ export interface UdlApi {
 		body?: RequestBody<Id>,
 		params?: PathParams<Id>,
 	): Promise<ResponseBody<Id>>;
+	/** `call` for a name the page has at runtime only — a generated page's operation (24.6),
+	 * which udl named in its JSON — so the request is JSON the schema cannot type. A name that
+	 * is no operation throws (udl's JSON is checked before a page is drawn from it). */
+	callNamed(id: string, body?: unknown, params?: Record<string, string>): Promise<unknown>;
+	/** `call` for a route the page has at runtime only — a plugin's operation (24.6), whose
+	 * method and path udl's JSON names — so the request is JSON the schema cannot type. */
+	callAt(
+		method: string,
+		path: string,
+		body?: unknown,
+		params?: Readonly<Record<string, unknown>>,
+	): Promise<unknown>;
 }
 
 // (The API takes a write from a page only with this header: a write from another site's page is
 // refused. See the API's module docstring.)
 const WRITES = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+// (A read's request is its query, not its body: `fetch` refuses a body on a GET, and the API
+// takes a read's fields as query parameters — `limit`, `status`, `max_chars` and the rest.)
+const QUERIES = new Set(["GET", "HEAD", "DELETE"]);
 
 const csrf: Middleware = {
 	onRequest({ request }) {
@@ -87,35 +103,73 @@ export function createUdlClient({ baseUrl, fetch }: UdlClientOptions): UdlApi {
 	return {
 		client,
 		call: (id, body, params) => send(doFetch, baseUrl, id, body, params),
+		callNamed: (id, body, params) => {
+			if (!isOperationId(id)) {
+				throw new Error(`no operation named ${id}`);
+			}
+			return send(doFetch, baseUrl, id, body, params);
+		},
+		callAt: (method, path, body, params) => sendTo(doFetch, baseUrl, method, path, body, params),
 	};
+}
+
+/** Whether `name` is one of the API's operations (`operations` is the schema's own list). */
+function isOperationId(name: string): name is OperationId {
+	return Object.hasOwn(operations, name);
 }
 
 async function send<Id extends OperationId>(
 	doFetch: typeof globalThis.fetch,
 	baseUrl: string,
 	id: Id,
-	body?: RequestBody<Id>,
-	params?: PathParams<Id>,
+	// (What `call` gives it, typed by the operation, and what `callNamed` has at runtime only: a
+	// generated page's form, which is JSON the schema cannot see. The route and the method are
+	// the operation's either way.)
+	body?: unknown,
+	params?: Readonly<Record<string, unknown>>,
 ): Promise<ResponseBody<Id>> {
 	const { method, path } = operations[id];
-	const init: RequestInit = {
-		method: method.toUpperCase(),
-		credentials: "same-origin",
-		headers: headersFor(method, body !== undefined),
-	};
-	if (body !== undefined) init.body = JSON.stringify(body);
-	// (Joined as openapi-fetch joins it: a base that is a page's own origin is "", and one behind
-	// a reverse proxy's prefix keeps it.)
-	const response = await doFetch(`${baseUrl.replace(/\/+$/, "")}${fill(path, params)}`, init);
-	const data: unknown = parse(response.status === 204 ? "" : await response.text());
-	if (!response.ok) throw new UdlError(asErrorInfo(data), response.status);
 	// (The schema is what says a 2xx answer's body is this operation's `ResponseBody`: the one
 	// place where the types and the JSON meet.)
-	return data as ResponseBody<Id>;
+	return (await sendTo(doFetch, baseUrl, method, path, body, params)) as ResponseBody<Id>;
+}
+
+/** Send a request to `path` (with its `{name}` placeholders filled from `params`), as `call`
+ * does, for a route the schema does not hold. */
+async function sendTo(
+	doFetch: typeof globalThis.fetch,
+	baseUrl: string,
+	method: string,
+	path: string,
+	body?: unknown,
+	params?: Readonly<Record<string, unknown>>,
+): Promise<unknown> {
+	const verb = method.toUpperCase();
+	const asQuery = QUERIES.has(verb);
+	const init: RequestInit = {
+		method: verb,
+		credentials: "same-origin",
+		headers: headersFor(verb, body !== undefined && !asQuery),
+	};
+	let route = fill(path, params);
+	if (body !== undefined) {
+		if (asQuery) {
+			const query = searchOf(body);
+			if (query !== "") route += `${route.includes("?") ? "&" : "?"}${query}`;
+		} else {
+			init.body = JSON.stringify(body);
+		}
+	}
+	// (Joined as openapi-fetch joins it: a base that is a page's own origin is "", and one behind
+	// a reverse proxy's prefix keeps it.)
+	const response = await doFetch(`${baseUrl.replace(/\/+$/, "")}${route}`, init);
+	const data: unknown = parse(response.status === 204 ? "" : await response.text());
+	if (!response.ok) throw new UdlError(asErrorInfo(data), response.status);
+	return data;
 }
 
 /** The route `path`, with its `{name}` placeholders replaced by `params` (and encoded). */
-function fill(path: string, params: object | undefined): string {
+function fill(path: string, params: Readonly<Record<string, unknown>> | undefined): string {
 	const values = new Map(
 		Object.entries(params ?? {}).map(([name, value]) => [name, String(value)]),
 	);
@@ -124,6 +178,19 @@ function fill(path: string, params: object | undefined): string {
 		if (value === undefined) throw new Error(`${path} needs a path parameter: ${name}`);
 		return encodeURIComponent(value);
 	});
+}
+
+/** `body` as a query string: a read's fields, a list repeated (as FastAPI takes one). */
+function searchOf(body: unknown): string {
+	if (typeof body !== "object" || body === null) return "";
+	const query = new URLSearchParams();
+	for (const [field, value] of Object.entries(body)) {
+		for (const one of Array.isArray(value) ? value : [value]) {
+			if (one === undefined) continue;
+			query.append(field, one === null ? "" : String(one));
+		}
+	}
+	return query.toString();
 }
 
 function headersFor(method: string, hasBody: boolean): Record<string, string> {

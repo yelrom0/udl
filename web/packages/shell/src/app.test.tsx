@@ -2,9 +2,10 @@ import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/rea
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { onNavigate, routerNavigation } from "./plugins/navigation";
-import { OWN_NAV, registerPlugins } from "./plugins/shell";
+import { OWN_NAV, registerGenerated, registerPlugins } from "./plugins/shell";
 import { BASE } from "./router";
 import { routeTree } from "./routeTree.gen";
+import { setGenerated } from "./stores/generated";
 import { clear, pushEvent, setRun } from "./stores/live";
 import { setPlugins } from "./stores/plugins";
 import { session } from "./stores/session";
@@ -90,6 +91,7 @@ beforeEach(() => {
 	localStorage.clear();
 	// (The page's own pages, as `main.tsx` registers them before the first route is drawn.)
 	registerPlugins([]);
+	setGenerated(null, null);
 });
 
 afterEach(() => {
@@ -201,10 +203,33 @@ describe("the shell", () => {
 
 	it("says a plugin page it has no plugin for", async () => {
 		udl();
+		setGenerated({ plugins: [] }, null);
 		draw("/ui/p/gmail/inbox");
 
 		expect(await screen.findByRole("heading", { level: 1, name: "gmail" })).toBeTruthy();
-		expect(screen.getByText(/No UI plugin named "gmail" is loaded/)).toBeTruthy();
+		expect(screen.getByText(/There is no plugin named/)).toBeTruthy();
+	});
+
+	it("waits for the generated list before saying a plugin is unknown", async () => {
+		// (A reload or a direct link asks for `/ui/generated.json` and draws the route at once:
+		// "there is no plugin named gmail" would be said before udl had answered.)
+		udl();
+		draw("/ui/p/gmail/inbox");
+
+		expect(await screen.findByLabelText("Loading the plugin")).toBeTruthy();
+		expect(screen.queryByText(/There is no plugin named/)).toBeNull();
+	});
+
+	it("says why the generated list could not be read", async () => {
+		udl();
+		setGenerated(null, "the plugin list could not be read");
+		draw("/ui/p/gmail/inbox");
+
+		expect(await screen.findByRole("alert")).toHaveProperty(
+			"textContent",
+			expect.stringContaining("the plugin list could not be read"),
+		);
+		expect(screen.queryByText(/There is no plugin named/)).toBeNull();
 	});
 
 	it("switches the theme, and keeps the choice", async () => {
@@ -290,10 +315,118 @@ describe("the shell", () => {
 
 	it("says an unknown plugin, and the shell carries on", async () => {
 		udl();
+		setGenerated({ plugins: [] }, null);
 		draw("/ui/p/nobody/inbox");
 
 		expect(await screen.findByRole("heading", { level: 1, name: "nobody" })).toBeTruthy();
-		expect(screen.getByText(/No UI plugin named "nobody"/)).toBeTruthy();
+		expect(screen.getByText(/There is no plugin named/)).toBeTruthy();
+	});
+
+	it("draws a plugin's generated page when it brings no UI of its own", async () => {
+		udl();
+		const gmail = {
+			name: "gmail",
+			kind: "udl.integrations",
+			title: "Gmail",
+			summary: "Mail, from udl",
+			has_ui_plugin: false,
+			operations: [],
+			settings: { json_schema: { type: "object", properties: {} }, read_only: [], secret: [] },
+			accounts: null,
+			event_types: [],
+		};
+		setGenerated({ plugins: [gmail] }, null);
+		registerGenerated({ plugins: [gmail] });
+		registerPlugins([]);
+		draw("/ui/p/gmail/");
+
+		expect(await screen.findByRole("heading", { level: 2, name: "Gmail" })).toBeTruthy();
+		expect(screen.getByRole("tab", { name: "settings" })).toBeTruthy();
+		// (And the drawer has the plugin's page: it has something to show.)
+		expect(screen.getAllByRole("link", { name: "Gmail" }).length).toBeGreaterThan(0);
+	});
+
+	it("keeps a UI plugin's own page over the generated one", async () => {
+		udl();
+		const gmail = {
+			name: "gmail",
+			version: "0.1.0",
+			base_url: "/ui/plugins/gmail/",
+			entry_url: "/ui/plugins/gmail/index.js",
+			styles: [],
+			isolation: "shadow" as const,
+			contributes: { routes: ["inbox"] },
+			plugin: "gmail",
+		};
+		bundle.page = (target) => {
+			target.textContent = "the plugin's own page";
+			return { update: () => {}, unmount: () => {} };
+		};
+		setPlugins([gmail], []);
+		registerPlugins([gmail]);
+		const generated = {
+			plugins: [
+				{
+					name: "gmail",
+					kind: "udl.integrations",
+					title: "Gmail",
+					summary: "",
+					has_ui_plugin: true,
+					operations: [],
+					settings: { json_schema: {}, read_only: [], secret: [] },
+					accounts: null,
+					event_types: [],
+				},
+			],
+		};
+		setGenerated(generated, null);
+		registerGenerated(generated);
+		draw("/ui/p/gmail/inbox");
+
+		// (A plugin's page is drawn in its own shadow root: its text is there, not in the page's.)
+		await waitFor(() =>
+			expect(document.querySelector(".udl-plugin-slot")?.shadowRoot?.innerHTML).toContain(
+				"the plugin's own page",
+			),
+		);
+	});
+
+	it("falls back to the generated page for a page its UI plugin does not have", async () => {
+		udl();
+		const gmail = {
+			name: "gmail",
+			version: "0.1.0",
+			base_url: "/ui/plugins/gmail/",
+			entry_url: "/ui/plugins/gmail/index.js",
+			styles: [],
+			isolation: "shadow" as const,
+			contributes: { routes: ["inbox"] },
+			plugin: "gmail",
+		};
+		setPlugins([gmail], []);
+		registerPlugins([gmail]);
+		setGenerated(
+			{
+				plugins: [
+					{
+						name: "gmail",
+						kind: "udl.integrations",
+						title: "Gmail",
+						summary: "",
+						has_ui_plugin: true,
+						operations: [],
+						settings: { json_schema: {}, read_only: [], secret: [] },
+						accounts: null,
+						event_types: [],
+					},
+				],
+			},
+			null,
+		);
+		draw("/ui/p/gmail/settings");
+
+		expect(await screen.findByRole("heading", { level: 2, name: "Gmail" })).toBeTruthy();
+		expect(screen.getByRole("tab", { name: "settings" })).toBeTruthy();
 	});
 
 	it("shows a plugin's page, and an error card in its place when it fails", async () => {
