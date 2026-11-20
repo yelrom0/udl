@@ -700,6 +700,28 @@ class Orch(AppPlugin[OrchSettings]):
                 f"{request.key!r} is not ready: {'; '.join(found.blockers)}",
                 hint="Fix what it says, then ask again.",
             )
+        from udl.interfaces.security import current_principal
+
+        who = current_principal.get()
+        merging = await stored.ProjectRecords(self.records).project(project)
+        if (
+            merging is not None
+            and merging.merge == MergePolicy.AGENT
+            and who is not None
+            and who.is_agent
+            and task.assignee == who.name
+        ):
+            # (27.6's deferred branch: where a project lets its own agent merge, an agent that
+            # marks its pull ready merges it, through 28.3's merge, and the task goes `merged`.)
+            await self._after_merge(
+                service,
+                project=project,
+                key=request.key,
+                by=who.name,
+                reviewed=False,
+                promoted=bool(merging.promotion),
+            )
+            return found
         moved = transitions.move(task, READY, by=_UDL)
         note = stored.Note(
             owner_kind=OwnerKind.TASK,

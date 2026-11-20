@@ -517,6 +517,52 @@ async def test_a_stack_of_three_merges_in_order_each_prompting_the_next(
     assert [(one.number, one.sha) for one in app.merged] == [(1, HEAD), (2, HEAD), (3, HEAD)]
 
 
+async def test_ready_merges_where_the_project_says_agent_and_the_caller_holds_it(
+    service: UDLService,
+) -> None:
+    """(27.6's deferred branch: an agent that marks its own pull ready merges it where the project
+    lets its agents merge, and the task goes `merged`.)"""
+    await set_project(service, merge=MergePolicy.AGENT)
+    tasks = TaskRecords(AppRecords(service.db))
+    found = await tasks.task("udl", "F-1.1")
+    assert found is not None
+    await tasks.save_task(found.model_copy(update={"assignee": "deepseek-b"}))
+    caller = current_principal.set(
+        Caller(kind=PrincipalKind.AGENT, name="deepseek-b", role="implementer")
+    )
+    try:
+        await service.call("orch_ready", {"key": "F-1.1"})
+    finally:
+        current_principal.reset(caller)
+
+    moved = await tasks.task("udl", "F-1.1")
+    assert moved is not None
+    assert moved.state == MERGED
+
+
+async def test_ready_only_marks_ready_where_a_person_merges(service: UDLService) -> None:
+    """(The other side: a project where a person merges leaves the task at `ready`.)"""
+    await add_task(service, "F-1.2", number=2)
+    app = await service.apps.get("github")
+    assert isinstance(app, FakeGitHub)
+    app.pull(2)
+    tasks = TaskRecords(AppRecords(service.db))
+    found = await tasks.task("udl", "F-1.2")
+    assert found is not None
+    await tasks.save_task(found.model_copy(update={"assignee": "deepseek-b"}))
+    caller = current_principal.set(
+        Caller(kind=PrincipalKind.AGENT, name="deepseek-b", role="implementer")
+    )
+    try:
+        await service.call("orch_ready", {"key": "F-1.2"})
+    finally:
+        current_principal.reset(caller)
+
+    moved = await tasks.task("udl", "F-1.2")
+    assert moved is not None
+    assert moved.state == READY
+
+
 # ---------------------------------------------------------------------------------------------
 # Promotion
 # ---------------------------------------------------------------------------------------------
