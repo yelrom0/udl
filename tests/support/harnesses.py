@@ -86,6 +86,12 @@ class ScriptedShell(HostShell):
         """Every argv it started as a sign-in."""
         self.says: Sequence[str] = ("",)
         """What the next sign-in prints, a line per read."""
+        self.hanging: set[str] = set()
+        """The argv that never answer: what a shell whose `wait_for` runs out raises."""
+
+    def never(self, argv: Sequence[str]) -> None:
+        """Say that a command never answers (it runs past the time it is given)."""
+        self.hanging.add(" ".join(argv))
 
     def answer(self, argv: Sequence[str], stdout: str = "", code: int = 0) -> None:
         """Say what a command answers."""
@@ -107,6 +113,8 @@ class ScriptedShell(HostShell):
         self.runs.append(list(argv))
         self.secret_envs.append(dict(secret_env or {}))
         command = " ".join(argv)
+        if command in self.hanging:
+            raise TimeoutError
         if argv[0] == "sh" and "cat > " in command:
             path = command.split("cat > ", 1)[1]
             self.files[path] = (stdin or b"").decode()

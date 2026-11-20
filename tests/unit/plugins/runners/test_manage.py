@@ -332,6 +332,21 @@ async def test_a_runner_that_cannot_answer_is_a_problem_in_its_row(
     assert listed.problems == []
 
 
+async def test_a_harness_that_never_answers_keeps_its_row(hosts: Hosts) -> None:
+    """A harness that runs past its timeout costs only its own row: the listing says it could not
+    be asked, and every other harness is still listed."""
+    shell = hosts.shell("local")
+    script_claude(shell)
+    shell.never(["claude", "--version"])
+
+    listed = await hosts.harnesses.all(ListRunnersRequest(host="local"))
+
+    [claude] = [item for item in listed.items if item.runner == "claude-code"]
+    assert claude.health.installed is False
+    assert any("did not answer in time" in problem for problem in claude.health.problems)
+    assert any(item.runner == "command" for item in listed.items)
+
+
 async def test_a_runner_whose_health_fails_keeps_its_row(
     hosts: Hosts, monkeypatch: pytest.MonkeyPatch
 ) -> None:

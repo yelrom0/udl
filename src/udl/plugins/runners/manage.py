@@ -254,9 +254,15 @@ class _Attempt:
         return self.attempt.model_copy(update={"prompt": self.said})
 
 
-_ASK_FAILED = (PluginError, NotAllowed, DoesNotExist, ConfigError, ToolUnavailable)
-"""What asking a harness can fail with: a runner udl cannot make, or one that cannot answer.
-Each becomes a problem in the listing, never the end of it."""
+_ASK_FAILED = (PluginError, NotAllowed, DoesNotExist, ConfigError, ToolUnavailable, TimeoutError)
+"""What asking a harness can fail with: a runner udl cannot make, one that cannot answer, and one
+that runs past the time it is given (a shell's `wait_for`, which is a `TimeoutError`). Each
+becomes a problem in its own row, never the end of the listing."""
+
+
+def _why(failure: Exception) -> str:
+    """What to say about something that could not be asked: a timeout has no message of its own."""
+    return str(failure) or "it did not answer in time"
 
 
 class Harnesses:
@@ -298,17 +304,22 @@ class Harnesses:
         try:
             runner = await self.runner(host, name)
         except _ASK_FAILED as failure:
-            return RunnerHealth(installed=False, problems=[f"udl cannot make it: {failure}"]), []
+            return (
+                RunnerHealth(installed=False, problems=[f"udl cannot make it: {_why(failure)}"]),
+                [],
+            )
         try:
             health = await self._health(host, name, runner)
         except _ASK_FAILED as failure:
-            health = RunnerHealth(installed=False, problems=[f"udl could not ask it: {failure}"])
+            health = RunnerHealth(
+                installed=False, problems=[f"udl could not ask it: {_why(failure)}"]
+            )
         models: list[RunnerModel] = []
         try:
             models = await runner.models()
         except _ASK_FAILED as failure:
             health = health.model_copy(
-                update={"problems": [*health.problems, f"its models: {failure}"]}
+                update={"problems": [*health.problems, f"its models: {_why(failure)}"]}
             )
         return health, models
 
