@@ -62,6 +62,7 @@ export const operations = {
 	list_subscriptions: { method: "get", path: "/subscriptions" },
 	orch_assign: { method: "post", path: "/plugins/orch/assign" },
 	orch_get_queue: { method: "post", path: "/plugins/orch/get_queue" },
+	orch_issue_token: { method: "post", path: "/plugins/orch/issue_token" },
 	orch_list_runners: { method: "post", path: "/plugins/orch/list_runners" },
 	orch_my_task: { method: "post", path: "/plugins/orch/my_task" },
 	orch_reorder_queue: { method: "post", path: "/plugins/orch/reorder_queue" },
