@@ -183,14 +183,16 @@ async def _assign(
         ]
         writes += _renumbered(left, was=left)
         also.append(_stopped(placed, stopped=stopped, agent=agent))
-    saved = await tasks.save_all(writes, also=also)
-    placed = next((one for one in saved if one.id == placed.id), placed)
     if placed.task_kind == "human":
         # (A person's task is something only they can do: it is their action from the moment it
-        # is theirs, 28.2. Its own write, after the queue's — the counter it takes its number
-        # from is one too, and there is no transaction around them yet.)
-        await actions.for_task(actions.ActionRecords(tasks.records), placed, assignee=agent)
-    return placed
+        # is theirs, 28.2. The action is planned here and written in the same batch, so a task
+        # is never queued without it — the batch is one write, or none.)
+        planned = await actions.plan_for_task(
+            actions.ActionRecords(tasks.records), placed, assignee=agent
+        )
+        also.append(planned)
+    saved = await tasks.save_all(writes, also=also)
+    return next((one for one in saved if one.id == placed.id), placed)
 
 
 async def _check_agent(tasks: TaskRecords, task: Task, agent: str, *, key: str) -> None:
@@ -315,15 +317,16 @@ async def _unassign(
     left = [
         found for found in await queue_of(tasks, project=project, agent=agent) if found.key != key
     ]
-    saved = await tasks.save_all([freed, *_renumbered(left, was=left)])
-    freed = saved[0]
+    also: list[Record] = []
     if freed.task_kind == "human":
         # (The action it had is nobody's now: it goes back to `open` and off the person's list,
-        # so a task nobody holds is not still on someone's To action, 28.2.)
+        # so a task nobody holds is not still on someone's To action, 28.2. It is written in
+        # the queue's own batch, like its assignment.)
         stored = actions.ActionRecords(tasks.records)
         for found in await stored.actions(project, state=OPEN, task=freed.key):
-            await stored.save_action(found.model_copy(update={"assignee": None}))
-    return freed
+            also.append(found.model_copy(update={"assignee": None}))
+    saved = await tasks.save_all([freed, *_renumbered(left, was=left)], also=also)
+    return saved[0]
 
 
 async def queue_of(tasks: TaskRecords, *, project: str, agent: str) -> list[Task]:

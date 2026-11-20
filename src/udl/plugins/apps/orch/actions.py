@@ -122,6 +122,36 @@ async def set_action(
     """Add an action to `project`, with the next `A-` number. Raises DoesNotExist when the
     project is not there, and NotAllowed for a `when` that does not match what it waits for, or
     for an assignee that is an agent (an action is a person's)."""
+    planned = await plan_action(
+        actions,
+        project=project,
+        title=title,
+        text=text,
+        when=when,
+        after=after,
+        task=task,
+        assignee=assignee,
+    )
+    return await actions.save_action(planned)
+
+
+async def plan_action(
+    actions: ActionRecords,
+    *,
+    project: str,
+    title: str,
+    text: str = "",
+    when: ActionWhen | str = ActionWhen.NOW,
+    after: str | None = None,
+    task: str | None = None,
+    assignee: str | None = None,
+) -> HumanAction:
+    """The action `set_action` would store, with its `A-` number already claimed, and not
+    stored: what a caller that writes a task in one batch carries in it (28.2's review: a
+    person's task and its action are one write, not two).
+
+    The claim is its own write — a compare-and-set on the counter, which a batch cannot take —
+    so a caller whose batch then fails has burned a number and written no action."""
     await ProjectRecords(actions.records).require(project)
     due = ActionWhen(when)
     _check_when(due, after=after)
@@ -132,17 +162,15 @@ async def set_action(
     if assignee is not None:
         _check_person(assignee)
     number = await Counters(actions.records).claim(project, ACTIONS)
-    return await actions.save_action(
-        HumanAction(
-            project=project,
-            key=f"{ACTIONS}{number}",
-            title=title,
-            text=text,
-            when=due,
-            after=after,
-            task=task,
-            assignee=assignee,
-        )
+    return HumanAction(
+        project=project,
+        key=f"{ACTIONS}{number}",
+        title=title,
+        text=text,
+        when=due,
+        after=after,
+        task=task,
+        assignee=assignee,
     )
 
 
@@ -274,8 +302,17 @@ async def drop(actions: ActionRecords, *, project: str, key: str, reason: str = 
 
 
 async def for_task(actions: ActionRecords, task: Task, *, assignee: str) -> HumanAction:
-    """The action of the person's task `task`, given to `assignee`: the one it has, or a new one
-    (its title and text are the task's). Raises NotAllowed when `task` is not a person's."""
+    """The action of the person's task `task`, given to `assignee`, stored: the one it has, or a
+    new one (its title and text are the task's). Raises NotAllowed when `task` is not a person's."""
+    planned = await plan_for_task(actions, task, assignee=assignee)
+    return await actions.save_action(planned)
+
+
+async def plan_for_task(actions: ActionRecords, task: Task, *, assignee: str) -> HumanAction:
+    """The action of the person's task `task`, given to `assignee`, not stored: what the queue's
+    own write carries, so a task is never queued without its action (28.2's review).
+
+    Raises NotAllowed when `task` is not a person's."""
     if task.task_kind != "human":
         raise NotAllowed(
             f"{task.key!r} is not a person's task",
@@ -285,16 +322,14 @@ async def for_task(actions: ActionRecords, task: Task, *, assignee: str) -> Huma
     if found:
         # (A dropped one is reopened: the task is somebody's again, so the action is open again
         # — otherwise it would never reach `merged` through 28.2.)
-        return await actions.save_action(
-            found[0].model_copy(
-                update={
-                    "assignee": assignee,
-                    "state": ActionState.OPEN,
-                    "result": None,
-                }
-            )
+        return found[0].model_copy(
+            update={
+                "assignee": assignee,
+                "state": ActionState.OPEN,
+                "result": None,
+            }
         )
-    return await set_action(
+    return await plan_action(
         actions,
         project=task.project,
         title=task.title,
