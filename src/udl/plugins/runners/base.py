@@ -34,7 +34,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, NonNegativeInt
 
 # Local Imports
 from udl.clock import Clock
-from udl.errors import PluginError
+from udl.errors import ErrorCode, PluginError, UDLError
 from udl.hosts.shell import HostShell, Interaction
 from udl.plugins.requirements import Requirement
 from udl.plugins.ui.base import UIBundle
@@ -166,21 +166,23 @@ class Usage(AgentEvent):
     """What it cost, when the harness says (a subscription's turns cost nothing to count)."""
 
 
-class LoginByHand(PluginError):
+class LoginByHand(UDLError):
     """A harness whose sign-in cannot be driven from udl: what a person runs on the host instead.
 
     A harness that needs a terminal of its own (any CLI udl does not know) says so with this, and
     the caller answers with the command rather than a failure (25.11's relayed sign-in)."""
 
-    def __init__(self, argv: Sequence[str] = (), *, why: str = "") -> None:
+    code = ErrorCode.LOGIN_BY_HAND
+
+    def __init__(self, argv: Sequence[str] = (), *, why: str = "", hint: str | None = None) -> None:
         self.argv = tuple(argv)
         self.why = why or "its sign-in needs a terminal"
-        hint = (
+        told = hint or (
             f"Run `{shlex.join(self.argv)}` in a shell on that host."
             if self.argv
             else "Sign it in on that host, in a shell."
         )
-        super().__init__(self.why, hint=hint)
+        super().__init__(self.why, hint=told)
 
     @property
     def command(self) -> str | None:
