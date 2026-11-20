@@ -929,10 +929,11 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   a holder unique per push — `assignee:key:8 hex` — so two pushes never take each other's lease
   for granted) and `push()`: uncommitted work refused with `git status`'s summary, a branch that
   grew on origin since this task last pushed it refused (`git pull --rebase` in its hint), so
-  someone else's commits are never overwritten, and the lease pinned to that same sha — what the
-  task last pushed is kept under `refs/udl/pushed/<branch>` (written after each push, taken away
-  by `remove()`), not the tracking ref, which every worktree of the checkout shares and any fetch
-  moves; a rebase on what the branch is built on when that moved (the repo's base, or the needed task's branch while
+  someone else's commits are never overwritten — what the task last pushed is kept under
+  `refs/udl/pushed/<branch>` (written after each push, taken away by `remove()`), not the tracking
+  ref, which every worktree of the checkout shares and any fetch moves — and the lease pinned to
+  origin's tip as just fetched (so a push after the agent's `git pull --rebase` goes through, and
+  one after the gate window does not); a rebase on what the branch is built on when that moved (the repo's base, or the needed task's branch while
   its pull is open; a conflict is `NotAllowed` with git's hint and nothing is pushed), the repo's
   `gate` run in the lane under `[apps.orch] gate_minutes` (60) — read, not raised on, so the
   agent gets its real exit code and the last 200 lines of its output (each stream's own end: the
@@ -956,8 +957,8 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   bare `origin` and a fake `github`: a failing gate pushes nothing, a long one says its code and
   the end of its output, a gate that prints more than udl keeps still says its summary, a second
   push with no body leaves the description, a branch someone else moved is refused and their
-  commit stays even when a fetch moved the tracking ref first, a stacked task's body says what it
-  merges after) and 6 in `test_pr_status.py` (on a `FakeClock`), plus
+  commit stays even when a fetch moved the tracking ref first, and the pull that follows lets the
+  push through, a stacked task's body says what it merges after) and 6 in `test_pr_status.py` (on a `FakeClock`), plus
   `HostShell.run(check=False)` in `test_host_shell.py` (both shells give a failure back).
   Names, as the card's differ: the operation is `orch_pr_status`, the request field is `key` (not
   `task`), the setting is `gate_minutes` (not `gate_timeout`) and the wait's is `minutes` (not

@@ -288,8 +288,8 @@ async def push(
     overwritten — what it last pushed is kept under `refs/udl/pushed/<branch>`, since the
     tracking ref is shared and any fetch moves it), rebased on what it is built on when that has
     moved, the repo's gate run in its host's lane (one at a time, 27.5), and on a pass `git push
-    --force-with-lease=<branch>:<that same sha>`, then `github_open_pull` and a `pull` link on
-    the task. A gate that fails, a rebase
+    --force-with-lease=<branch>:<origin's tip when we looked>`, then `github_open_pull` and a
+    `pull` link on the task. A gate that fails, a rebase
     that conflicts or a push git refuses is NotAllowed: nothing is pushed, and the agent is told
     why.
 
@@ -317,7 +317,10 @@ async def push(
     if seen and moved and moved != seen and not await _contains(shell, path, moved):
         raise NotAllowed(
             f"{branch!r} has commits this worktree does not",
-            hint="Someone else pushed to it: `git pull --rebase` in the worktree, then push again.",
+            hint=(
+                f"Someone else pushed to it: `git pull --rebase origin {branch}` in the worktree,"
+                " then push again."
+            ),
         )
     onto = await _built_on(task, repo=repo, records=records)
     if not await _contains(shell, path, onto):
@@ -342,7 +345,10 @@ async def push(
             f"the gate failed with exit code {gate.returncode}",
             hint=ran.output or None,
         )
-    await _git(shell, ["-C", path, "push", *_lease(branch, seen), "origin", branch])
+    # (The lease is what origin held when we looked: `moved` once the guard above has passed —
+    # it is `seen` or something this worktree has, and pinning it to `seen` would make every
+    # push after a pull stale, 27.5.)
+    await _git(shell, ["-C", path, "push", *_lease(branch, moved or seen), "origin", branch])
     await _git(shell, ["-C", path, "update-ref", _pushed(branch), "HEAD"], within=GIT_QUIET)
     first = not await _has_pull(task, records=records)
     pull = await _as_udl(

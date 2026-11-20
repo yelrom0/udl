@@ -478,6 +478,18 @@ async def test_a_push_whose_branch_someone_else_moved_is_refused(
     # (Their commit is still on origin: the push did not overwrite it.)
     assert git("rev-parse", "feat/F-1.1-it", cwd=home / "origin.git") == theirs
 
+    # (And the way out works: once the agent has taken their commit in, the push goes through.)
+    git("pull", "--rebase", "origin", "feat/F-1.1-it", cwd=worktree)
+    await pushed(service, key="F-1.1")
+
+    assert git("rev-parse", "feat/F-1.1-it", cwd=home / "origin.git") == git(
+        "rev-parse", "HEAD", cwd=worktree
+    )
+    assert git("log", "--format=%s", "feat/F-1.1-it", cwd=home / "origin.git").splitlines()[:2] == [
+        "fix: the work again",
+        "feat: their work",
+    ]
+
 
 async def test_the_branch_is_rebased_when_the_base_moved(
     service: UDLService, worktree: Path, home: Path, as_agent: None
