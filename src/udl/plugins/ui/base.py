@@ -249,10 +249,15 @@ class UIPluginInfo(_Frozen):
     """The plugin it belongs to (None for a UI-only plugin)."""
     generated: Generated | None = None
     """How it guides the page udl generates (24.7)."""
+    problems: list[str] = Field(default_factory=list[str])
+    """What its guidance names that no operation it reaches has (24.7): said, never fatal."""
 
     @classmethod
-    def of(cls, found: UIBundle, *, plugin: str | None) -> UIPluginInfo:
-        """`found`'s entry in the list, as the shell asks for it."""
+    def of(
+        cls, found: UIBundle, *, plugin: str | None, problems: Iterable[str] = ()
+    ) -> UIPluginInfo:
+        """`found`'s entry in the list, as the shell asks for it, and what its guidance names
+        that no operation it reaches has."""
         base = f"/ui/plugins/{found.name}/"
         return cls(
             name=found.name,
@@ -264,6 +269,7 @@ class UIPluginInfo(_Frozen):
             contributes=found.manifest.contributes,
             plugin=plugin,
             generated=found.manifest.generated,
+            problems=list(problems),
         )
 
 
@@ -286,10 +292,11 @@ class UIPluginList(_Frozen):
 
 
 def guidance_problems(manifest: UIManifest, operations: Iterable[str]) -> list[str]:
-    """What `manifest`'s guidance names that its plugin's `operations` have not: a `hide` that
-    matches none, or a label, a group, an order, an operation view or a result view for an
-    operation it has not. They are problems, not errors: the bundle is still served, and the
-    page ignores what matches nothing."""
+    """What `manifest`'s guidance names that `operations` have not: a `hide` that matches none,
+    or a label, a group, an order, an operation view or a result view for an operation it has
+    not. `operations` is its own plugin's, or (a UI-only bundle's, whose guidance every page
+    takes) every operation udl knows. They are problems, not errors: the bundle is still
+    served, and the page ignores what matches nothing."""
     names = set(operations)
     guidance = manifest.generated
     contributes = manifest.contributes

@@ -87,11 +87,7 @@ function guidedOf(operation: GeneratedOperation) {
 
 /** The hints as a record a plugin reads by name (`read_only`, `destructive`...). */
 function hintsOf(hints: GeneratedHints): Readonly<Record<string, boolean>> {
-	const found: Record<string, boolean> = {};
-	for (const [key, value] of Object.entries(hints)) {
-		found[key] = value;
-	}
-	return found;
+	return { ...hints };
 }
 
 /** One operation: what it is, its fields (when it has any), and what it answered. */
@@ -183,6 +179,7 @@ export function OperationCard({
 						point="operationViews"
 						lookup={operation.name}
 						registry={registry}
+						replace
 						props={{
 							operation: guidedOf(operation),
 							schema: operation.request_schema,
@@ -242,6 +239,7 @@ export function OperationCard({
 						lookup={operation.name}
 						registry={registry}
 						match="prefix"
+						replace
 						props={{ operation: guidedOf(operation), value: answer.value }}
 						fallback={<ResultView schema={operation.response_schema} value={answer.value} />}
 					/>

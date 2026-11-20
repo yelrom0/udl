@@ -11,7 +11,7 @@
 import type { GeneratedNav } from "@udl/ui-sdk";
 import { describe, expect, it } from "vitest";
 import type { UIPluginInfo } from "../stores/plugins";
-import { guidanceOf, guided, matches, navOf, tabsGuided } from "./guidance";
+import { guidanceOf, guided, matches, navOf, tabsGuided, tabsOfGuided } from "./guidance";
 import type { GeneratedOperation, GeneratedPlugin } from "./spec";
 
 const HINTS = {
@@ -119,6 +119,17 @@ describe("the guidance every UI plugin gives", () => {
 
 		expect(found.groupOrder).toEqual(["Mail", "Drafts"]);
 	});
+
+	it("keeps both manifests' members of a group they both name", () => {
+		// (A group is a name, not an owner: the second to say it adds to it, not replaces it.)
+		const found = guidanceOf([
+			ui("gmail", { groups: { Mail: ["gmail_list"] } }, "gmail"),
+			ui("shadcn", { groups: { Mail: ["fake_list"] } }),
+		]);
+
+		expect(found.groups.Mail).toEqual(["gmail_list", "fake_list"]);
+		expect(found.groupOrder).toEqual(["Mail"]);
+	});
 });
 
 describe("a guided page", () => {
@@ -199,6 +210,17 @@ describe("the tabs a page keeps", () => {
 		expect(tabsGuided(plugin(operation("gmail_list")), ["accounts", "operations"])).toEqual([
 			"accounts",
 			"operations",
+		]);
+	});
+
+	it("are all of them when its UI plugin names none (the served shape is an empty list)", () => {
+		// (udl sends `tabs: []` for a guidance that does not name them, so `[]` is "all of them".)
+		expect(tabsOfGuided([ui("gmail", { tabs: [] }, "gmail")], "gmail")).toBeNull();
+		expect(tabsGuided(plugin(operation("gmail_list")), [])).toEqual([
+			"operations",
+			"settings",
+			"accounts",
+			"events",
 		]);
 	});
 

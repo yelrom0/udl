@@ -268,7 +268,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - Bump `SDK_VERSION`'s minor.
 - Tests first: `tests/unit/plugins/test_ui.py` (a `hide` glob matching nothing and an `operationViews` key naming no operation are problems, not errors); Vitest for precedence.
 - Done when: the template plugin (18.10) hides one operation and replaces one result view in six lines of manifest.
-- **Built (deepseek-a, 2026-11-21, PR #54):** `UIManifest.generated` — `nav` (a title and icon of its own,
+- **Built (deepseek-a, 2026-11-21, PR #55):** `UIManifest.generated` — `nav` (a title and icon of its own,
   or `false` for no drawer entry), `tabs`, `hide`, `groups`, `order`, `labels` — validated in
   `udl/plugins/ui/base.py` (`guidance_problems`: a `hide` glob matching nothing and an `operationViews`
   key naming no operation are **problems, not errors**, so a page still opens and says what its guidance
@@ -296,6 +296,24 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   `count_things` and `ping` for it (guidance names operations, and the page it guides is udl's); and
   24.8's `generated-guided.spec.ts` is still the browser proof the phase card describes, with the shadcn
   example's own `resultViews`.
+
+- **Review round (deepseek-a, 2026-11-21, PR #55):** six items, all test-first. (1) A global
+  manifest's guidance reaches every page, so it is now checked against every operation udl knows and its
+  problems are served on the bundle: `UIPluginInfo.problems` (`list[str]`, from `guidance_problems`
+  against `ops.names()` for a UI-only bundle and the plugin's own for the others), `ui_plugins()` takes
+  the operations registry, and the Plugins page says each one under the bundle's "What it adds".
+  (2) `docs/ui-plugins.md` states whose page guidance reaches, that the plugin's own applies after a
+  UI-only one's, and that `sdk: ^1.1` is what a manifest needs for guidance. (3) A group two manifests
+  name now keeps both sets of members (`guidanceOf` appends rather than replaces). (4) The template's
+  `sdk` is `^1.1`. (5) A point that replaces one thing draws only the last contribution: `<PluginSlot
+  replace>`, on `operationViews`, `resultViews`, `settings`, `accountSetup` and `fieldWidgets`. (6)
+  `tabs: []` (what udl serves for a guidance that names none) means all of them, on both sides, and
+  `SettingsProps.save`'s doc says the shell leaves out a file-only field and an unchanged value. Tests:
+  `test_ui.py` (a UI-only bundle's guidance against another plugin's operation is no problem; a name
+  matching nothing is a problem on the bundle), `guidance.test.ts` (two manifests' members of one group;
+  an empty `tabs`), `slot.test.tsx` (the last of two contributions to a replacing point), `PluginList.test.tsx`
+  (the bundle's problems said) and `Settings.test.tsx` (a contributed panel's save sends only what
+  changed, never the file-only field or the secret's mask).
 
 **24.8 Proof** · needs 24.7
 - Build: `web/e2e/generated-guided.spec.ts`: the shadcn example (18.10) gains a `resultViews` contribution for one fake operation; the rest of that plugin's page stays generated. Both themes.

@@ -24,7 +24,7 @@ export function useFieldWidgets(
 		const found: Record<string, (props: FieldWidgetProps) => ReactNode> = {};
 		for (const contribution of registry.point("fieldWidgets").every()) {
 			found[contribution.key] = (props: FieldWidgetProps) => (
-				<PluginSlot point="fieldWidgets" props={props} registry={registry} />
+				<PluginSlot point="fieldWidgets" props={props} registry={registry} replace />
 			);
 		}
 		return found;

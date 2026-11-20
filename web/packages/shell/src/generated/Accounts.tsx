@@ -199,6 +199,7 @@ export function AccountsTab({ plugin, api, registry = shellRegistry }: AccountsT
 					point="accountSetup"
 					lookup={plugin.name}
 					registry={registry}
+					replace
 					props={{ integration: plugin.name, done: () => void read() }}
 				/>
 			) : (

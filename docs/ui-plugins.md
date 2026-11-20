@@ -13,7 +13,7 @@ answers), or stand on its own (`"plugin": null`: a page, a widget, a theme of it
 | Field | What it is |
 |---|---|
 | `name`, `version` | Its own name and version (the version is what the shell shows when it fails). |
-| `sdk` | The `@udl/ui-sdk` range it was built for: `^MAJOR.MINOR`, which the shell's must satisfy. |
+| `sdk` | The `@udl/ui-sdk` range it was built for: `^MAJOR.MINOR`, which the shell's must satisfy. `^1.1` is the first with guidance (`generated`); a manifest that says `^1.0` gets no guidance. |
 | `entry`, `styles` | Files of the bundle: its ES module, and the stylesheets adopted into its root. |
 | `isolation` | `shadow` (its own root, the default) or `none` (the shell's DOM and CSS). |
 | `contributes` | What it adds, by point — a closed set (`POINTS` in `src/udl/plugins/ui/base.py`). |
@@ -69,7 +69,13 @@ All of it optional; what a plugin does not say stays as udl answered it.
 
 Guidance names operations by name; naming one the plugin does not have is not an error — the page says
 so in a notice (`problems` in the shell's own words) and shows the rest. Several manifests may guide the
-same plugin: the last one to say something wins.
+same plugin: the last one to say something wins, and a group two of them name keeps both sets of members.
+
+**Whose page guidance reaches.** A manifest with `"plugin": "gmail"` guides gmail's page only. A UI-only
+manifest (`"plugin": null`) guides **every** generated page: it is checked against every operation udl
+knows, and the plugin's own guidance is applied after it, so the plugin's page is the UI-only one's
+guidance with the plugin's on top. A name no operation matches is listed on the bundle in
+`/ui/plugins.json` (`problems`), where the Plugins page says it: the bundle is still served.
 
 ## Building
 

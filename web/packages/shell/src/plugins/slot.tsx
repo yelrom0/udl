@@ -51,6 +51,11 @@ export type PluginSlotProps<P extends Point> = {
 	/** How the key matches: itself (the default), or a manifest's `*` prefix too (24.7's
 	 * `resultViews`). */
 	readonly match?: "exact" | "prefix";
+	/** Draw only the last matching contribution: the point replaces one thing (24.7's operation
+	 * and result views, its settings and account panels, a field's widget), so two of them for
+	 * one key would draw two. The last one registered wins, as the last manifest to speak does
+	 * for guidance. */
+	readonly replace?: boolean;
 };
 
 /** `contribution`'s mount, from its plugin's bundle (imported once per bundle). */
@@ -229,11 +234,13 @@ export function PluginSlot<P extends Point>({
 	importer,
 	fallback = null,
 	match = "exact",
+	replace = false,
 }: PluginSlotProps<P>) {
 	const { key, of } = keyOf(point, props, lookup);
 	const at = registry.point(point);
 	const found = match === "prefix" ? at.prefixed(key) : at.at(key);
-	const chosen = of === undefined ? found : found.filter((one) => one.plugin.name === of);
+	const scoped = of === undefined ? found : found.filter((one) => one.plugin.name === of);
+	const chosen = replace ? scoped.slice(-1) : scoped;
 
 	if (chosen.length === 0) {
 		return fallback;

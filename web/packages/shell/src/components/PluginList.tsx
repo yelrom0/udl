@@ -136,6 +136,11 @@ export function PluginList() {
 									{adds(manifest.contributes).map((line) => (
 										<div key={line}>{line}</div>
 									))}
+									{(manifest.problems ?? []).map((problem) => (
+										<div key={problem} className="text-warning">
+											{problem}
+										</div>
+									))}
 								</td>
 							</tr>
 						))}

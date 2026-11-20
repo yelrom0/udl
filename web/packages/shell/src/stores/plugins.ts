@@ -27,6 +27,8 @@ export interface UIPluginInfo {
 	readonly plugin: string | null;
 	/** How it guides the page udl generates for its plugin (24.7); absent when it does not. */
 	readonly generated?: Generated | null;
+	/** What its guidance names that no operation it reaches has (24.7): said, never fatal. */
+	readonly problems?: readonly string[];
 }
 
 /** A bundle udl refused: where it was, and what was wrong with it. */

@@ -159,11 +159,19 @@ export function SettingsTab({ plugin, api, registry = shellRegistry }: SettingsT
 				point="settings"
 				lookup={plugin.name}
 				registry={registry}
+				replace
 				props={{
 					plugin: plugin.name,
 					info: answered,
-					save: async (values) => {
-						await api.call("set_plugin_settings", { values }, { name: plugin.name });
+					// (What it changed, as the generated form sends it: a file-only field is not
+					// udl's to save, and a value it did not change (a secret's mask) would shadow
+					// what udl has.)
+					save: async (given) => {
+						await api.call(
+							"set_plugin_settings",
+							{ values: unsent(info, seed.current, given) },
+							{ name: plugin.name },
+						);
 					},
 				}}
 			/>

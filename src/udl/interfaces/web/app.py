@@ -110,7 +110,8 @@ def add_web_routes(app: FastAPI, settings: Settings, dist: Path | None = None) -
 
     async def plugins(request: Request) -> Response:
         # (The shell asks for this once a load: what it can put in its pages, and what it cannot.)
-        found = ui_plugins(settings, request.app.state.service.registry)
+        service = request.app.state.service
+        found = ui_plugins(settings, service.registry, service.operations)
         return JSONResponse(found.model_dump(mode="json", by_alias=True), headers=HEADERS)
 
     async def generated_json(request: Request) -> Response:

@@ -18,6 +18,7 @@ from typing import Any, Final
 import pytest
 
 # Local Imports
+from support.actions import with_chores
 from support.api import client_for
 from support.engine import settings
 from support.interfaces import Harness
@@ -332,6 +333,51 @@ def test_a_ui_only_plugin_is_named_after_its_manifest(tmp_path: Path) -> None:
     found = ui_plugins(settings(tmp_path, web=WebSettings(ui_plugin_dirs=[])), plugins)
 
     assert [plugin.name for plugin in found.plugins] == ["mailbox"]
+
+
+async def test_a_ui_only_bundle_s_guidance_is_checked_against_every_operation(
+    tmp_path: Path,
+) -> None:
+    """Its guidance reaches every page, so it is checked against every operation udl knows: a
+    hide that names another plugin's operation is no problem, one that names nothing is said on
+    the bundle (which is still served)."""
+    harness = with_chores(
+        Harness(
+            tmp_path,
+            web=WebSettings(
+                ui_plugin_dirs=[
+                    bundle(tmp_path, name="mailbox", generated={"hide": ["chores_nope"]}).parent
+                ]
+            ),
+        )
+    )
+
+    async with client_for(harness) as client:
+        answer = await client.get("/ui/plugins.json")
+
+    [plugin] = answer.json()["plugins"]
+    assert plugin["problems"] == ['its guidance hides "chores_nope", and no operation matches']
+
+
+async def test_a_ui_only_bundle_that_hides_another_plugin_s_operation_is_no_problem(
+    tmp_path: Path,
+) -> None:
+    harness = with_chores(
+        Harness(
+            tmp_path,
+            web=WebSettings(
+                ui_plugin_dirs=[
+                    bundle(tmp_path, name="mailbox", generated={"hide": ["chores_do"]}).parent
+                ]
+            ),
+        )
+    )
+
+    async with client_for(harness) as client:
+        answer = await client.get("/ui/plugins.json")
+
+    [plugin] = answer.json()["plugins"]
+    assert plugin["problems"] == []
 
 
 # ---------------------------------------------------------------------------------------------

@@ -14,24 +14,44 @@ from pathlib import Path
 
 # Local Imports
 from udl.config import Settings
+from udl.core.operations import OperationRegistry
 from udl.errors import PluginError
 from udl.plugins.registry import UI, PluginRegistry
-from udl.plugins.ui.base import UIBundle, UIBundleProblem, UIPluginInfo, UIPluginList
+from udl.plugins.ui.base import (
+    UIBundle,
+    UIBundleProblem,
+    UIPluginInfo,
+    UIPluginList,
+    guidance_problems,
+)
 
 log = logging.getLogger(__name__)
 
 
-def ui_plugins(settings: Settings, plugins: PluginRegistry) -> UIPluginList:
+def ui_plugins(
+    settings: Settings, plugins: PluginRegistry, ops: OperationRegistry | None = None
+) -> UIPluginList:
     """Every UI plugin the shell can load: each plugin's `ui` (of any kind, the `udl.ui` kind's
     included), then each folder of `[web] ui_plugin_dirs` with a manifest.json. A bundle that
-    fails is one of the problems (and is not served)."""
+    fails is one of the problems (and is not served), and what a bundle's guidance names that
+    no operation it reaches has is said on it (`ops`: the operations, when they are known)."""
     found, problems = _bundles(settings, plugins)
     return UIPluginList(
         plugins=[
-            UIPluginInfo.of(bundle, plugin=owner) for _, (bundle, owner) in sorted(found.items())
+            UIPluginInfo.of(bundle, plugin=owner, problems=_guidance_of(bundle, owner, ops))
+            for _, (bundle, owner) in sorted(found.items())
         ],
         problems=problems,
     )
+
+
+def _guidance_of(bundle: UIBundle, owner: str | None, ops: OperationRegistry | None) -> list[str]:
+    """What `bundle`'s guidance names that no operation it reaches has: its plugin's own, or
+    (a UI-only bundle's, whose guidance every page takes) every operation udl knows."""
+    if ops is None:
+        return []
+    names = ops.names() if owner is None else [op.name for op in ops.in_namespace(owner)]
+    return guidance_problems(bundle.manifest, names)
 
 
 def ui_bundles(settings: Settings, plugins: PluginRegistry) -> dict[str, UIBundle]:

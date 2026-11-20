@@ -123,7 +123,10 @@ export type SettingsProps = {
 	plugin: string;
 	/** What `get_plugin_settings` answers: the values, where each comes from, and their schema. */
 	info: JsonObject;
-	/** Saves the values (a secret's goes to the secret store, never to a database). */
+	/** Saves these values (a secret's goes to the secret store, never to a database). The shell
+	 * leaves out what must not be sent, as its own form does: a field `info.file_only` names
+	 * (udl refuses it, and it is the config file's), and a value it did not change (a secret it
+	 * gave as a mask). */
 	save(values: JsonObject): Promise<void>;
 };
 

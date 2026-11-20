@@ -143,6 +143,29 @@ describe("the plugins page", () => {
 		expect(screen.getByText(/the import failed/)).toBeDefined();
 	});
 
+	it("says what a bundle's guidance names that no operation has", () => {
+		setGenerated({ plugins: [] }, null);
+		setPlugins(
+			[
+				{
+					name: "shadcn",
+					version: "0.1.0",
+					base_url: "/ui/plugins/shadcn/",
+					entry_url: "/ui/plugins/shadcn/index.js",
+					styles: [],
+					isolation: "shadow",
+					contributes: {},
+					plugin: null,
+					problems: ['its guidance hides "shadcn_nope", and no operation matches'],
+				},
+			],
+			[],
+		);
+		render(<PluginList />);
+
+		expect(screen.getByText(/hides "shadcn_nope"/)).toBeDefined();
+	});
+
 	it("says no plugin brings a web UI", () => {
 		setGenerated({ plugins: [] }, null);
 		render(<PluginList />);

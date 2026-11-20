@@ -77,6 +77,14 @@ function recording() {
 
 const ROUTE: RouteProps = { path: "inbox", params: {}, search: {} };
 
+const GUIDED = {
+	name: "gmail_list",
+	title: "List mail",
+	summary: "",
+	view: "list" as const,
+	hints: {},
+};
+
 beforeEach(() => {
 	forgetPlugins();
 	forgetListeners();
@@ -86,6 +94,40 @@ beforeEach(() => {
 });
 
 describe("a plugin slot", () => {
+	it("draws the last contribution to a point that replaces a thing, not both", async () => {
+		// (24.7's operation and result views, settings, account setup and field widgets replace
+		// what udl generates: two of them for one key would draw two, so the last one wins.)
+		const first = recording();
+		const second = recording();
+		const identity = { name: "gmail", version: "0.1.0", baseUrl: "/ui/plugins/gmail/" };
+		const registry = new Registry();
+		registry.point("resultViews").add("gmail_list", {
+			plugin: identity,
+			key: "gmail_list",
+			entry: "gmail_list",
+			mount: first.mount,
+		});
+		registry.point("resultViews").add("gmail_list", {
+			plugin: identity,
+			key: "gmail_list",
+			entry: "gmail_list",
+			mount: second.mount,
+		});
+
+		render(
+			<PluginSlot
+				point="resultViews"
+				props={{ operation: GUIDED, value: { things: 3 } }}
+				registry={registry}
+				lookup="gmail_list"
+				replace
+			/>,
+		);
+
+		await waitFor(() => expect(second.mount).toHaveBeenCalledTimes(1));
+		expect(first.mount).not.toHaveBeenCalled();
+	});
+
 	it("draws the contribution in a shadow root of its own", async () => {
 		const drawn = recording();
 		plugins.setState({ manifests: [GMAIL], problems: [], errors: [] });

@@ -52,7 +52,11 @@ export function guidanceOf(manifests: readonly UIPluginInfo[]): Guidance {
 			continue;
 		}
 		hide.push(...(given.hide ?? []));
-		Object.assign(groups, given.groups ?? {});
+		// (A group is a name, not an owner: a second manifest naming it adds its members.)
+		for (const [group, names] of Object.entries(given.groups ?? {})) {
+			const found = groups[group];
+			groups[group] = found === undefined ? [...names] : [...found, ...names];
+		}
 		order.push(...(given.order ?? []));
 		Object.assign(labels, given.labels ?? {});
 	}
@@ -107,10 +111,11 @@ export function guided(plugin: GeneratedPlugin, guidance: Guidance): GeneratedPl
 }
 
 /** The tabs `plugin`'s page keeps: the ones its own UI plugin names, in its order, each only
- * when the page has something for it (`null` for all of them, as udl lists them). */
+ * when the page has something for it (`null`, or an empty list, for all of them as udl lists
+ * them: udl sends `[]` for a guidance that does not name them). */
 export function tabsGuided(plugin: GeneratedPlugin, tabs: readonly Tab[] | null): readonly Tab[] {
 	const has = tabsOf(plugin);
-	if (tabs === null) {
+	if (tabs === null || tabs.length === 0) {
 		return has;
 	}
 	return tabs.filter((tab) => has.includes(tab));
@@ -127,11 +132,13 @@ export function navOf(
 	return nav === undefined || nav === null ? null : nav;
 }
 
-/** The tabs `name`'s own UI plugin asks to keep (`null` for all of them). */
+/** The tabs `name`'s own UI plugin asks to keep (`null` for all of them, and for an empty list:
+ * udl sends `[]` for a guidance that does not name them). */
 export function tabsOfGuided(
 	manifests: readonly UIPluginInfo[],
 	name: string,
 ): readonly Tab[] | null {
 	const own = manifests.find((manifest) => (manifest.plugin ?? manifest.name) === name);
-	return own?.generated?.tabs ?? null;
+	const tabs = own?.generated?.tabs;
+	return tabs === undefined || tabs === null || tabs.length === 0 ? null : tabs;
 }
