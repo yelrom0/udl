@@ -19,11 +19,14 @@ test("a plugin's nav item is in the drawer, and its page draws in a shadow root"
 	await expect(page).toHaveURL(/\/ui\/p\/hello\/hello$/);
 	const slot = page.locator(".udl-plugin-slot");
 	await expect(slot).toHaveCount(1);
-	// (Its own root: the shell's DOM does not have its text, the slot's shadow root does.)
-	await expect(page.getByText("Hello from the plugin, on hello")).toHaveCount(0);
+	// (Its own root: the slot's shadow root has the plugin's text, and the page's own DOM —
+	// which `textContent` leaves shadow roots out of, while a locator pierces them — has not.)
 	await expect
 		.poll(async () => slot.evaluate((host) => host.shadowRoot?.textContent ?? ""))
 		.toContain("Hello from the plugin, on hello");
+	expect(await page.evaluate(() => document.body.textContent ?? "")).not.toContain(
+		"Hello from the plugin",
+	);
 });
 
 test("a plugin's stylesheet is adopted, its @property hoisted, and its theme the page's", async ({
