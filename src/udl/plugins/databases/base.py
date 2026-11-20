@@ -13,6 +13,7 @@ behaviour every plugin must have.
 
 # System Imports
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from types import TracebackType
 from typing import ClassVar, Self
@@ -137,6 +138,19 @@ class DatabasePlugin(ABC):
         caller stamps the times, from its clock: DBManager). Returns the stored record. Raises
         DuplicateKey when another record of its kind has the same values in one of its kind's
         unique keys (none of them None)."""
+
+    @abstractmethod
+    async def upsert_records[R: Record](self, records: Sequence[R]) -> list[R]:
+        """Store records, matched by id, as one write: all of them, or none.
+
+        What a queue needs (27.3a): its positions are written together, and half of one is a
+        queue with two tasks in one place. Returns the stored records, in the order given. A
+        database that cannot make a batch atomic says so with `transactions`."""
+
+    @property
+    def transactions(self) -> bool:
+        """Whether a batch is all or nothing here (MongoDB on a standalone server is not)."""
+        return True
 
     @abstractmethod
     async def delete_record(self, kind: type[Record], record_id: UUID) -> bool:

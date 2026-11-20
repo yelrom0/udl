@@ -7,7 +7,7 @@ A database that lives in memory: for tests, and for runs that should remember no
 """
 
 # System Imports
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta
 from uuid import UUID
 
@@ -170,6 +170,24 @@ class MemoryDatabase(DatabasePlugin):
         _check_unique(record, records.values())
         records[record.id] = _copy(kind, record)
         return _copy(kind, record)
+
+    async def upsert_records[R: Record](self, records: Sequence[R]) -> list[R]:
+        # (Every record is checked against what is stored and against the ones before it in the
+        # batch first: nothing is written until the whole batch would be.)
+        staged: dict[UUID, Record] = {}
+        kept: list[R] = []
+        for record in records:
+            kind = type(record)
+            existing = self._of(kind)
+            if (stored := existing.get(record.id)) is not None:
+                record = record.model_copy(update={"created_at": stored.created_at})
+            others = [one for one in (*existing.values(), *staged.values()) if type(one) is kind]
+            _check_unique(record, others)
+            staged[record.id] = record
+            kept.append(record)
+        for record in staged.values():
+            self._of(type(record))[record.id] = _copy(type(record), record)
+        return [record.model_copy() for record in kept]
 
     async def delete_record(self, kind: type[Record], record_id: UUID) -> bool:
         return self._of(kind).pop(record_id, None) is not None

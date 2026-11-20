@@ -124,7 +124,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 27.1 `Agent` records: runner, model, host, role, manager (the hierarchy), permissions
   - [~] 27.2 Agent tokens: an agent calls udl as itself, and only the operations its role allows
   - [x] 27.3 Queues: assign, reorder, unassign
-  - [ ] 27.3a A queue change is one write: `upsert_records` on the database kind, all or nothing, and a per-assignee lock in `orch.queue`
+  - [~] 27.3a A queue change is one write: `upsert_records` on the database kind, all or nothing, and a per-assignee lock in `orch.queue`
   - [~] 27.4 Suggested next tasks, ranked, each with its reasons
   - [ ] 27.5 Worktrees and the gate lane: `orch_push` runs the repo's gates, pushes, opens or updates the PR
   - [ ] 27.6 PR readiness: CI, the review bot's verdict, mergeability, stacks, holds

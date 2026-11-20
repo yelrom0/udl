@@ -44,6 +44,50 @@ async def test_an_unknown_record_is_none(db: DatabasePlugin) -> None:
     assert await db.get_record(Note, uuid4()) is None
 
 
+async def test_a_batch_is_stored_and_given_back(db: DatabasePlugin) -> None:
+    first, second = note(slug="a"), note(slug="b")
+
+    stored = await db.upsert_records([first, second])
+
+    assert [found.slug for found in stored] == ["a", "b"]
+    assert await db.get_record(Note, first.id) == first
+    assert await db.get_record(Note, second.id) == second
+
+
+async def test_an_empty_batch_stores_nothing(db: DatabasePlugin) -> None:
+    assert await db.upsert_records([]) == []
+
+
+async def test_a_batch_with_one_bad_record_writes_none(db: DatabasePlugin) -> None:
+    # (A queue's positions are written together: half of one is a queue with two tasks in one
+    # place, so a batch is all or nothing.)
+    await stored(db, note(slug="taken"))
+    first, bad = note(slug="a"), note(slug="taken")
+
+    with pytest.raises(DuplicateKey):
+        await db.upsert_records([first, bad])
+
+    if db.transactions:
+        assert await db.get_record(Note, first.id) is None
+        assert [found.slug for found in await db.list_records(Note, RecordQuery())] == ["taken"]
+    else:
+        # (A standalone MongoDB has none: it says so with `transactions`, and writes in order,
+        # so the record before the bad one stays.)
+        assert await db.get_record(Note, first.id) is not None
+
+
+async def test_a_batch_keeps_a_stored_records_created_at(db: DatabasePlugin) -> None:
+    record = note(slug="a")
+    (kept,) = await stored(db, record.model_copy(update={"created_at": T0, "updated_at": T0}))
+
+    (updated,) = await db.upsert_records(
+        [kept.model_copy(update={"count": 2, "created_at": T0 + MINUTE, "updated_at": T0 + MINUTE})]
+    )
+
+    assert updated.created_at == T0
+    assert updated.count == 2
+
+
 async def test_a_stored_record_round_trips(db: DatabasePlugin) -> None:
     record = note(
         status=NoteStatus.DONE,

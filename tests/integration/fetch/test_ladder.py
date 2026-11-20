@@ -114,7 +114,12 @@ async def test_a_page_that_needs_javascript_is_read_in_the_browser_after_a_try_a
     assert rungs(outcome) == ["static", "static", "browser"]
     assert outcome.via is Via.BROWSER
     assert "# Plain one" in markdown(outcome)
-    assert [visit.status for visit in antibot.visits("/plain-500/one")] == [500, 500, 500, 200]
+    # (Two static tries, then the browser, which gets it: Chromium itself may ask once more
+    # before it renders, so only the static tries and the last answer are fixed.)
+    statuses = [visit.status for visit in antibot.visits("/plain-500/one")]
+    assert statuses[:2] == [500, 500]
+    assert set(statuses[2:-1]) <= {500}
+    assert statuses[-1] == 200
 
 
 async def test_the_next_fetch_on_that_host_starts_in_the_browser(

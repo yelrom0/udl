@@ -775,3 +775,28 @@ async def test_a_lease_that_cannot_be_claimed_is_a_database_error(
     async with make_manager(registry, conn("local", url="broken://write")) as db:
         with pytest.raises(DatabaseError, match="local is unreachable"):
             await db.claim_lease("automations", "udl-1", timedelta(minutes=1))
+
+
+async def test_a_batch_of_records_is_stamped_and_stored_together(
+    registry: PluginRegistry,
+) -> None:
+    async with make_manager(registry, conn("local", primary=True)) as db:
+        first, second = note("a"), note("b")
+
+        stored = await db.upsert_records([first, second])
+
+        assert [found.slug for found in stored] == ["a", "b"]
+        assert stored[0].created_at == stored[0].updated_at  # (both stamped from the clock)
+        assert await db.get_record(Note, first.id) == stored[0]
+        assert await db.get_record(Note, second.id) == stored[1]
+
+
+async def test_a_batch_of_records_is_never_empty_and_never_mixed(
+    registry: PluginRegistry,
+) -> None:
+    async with make_manager(registry, conn("local", primary=True)) as db:
+        assert await db.upsert_records([]) == []
+
+        # (A batch goes to one connection, so every record in it is of one scope.)
+        with pytest.raises(DatabaseError, match="scope"):
+            await db.upsert_records([note("a"), Scratch(note="b")])

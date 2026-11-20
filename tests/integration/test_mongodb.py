@@ -23,6 +23,7 @@ from pymongo.asynchronous.collection import AsyncCollection
 # Local Imports
 from udl.config import DBConnectionConfig
 from udl.db.models import DownloadRecord, Site, SiteQuery
+from udl.db.records import Lease
 from udl.errors import DatabaseError
 from udl.plugins.databases.mongodb import SCHEMA_VERSION, MongoDBPlugin
 
@@ -171,3 +172,50 @@ async def test_the_url_s_server_selection_timeout_beats_udl_s(
     await db.close()
 
     assert time.monotonic() - began < 10
+
+
+async def test_a_batch_on_a_server_that_said_it_had_transactions_falls_back(
+    mongodb_url: str, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (connect() could not ask the deployment, so the batch is tried in a transaction: when the
+    # server turns out to have none, the writes go in order, once, and it says so.)
+    async def cannot_ask(self: MongoDBPlugin) -> None:
+        """`hello` failed at connect: the batch finds out about transactions itself."""
+
+    monkeypatch.setattr(MongoDBPlugin, "_ask_transactions", cannot_ask)
+    plugin = MongoDBPlugin(connection(mongodb_url))
+    async with plugin:
+        if not plugin.transactions:  # (a replica set: nothing to fall back from)
+            pytest.skip("this machine's server has transactions")
+        caplog.clear()
+        with caplog.at_level("WARNING", logger="udl.plugins.databases.mongodb"):
+            leases = [
+                Lease.example().model_copy(update={"name": f"fallback-{number}"})
+                for number in (1, 2)
+            ]
+            stored = await plugin.upsert_records(leases)
+
+    assert [one.name for one in stored] == ["fallback-1", "fallback-2"]
+    assert plugin.transactions is False
+    warnings = [one for one in caplog.records if "standalone server" in one.getMessage()]
+    assert len(warnings) == 1
+
+
+async def test_a_standalone_server_says_it_has_no_transactions(
+    mongodb_url: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    # (A batch of writes is all or nothing only on a replica set or a sharded cluster: a
+    # standalone server writes them in order, and says so once, when it connects.)
+    plugin = MongoDBPlugin(connection(mongodb_url))
+    with caplog.at_level("WARNING", logger="udl.plugins.databases.mongodb"):
+        async with plugin:
+            standalone = not plugin.transactions
+
+    warnings = [one for one in caplog.records if "standalone server" in one.getMessage()]
+    if standalone:
+        assert plugin.transactions is False
+        assert len(warnings) == 1
+        assert "replica set" in warnings[0].getMessage()
+    else:  # (This machine's server is a replica set: the other branch is the one to read.)
+        assert plugin.transactions is True
+        assert warnings == []
