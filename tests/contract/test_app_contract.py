@@ -16,6 +16,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import Any
 
 # Package Imports
 import pytest
@@ -35,11 +36,30 @@ from udl.plugins.apps.orch.settings import OrchSettings
 from udl.plugins.registry import APPS, PluginRegistry
 
 
+class _FakeBus:
+    """A bus that holds no events (an app's service only listens: nothing is dispatched here).
+
+    Its subscription ends at once, so a service that waits for events ends with it — which is
+    what these tests want of a service that has nothing to do yet."""
+
+    def notices(self, pattern: str, *, runs: bool) -> Any:
+        """A listener that ends at once (no event ever comes)."""
+
+        async def none() -> Any:
+            return
+            yield  # pragma: no cover  (an async generator that never yields)
+
+        return none()
+
+    async def publish(self, event: object) -> None:
+        """Nothing is dispatched here."""
+
+
 class _Events(AppEvents):
     """An app's events, keeping what it publishes (nothing here dispatches them)."""
 
     def __init__(self, name: str) -> None:
-        super().__init__(bus=None, name=name)  # pyright: ignore[reportArgumentType]  (a bus is only needed to wait)
+        super().__init__(bus=_FakeBus(), name=name)  # pyright: ignore[reportArgumentType]
         self.published: list[tuple[str, BaseModel]] = []
 
     async def emit(

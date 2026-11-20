@@ -27,10 +27,14 @@ sit over it, so nothing here knows about a database.
 """
 
 # System Imports
+<<<<<<< HEAD
 import hashlib
+=======
+import logging
+>>>>>>> a605daf (feat(orch): links (26.4))
 from datetime import datetime
 from decimal import Decimal
-from typing import Self
+from typing import Final, Self
 from uuid import UUID
 
 # Package Imports
@@ -66,15 +70,19 @@ from udl.plugins.apps.orch.models import (
     GitHubSlug,
     HostName,
     Key,
+    LinkKind,
     MergePolicy,
     NoteKind,
     OwnerKind,
     Principal,
     Promotion,
+    PullReader,
+    PullState,
     Spec,
     State,
     TaskKind,
     Title,
+    URLText,
 )
 from udl.plugins.runners.base import SessionRef, TextDelta
 
@@ -278,6 +286,49 @@ class Note(Record):
         )
 
 
+class Link(Record):
+    """A link: a typed pointer from a feature, task, question or action to something else.
+
+    A link is unique on its project, what it hangs on and its URL: two projects that each have
+    a task `1.1` each link the same PR as their own, and a feature and a task with the same key
+    never share one. It is looked up by its URL (what finds it) and by its owner (what hangs on
+    it)."""
+
+    kind = "orch_link"
+    indexed = ("project", "owner_kind", "owner", "url")
+    unique = (("project", "owner_kind", "owner", "url"),)
+
+    project: Name
+    """The project whose work it is a link to (the owner's project)."""
+    owner_kind: OwnerKind
+    """What it hangs on."""
+    owner: str
+    """What it hangs on, by key (the task's key, `Q-7`)."""
+    link_kind: LinkKind
+    """What it points at (not `kind`: a record's `kind` is the name of its kind)."""
+    url: URLText
+    """The canonical form of the URL (a `udl:` one for an internal kind)."""
+    title: str = ""
+    """What it is called, when it has been seen."""
+    state: PullState = Field(default_factory=PullState)
+    """What is known about it (for a pull: its state, head sha, checks and review)."""
+    added_by: str = ""
+    """Who added it."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            project="udl",
+            owner_kind=OwnerKind.TASK,
+            owner="26.2",
+            link_kind="pull",
+            url="https://github.com/yelrom0/udl/pull/33",
+            title="Projects and repos",
+            state=PullState(state="merged", checks="pass"),
+            added_by="ernie-c",
+        )
+
+
 class Counter(Record):
     """One number a counter handed out: the compare-and-set claim of a key (`F-`, `Q-`, `A-`).
 
@@ -416,6 +467,7 @@ class SessionEvent(Record):
         )
 
 
+<<<<<<< HEAD
 def hash_token(token: str) -> str:
     """The SHA-256 of a token (hex): what an AgentToken keeps, so the token itself is never
     stored outside udl's secret store."""
@@ -447,6 +499,46 @@ class AgentToken(Record):
             agent="deepseek-a",
             hash=hashlib.sha256(b"udl_agent_example").hexdigest(),
             last_used_at=None,
+=======
+SCANNED: Final = "scan"
+"""What a link's `added_by` says when a save's scan added it (not a person or an agent)."""
+
+log = logging.getLogger(__name__)
+"""Where a scan that could not read a text says so (it never breaks the save)."""
+
+
+async def _scan(
+    records: AppRecords, project: str, owner_kind: OwnerKind, owner: str, text: str
+) -> None:
+    """Store the links a text makes (a GitHub URL, a task key in backticks), as links of
+    `project`/`owner_kind`/`owner`, and drop the ones the text no longer has.
+
+    A scan is a save's helper: it never breaks the save (a text udl cannot scan is saved, and the
+    scan is reported in the log), so a task's spec is never refused for a link's sake."""
+    from udl.plugins.apps.orch.links import links_in
+
+    try:
+        wanted = {link.url: link for link in links_in(text, project=project)}
+    except Exception as error:  # noqa: BLE001 - (a scan never breaks the save)
+        log.warning("orch could not scan %s %s: %s", owner_kind, owner, error)
+        return
+    links = LinkRecords(records)
+    for link in await links.for_owner(project, owner_kind, owner):
+        if link.added_by == SCANNED and link.url not in wanted:
+            await links.delete(link)
+    for url, link in wanted.items():
+        if await links.by_url(url) and any(
+            found.url == url for found in await links.for_owner(project, owner_kind, owner)
+        ):
+            continue
+        await links.add(
+            project=project,
+            owner_kind=owner_kind,
+            owner=owner,
+            kind=link.link_kind,
+            url=url,
+            added_by=SCANNED,
+>>>>>>> a605daf (feat(orch): links (26.4))
         )
 
 
@@ -493,8 +585,10 @@ class ProjectRecords:
             for record in await self._records.list(kind, RecordQuery(where={"project": name})):
                 if isinstance(record, Task):
                     await _delete_notes(self._records, "task", record.id)
+                    await _delete_links(self._records, record.project, "task", record.key)
                 elif isinstance(record, Feature):
                     await _delete_notes(self._records, "feature", record.id)
+                    await _delete_links(self._records, record.project, "feature", record.key)
                 await self._records.delete(kind, record.id)
         return await self._records.delete(Project, project.id)
 
@@ -536,6 +630,114 @@ class RepoRecords:
         return repo is not None and await self._records.delete(Repo, repo.id)
 
 
+class LinkRecords:
+    """Where orch keeps its links: looked up by owner (what hangs on them) and by URL (what
+    finds them), both ways.
+
+    An owner is a project, what it hangs on (`owner_kind`) and its key together: two projects
+    that each have a task `1.1` each link a PR of their own, and `for_owner`/`delete_for` touch
+    only the one project's and the one kind's links."""
+
+    def __init__(self, records: AppRecords) -> None:
+        self._records = records
+
+    @property
+    def records(self) -> AppRecords:
+        """The records the links are kept in."""
+        return self._records
+
+    async def add(
+        self,
+        *,
+        project: str,
+        owner_kind: OwnerKind,
+        owner: str,
+        kind: LinkKind,
+        url: str,
+        title: str = "",
+        state: PullState | None = None,
+        added_by: str = "",
+    ) -> Link:
+        """Store a link to `url` on `project`/`owner_kind`/`owner` (canonicalised first), or
+        give the stored one when it is there already (one URL, one link). Raises ValueError when
+        the URL is not one the kind can point at."""
+        from udl.plugins.apps.orch.links import canonical, is_github
+
+        clean = canonical(url)
+        if not clean.strip():
+            raise ValueError("A link needs a URL")
+        if kind in ("pull", "issue", "commit", "branch", "ci_run") and not is_github(clean):
+            raise ValueError(f"A {kind} link needs a GitHub URL (not {url!r})")
+        if kind == "url" and not clean.startswith(("http://", "https://", "udl:")):
+            raise ValueError(f"A url link needs a URL (not {url!r})")
+        for found in await self.by_url(clean):
+            if (found.project, found.owner_kind, found.owner) == (project, owner_kind, owner):
+                return found
+        return await self._records.save(
+            Link(
+                project=project,
+                owner_kind=owner_kind,
+                owner=owner,
+                link_kind=kind,
+                url=clean,
+                title=title,
+                state=state or PullState(),
+                added_by=added_by,
+            )
+        )
+
+    async def get(self, link_id: UUID) -> Link | None:
+        """The link with that id, or None when there is none."""
+        return await self._records.get(Link, link_id)
+
+    async def by_url(self, url: str) -> list[Link]:
+        """Every link to `url` (canonicalised), by owner."""
+        from udl.plugins.apps.orch.links import canonical
+
+        found = await self._records.list(Link, RecordQuery(where={"url": canonical(url)}))
+        return sorted(found, key=lambda link: (link.project, link.owner_kind, link.owner))
+
+    async def for_url(self, url: str) -> list[Link]:
+        """Every link to `url`, however it was written (canonicalised first)."""
+        return await self.by_url(url)
+
+    async def for_owner(self, project: str, owner_kind: OwnerKind, owner: str) -> list[Link]:
+        """Every link hanging on `project`/`owner_kind`/`owner`, by URL."""
+        found = await self._records.list(
+            Link,
+            RecordQuery(where={"project": project, "owner_kind": owner_kind.value, "owner": owner}),
+        )
+        return sorted(found, key=lambda link: link.url)
+
+    async def save(self, link: Link) -> Link:
+        """Store `link` as it is (what a refresh does)."""
+        return await self._records.save(link)
+
+    async def delete(self, link: Link) -> bool:
+        """Delete `link`. Returns whether it was there."""
+        return await self._records.delete(Link, link.id)
+
+    async def delete_for(self, project: str, owner_kind: OwnerKind, owner: str) -> int:
+        """Delete every link hanging on `project`/`owner_kind`/`owner` (what a deleted task or
+        feature does). Returns how many went."""
+        gone = await self.for_owner(project, owner_kind, owner)
+        for link in gone:
+            await self.delete(link)
+        return len(gone)
+
+    async def refresh(self, link: Link, *, github: PullReader) -> Link:
+        """`link` with its state read again through `github_get_pull`, stored and given back.
+
+        The link is the service's own: it is stored as it is, so what a pull is now is what a
+        link says from now on. A link that is not a pull is given back unchanged."""
+        from udl.plugins.apps.orch.links import refresh_pull
+
+        refreshed = await refresh_pull(link, github=github)
+        if refreshed == link:
+            return link
+        return await self.save(refreshed)
+
+
 class FeatureRecords:
     """Where orch keeps its features: looked up by project and key."""
 
@@ -551,9 +753,12 @@ class FeatureRecords:
     async def save_feature(self, feature: Feature) -> Feature:
         """Store `feature` (by its id, so storing one again replaces it). Raises DoesNotExist
         when its project is not there, and DuplicateKey when the project already has a feature
-        of that key."""
+        of that key. Its spec is scanned as it is saved: a GitHub URL or a task key in backticks
+        becomes a link of its own (26.4)."""
         await self._projects.require(feature.project)
-        return await self._records.save(feature)
+        saved = await self._records.save(feature)
+        await _scan(self._records, feature.project, OwnerKind.FEATURE, feature.key, feature.spec)
+        return saved
 
     async def feature(self, project: str, key: str) -> Feature | None:
         """The feature called `key` of `project`, or None when there is none."""
@@ -601,8 +806,10 @@ class FeatureRecords:
             return False
         for task in await TaskRecords(self._records, self._projects).tasks(project, feature=key):
             await _delete_notes(self._records, "task", task.id)
+            await _delete_links(self._records, task.project, "task", task.key)
             await self._records.delete(Task, task.id)
         await _delete_notes(self._records, "feature", feature.id)
+        await _delete_links(self._records, feature.project, "feature", feature.key)
         return await self._records.delete(Feature, feature.id)
 
 
@@ -641,7 +848,9 @@ class TaskRecords:
                 f"a new task cannot start in {task.state!r}",
                 hint="A task is saved open, and then moved.",
             )
-        return await self._store(task)
+        saved = await self._store(task)
+        await _scan(self._records, task.project, OwnerKind.TASK, task.key, task.spec)
+        return saved
 
     async def move(self, task: Task, to: str, *, by: Principal, note: str = "") -> Task:
         """`task` moved to `to` by `by` and stored: the one path that sets a task's state (the
@@ -745,6 +954,7 @@ class TaskRecords:
         if task is None:
             return False
         await _delete_notes(self._records, "task", task.id)
+        await _delete_links(self._records, task.project, "task", task.key)
         return await self._records.delete(Task, task.id)
 
 
@@ -1030,3 +1240,9 @@ async def _delete_notes(records: AppRecords, owner_kind: str, owner: UUID) -> No
         Note, RecordQuery(where={"owner_kind": owner_kind, "owner": owner})
     ):
         await records.delete(Note, note.id)
+
+
+async def _delete_links(records: AppRecords, project: str, owner_kind: str, owner: str) -> None:
+    """Delete every link hanging on the record `owner` of `owner_kind` in `project` (what
+    deleting it takes with it, so a link never answers for a task that is gone)."""
+    await LinkRecords(records).delete_for(project, OwnerKind(owner_kind), owner)
