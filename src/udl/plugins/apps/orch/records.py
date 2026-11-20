@@ -27,11 +27,8 @@ sit over it, so nothing here knows about a database.
 """
 
 # System Imports
-<<<<<<< HEAD
 import hashlib
-=======
 import logging
->>>>>>> a605daf (feat(orch): links (26.4))
 from datetime import datetime
 from decimal import Decimal
 from typing import Final, Self
@@ -468,7 +465,6 @@ class SessionEvent(Record):
         )
 
 
-<<<<<<< HEAD
 def hash_token(token: str) -> str:
     """The SHA-256 of a token (hex): what an AgentToken keeps, so the token itself is never
     stored outside udl's secret store."""
@@ -500,7 +496,9 @@ class AgentToken(Record):
             agent="deepseek-a",
             hash=hashlib.sha256(b"udl_agent_example").hexdigest(),
             last_used_at=None,
-=======
+        )
+
+
 SCANNED: Final = "scan"
 """What a link's `added_by` says when a save's scan added it (not a person or an agent)."""
 
@@ -539,7 +537,6 @@ async def _scan(
             kind=link.link_kind,
             url=url,
             added_by=SCANNED,
->>>>>>> a605daf (feat(orch): links (26.4))
         )
 
 
