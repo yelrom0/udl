@@ -1295,6 +1295,19 @@
             "title": "Name",
             "type": "string"
           },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When it started (None: GitHub did not say). The earliest of a head's checks is when its\npush was: what a review bot's comment without a sha is compared against (27.6).",
+            "title": "Started At"
+          },
           "status": {
             "description": "Where it is: queued, in_progress or completed.",
             "title": "Status",
@@ -5721,6 +5734,19 @@
             "title": "Head",
             "type": "string"
           },
+          "head_committed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the commit at its head was committed (None: GitHub did not say). A review bot's\nfirst comment counts only if it was written after this (27.6).",
+            "title": "Head Committed At"
+          },
           "head_sha": {
             "description": "The commit at its head.",
             "title": "Head Sha",
@@ -6019,6 +6045,109 @@
         "title": "ReadPolicy",
         "type": "string"
       },
+      "Readiness": {
+        "additionalProperties": false,
+        "description": "Whether a pull may be merged for a task (27.6): ready or not, why not, and what the\nreview bot still lists.",
+        "properties": {
+          "blockers": {
+            "description": "Why it may not be merged, in the order a person would look at them (empty: it may).",
+            "items": {
+              "type": "string"
+            },
+            "title": "Blockers",
+            "type": "array"
+          },
+          "held": {
+            "default": false,
+            "description": "Whether it is held (`task.hold`) and otherwise ready: built now, merged later.",
+            "title": "Held",
+            "type": "boolean"
+          },
+          "open_items": {
+            "description": "The review bot's items that are not fixed, for the task's note.",
+            "items": {
+              "$ref": "#/components/schemas/ReviewItem"
+            },
+            "title": "Open Items",
+            "type": "array"
+          },
+          "ready": {
+            "description": "Whether it may be merged now.",
+            "title": "Ready",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ready"
+        ],
+        "title": "Readiness",
+        "type": "object"
+      },
+      "ReadinessRequest": {
+        "additionalProperties": false,
+        "description": "Asking whether a task's pull may be merged (27.6).",
+        "properties": {
+          "key": {
+            "description": "The task whose pull is asked about (`27.6`).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "ReadinessRequest",
+        "type": "object"
+      },
+      "ReadyRequest": {
+        "additionalProperties": false,
+        "description": "Marking a task's pull ready: the task, and the note to write with it (27.6).",
+        "properties": {
+          "key": {
+            "description": "The task whose pull is ready (`27.6`).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "note": {
+            "default": "",
+            "description": "What to write as the task's `progress` note (empty: a line saying it is ready).",
+            "maxLength": 100000,
+            "title": "Note",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "ReadyRequest",
+        "type": "object"
+      },
       "RegexStep": {
         "additionalProperties": false,
         "description": "The matches of a regex in each value: its first group, if it has groups, else the whole\nmatch.",
@@ -6311,6 +6440,45 @@
         ],
         "title": "ReviewCommentInfo",
         "type": "object"
+      },
+      "ReviewItem": {
+        "additionalProperties": false,
+        "description": "One item of the review bot's comment: what it says, and where it is.",
+        "properties": {
+          "number": {
+            "default": "",
+            "description": "Its number in the comment (`1`, or empty for a row without one).",
+            "title": "Number",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ReviewStatus",
+            "default": "open",
+            "description": "Where it is; anything but `fixed` keeps the pull from being ready."
+          },
+          "text": {
+            "description": "What the item is, as the bot wrote it (its status word left out).",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "ReviewItem",
+        "type": "object"
+      },
+      "ReviewStatus": {
+        "description": "Where one of the review bot's items is: open, fixed, partly fixed, not fixed, or a new\nissue it found this round.",
+        "enum": [
+          "open",
+          "fixed",
+          "partially_fixed",
+          "not_fixed",
+          "new_issue"
+        ],
+        "title": "ReviewStatus",
+        "type": "string"
       },
       "RunActionRequestBody": {
         "additionalProperties": false,
@@ -15372,6 +15540,200 @@
           }
         ],
         "summary": "What an agent is to work next: the task it is in progress on, else the first on its",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/readiness": {
+      "post": {
+        "description": "Whether the pull of the task `key` may be merged (27.6): ready or not, why not, and\nthe review bot's items it still lists. It reads: nothing changes.",
+        "operationId": "orch_readiness",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReadinessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Readiness"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Whether the pull of the task `key` may be merged (27.6): ready or not, why not, and",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/ready": {
+      "post": {
+        "description": "Mark the task `key`'s pull ready: it moves to `ready`, with `note` as its progress\nnote, and `orch.task.ready` is published.\n\nRaises NotAllowed with the blockers unless it is ready (27.6): not a draft, cleanly\nmergeable, its checks passed, the review bot's latest comment for this head clean, every\ntask it needs merged, and no hold. A task with a hold is not ready however clean it is\n(it is built now and merged later, 28.3).",
+        "operationId": "orch_ready",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReadyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Readiness"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Mark the task `key`'s pull ready: it moves to `ready`, with `note` as its progress",
         "tags": [
           "orch"
         ]

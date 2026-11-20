@@ -13,7 +13,7 @@ repository again only when GitHub says it changed
 # System Imports
 import asyncio
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 # Package Imports
 import pytest
@@ -196,6 +196,31 @@ async def test_a_pull_is_read_with_its_checks_and_comments(
         ("human", "Please fix the test")
     ]
     assert [(note.path, note.line) for note in found.review_comments] == [("src/app.py", 42)]
+
+
+async def test_a_pull_is_read_with_when_its_head_was_committed(
+    github: GitHubIntegration, fake: FakeGitHub
+) -> None:
+    """(27.6 needs it: a review bot's first comment counts only if it was written after the
+    head's commit.)"""
+    committed = datetime(2026, 11, 20, 9, 0, tzinfo=UTC)
+    fake.commits["acme/widgets@abc1234"] = committed
+
+    found = await github.get_pull(handle(), GetPullRequest(repo=REPO, number=7))
+
+    assert found.head_committed_at == committed
+
+
+async def test_a_pull_is_read_with_when_its_checks_started(
+    github: GitHubIntegration, fake: FakeGitHub
+) -> None:
+    """(27.6 needs it: a review bot's first comment counts only if it was written after the head
+    was pushed, and its earliest check's start is when it was.)"""
+    fake.set_checks("abc1234", check_run_body("pytest", "success"))
+
+    found = await github.get_pull(handle(), GetPullRequest(repo=REPO, number=7))
+
+    assert found.checks[0].started_at is not None
 
 
 async def test_a_repository_the_account_does_not_name_is_refused(

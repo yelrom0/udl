@@ -133,6 +133,7 @@ def check_run_body(name: str, conclusion: str | None) -> GhCheckRun:
         status="completed" if conclusion else "in_progress",
         conclusion=conclusion,
         html_url=f"https://github.com/acme/widgets/runs/{name}",
+        started_at=datetime.now(UTC),
         completed_at=datetime.now(UTC) if conclusion else None,
     )
 
@@ -197,6 +198,8 @@ class FakeGitHub:
     """The diff comments of each pull, by "owner/name#number"."""
     checks: dict[str, list[GhCheckRun]] = field(default_factory=dict[str, list[GhCheckRun]])
     """The check runs of each commit, by "owner/name@sha"."""
+    commits: dict[str, datetime] = field(default_factory=dict[str, datetime])
+    """When each commit was committed, by "owner/name@sha" (empty: a minute before now)."""
     merged: list[str] = field(default_factory=list[str])
     """The pulls that were merged ("owner/name#number")."""
     reruns: list[str] = field(default_factory=list[str])
@@ -349,6 +352,11 @@ class FakeGitHub:
                     methods=["PUT"],
                 ),
                 Route(
+                    "/repos/{owner}/{repo}/commits/{sha}",
+                    self._commit,
+                    methods=["GET"],
+                ),
+                Route(
                     "/repos/{owner}/{repo}/commits/{sha}/check-runs",
                     self._check_runs,
                     methods=["GET"],
@@ -471,6 +479,18 @@ class FakeGitHub:
             request,
             200,
             {"merged": True, "sha": "def5678", "message": "Pull Request successfully merged"},
+        )
+
+    async def _commit(self, request: Request) -> Response:
+        repo = self._name(request)
+        sha = request.path_params["sha"]
+        if sha not in {pull.head.sha for pull in self.pulls.get(repo, [])}:
+            return self._answer(request, 404, {"message": "Not Found"})
+        committed = self.commits.get(f"{repo}@{sha}", datetime.now(UTC) - timedelta(minutes=1))
+        return self._answer(
+            request,
+            200,
+            {"sha": sha, "commit": {"committer": {"date": committed.isoformat()}}},
         )
 
     async def _check_runs(self, request: Request) -> Response:

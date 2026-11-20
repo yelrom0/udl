@@ -71,6 +71,7 @@ from udl.plugins.integrations.github.events import (
 from udl.plugins.integrations.github.models import (
     GhCheckRun,
     GhComment,
+    GhCommit,
     GhPull,
     GhRepo,
     GhReviewComment,
@@ -223,10 +224,18 @@ class CheckInfo(_Model):
     """Where it is: queued, in_progress or completed."""
     conclusion: str | None = None
     """What it concluded, once it has (success, failure, neutral, skipped...)."""
+    started_at: AwareDatetime | None = None
+    """When it started (None: GitHub did not say). The earliest of a head's checks is when its
+    push was: what a review bot's comment without a sha is compared against (27.6)."""
 
     @classmethod
     def of(cls, run: GhCheckRun) -> CheckInfo:
-        return cls(name=run.name, status=run.status, conclusion=run.conclusion)
+        return cls(
+            name=run.name,
+            status=run.status,
+            conclusion=run.conclusion,
+            started_at=run.started_at,
+        )
 
 
 class CommentInfo(_Model):
@@ -254,6 +263,13 @@ class CommentInfo(_Model):
         )
 
 
+def _committed_at(commit: GhCommit | None) -> AwareDatetime | None:
+    """When `commit` was committed, or None when GitHub did not say (or there is no commit)."""
+    if commit is None or commit.commit.committer is None:
+        return None
+    return commit.commit.committer.date
+
+
 class ReviewCommentInfo(CommentInfo):
     """A comment on a line of a pull request's diff."""
 
@@ -277,6 +293,9 @@ class PullDetail(PullInfo):
     """Whether GitHub says it may be merged (None: it is still working it out)."""
     mergeable_state: str = ""
     """GitHub's own word for that (clean, dirty, behind, blocked...)."""
+    head_committed_at: AwareDatetime | None = None
+    """When the commit at its head was committed (None: GitHub did not say). A review bot's
+    first comment counts only if it was written after this (27.6)."""
     checks: list[CheckInfo] = Field(default_factory=list[CheckInfo])
     """Its checks."""
     comments: list[CommentInfo] = Field(default_factory=list[CommentInfo])
@@ -672,6 +691,7 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
         client = await self._client(account)
         repo = _wanted(account.options, request.repo)
         pull = await client.get_pull(repo, request.number)
+        committed = await client.get_commit(repo, pull.head.sha) if pull.head.sha else None
         checks = await client.list_check_runs(repo, pull.head.sha)
         comments = await client.list_comments(repo, request.number)
         review = await client.list_review_comments(repo, request.number)
@@ -680,6 +700,7 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
             body=pull.body,
             mergeable=pull.mergeable,
             mergeable_state=pull.mergeable_state,
+            head_committed_at=_committed_at(committed),
             checks=[CheckInfo.of(run) for run in checks],
             comments=[CommentInfo.of(note) for note in comments],
             review_comments=[ReviewCommentInfo.on_a_line(note) for note in review],

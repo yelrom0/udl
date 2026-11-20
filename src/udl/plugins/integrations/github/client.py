@@ -58,6 +58,7 @@ from udl.http import HttpClientFactory, api_client
 from udl.plugins.integrations.github.models import (
     GhCheckRun,
     GhComment,
+    GhCommit,
     GhMerge,
     GhPull,
     GhRepo,
@@ -258,6 +259,10 @@ class GitHubClient:
     async def get_pull(self, repo: str, number: int) -> GhPull:
         """One pull request, by number (GET /repos/{repo}/pulls/{number})."""
         return await self._get(f"/repos/{repo_name(repo)}/pulls/{number}", GhPull)
+
+    async def get_commit(self, repo: str, sha: str) -> GhCommit:
+        """One commit (GET /repos/{repo}/commits/{sha}): who committed it, and when."""
+        return await self._get(f"/repos/{repo_name(repo)}/commits/{sha}", GhCommit)
 
     async def pulls_if_changed(
         self, repo: str, *, state: PullStateFilter = "all", etag: str | None = None

@@ -922,12 +922,31 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
 
 **27.6 Readiness** · needs 25.5, 26.4
 - Build: `readiness.py`: `readiness(pull: PullDetail, *, bot: str | None, task, tasks) -> Readiness`, pure. `Readiness`: `ready: bool`, `blockers: list[str]`, `open_items: list[ReviewItem]`.
-  - Ready needs all of: not a draft; `mergeable` and `mergeable_state` clean; every check run on the head completed with `success`, `neutral` or `skipped`; when `bot` is set, the bot's latest comment is **for this head** (written after the head's commit) and its verdict is clean; no `needs` task still unmerged ("Merge after #N"); the task has no `hold`.
+  - Ready needs all of: not a draft; `mergeable` and `mergeable_state` clean; every check run on the head completed with `success`, `neutral` or `skipped`; when `bot` is set, the bot's latest comment is **for this head** (written after the head was pushed: its earliest check's `started_at`, which `CheckInfo` now carries, or the commit's time when no check says) and its verdict is clean; no `needs` task still unmerged ("Merge after #N"); the task has no `hold`.
   - `parse_review(body) -> ReviewVerdict`: `items` (each with a status: `open`, `fixed`, `partially_fixed`, `not_fixed`, `new_issue`) and `assessment` (`approve`, `request_changes` or unknown). **Clean means: no item other than `fixed`, and the assessment isn't `request_changes`. An "approve" line never overrides an open item** (the 12 Nov bug in thevault's `pr-status`).
   - A task with `hold` set and everything else ready is reported as `held`, not ready.
   - `orch_ready` (`task`, `note`): refuses with the blockers unless ready; then moves the task to `ready`, writes the note as `progress`, publishes `orch.task.ready`. Where the project's `merge = agent` and the caller is the assignee, it merges instead (28.3's path) and the task goes to `merged`.
 - Tests first: `tests/unit/plugins/apps/orch/test_readiness.py`: the phase's third bullet. Bot comments are real ones copied from udl's first PRs (23.2) into `tests/fixtures/reviews/`.
 - Done when: a comment with one PARTIALLY FIXED row is not ready, by test.
+- **Built (deepseek-b, 20 Nov, PR #50):** `readiness.py` — `readiness()` (pure) over a `Pull` that
+  keeps only what a verdict needs, and `parse_review()` for the bot's status table and its
+  numbered and bulleted lists; an approve line never overrides an open item, and a comment
+  written before the head was pushed does not count — the push is the earliest check's
+  `started_at` (`CheckInfo` carries it, so a comment written while `agent-push` runs its gates is
+  not taken for one on the new head), and the commit's time only when no check says. `Readiness`
+  adds `held`, and `open_items` are the bot's items that are not `fixed`. `orch_readiness` (read-only) and `orch_ready` (refuses
+  with the blockers; then moves the task to `ready` with its `progress` note in the same
+  `save_all` write, and publishes `orch.task.ready`). The GitHub integration grew
+  `head_committed_at` on a pull (`get_commit`) and `started_at` on each check, which is what makes
+  "for this head" checkable. udl moves a task to `ready` as the system, in the role `ready` (a
+  person's principal may move a task anywhere, which would ready an `open` or `blocked` one and
+  clear its reason).
+  Tests: 42 in `test_readiness.py` (the fixture is 28.2's real review comment,
+  `tests/fixtures/reviews/follow-up-all-clear.md`) and 14 in `test_readiness_operations.py`
+  through the service with a fake `github` app, plus `test_plugin.py`'s two for the times the
+  integration hands readiness. The card's "merge instead when `merge = agent`"
+  is 28.3's, not built here. Names: the operations are `orch_readiness` and `orch_ready` (the
+  card wrote only `orch_ready`); `orch_pr_status` (27.5) can wrap `readiness` later.
 
 **27.7 The dispatcher** · needs 27.2–27.6, 25.7
 - Build: `dispatcher.py`, run from `OrchApp.serve()`. One loop per enabled agent, woken by `orch.*` and `github.pr.*` events and by a 30 s tick.

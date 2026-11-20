@@ -845,3 +845,86 @@ class QueueRequest(_Model):
 
 class MyTaskRequest(QueueRequest):
     """Asking what an agent is to work next."""
+
+
+# ---------------------------------------------------------------------------------------------
+# Readiness (27.6)
+# ---------------------------------------------------------------------------------------------
+
+
+class ReviewStatus(StrEnum):
+    """Where one of the review bot's items is: open, fixed, partly fixed, not fixed, or a new
+    issue it found this round."""
+
+    OPEN = "open"
+    FIXED = "fixed"
+    PARTIALLY_FIXED = "partially_fixed"
+    NOT_FIXED = "not_fixed"
+    NEW_ISSUE = "new_issue"
+
+
+class ReviewItem(_Model):
+    """One item of the review bot's comment: what it says, and where it is."""
+
+    number: str = ""
+    """Its number in the comment (`1`, or empty for a row without one)."""
+    text: str
+    """What the item is, as the bot wrote it (its status word left out)."""
+    status: ReviewStatus = ReviewStatus.OPEN
+    """Where it is; anything but `fixed` keeps the pull from being ready."""
+
+
+class Assessment(StrEnum):
+    """What the review bot thinks of the pull as a whole."""
+
+    APPROVE = "approve"
+    """It says the pull is clear."""
+    REQUEST_CHANGES = "request_changes"
+    """It asks for changes."""
+    UNKNOWN = "unknown"
+    """It wrote no verdict, or one udl does not know (which never overrides an open item)."""
+
+
+class ReviewVerdict(_Model):
+    """A review bot's comment, read: its items, its assessment, and the commit it reviewed."""
+
+    items: list[ReviewItem] = Field(default_factory=list[ReviewItem])
+    """Its items, in the order it wrote them."""
+    assessment: Assessment = Assessment.UNKNOWN
+    """What it thinks of the pull as a whole."""
+    reviewed_sha: str | None = None
+    """The commit it says it reviewed (a follow-up names one; a first review does not)."""
+
+
+class Readiness(_Model):
+    """Whether a pull may be merged for a task (27.6): ready or not, why not, and what the
+    review bot still lists."""
+
+    ready: bool
+    """Whether it may be merged now."""
+    held: bool = False
+    """Whether it is held (`task.hold`) and otherwise ready: built now, merged later."""
+    blockers: list[str] = Field(default_factory=list[str])
+    """Why it may not be merged, in the order a person would look at them (empty: it may)."""
+    open_items: list[ReviewItem] = Field(default_factory=list[ReviewItem])
+    """The review bot's items that are not fixed, for the task's note."""
+
+
+class ReadinessRequest(_Model):
+    """Asking whether a task's pull may be merged (27.6)."""
+
+    key: Key
+    """The task whose pull is asked about (`27.6`)."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class ReadyRequest(_Model):
+    """Marking a task's pull ready: the task, and the note to write with it (27.6)."""
+
+    key: Key
+    """The task whose pull is ready (`27.6`)."""
+    note: Spec = ""
+    """What to write as the task's `progress` note (empty: a line saying it is ready)."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
