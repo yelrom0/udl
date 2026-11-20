@@ -33,15 +33,19 @@ from pydantic import (
 from udl.db.records import Name
 
 __all__ = [
+    "AFTER",
     "BLOCKED",
     "BRANCH_PARTS",
     "CANCELLED",
     "DEFAULT_BRANCH_PATTERN",
     "DEFAULT_GATE",
     "DONE",
+    "DROPPED",
     "IN_PROGRESS",
+    "LATER",
     "MERGED",
     "MOVED",
+    "NOW",
     "OPEN",
     "QUEUED",
     "READY",
@@ -49,11 +53,17 @@ __all__ = [
     "ROLE",
     "STATE",
     "STATE_MARK",
+    "Action",
+    "ActionState",
+    "ActionWhen",
+    "Actions",
     "AssignTaskRequest",
     "BranchName",
     "BranchPattern",
+    "DropActionRequest",
     "Feature",
     "FeatureStatus",
+    "FinishActionRequest",
     "Gate",
     "GateArg",
     "GitHubAccount",
@@ -62,6 +72,7 @@ __all__ = [
     "Key",
     "Link",
     "LinkKind",
+    "ListActionsRequest",
     "MergePolicy",
     "MyTaskNote",
     "MyTaskRequest",
@@ -77,6 +88,7 @@ __all__ = [
     "ReorderQueueRequest",
     "Repo",
     "Role",
+    "SetActionRequest",
     "Spec",
     "State",
     "SuggestRequest",
@@ -174,6 +186,22 @@ class MergePolicy(StrEnum):
     AGENT = "agent"
 
 
+class ActionWhen(StrEnum):
+    """When a person's action is due (28.2): now, after a task merges, or later."""
+
+    NOW = "now"
+    AFTER = "after"
+    LATER = "later"
+
+
+class ActionState(StrEnum):
+    """Where an action is: still to do, done (with its result), or dropped."""
+
+    OPEN = "open"
+    DONE = "done"
+    DROPPED = "dropped"
+
+
 type State = Literal[
     "open", "queued", "in_progress", "blocked", "ready", "merged", "done", "moved", "cancelled"
 ]
@@ -251,6 +279,18 @@ MOVED: Final = "moved"
 
 CANCELLED: Final = "cancelled"
 """A task that is not going to be done."""
+
+NOW: Final = "now"
+"""An action that is due now (28.2)."""
+
+AFTER: Final = "after"
+"""An action that waits for a task to merge."""
+
+LATER: Final = "later"
+"""An action that is due when someone gets to it."""
+
+DROPPED: Final = "dropped"
+"""An action that is not going to be done."""
 
 
 def _an_argv(argv: list[str]) -> list[str]:
@@ -555,6 +595,103 @@ class Task(_Model):
     """The worktree it is done in, once the dispatcher has made one."""
     updated_by: str = ""
     """Who last moved it (a role, or an agent's name)."""
+
+
+# ---------------------------------------------------------------------------------------------
+# Human actions (28.2)
+# ---------------------------------------------------------------------------------------------
+
+
+class Action(_Model):
+    """Something only a person can do, with a result line (human-comms.md's "To action").
+
+    `when` is `now`, `after` a task (it becomes `now` when that task merges), or `later`; `task`
+    is the task it is about, when it is about one, and the result of finishing it is written
+    there as a note."""
+
+    key: Key
+    """Its key within the project (`A-<n>`)."""
+    project: Name
+    """The project it belongs to."""
+    title: Title
+    """What is to be done, in a line."""
+    text: Text = ""
+    """What it says, as markdown (what to do, and why)."""
+    when: ActionWhen = ActionWhen.NOW
+    """When it is due: now, after a task, or later."""
+    after: Key | None = None
+    """The task it waits for, while `when` is `after` (it becomes `now` when that one merges)."""
+    task: Key | None = None
+    """The task it is about, when it is about one (the result is written there)."""
+    assignee: str | None = None
+    """The person it is for (`human:<name>`), or None for whoever picks it up."""
+    state: ActionState = ActionState.OPEN
+    """Where it is: open, done or dropped."""
+    result: str | None = None
+    """What came of it: the result of finishing it, or why it was dropped."""
+
+
+class SetActionRequest(_Model):
+    """Adding something only a person can do (28.2)."""
+
+    title: Title
+    """What is to be done, in a line."""
+    text: Text = ""
+    """What it says, as markdown."""
+    when: ActionWhen = ActionWhen.NOW
+    """When it is due: now, after a task, or later."""
+    after: Key | None = None
+    """The task it waits for (only while `when` is `after`)."""
+    task: Key | None = None
+    """The task it is about, when it is about one."""
+    assignee: str | None = None
+    """The person it is for (`human:<name>`)."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class ListActionsRequest(_Model):
+    """Asking what is to be done, in the order it is due."""
+
+    state: ActionState | None = None
+    """Only the actions in this state (None: the open ones)."""
+    when: ActionWhen | None = None
+    """Only the actions due at this time (None: now, after and later)."""
+    assignee: str | None = None
+    """Only the actions of this person (`human:<name>`)."""
+    project: Name | None = None
+    """The project they are of (None: the only one, while udl has one)."""
+
+
+class FinishActionRequest(_Model):
+    """Finishing something only a person could do, with what came of it."""
+
+    key: Key
+    """The action to finish (`A-<n>`)."""
+    result: str
+    """What came of it (written as a note on the task it is about)."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class DropActionRequest(_Model):
+    """Dropping something that is not going to be done, with the reason."""
+
+    key: Key
+    """The action to drop (`A-<n>`)."""
+    reason: str = ""
+    """Why it is dropped."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class Actions(_Model):
+    """What is to be done, in the order it is due (28.2)."""
+
+    project: Name
+    """The project they are of."""
+    actions: list[Action] = Field(default_factory=list[Action])
+    """The actions, now first, then after, then later (empty: nothing to do)."""
 
 
 # ---------------------------------------------------------------------------------------------

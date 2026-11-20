@@ -30,7 +30,7 @@ from weakref import WeakKeyDictionary
 # Local Imports
 from udl.db.records import Record
 from udl.errors import DoesNotExist, NotAllowed
-from udl.plugins.apps.orch import transitions
+from udl.plugins.apps.orch import actions, transitions
 from udl.plugins.apps.orch.models import (
     IN_PROGRESS,
     MOVED,
@@ -184,7 +184,13 @@ async def _assign(
         writes += _renumbered(left, was=left)
         also.append(_stopped(placed, stopped=stopped, agent=agent))
     saved = await tasks.save_all(writes, also=also)
-    return next((one for one in saved if one.id == placed.id), placed)
+    placed = next((one for one in saved if one.id == placed.id), placed)
+    if placed.task_kind == "human":
+        # (A person's task is something only they can do: it is their action from the moment it
+        # is theirs, 28.2. Its own write, after the queue's — the counter it takes its number
+        # from is one too, and there is no transaction around them yet.)
+        await actions.for_task(actions.ActionRecords(tasks.records), placed, assignee=agent)
+    return placed
 
 
 async def _check_agent(tasks: TaskRecords, task: Task, agent: str, *, key: str) -> None:

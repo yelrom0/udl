@@ -42,6 +42,7 @@ from udl.plugins.apps.orch.records import Agent as AgentRecord
 from udl.plugins.apps.orch.records import (
     AgentRecords,
     AgentToken,
+    HumanAction,
     SessionEvent,
     SessionRecords,
 )
@@ -445,6 +446,7 @@ def test_orch_brings_its_kinds() -> None:
         AgentSessionRecord,
         AgentToken,
         SessionEvent,
+        HumanAction,
     }
 
 

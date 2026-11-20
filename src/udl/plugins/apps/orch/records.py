@@ -60,6 +60,8 @@ from udl.plugins.apps.orch.models import (
     CANCELLED,
     DONE,
     OPEN,
+    ActionState,
+    ActionWhen,
     BranchName,
     CheckedBranchPattern,
     FeatureStatus,
@@ -325,6 +327,49 @@ class Link(Record):
             title="Projects and repos",
             state=PullState(state="merged", checks="pass"),
             added_by="ernie-c",
+        )
+
+
+class HumanAction(Record):
+    """Something only a person can do (28.2), as it is stored: what orch.models.Action is.
+
+    Its key is `A-<n>` of its project's counter, and it is unique by it. `after` is the task it
+    waits for (it becomes `now` when that one merges, `orch.actions.become_now`), and `task` is
+    the task it is about, whose notes its result is written to."""
+
+    kind = "orch_action"
+    indexed = ("project", "key", "state", "when", "assignee", "task")
+    unique = (("project", "key"),)
+
+    key: Key
+    """Its key within the project (`A-<n>`)."""
+    project: Name
+    """The project it belongs to."""
+    title: Title
+    """What is to be done, in a line."""
+    text: Text = ""
+    """What it says, as markdown."""
+    when: ActionWhen = ActionWhen.NOW
+    """When it is due: now, after a task, or later."""
+    after: Key | None = None
+    """The task it waits for, while `when` is `after`."""
+    task: Key | None = None
+    """The task it is about, when it is about one."""
+    assignee: str | None = None
+    """The person it is for (`human:<name>`), or None."""
+    state: ActionState = ActionState.OPEN
+    """Where it is: open, done or dropped."""
+    result: str | None = None
+    """What came of it: its result, or why it was dropped."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            project="udl",
+            key="A-1",
+            title="Send the OpenRouter key to Liively",
+            text="The one from 1Password, for the AI providers.",
+            assignee="human:claude",
         )
 
 
