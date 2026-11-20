@@ -44,11 +44,11 @@ def by_name(found: GeneratedUI) -> dict[str, GeneratedPlugin]:
     return {plugin.name: plugin for plugin in found.plugins}
 
 
-def a_bundle(tmp_path: Path) -> UIBundle:
+def a_bundle(tmp_path: Path, **changes: object) -> UIBundle:
     """A UI plugin's bundle, for the plugin that brings one."""
     folder = tmp_path / "ui-plugins" / "chores"
     folder.mkdir(parents=True)
-    (folder / "manifest.json").write_text(json.dumps(MANIFEST))
+    (folder / "manifest.json").write_text(json.dumps({**MANIFEST, **changes}))
     (folder / "index.js").write_text("export default {}\n")
     return UIBundle.of(folder)
 
@@ -219,6 +219,41 @@ def test_a_plugin_without_a_ui_says_it_has_none(tmp_path: Path) -> None:
     found = by_name(ui_of(with_chores(Harness(tmp_path))))
 
     assert found["chores"].has_ui_plugin is False
+
+
+# ---------------------------------------------------------------------------------------------
+# The guidance a UI plugin gives its page (24.7)
+# ---------------------------------------------------------------------------------------------
+
+
+def _with_guidance(tmp_path: Path, **generated: object) -> GeneratedPlugin:
+    """The chores plugin's page, with a UI plugin whose guidance is `generated`."""
+    harness = with_chores(Harness(tmp_path))
+    chores = harness.registry.get(SITES, "chores")
+    harness.registry.register(
+        SITES, type("Chores", (chores,), {"ui": a_bundle(tmp_path, generated=generated)})
+    )
+    return by_name(ui_of(harness))["chores"]
+
+
+def test_guidance_that_names_nothing_is_a_problem_on_the_plugin(tmp_path: Path) -> None:
+    # (It is said where the page is, and the page is still generated: the bundle is served.)
+    found = _with_guidance(tmp_path, hide=["chores_nope_*"])
+
+    assert found.problems == ['its guidance hides "chores_nope_*", and no operation matches']
+    assert [op.name for op in found.operations] != []
+
+
+def test_guidance_that_names_its_operations_is_no_problem(tmp_path: Path) -> None:
+    found = _with_guidance(tmp_path, hide=["chores_*"], labels={"chores_do": "Do it"})
+
+    assert found.problems == []
+
+
+def test_a_plugin_without_a_ui_has_no_problems(tmp_path: Path) -> None:
+    found = by_name(ui_of(with_chores(Harness(tmp_path))))["chores"]
+
+    assert found.problems == []
 
 
 # ---------------------------------------------------------------------------------------------

@@ -33,6 +33,7 @@ from udl.core.operations import (
 from udl.core.schemas import model_schema
 from udl.plugins.registry import INTEGRATIONS, PluginInfo, PluginRegistry
 from udl.plugins.settings import is_file_only, is_secret, settings_model_of
+from udl.plugins.ui.base import guidance_problems
 
 log = logging.getLogger(__name__)
 
@@ -139,6 +140,8 @@ class GeneratedPlugin(_Frozen):
     """How its accounts connect (integrations only)."""
     event_types: list[str] = Field(default_factory=list[str])
     """The event types it publishes."""
+    problems: list[str] = Field(default_factory=list[str])
+    """What its UI plugin's guidance names that it has not (24.7): said, never fatal."""
 
 
 class GeneratedUI(_Frozen):
@@ -171,17 +174,28 @@ def _of_plugin(info: PluginInfo, cls: type[object], ops: OperationRegistry) -> G
     """`info`'s plugin, with what it adds and what it has to show."""
     model = settings_model_of(cls)
     integration = info.kind == INTEGRATIONS.group
+    found = ops.in_namespace(info.name)
     return GeneratedPlugin(
         name=info.name,
         kind=info.kind,
         title=str(getattr(cls, "title", info.name)),
         summary=str(getattr(cls, "summary", "")),
         has_ui_plugin=getattr(cls, "ui", None) is not None,
-        operations=[GeneratedOperation.of(op) for op in ops.in_namespace(info.name)],
+        operations=[GeneratedOperation.of(op) for op in found],
         settings=None if model is None else GeneratedForm.of(model),
         accounts=_accounts_of(cls) if integration else None,
         event_types=_event_types(cls),
+        problems=_guidance_problems(cls, [op.name for op in found]),
     )
+
+
+def _guidance_problems(cls: type[object], operations: list[str]) -> list[str]:
+    """What the UI plugin `cls` brings says about operations it does not have (24.7)."""
+    bundle = getattr(cls, "ui", None)
+    manifest = getattr(bundle, "manifest", None)
+    if manifest is None:
+        return []
+    return guidance_problems(manifest, operations)
 
 
 def _accounts_of(cls: type[object]) -> GeneratedAccounts:
