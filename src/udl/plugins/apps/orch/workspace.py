@@ -280,12 +280,15 @@ async def push(
 ) -> PushResult:
     """Push `task`'s work: its branch to origin, then its pull request (27.5).
 
-    Nothing uncommitted (else NotAllowed with `git status`'s summary), rebased on what it is
-    built on when that has moved, the repo's gate run in its host's lane (one at a time, 27.5),
-    and on a pass `git push --force-with-lease=<branch>:<the sha we saw>` (so a branch someone
-    else moved is refused, not overwritten), then `github_open_pull` and a `pull` link on the
-    task. A gate that fails, a rebase that conflicts or a push git refuses is NotAllowed:
-    nothing is pushed, and the agent is told why.
+    Nothing uncommitted (else NotAllowed with `git status`'s summary), the branch not moved on
+    origin since the worktree last saw it (else NotAllowed: someone else's commits are not
+    overwritten), rebased on what it is built on when that has moved, the repo's gate run in its
+    host's lane (one at a time, 27.5), and on a pass `git push
+    --force-with-lease=<branch>:<the sha the worktree last saw>` (a fetch just before the push
+    would otherwise move the ref the plain form compares against, and it would protect
+    nothing), then `github_open_pull` and a `pull` link on the task. A gate that fails, a rebase
+    that conflicts or a push git refuses is NotAllowed: nothing is pushed, and the agent is told
+    why.
 
     `title` and `body` are the pull's, and None leaves them as they are on a second push: what a
     person wrote in the description is not a push's to wipe."""
@@ -301,11 +304,19 @@ async def push(
             f"{task.key!r} has uncommitted work",
             hint=_summary(dirty),
         )
+    # (The sha the worktree last saw: the lease is pinned to it, so a commit someone pushed to
+    # the branch before this push is refused rather than overwritten, 27.5.)
+    seen = await _sha_of(shell, path, f"origin/{branch}")
     await _git(shell, ["-C", path, "fetch", "origin"])
+    moved = await _sha_of(shell, path, f"origin/{branch}")
+    if seen and moved and moved != seen and not await _contains(shell, path, moved):
+        raise NotAllowed(
+            f"{branch!r} has commits this worktree does not",
+            hint="Someone else pushed to it: `git pull --rebase` in the worktree, then push again.",
+        )
     onto = await _built_on(task, repo=repo, records=records)
     if not await _contains(shell, path, onto):
         await _rebase(shell, path, onto, key=task.key)
-    seen = await _sha_of(shell, path, f"origin/{branch}")
     lane = GateLane(
         service.db,
         host=host.name,

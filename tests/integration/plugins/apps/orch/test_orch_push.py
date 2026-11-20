@@ -448,6 +448,34 @@ async def test_a_second_push_with_no_body_leaves_the_description(
     assert [one["title"] for one in app.opened] == ["It", None]
 
 
+async def test_a_push_whose_branch_someone_else_moved_is_refused(
+    service: UDLService, worktree: Path, home: Path, as_agent: None
+) -> None:
+    """(The lease is pinned to what the worktree last saw, and a branch that grew on origin
+    before the push is not overwritten: the agent rebases onto it instead, 27.5.)"""
+    await pushed(service, key="F-1.1", title="It")
+    elsewhere = home / "elsewhere"
+    git("clone", str(home / "origin.git"), str(elsewhere), cwd=home)
+    git("config", "user.name", "someone", cwd=elsewhere)
+    git("config", "user.email", "someone@example.com", cwd=elsewhere)
+    git("checkout", "-b", "feat/F-1.1-it", "origin/feat/F-1.1-it", cwd=elsewhere)
+    (elsewhere / "theirs.txt").write_text("their work\n")
+    git("add", "theirs.txt", cwd=elsewhere)
+    git("commit", "-m", "feat: their work", cwd=elsewhere)
+    git("push", "origin", "feat/F-1.1-it", cwd=elsewhere)
+    theirs = git("rev-parse", "HEAD", cwd=elsewhere)
+
+    (worktree / "work.txt").write_text("the work, again\n")
+    git("commit", "-am", "fix: the work again", cwd=worktree)
+
+    with pytest.raises(NotAllowed, match="has commits this worktree does not") as refused:
+        await pushed(service, key="F-1.1")
+
+    assert "git pull --rebase" in (refused.value.hint or "")
+    # (Their commit is still on origin: the push did not overwrite it.)
+    assert git("rev-parse", "feat/F-1.1-it", cwd=home / "origin.git") == theirs
+
+
 async def test_the_branch_is_rebased_when_the_base_moved(
     service: UDLService, worktree: Path, home: Path, as_agent: None
 ) -> None:
