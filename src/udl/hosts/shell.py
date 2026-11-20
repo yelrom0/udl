@@ -25,6 +25,7 @@ import os
 import re
 import shlex
 import socket
+import tempfile
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
@@ -38,7 +39,7 @@ from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
-from typing import ClassVar, Final, Protocol, Self
+from typing import IO, ClassVar, Final, Protocol, Self
 
 # Package Imports
 from pydantic import Field, model_validator
@@ -529,26 +530,24 @@ async def _forwarded_ssh(host: Host, port: int) -> AsyncGenerator[str]:
         spare.bind(("127.0.0.1", 0))
         local = spare.getsockname()[1]
     argv = ssh_forward_argv(host, port, local=local)
-    process = await asyncio.create_subprocess_exec(
-        *argv,
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        await _tunnel_up(process, local)
-        yield f"http://127.0.0.1:{local}"
-    finally:
-        await _stopped(process)
-        # (Drain its stderr: a pipe nobody reads is left open, and asyncio warns about the
-        # transport at the next collection. Bounded, because a ProxyCommand or ProxyJump helper
-        # from ~/.ssh/config can outlive ssh and hold the pipe open.)
-        if process.stderr is not None:
-            with contextlib.suppress(Exception, TimeoutError):
-                await asyncio.wait_for(process.stderr.read(), END.total_seconds())
+    # (Its stderr goes to a file, not a pipe: a pipe nobody drains is a transport asyncio leaves
+    # open — and a ProxyCommand or ProxyJump helper from ~/.ssh/config can hold one open long
+    # after ssh itself has ended, which is a warning at the next collection, not a tunnel.)
+    with tempfile.TemporaryFile() as errors:
+        process = await asyncio.create_subprocess_exec(
+            *argv,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=errors,
+        )
+        try:
+            await _tunnel_up(process, errors, local)
+            yield f"http://127.0.0.1:{local}"
+        finally:
+            await _stopped(process)
 
 
-async def _tunnel_up(process: asyncio.subprocess.Process, local: int) -> None:
+async def _tunnel_up(process: asyncio.subprocess.Process, errors: IO[bytes], local: int) -> None:
     """Wait until the tunnel's local port accepts a connection (or ssh gives up).
 
     ssh would otherwise sit there silently when the tunnel cannot be set up, and a caller would
@@ -556,11 +555,8 @@ async def _tunnel_up(process: asyncio.subprocess.Process, local: int) -> None:
     deadline = asyncio.get_event_loop().time() + FORWARD_WAIT.total_seconds()
     while True:
         if process.returncode is not None:
-            detail = (
-                (await process.stderr.read()).decode(errors="replace").strip()
-                if process.stderr
-                else ""
-            )
+            errors.seek(0)
+            detail = errors.read().decode(errors="replace").strip()
             raise PluginFailed(
                 f"The SSH tunnel closed before it was ready{detail and ': ' + detail}",
                 hint="Check the host's ssh entry (a ~/.ssh/config host name) and its sshd.",

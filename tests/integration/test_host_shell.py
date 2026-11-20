@@ -14,6 +14,7 @@ or the server cannot start.
 
 # System Imports
 import asyncio
+import gc
 import os
 import shutil
 import sys
@@ -315,6 +316,20 @@ def _fetch(url: str) -> bytes:
     the loop."""
     with urllib.request.urlopen(url, timeout=10) as answer:  # noqa: S310 - (a loopback URL)
         return bytes(answer.read())
+
+
+async def test_a_tunnel_leaves_no_pipe_open(both: list[tuple[str, HostShell]]) -> None:
+    """ssh's stderr goes to a file, not a pipe: a pipe left open is a transport asyncio warns
+    about at the next collection (and a warning is an error here), which is what a ProxyCommand
+    holding the pipe could always do."""
+    for name, shell in both:
+        if name == "local":
+            continue
+        async with shell.forward(8765):
+            pass
+        gc.collect()
+
+    # (Nothing to assert: an unclosed transport raises at the collection above.)
 
 
 async def test_both_shells_forward_a_loopback_port(
