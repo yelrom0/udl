@@ -1058,9 +1058,9 @@ class MergeRequest(_Model):
     """The task whose pull is merged."""
     confirm: str
     """`owner/repo#number`, as `github_merge_pull` asks: the merge says which pull it is."""
-    sha: str | None = None
-    """The head the caller saw (`orch_merge_list`'s row): a pull that moved since is refused,
-    rather than merged blind (None: whatever head it has now)."""
+    sha: str
+    """The head the caller saw (`orch_merge_list`'s row): the pull is merged only at that head,
+    and one that moved since is refused rather than merged blind."""
     project: Name | None = None
     """The project it is in (None: the only one, while udl has one)."""
 

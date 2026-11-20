@@ -135,6 +135,9 @@ __all__ = ["EventEmission", "Orch", "OrchContext", "Stopping", "Subscription"]
 log = logging.getLogger(__name__)
 
 _UDL: Final = Principal(kind="system", role="ready")
+"""(Who udl is when it moves a task itself: the system, in the role `ready` — not a person, who may
+move a task anywhere, so an `open` or `blocked` task would be marked ready with its reason
+cleared. The table allows `ready` from `in_progress` only.)"""
 
 _MERGED: Final = "github.pr.merged"
 """The event the GitHub watcher publishes for a pull that merged (25.5)."""
@@ -144,9 +147,6 @@ _CLOSED: Final = "github.pr.closed"
 
 _REVIEWER: Final = Principal(kind="agent", name="reviewer", role="review")
 """The reviewer: what a promotion's `done` is (only a reviewer or a person reviews)."""
-"""(Who udl is when it moves a task itself: the system, in the role `ready` — not a person, who may
-move a task anywhere, so an `open` or `blocked` task would be marked ready with its reason
-cleared. The table allows `ready` from `in_progress` only.)"""
 
 
 class Subscription(Protocol):
@@ -839,8 +839,9 @@ class Orch(AppPlugin[OrchSettings]):
 
         A person merges, or — where the project's `merge` is `agent` — the task's own assignee.
         After it the task is `merged` (and `done` at once when a person merged and nothing follows
-        the base), its worktree is taken away, and each task stacked on it is told to rebase and
-        push again."""
+        the base), and each task stacked on it is told to rebase and push again. Its worktree is
+        taken away by 27.5's `remove()`, which this PR does not reach (it is in #52, not in
+        `main`)."""
         project = await self._project(request.project)
         task, pull, why = await self._pull_of(service, project, request.key)
         if pull is None:
@@ -866,7 +867,7 @@ class Orch(AppPlugin[OrchSettings]):
                     "caller is the task's own assignee."
                 ),
             )
-        if request.sha is not None and request.sha != pull.head_sha:
+        if request.sha != pull.head_sha:
             raise NotAllowed(
                 f"{request.key!r} has moved since it was listed: {request.sha[:7]} is now "
                 f"{pull.head_sha[:7]}",
@@ -1008,8 +1009,8 @@ class Orch(AppPlugin[OrchSettings]):
         reviewed: bool,
         promoted: bool,
     ) -> stored.Task:
-        """What a merge sets off (28.3), however it happened: `merge.after_merge`, then the merged
-        task's worktree taken away."""
+        """What a merge sets off (28.3), however it happened: `merge.after_merge` (the task's
+        state, the rebase notes, the actions waiting on it)."""
         changed = await after_merge(
             self.records, project=project, key=key, by=by, reviewed=reviewed, promoted=promoted
         )

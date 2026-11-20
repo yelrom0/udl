@@ -19,7 +19,7 @@ from typing import Any
 
 # Package Imports
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 # Local Imports
 from support.clock import FakeClock
@@ -410,7 +410,8 @@ async def test_a_task_with_no_pull_is_not_in_the_list(service: UDLService) -> No
 
 
 async def merged(service: UDLService, **request: Any) -> Merged:
-    """`orch_merge`, as a caller of any interface calls it."""
+    """`orch_merge`, as a caller calls it (the head listed, unless it names one)."""
+    request.setdefault("sha", HEAD)
     found = await service.call("orch_merge", request)
 
     assert isinstance(found, Merged)
@@ -426,6 +427,16 @@ async def test_a_ready_task_is_merged_at_its_head(service: UDLService) -> None:
     assert [(one.number, one.sha, one.confirm) for one in app.merged] == [
         (1, HEAD, "yelrom0/udl#1")
     ]
+
+
+async def test_a_merge_that_names_no_head_is_refused(service: UDLService) -> None:
+    """(The head is not optional: a merge always says which head it merges.)"""
+    with pytest.raises(ValidationError, match="sha"):
+        await service.call("orch_merge", {"key": "F-1.1", "confirm": "yelrom0/udl#1"})
+
+    app = await service.apps.get("github")
+    assert isinstance(app, FakeGitHub)
+    assert app.merged == []
 
 
 async def test_a_pull_that_moved_since_it_was_listed_is_refused(service: UDLService) -> None:
