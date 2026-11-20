@@ -66,6 +66,7 @@ QUEUE_OPERATIONS: list[str] = [
     "assign",
     "reorder_queue",
     "unassign",
+    "push",
     "get_queue",
     "my_task",
     "suggest",
@@ -76,8 +77,8 @@ QUEUE_OPERATIONS: list[str] = [
     "readiness",
     "ready",
 ]
-"""What comes before the harnesses' (25.11): the token's, the queue's, what to do next, what only
-a person can do (28.2), and whether a pull is ready (27.6)."""
+"""What comes before the harnesses' (25.11): the token's, the queue's, a push's (27.5), what to
+do next, what only a person can do (28.2), and whether a pull is ready (27.6)."""
 
 
 def test_orch_offers_the_queue_s_operations() -> None:

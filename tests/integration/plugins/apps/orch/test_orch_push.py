@@ -1,0 +1,366 @@
+"""
+---------------------
+- test_orch_push.py -
+---------------------
+
+`orch_push` (27.5): an agent's whole path to a pull request, on a real git repository with a bare
+`origin` and a fake `github` app. Nothing here touches the network or this repository.
+
+The gate is an argv in the repo's record (`["sh", "-c", "..."]`), so a test says what a passing
+one and a failing one do.
+"""
+
+# System Imports
+import subprocess
+from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
+from typing import Any
+
+# Package Imports
+import pytest
+from pydantic import BaseModel
+
+# Local Imports
+from support.engine import registry, settings
+from udl.core.operations import OperationHints
+from udl.core.service import UDLService
+from udl.errors import NotAllowed
+from udl.hosts import Host
+from udl.interfaces.security import Principal, PrincipalKind, current_principal
+from udl.plugins.apps.base import AppPlugin, AppRecords, AppSettings
+from udl.plugins.apps.orch.models import IN_PROGRESS, OwnerKind
+from udl.plugins.apps.orch.models import Principal as Who
+from udl.plugins.apps.orch.plugin import Orch
+from udl.plugins.apps.orch.records import (
+    Agent,
+    AgentRecords,
+    Feature,
+    FeatureRecords,
+    LinkRecords,
+    Project,
+    ProjectRecords,
+    Repo,
+    RepoRecords,
+    Task,
+    TaskRecords,
+)
+from udl.plugins.apps.orch.workspace import prepare
+from udl.plugins.registry import APPS, PluginRegistry
+
+GIT: list[str] = ["git", "-c", "user.name=udl", "-c", "user.email=udl@example.com"]
+AGENT: str = "deepseek-b"
+
+
+def git(*args: str, cwd: Path) -> str:
+    """Run git in `cwd` and answer what it printed (its own error when it fails)."""
+    done = subprocess.run(  # noqa: S603 - (a test's own argv, never a user's)
+        [*GIT, *args], cwd=cwd, capture_output=True, text=True, check=False
+    )
+    assert done.returncode == 0, done.stderr
+    return done.stdout.strip()
+
+
+class OpenPull(BaseModel):
+    """What `github_open_pull` is asked (the parts a push gives it)."""
+
+    repo: str
+    head: str
+    title: str
+    base: str
+    body: str
+
+
+class FakePull(BaseModel):
+    """What `github_open_pull` answers, as a push reads it (a `PullInfo`)."""
+
+    repo: str = "yelrom0/udl"
+    number: int = 7
+    title: str = "It"
+    state: str = "open"
+    draft: bool = False
+    merged: bool = False
+    head: str = "feat/F-1.1-it"
+    head_sha: str = "abc1234"
+    base: str = "main"
+    html_url: str = "https://github.com/yelrom0/udl/pull/7"
+
+
+class FakeGitHub(AppPlugin[AppSettings]):
+    """A `github` app whose one operation answers a pull (what a push opens)."""
+
+    name = "github"
+    title = "GitHub (fake)"
+
+    def __init__(self, settings_: AppSettings | None = None, **kwargs: object) -> None:
+        super().__init__(settings_ or AppSettings(), **kwargs)  # pyright: ignore[reportArgumentType]
+        self.opened: list[dict[str, Any]] = []
+
+    @classmethod
+    def operations(cls) -> list[Any]:
+        return [
+            cls.operation("open_pull", title="Open a pull", hints=OperationHints(open_world=True))
+        ]
+
+    async def open_pull(self, request: OpenPull) -> FakePull:
+        """Record the pull that was asked for (a new one, or the same one updated)."""
+        asked = request.model_dump()
+        self.opened.append(asked)
+        return FakePull(title=str(asked.get("title") or "It"))
+
+
+def orch_registry() -> PluginRegistry:
+    """The memory database, the secret store, the fake github and the orch app."""
+    plugins = registry()
+    plugins.register(APPS, FakeGitHub)
+    plugins.register(APPS, Orch)
+    return plugins
+
+
+# ---------------------------------------------------------------------------------------------
+# A real repository, and a task with a worktree in it
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def home(tmp_path: Path) -> Path:
+    """A temp folder: the host's work dir, the bare `origin` and a checkout of it."""
+    (tmp_path / "work").mkdir()
+    (tmp_path / "checkout").mkdir()
+    bare = tmp_path / "origin.git"
+    git("init", "--bare", "-b", "main", str(bare), cwd=tmp_path)
+    checkout = tmp_path / "checkout"
+    git("init", "-b", "main", cwd=checkout)
+    (checkout / "README.md").write_text("udl\n")
+    git("add", "README.md", cwd=checkout)
+    git("commit", "-m", "the first commit", cwd=checkout)
+    git("config", "user.name", "udl", cwd=checkout)
+    git("config", "user.email", "udl@example.com", cwd=checkout)
+    git("remote", "add", "origin", str(bare), cwd=checkout)
+    git("push", "-u", "origin", "main", cwd=checkout)
+    return tmp_path
+
+
+@pytest.fixture
+async def service(tmp_path: Path, home: Path) -> AsyncIterator[UDLService]:
+    """A service with the project, its repo, the agent, and the task assigned to it, in its
+    worktree."""
+    async with UDLService(settings(tmp_path), registry=orch_registry()) as running:
+        await running.db.upsert_record(Host.local(str(home / "work")))
+        records = AppRecords(running.db)
+        await ProjectRecords(records).save_project(Project(name="udl", title="udl"))
+        await FeatureRecords(records).save_feature(Feature(project="udl", key="F-1", title="It"))
+        await RepoRecords(records).save_repo(
+            Repo(
+                project="udl",
+                name="udl",
+                github="yelrom0/udl",
+                account="github:yelrom0",
+                base_branch="main",
+                gate=["true"],
+                checkouts={"local": str(home / "checkout")},
+            )
+        )
+        await AgentRecords(records).save_agent(
+            Agent(name=AGENT, title=AGENT, runner="opencode", host="local")
+        )
+        task = Task(
+            project="udl",
+            feature="F-1",
+            key="F-1.1",
+            title="It",
+            repo="udl",
+            assignee=AGENT,
+        )
+        tasks = TaskRecords(records)
+        await tasks.save_task(task)
+        await tasks.move(task, IN_PROGRESS, by=Who(kind="system", role="start"))
+        started = await tasks.task("udl", "F-1.1")
+        assert started is not None
+        repo = await RepoRecords(records).repo("udl", "udl")
+        assert repo is not None
+        found = await prepare(
+            started,
+            repo=repo,
+            host=Host.local(str(home / "work")),
+            shell=await running.hosts.shell("local"),
+        )
+        await tasks.save_task(
+            started.model_copy(update={"branch": found.branch, "worktree": found.path})
+        )
+        yield running
+
+
+@pytest.fixture
+def as_agent() -> Iterator[None]:
+    """The caller is the agent (an agent token's principal, as an interface sets it)."""
+    token = current_principal.set(
+        Principal(kind=PrincipalKind.AGENT, name=AGENT, role="implementer")
+    )
+    try:
+        yield
+    finally:
+        current_principal.reset(token)
+
+
+@pytest.fixture
+async def worktree(service: UDLService) -> Path:
+    """The task's worktree, with one commit of its own in it."""
+    found = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
+    assert found is not None
+    assert found.worktree is not None
+    path = Path(found.worktree)
+    (path / "work.txt").write_text("the work\n")
+    git("add", "work.txt", cwd=path)
+    git("commit", "-m", "feat: the work", cwd=path)
+    return path
+
+
+async def pushed(service: UDLService, **request: Any) -> Any:
+    """`orch_push`, as the agent calls it."""
+    return await service.call("orch_push", request)
+
+
+# ---------------------------------------------------------------------------------------------
+# What it refuses
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_push_with_uncommitted_work_is_refused(
+    service: UDLService, worktree: Path, as_agent: None
+) -> None:
+    (worktree / "draft.txt").write_text("not committed\n")
+
+    with pytest.raises(NotAllowed, match="uncommitted work"):
+        await pushed(service, key="F-1.1", title="It")
+
+    app = await service.apps.get("github")
+    assert isinstance(app, FakeGitHub)
+    assert app.opened == []
+
+
+async def test_an_agent_that_is_not_the_task_s_assignee_is_refused(
+    service: UDLService, worktree: Path
+) -> None:
+    token = current_principal.set(
+        Principal(kind=PrincipalKind.AGENT, name="deepseek-a", role="implementer")
+    )
+    try:
+        with pytest.raises(NotAllowed, match="is not yours to push"):
+            await pushed(service, key="F-1.1", title="It")
+    finally:
+        current_principal.reset(token)
+
+
+async def test_a_failing_gate_pushes_nothing(
+    service: UDLService, worktree: Path, home: Path, as_agent: None
+) -> None:
+    await RepoRecords(AppRecords(service.db)).save_repo(
+        (await RepoRecords(AppRecords(service.db)).repo("udl", "udl")).model_copy(  # type: ignore[union-attr]
+            update={"gate": ["sh", "no-such-gate.sh"]}
+        )
+    )
+
+    with pytest.raises(NotAllowed, match="the gate failed"):
+        await pushed(service, key="F-1.1", title="It")
+
+    assert (
+        git("for-each-ref", "--format=%(refname:short)", "refs/heads", cwd=home / "origin.git")
+        == "main"
+    )
+    app = await service.apps.get("github")
+    assert isinstance(app, FakeGitHub)
+    assert app.opened == []
+
+
+# ---------------------------------------------------------------------------------------------
+# What it does: push, then open the pull
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_passing_gate_pushes_and_opens_the_pull(
+    service: UDLService, worktree: Path, home: Path, as_agent: None
+) -> None:
+    found = await pushed(service, key="F-1.1", title="feat(orch): the work (27.5)", body="It.")
+
+    assert found.branch == "feat/F-1.1-it"
+    assert found.gate.exit_code == 0
+    assert found.pull == "https://github.com/yelrom0/udl/pull/7"
+    # (The branch is on origin, at the worktree's commit.)
+    assert git("rev-parse", "feat/F-1.1-it", cwd=home / "origin.git") == git(
+        "rev-parse", "HEAD", cwd=worktree
+    )
+    app = await service.apps.get("github")
+    assert isinstance(app, FakeGitHub)
+    assert [one["head"] for one in app.opened] == ["feat/F-1.1-it"]
+    assert app.opened[0]["title"] == "feat(orch): the work (27.5)"
+    assert "Task: `F-1.1`" in str(app.opened[0]["body"])
+    # (The task has the pull's link, so readiness has a pull to ask about.)
+    task = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
+    assert task is not None
+    links = await LinkRecords(AppRecords(service.db)).for_owner("udl", OwnerKind.TASK, "F-1.1")
+    assert [(link.link_kind, link.url) for link in links] == [("pull", found.pull)]
+
+
+async def test_a_second_push_updates_the_same_pull(
+    service: UDLService, worktree: Path, as_agent: None
+) -> None:
+    await pushed(service, key="F-1.1", title="It")
+    (worktree / "work.txt").write_text("the work, again\n")
+    git("commit", "-am", "fix: the work again", cwd=worktree)
+
+    await pushed(service, key="F-1.1", title="It, again")
+
+    app = await service.apps.get("github")
+    assert isinstance(app, FakeGitHub)
+    assert [one["title"] for one in app.opened] == ["It", "It, again"]
+
+
+async def test_the_branch_is_rebased_when_the_base_moved(
+    service: UDLService, worktree: Path, home: Path, as_agent: None
+) -> None:
+    """(Two agents' branches in one repo: a push rebases on origin's base, so the PR is not
+    behind it.)"""
+    checkout = home / "checkout"
+    (checkout / "README.md").write_text("udl, and a change on main\n")
+    git("commit", "-am", "docs: a change on main", cwd=checkout)
+    git("push", "origin", "main", cwd=checkout)
+    moved = git("rev-parse", "origin/main", cwd=checkout)
+
+    await pushed(service, key="F-1.1", title="It")
+
+    # (Its commit is on top of the base's, not beside it.)
+    done = subprocess.run(  # noqa: S603, ASYNC221 - (a test's own argv, a git that ends at once)
+        [*GIT, "merge-base", "--is-ancestor", moved, "HEAD"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0
+    assert git("rev-parse", "HEAD~1", cwd=worktree) == moved
+
+
+async def test_a_conflict_with_the_base_pushes_nothing(
+    service: UDLService, worktree: Path, home: Path, as_agent: None
+) -> None:
+    checkout = home / "checkout"
+    (checkout / "work.txt").write_text("main's version\n")
+    git("add", "work.txt", cwd=checkout)
+    git("commit", "-m", "docs: main's version", cwd=checkout)
+    git("push", "origin", "main", cwd=checkout)
+
+    with pytest.raises(NotAllowed, match="does not rebase"):
+        await pushed(service, key="F-1.1", title="It")
+
+    app = await service.apps.get("github")
+    assert isinstance(app, FakeGitHub)
+    assert app.opened == []
+
+
+async def test_an_owner_may_push_any_task(service: UDLService, worktree: Path) -> None:
+    """(The person who owns udl is not held to an agent's own task.)"""
+    current_principal.set(Principal(kind=PrincipalKind.OWNER, name="owner"))
+
+    found = await pushed(service, key="F-1.1", title="It")
+
+    assert found.pull

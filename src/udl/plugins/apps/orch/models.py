@@ -66,6 +66,7 @@ __all__ = [
     "FinishActionRequest",
     "Gate",
     "GateArg",
+    "GateRun",
     "GitHubAccount",
     "GitHubSlug",
     "HostName",
@@ -83,6 +84,8 @@ __all__ = [
     "Project",
     "Promotion",
     "PullState",
+    "PushRequest",
+    "PushResult",
     "QueueEntry",
     "QueueRequest",
     "ReorderQueueRequest",
@@ -717,6 +720,46 @@ class QueueEntry(_Model):
     """An agent's name, or `human:<name>`; None while it is nobody's."""
     repo: str | None = None
     """The repo it is done in, or None."""
+
+
+class PushRequest(_Model):
+    """Push a task's work (27.5): its branch to origin, then its pull request."""
+
+    key: Key
+    """The task whose work it is."""
+    title: Title | None = None
+    """The pull's title (None: the task's own)."""
+    body: Text | None = None
+    """What the pull says, as markdown (the task's key is added to it)."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class GateRun(_Model):
+    """The gate a push ran: how it ended, and the end of what it printed."""
+
+    exit_code: int
+    """Its exit code (0: it passed, which is the only way a push goes on)."""
+    output: str
+    """The last of its output (the end, which is where a failure says why)."""
+    seconds: float
+    """How long it took, in seconds."""
+
+
+class PushResult(_Model):
+    """What a push did: the branch it pushed, the gate it passed, and the pull it opened (or
+    updated)."""
+
+    project: Name
+    """The project the task is of."""
+    key: Key
+    """The task whose work it is."""
+    branch: BranchName
+    """The branch it pushed."""
+    gate: GateRun
+    """The gate it passed first."""
+    pull: str
+    """The pull request's URL."""
 
 
 class TaskQueue(_Model):
