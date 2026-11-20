@@ -27,11 +27,11 @@ from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext, suppress
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Final
+from typing import Final, Literal
 
 # Package Imports
 import httpx
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
@@ -41,6 +41,30 @@ from starlette.routing import Route
 from udl.errors import PluginFailed
 from udl.hosts.shell import Host, HostShell, Interaction
 from udl.process import CancelToken, ProcessResult
+
+
+class _CredentialKey(BaseModel):
+    """`Credential.Key`, as the committed document has it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["key"]
+    key: str
+    metadata: dict[str, object] = Field(default_factory=dict[str, object])
+
+
+class CreateInput(BaseModel):
+    """`Credential.CreateInput`, as the committed document has it: a test compares the two, so the
+    fake and the document cannot drift apart."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    integrationID: str  # noqa: N815 - (the API's own name)
+    value: _CredentialKey
+    activate: bool = True
+    id: str | None = None
+    label: str = ""
+
 
 USER: Final = "opencode"
 """The service's Basic auth user (the password is the one in its `service.json`)."""
@@ -273,8 +297,37 @@ class FakeOpenCode:
     """The permissions waiting for an answer (what `GET /api/session/{id}/permission` lists)."""
     variables: dict[str, str] = field(default_factory=dict[str, str])
     """The environment sessions were given (`PUT /api/session/{id}/environment`)."""
-    credentials: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
-    """The credentials stored (`POST /api/credential`), as they were given."""
+    credentials: dict[str, dict[str, object]] = field(default_factory=dict[str, dict[str, object]])
+    """The credentials stored (`POST /api/credential`), by id."""
+    integrations: list[dict[str, object]] = field(
+        default_factory=lambda: [
+            {
+                "id": "openrouter",
+                "name": "OpenRouter",
+                "methods": [{"type": "env", "names": ["OPENROUTER_API_KEY"]}],
+                "connections": [],
+            },
+            {
+                "id": "anthropic",
+                "name": "Anthropic",
+                "methods": [{"type": "env", "names": ["ANTHROPIC_API_KEY"]}],
+                "connections": [],
+            },
+            {
+                "id": "togetherai",
+                "name": "Together AI",
+                "methods": [{"type": "env", "names": ["TOGETHER_API_KEY"]}],
+                "connections": [],
+            },
+        ]
+    )
+    """What `GET /api/integration` lists (the provider ids a key's variable can be found under)."""
+    credential_bodies: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
+    """Every body `POST /api/credential` was sent, as it was sent."""
+    credential_status: int = 200
+    """What `POST /api/credential` answers (200: it stores it; a test's own failure)."""
+    credential_says: str = ""
+    """What that failure says (a test's own text, which may repeat what it was sent)."""
     pending_outcome: str | None = None
     """How the turn whose events the stream is serving ended (published with its last event)."""
     silent_reads: int = 0
@@ -330,7 +383,9 @@ class FakeOpenCode:
                 Route(
                     "/api/experimental/session/{session_id}/log", self._read_log, methods=["GET"]
                 ),
-                Route("/api/credential", self._credential, methods=["POST"]),
+                Route("/api/integration", self._integration, methods=["GET"]),
+                Route("/api/credential", self._credential, methods=["GET", "POST"]),
+                Route("/api/credential/{credential_id}", self._credential_one, methods=["DELETE"]),
                 Route("/api/experimental/mcp/{server}", self._mcp, methods=["PUT"]),
             ]
         )
@@ -397,23 +452,55 @@ class FakeOpenCode:
             }
         )
 
+    async def _integration(self, request: Request) -> Response:
+        if not self._allowed(request):
+            return JSONResponse({"message": "unauthorized"}, status_code=401)
+        self.calls.append(("GET", "/api/integration", dict(request.query_params)))
+        return JSONResponse(
+            {
+                "location": {"directory": request.query_params.get("location[directory]")},
+                "data": self.integrations,
+            }
+        )
+
     async def _credential(self, request: Request) -> Response:
         if not self._allowed(request):
             return JSONResponse({"message": "unauthorized"}, status_code=401)
+        if request.method == "GET":
+            self.calls.append(("GET", "/api/credential", None))
+            return JSONResponse({"data": list(self.credentials.values())})
         body = await request.json()
         self.calls.append(("POST", "/api/credential", body))
-        self.credentials.append(body)
-        return JSONResponse(
-            {
-                "data": {
-                    "id": f"cred_{len(self.credentials)}",
-                    "integrationID": body.get("integrationID"),
-                    "label": body.get("label", ""),
-                    "active": True,
-                    "value": body.get("value", {}),
-                }
-            }
-        )
+        if self.credential_status != 200:
+            return JSONResponse(
+                {"message": self.credential_says}, status_code=self.credential_status
+            )
+        try:
+            made = CreateInput.model_validate(body)  # (the document's shape, as a model)
+        except ValidationError as failure:
+            return JSONResponse({"message": str(failure)}, status_code=400)
+        self.credential_bodies.append(made.model_dump())
+        if made.id is not None and made.id in self.credentials:
+            return JSONResponse({"message": "that credential exists"}, status_code=409)
+        credential_id = made.id if made.id is not None else f"cred_{len(self.credentials) + 1}"
+        stored: dict[str, object] = {
+            "id": credential_id,
+            "integrationID": made.integrationID,
+            "label": made.label,
+            "active": made.activate,
+            "value": {"type": "key", "key": made.value.key},
+        }
+        self.credentials[credential_id] = stored
+        return JSONResponse({"data": stored})
+
+    async def _credential_one(self, request: Request) -> Response:
+        if not self._allowed(request):
+            return JSONResponse({"message": "unauthorized"}, status_code=401)
+        credential_id = request.path_params["credential_id"]
+        self.calls.append(("DELETE", f"/api/credential/{credential_id}", None))
+        if self.credentials.pop(credential_id, None) is None:
+            return JSONResponse({"message": "no such credential"}, status_code=400)
+        return Response(status_code=204)
 
     def _tick(self) -> int:
         """A millisecond that always moves on (a real clock can repeat within one turn)."""

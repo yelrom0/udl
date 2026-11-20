@@ -26,7 +26,15 @@ from pydantic import BaseModel, ConfigDict, SecretStr, TypeAdapter
 
 # Local Imports
 from support.clock import T0, FakeClock
-from support.opencode import PASSWORD, BusyHost, FakeOpenCode, FakeShell, as_sequence, event
+from support.opencode import (
+    PASSWORD,
+    BusyHost,
+    CreateInput,
+    FakeOpenCode,
+    FakeShell,
+    as_sequence,
+    event,
+)
 from udl.errors import NotAllowed, PluginFailed, ToolUnavailable
 from udl.plugins.runners import opencode
 from udl.plugins.runners.base import (
@@ -72,6 +80,23 @@ class _Document(BaseModel):
     """The OpenAPI document OpenCode serves, as far as its paths go."""
 
     paths: dict[str, object]
+
+
+class _Schema(BaseModel):
+    """What a JSON schema says of a body: its fields, and the ones it requires."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    properties: dict[str, object] = {}
+    required: list[str] = []
+
+
+class _Components(BaseModel):
+    """A document's `components` (its schemas, as far as a test reads them)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    schemas: dict[str, _Schema] = {}
 
 
 class _Rule(BaseModel):
@@ -215,14 +240,15 @@ async def test_a_setup_writes_the_policies_and_an_agent_file_per_role(
     assert "udl's implementer agent" in shell.files["udl-implementer"]
     # (The key goes to the service's own credential store: it is in no command at all.)
     assert all("sk-1" not in " ".join(argv) for argv in shell.runs)
-    assert service.credentials == [
-        {
+    assert service.credentials == {
+        "udl-openrouter": {
+            "id": "udl-openrouter",
             "integrationID": "openrouter",
-            "value": {"type": "key", "key": "sk-1"},
-            "activate": True,
             "label": "udl",
+            "active": True,
+            "value": {"type": "key", "key": "sk-1"},
         }
-    ]
+    }
 
 
 async def test_a_setup_on_a_host_with_no_config_writes_the_policies(
@@ -303,24 +329,66 @@ async def test_a_key_that_is_not_a_variable_name_is_refused(
 async def test_a_provider_key_is_stored_under_the_provider_its_variable_names(
     service: FakeOpenCode, shell: FakeShell
 ) -> None:
-    """`ANTHROPIC_API_KEY` is OpenCode's `anthropic`, and `GROQ_KEY` its `groq`."""
-    await _runner(service, shell).setup([], {"ANTHROPIC_API_KEY": "sk-a", "GROQ_KEY": "sk-g"})
+    """`ANTHROPIC_API_KEY` is the service's `anthropic`, and `TOGETHER_API_KEY` its `togetherai`
+    (both read from `GET /api/integration`, not guessed from the name)."""
+    await _runner(service, shell).setup(
+        [], {"ANTHROPIC_API_KEY": "sk-a", "TOGETHER_API_KEY": "sk-t"}
+    )
 
-    assert [(cred["integrationID"], cred["value"]) for cred in service.credentials] == [
-        ("anthropic", {"type": "key", "key": "sk-a"}),
-        ("groq", {"type": "key", "key": "sk-g"}),
-    ]
+    assert service.credentials == {
+        "udl-anthropic": {
+            "id": "udl-anthropic",
+            "integrationID": "anthropic",
+            "label": "udl",
+            "active": True,
+            "value": {"type": "key", "key": "sk-a"},
+        },
+        "udl-togetherai": {
+            "id": "udl-togetherai",
+            "integrationID": "togetherai",
+            "label": "udl",
+            "active": True,
+            "value": {"type": "key", "key": "sk-t"},
+        },
+    }
     # (No command on the host carries either key.)
-    assert all("sk-a" not in " ".join(argv) and "sk-g" not in " ".join(argv) for argv in shell.runs)
+    assert all("sk-a" not in " ".join(argv) and "sk-t" not in " ".join(argv) for argv in shell.runs)
 
 
-async def test_a_key_whose_variable_names_no_provider_is_refused(
+async def test_a_second_setup_replaces_the_credential_it_wrote(
     service: FakeOpenCode, shell: FakeShell
 ) -> None:
-    with pytest.raises(NotAllowed, match="which provider"):
-        await _runner(service, shell).setup([], {"_API_KEY": "sk-1"})
+    """A key is stored once per provider: the second setup replaces it, so a host does not
+    collect one credential per run (and no stale secret is left behind)."""
+    runner = _runner(service, shell)
+    await runner.setup([], {"OPENROUTER_API_KEY": "sk-first"})
+    await runner.setup([], {"OPENROUTER_API_KEY": "sk-second"})
 
-    assert service.credentials == []
+    assert list(service.credentials) == ["udl-openrouter"]
+    assert service.credentials["udl-openrouter"]["value"] == {"type": "key", "key": "sk-second"}
+
+
+async def test_a_key_the_service_does_not_know_is_refused(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    with pytest.raises(NotAllowed, match="no provider whose key"):
+        await _runner(service, shell).setup([], {"GEMINI_API_KEY": "sk-1"})
+
+    assert service.credentials == {}
+
+
+async def test_a_key_never_appears_in_the_failure_it_causes(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """A service that repeats what it was sent must not put the key in udl's log."""
+    service.credential_status = 400
+    service.credential_says = "invalid key sk-1"
+
+    with pytest.raises(PluginFailed) as failure:
+        await _runner(service, shell).setup([], {"OPENROUTER_API_KEY": "sk-1"})
+
+    assert "sk-1" not in str(failure.value)
+    assert "400" in str(failure.value)
 
 
 async def test_a_sign_in_needs_the_provider(service: FakeOpenCode, shell: FakeShell) -> None:
@@ -609,6 +677,23 @@ async def test_every_call_it_makes_is_in_the_openapi_document_it_was_written_aga
     }
     assert made
     assert made <= known, made - known
+
+
+async def test_the_fake_takes_what_the_document_says_a_credential_is(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """The fake's `Credential.CreateInput` is the committed document's: its fields and the ones it
+    requires, so the fake and the service cannot drift apart (and a setup's body is that shape)."""
+    components = _Components.model_validate(_document()["components"])
+    schema = components.schemas["Credential.CreateInput"]
+
+    fields = set(CreateInput.model_fields)
+    assert fields == set(schema.properties)
+    assert {name for name, field in CreateInput.model_fields.items() if field.is_required()} == set(
+        schema.required
+    )
+    await _runner(service, shell).setup([], {"OPENROUTER_API_KEY": "sk-1"})
+    assert set(service.credential_bodies[0]) <= fields
 
 
 async def test_a_turn_is_a_prompt_and_the_log_from_the_sequence_udl_stored(

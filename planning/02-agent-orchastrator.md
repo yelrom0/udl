@@ -692,11 +692,17 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   `/etc/opencode/opencode.json` (which a project cannot widen) is *not* written: udl may not be
   root on that host, and the file is not there yet, so the user's global config is where the
   policies go until a host has a system one.
+- **A setup replaces the credential it wrote.** Its id is `udl-<provider>`: a second setup's
+  `POST` is a 409, so udl deletes that id and posts again — one credential per provider, the
+  newest key, and no stale secret left behind. Its failure never repeats the answer's body (a
+  service that echoes what it was sent would put the key in udl's log).
 - **A provider key is a credential on the service, never a command.** `opencode service set env`
   takes the value in its argv, so it would show in the host's process list; `POST /api/credential`
   (OpenCode 2.1.2's own API, in the committed OpenAPI document) stores it instead, and `activate`
   makes it the one sessions use. The key is in no argv on either machine, and it is set at setup,
-  not at every session.
+  not at every session. Which provider a variable is for comes from the service itself
+  (`GET /api/integration`, each one's `EnvMethod.names`), never from its name: `TOGETHER_API_KEY`
+  is `togetherai`, and a variable the service does not list is refused, naming what it does.
 - **A runner's quota is the dispatcher's to record:** `Harnesses.limited(host, runner, until)` is
   what 27.7 calls; `RunnerHealth.limited_until` reads it back. Nothing polls a provider's quota.
 - **`claude doctor` is an interactive screen:** it gets 20 seconds and no terminal, and one that

@@ -129,14 +129,9 @@ _ENTRIES: Final[TypeAdapter[list[dict[str, object]]]] = TypeAdapter(list[dict[st
 _ANY_LIST: Final[TypeAdapter[list[object]]] = TypeAdapter(list[object])
 """A config's `policies`, when it is a list of objects."""
 _KEY_NAME: Final = re.compile(r"^[A-Z_][A-Z0-9_]*$")
-_KEY_SUFFIX: Final = re.compile(r"_(?:API_KEY|KEY)$")
-
-
-def _integration(name: str) -> str:
-    """The provider an environment variable names: `OPENROUTER_API_KEY` and `OPENROUTER_KEY` are
-    OpenCode's `openrouter`, and `ANTHROPIC_API_KEY` its `anthropic` (the service's integration
-    ids are lower case). An empty string when the name says no provider at all."""
-    return _KEY_SUFFIX.sub("", name).lower().replace("_", "-")
+"""What a provider's key may be called: the variable the service reads it from."""
+_CREDENTIAL: Final = "udl"
+"""The prefix of the credentials udl stores, so a setup replaces its own and no one else's."""
 
 
 _REFUSAL: Final = "Not allowed here: ask with orch_ask."
@@ -193,6 +188,32 @@ class _Models(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     data: list[_ModelInfo] = Field(default_factory=lambda: list[_ModelInfo]())
+
+
+class _Method(BaseModel):
+    """One way an integration takes its credential (`Integration.Method`, as udl reads it)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    type: str = ""
+    names: list[str] = []
+
+
+class _Integration(BaseModel):
+    """One provider `GET /api/integration` lists."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = ""
+    methods: list[_Method] = []
+
+
+class _Integrations(BaseModel):
+    """`GET /api/integration`."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    data: list[_Integration] = []
 
 
 class _Auth(BaseModel):
@@ -476,34 +497,76 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
 
         The key never reaches a command: not udl's argv, not an `sh -c` line on the host, and so
         never the host's process list. The service keeps it (its credential store is what
-        `opencode auth list` reads), and `activate` makes it the one its sessions use."""
-        wanted: dict[str, str] = {}
-        for name, value in env.items():
+        `opencode auth list` reads), and `activate` makes it the one its sessions use. A setup run
+        again replaces the credential it wrote the first time instead of adding another."""
+        for name in env:
             if not _KEY_NAME.fullmatch(name):
                 raise NotAllowed(
                     f"{name!r} is not an environment variable udl will set",
                     hint="A provider's key is set as a variable named `[A-Z_][A-Z0-9_]*`.",
                 )
-            integration = _integration(name)
-            if not integration:
-                raise NotAllowed(
-                    f"{name!r} does not say which provider its key is for",
-                    hint="Name it as a provider's key: `OPENROUTER_API_KEY`, `ANTHROPIC_KEY`.",
-                )
-            wanted[integration] = value
         async with self._api() as api:
-            for integration, value in wanted.items():
-                await self._call(
-                    api,
-                    "POST",
-                    "/api/credential",
-                    json={
-                        "integrationID": integration,
-                        "value": {"type": "key", "key": value},
-                        "activate": True,
-                        "label": "udl",
-                    },
-                )
+            by_env = await self._providers(api)
+            for name, value in env.items():
+                integration = by_env.get(name)
+                if integration is None:
+                    known = ", ".join(sorted(by_env)) or "none"
+                    raise NotAllowed(
+                        f"opencode has no provider whose key is called {name!r}",
+                        hint=f"Its providers take: {known}.",
+                    )
+                await self._credential(api, integration, value)
+
+    async def _providers(self, api: httpx.AsyncClient) -> dict[str, str]:
+        """Every provider the service offers, by the variable its key is given in
+        (`GET /api/integration`: `OPENROUTER_API_KEY` is `openrouter`, `TOGETHER_API_KEY` is
+        `togetherai` — the service's own ids, never a guess from the name)."""
+        listed = await self._get(api, "/api/integration", _Integrations)
+        found: dict[str, str] = {}
+        for integration in listed.data:
+            for method in integration.methods:
+                if method.type == "env":
+                    for name in method.names:
+                        found[name] = integration.id
+        return found
+
+    async def _credential(self, api: httpx.AsyncClient, integration: str, key: str) -> None:
+        """`key` as `integration`'s credential, replacing the one udl stored before.
+
+        The answer's body is never in a failure: a service that repeats what it was sent would put
+        the key in udl's log."""
+        credential = f"{_CREDENTIAL}-{integration}"
+        body: dict[str, object] = {
+            "id": credential,
+            "integrationID": integration,
+            "value": {"type": "key", "key": key},
+            "activate": True,
+            "label": "udl",
+        }
+        status = await self._status(api, "POST", "/api/credential", json=body)
+        if status == 409:  # (the one udl wrote before: replaced, not added to)
+            await self._status(api, "DELETE", f"/api/credential/{credential}")
+            status = await self._status(api, "POST", "/api/credential", json=body)
+        if status >= httpx.codes.BAD_REQUEST:
+            raise PluginFailed(
+                f"opencode said {status} to POST /api/credential for {integration}",
+                hint="Its answer is not shown: it may repeat the key.",
+            )
+
+    async def _status(
+        self,
+        api: httpx.AsyncClient,
+        method: str,
+        path: str,
+        *,
+        json: Mapping[str, object] | None = None,
+    ) -> int:
+        """One call whose status is the answer (its body is left out, as it may hold a secret)."""
+        try:
+            answer = await api.request(method, path, json=json)
+        except httpx.HTTPError as failure:
+            raise PluginFailed(f"opencode could not be reached: {failure}") from failure
+        return answer.status_code
 
     async def _merged_policies(self) -> dict[str, object]:
         """The service's config as it is on the host, with udl's deny policies merged in: every

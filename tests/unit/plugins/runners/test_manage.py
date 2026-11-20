@@ -222,7 +222,9 @@ async def test_opencode_s_install_restarts_its_service(hosts: Hosts) -> None:
     assert ["opencode", "service", "restart"] in shell.runs
 
 
-@pytest.mark.parametrize("version", ["1.2; rm -rf /", "--help", "-rf", "1.2 3", ""])
+@pytest.mark.parametrize(
+    "version", ["1.2; rm -rf /", "--help", "--version", "-rf", "-x", "--", "1.2 3", ""]
+)
 async def test_a_bad_version_is_refused_before_anything_runs(hosts: Hosts, version: str) -> None:
     """A version is letters, digits, dots and dashes, and it starts with one of the first two: a
     leading dash is an option to the harness's own program, never a version."""
