@@ -4651,9 +4651,12 @@ Versions are whatever `pnpm add` gives when 18.1 starts (pinned by `pnpm-lock.ya
   routes). `/` redirects to `/ui/` when a browser asks for HTML. The API keeps its paths: they are
   documented and scripts and MCP clients use them, while the UI needs only one prefix. UI plugins are at
   `/ui/plugins/<name>/` from each plugin's bundle dir.
-- Headers on `/ui`: `Content-Security-Policy: default-src 'self'; connect-src 'self'; frame-ancestors
-  'none'` (styles are adopted stylesheets, so `style-src 'self'` should hold; 18.9 settles it),
-  `Referrer-Policy: same-origin`, `X-Content-Type-Options: nosniff`.
+- Headers on `/ui`: `Content-Security-Policy: default-src 'self'; connect-src 'self'; img-src 'self'
+  data:; frame-ancestors 'none'`, `Referrer-Policy: same-origin`, `X-Content-Type-Options: nosniff`.
+  Styles are adopted stylesheets, so `style-src` stays at `default-src 'self'` and no `unsafe-inline` is
+  needed; **18.9 settled it** in Chromium (an e2e assertion on the header, no `securitypolicyviolation`,
+  and the plugin's adopted style still computing), and `img-src 'self' data:` is there for daisyUI's own
+  `data:` images.
 - The build (`src/udl/interfaces/web/dist/`, and each built-in UI plugin's `ui/`) is package data, built by
   `make web` and not committed. Without it, `/ui/` says "run `make web`".
 - **Without an `api_key`** (localhost, the default) the UI just works, as the API does. **With one**,
