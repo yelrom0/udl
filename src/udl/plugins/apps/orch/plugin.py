@@ -46,6 +46,7 @@ from udl.plugins.apps.orch import suggest as suggested
 from udl.plugins.apps.orch import transitions
 from udl.plugins.apps.orch import workspace as space
 from udl.plugins.apps.orch.agents import AgentRole
+from udl.plugins.apps.orch.dispatcher import Dispatcher
 from udl.plugins.apps.orch.links import (
     LINK_CHANGED,
     LinkChanged,
@@ -102,6 +103,13 @@ from udl.plugins.apps.orch.models import (
 )
 from udl.plugins.apps.orch.readiness import TASK_READY, Pull, TaskReady
 from udl.plugins.apps.orch.readiness import readiness as assess
+from udl.plugins.apps.orch.sessions import (
+    AGENT_LIMITED,
+    SESSION_ENDED,
+    SESSION_EVENT,
+    SESSION_FAILED,
+    SESSION_STARTED,
+)
 from udl.plugins.apps.orch.settings import OrchSettings
 from udl.plugins.apps.orch.tokens import (
     IssueTokenRequest,
@@ -263,7 +271,15 @@ class Orch(AppPlugin[OrchSettings]):
     @classmethod
     def event_types(cls) -> Sequence[EventType[Any]]:
         """The events orch publishes: its links' changes (26.4), and its tasks' from 26.6 on."""
-        return (LINK_CHANGED, TASK_READY)
+        return (
+            LINK_CHANGED,
+            TASK_READY,
+            SESSION_STARTED,
+            SESSION_EVENT,
+            SESSION_ENDED,
+            SESSION_FAILED,
+            AGENT_LIMITED,
+        )
 
     def __init__(
         self, settings: OrchSettings, *, clock: Clock, records: AppRecords | None = None
@@ -461,9 +477,13 @@ class Orch(AppPlugin[OrchSettings]):
         return {}
 
     async def serve(self, ctx: AppContext) -> None:
-        """Orch's service: it keeps its pull links current (26.4), until the dispatcher
-        (Phase 27) gives it more to do."""
-        await self._keep_links(ctx.records, ctx.events, ctx.service, ctx.stop)
+        """Orch's service: it keeps its pull links current (26.4) and dispatches to its agents
+        (27.7), until the lease goes."""
+        keeping = self._keep_links(ctx.records, ctx.events, ctx.service, ctx.stop)
+        if self.service is None:  # (an app made outside a service has no agents to dispatch to)
+            await keeping
+            return
+        await asyncio.gather(keeping, Dispatcher(ctx, harnesses=self.harnesses).run())
 
     async def _keep_links(
         self,

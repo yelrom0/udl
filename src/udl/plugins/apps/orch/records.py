@@ -458,6 +458,8 @@ class AgentSession(Record):
     state: SessionState = SessionState.STARTING
     turns: NonNegativeInt = 0
     nudges: NonNegativeInt = 0
+    failures: NonNegativeInt = 0
+    """How many turns in a row failed (the dispatcher retries three times, 27.7)."""
     limited_until: AwareDatetime | None = None
     tokens_in: NonNegativeInt = 0
     tokens_out: NonNegativeInt = 0
