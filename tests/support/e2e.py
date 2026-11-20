@@ -106,10 +106,14 @@ def half_built() -> str | None:
     saying out loud rather than a page quietly missing a plugin.)"""
     if not SHELL_DIST.is_dir():
         return None
-    missing = [one.name for one in (SHADCN_EXAMPLE, TEMPLATE) if not one.is_dir()]
+    # (Named, not by their folders: both end in `dist`.)
+    plugins = {"example": SHADCN_EXAMPLE, "template": TEMPLATE}
+    missing = [name for name, path in plugins.items() if not path.is_dir()]
     if not missing:
         return None
-    return f"the shell is built and {', '.join(missing)} is not: run `make web`"
+    said = " and ".join(missing)
+    verb = "is" if len(missing) == 1 else "are"
+    return f"the shell is built and 18.10's {said} {verb} not: run `make web`"
 
 
 def write_config(root: Path, port: int) -> Path:
