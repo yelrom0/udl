@@ -14,29 +14,13 @@ import {
 	useRouter,
 } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
+import { ConfirmHost } from "../components/ConfirmHost";
 import { ThemeSwitcher } from "../components/ThemeSwitcher";
 import { startLive } from "../live/connection";
 import { useLive } from "../stores/live";
+import { useNav } from "../stores/plugins";
 import { check, session, signOut, useSession } from "../stores/session";
 import { applyTheme, useTheme } from "../stores/theme";
-
-/** One item of the nav: where it goes, and what it says. */
-export const NAV = [
-	{ to: "/", label: "Dashboard" },
-	{ to: "/downloads", label: "Downloads" },
-	{ to: "/sites", label: "Sites" },
-	{ to: "/chains", label: "Chains" },
-	{ to: "/events", label: "Events" },
-	{ to: "/subscriptions", label: "Subscriptions" },
-	{ to: "/actions", label: "Actions" },
-	{ to: "/runs", label: "Runs" },
-	{ to: "/schedules", label: "Schedules" },
-	{ to: "/ai", label: "AI" },
-	{ to: "/accounts", label: "Accounts" },
-	{ to: "/plugins", label: "Plugins" },
-	{ to: "/databases", label: "Databases" },
-	{ to: "/settings", label: "Settings" },
-] as const;
 
 export const Route = createRootRoute({
 	beforeLoad: async ({ location }) => {
@@ -57,6 +41,8 @@ function Layout() {
 	const theme = useTheme();
 	const connection = useLive((live) => live.connection);
 	const nav = useRef<HTMLInputElement>(null);
+	// (The shell's own pages and each plugin's: one list, from 18.9's registry.)
+	const pages = useNav();
 
 	useEffect(() => {
 		applyTheme(theme);
@@ -130,14 +116,15 @@ function Layout() {
 				<main className="flex-1 p-4 lg:p-8">
 					<Outlet />
 				</main>
+				<ConfirmHost />
 			</div>
 			<div className="drawer-side z-10">
 				<label htmlFor="nav" className="drawer-overlay" aria-label="Close the menu" />
 				<ul className="menu min-h-full w-56 bg-base-200 p-2">
-					{NAV.map((item) => (
-						<li key={item.to}>
+					{pages.map((page) => (
+						<li key={`${page.plugin.name}:${page.to}`}>
 							<Link
-								to={item.to}
+								to={page.to}
 								activeProps={{ className: "menu-active" }}
 								onClick={() => {
 									// (On a phone the nav covers the page: choosing a page closes it.)
@@ -146,7 +133,7 @@ function Layout() {
 									}
 								}}
 							>
-								{item.label}
+								{page.title}
 							</Link>
 						</li>
 					))}

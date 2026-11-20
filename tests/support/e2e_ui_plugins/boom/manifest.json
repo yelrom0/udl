@@ -1,0 +1,9 @@
+{
+	"name": "boom",
+	"version": "0.1.0",
+	"sdk": "^1.0",
+	"entry": "index.js",
+	"contributes": {
+		"routes": ["throw"]
+	}
+}

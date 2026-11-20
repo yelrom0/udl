@@ -8,6 +8,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { api, given } from "../api";
 import { ErrorCard } from "../components/ErrorCard";
 import { TimeAgo } from "../components/TimeAgo";
+import { UDL } from "../plugins/shell";
+import { PluginSlot } from "../plugins/slot";
 import { useLive } from "../stores/live";
 
 export const Route = createFileRoute("/")({
@@ -67,6 +69,9 @@ function Dashboard() {
 					</tbody>
 				</table>
 			)}
+
+			{/* (A plugin's own cards: nothing at all when no plugin has a dashboard widget.) */}
+			<PluginSlot point="widgets" props={{ slot: "dashboard", plugin: UDL }} />
 
 			<Live />
 		</section>

@@ -94,7 +94,7 @@ export interface FieldSpec {
 type Schema = Readonly<Record<string, JsonValue>>;
 
 /** Whether a value is a JSON object (not an array, not null). */
-export function isJsonObject(value: JsonValue | undefined): value is Schema {
+export function isJsonObject(value: unknown): value is Schema {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 

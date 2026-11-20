@@ -54,8 +54,12 @@ _IMMUTABLE: Final = "max-age=31536000, immutable"
 _NO_CACHE: Final = "no-cache"
 
 HEADERS: Final[dict[str, str]] = {
-    # (Styles are adopted stylesheets, so `style-src 'self'` holds; a plugin's are too.)
-    "Content-Security-Policy": "default-src 'self'; connect-src 'self'; frame-ancestors 'none'",
+    # (Styles are adopted stylesheets, so `style-src 'self'` holds; a plugin's are too. daisyUI
+    # draws its spinners and select arrows as `data:` images in its own CSS, so images allow
+    # them — inline scripts, styles and evals stay out.)
+    "Content-Security-Policy": (
+        "default-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'"
+    ),
     "Referrer-Policy": "same-origin",
     "X-Content-Type-Options": "nosniff",
 }

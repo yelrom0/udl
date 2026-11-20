@@ -49,6 +49,8 @@ from support.fixture_site import FixtureSite
 ROOT: Final[Path] = Path(__file__).resolve().parents[2]
 # Local plugins loaded by the e2e config (the fakes, as plugins).
 E2E_PLUGINS: Final[Path] = Path(__file__).resolve().parent / "e2e_plugins"
+# The UI plugins the shell loads in the e2e run: a working one and one that throws (18.9).
+E2E_UI_PLUGINS: Final[Path] = Path(__file__).resolve().parent / "e2e_ui_plugins"
 # How long a test server gets to answer before it is called broken (a loaded machine is slow).
 READY_TIMEOUT: Final[float] = 30
 # How long the server runs on its own before it stops itself, so a test that leaves it behind
@@ -103,7 +105,7 @@ def write_config(root: Path, port: int) -> Path:
             downloads=root / "downloads",
             database=root / "udl.db",
             plugins=E2E_PLUGINS,
-            ui=root / "ui-plugins",
+            ui=E2E_UI_PLUGINS,
             port=port,
             key=API_KEY,
         )

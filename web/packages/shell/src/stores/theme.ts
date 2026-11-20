@@ -31,6 +31,12 @@ function initial(): Theme {
 	}
 }
 
+/** What the page is showing: the chosen theme, or the system's while that is the choice. */
+export function shownTheme(): "light" | "dark" {
+	const chosen = theme.getState().current;
+	return chosen === "system" ? systemTheme() : chosen;
+}
+
 /** Put `chosen` on `<html>`, so daisyUI and the shell's own CSS follow it. */
 export function applyTheme(chosen: Theme): void {
 	const shown = chosen === "system" ? systemTheme() : chosen;

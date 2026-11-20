@@ -319,7 +319,7 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
   - [x] 18.6 Live data: shared SSE connections feeding Zustand stores, reconnecting with backoff
   - [x] 18.7 `UIManifest` (Pydantic → JSON Schema → TypeScript), `ui` on every plugin kind, the `udl.ui` kind, local UI plugin dirs, `GET /ui/plugins.json`, UI availability in `list_plugins`
   - [x] 18.8 `@udl/ui-sdk`: `defineUIPlugin`, the mount contract, a React adapter, the plugin context, SDK version checks
-  - [ ] 18.9 The plugin host: `<PluginSlot>` (lazy import, Shadow DOM isolation, error boundary) and the contribution points
+  - [~] 18.9 The plugin host: `<PluginSlot>` (lazy import, Shadow DOM isolation, error boundary) and the contribution points
   - [ ] 18.10 Proof: an example UI plugin built with shadcn/ui runs isolated inside the daisyUI shell (e2e); a template for new UI plugins
 
 - [ ] **Phase 19: Web UI for the downloader and the fetcher**
@@ -4576,6 +4576,43 @@ timeout: 5m
   in Playwright (the real thing).
 - Done when: a UI plugin that throws shows its error card, and the shell carries on.
 
+- **Built (deepseek-a, 2026-11-20, PR #49):** `web/packages/shell/src/plugins/`: `registry.ts` (the seven
+  points, each a key to its contributions — a route's path, a widget's slot — and `keyOf`, which says what a
+  slot is looked up by), `shell.ts` (the page's one registry; the shell's own 14 pages registered as plugin
+  `udl`, so `__root`'s drawer draws the store's `nav` and a plugin's items sit beside them), `list.ts`
+  (`GET /ui/plugins.json` → the store → the registry; a list that cannot be read is a problem the Plugins page
+  shows), `load.ts` (`import(entry_url)` once per bundle, a cache of promises; a failed import is dropped from
+  the cache so a retry can work), `dom.ts` (the mount's place: a wrapper with `data-theme`, a shadow root
+  with the plugin's stylesheets fetched and adopted through `replaceSync`, and the plugin's `@property` rules
+  hoisted to one document-level sheet — a shadow root cannot register one), `context.ts` (`UIContext`: the
+  typed `api`, `call(name, request)` filling path parameters and the rest into the query or the body,
+  `events.subscribe(filter)` with type globs and field filters, the theme with its daisyUI tokens and
+  `onChange`, the stores read-only, `navigate`, `toast`, `confirm`), `events.ts` (the bus the live connection
+  publishes to), `routes.ts` (`matchRoute`, `$name`s decoded), `ErrorBoundary.tsx` + `slot.tsx`
+  (`<PluginSlot point props>`: one `SlotItem` per contribution, drawn by a `Draw` that mounts, updates and
+  unmounts, and a failure is an `ErrorCard` with a retry — a fresh mount — in that contribution's place),
+  `navigation.ts`. The shell's pages: `routes/p/$plugin/$.tsx` (a plugin's page, its route's params and the
+  query as props; a page the plugin has not got, or a plugin that is not loaded, is a `Placeholder`), the
+  dashboard's `widgets` slot, and `routes/plugins.tsx` (each UI plugin, what it adds, refused bundles, and the
+  ones this browser could not load). `ctx.confirm` needed a host, so `components/ConfirmHost.tsx` +
+  `stores/confirms.ts` (one question at a time, in daisyUI's modal; `__root` renders it). `stores/plugins.ts`
+  gained `nav` and `errors`, and `toasts.ts`'s `toast(kind, message)` gained the store's own `useToasts`.
+  The SDK's `isJsonObject` now takes `unknown` (it is the guard for a value off the wire). Tests: Vitest —
+  `slot.test.tsx` 18, `registry.test.ts` 12, `context.test.ts` 10, `events.test.ts` 10, `shell.test.ts` 8,
+  `routes.test.ts` 7, `dom.test.ts` 6, `load.test.ts` 5, `PluginList.test.tsx` 5, `ConfirmHost.test.tsx` 5,
+  `plugins.test.ts` and `app.test.tsx` extended — 97.65 % statements, 91.02 % branches on the shell. e2e:
+  `web/e2e/ui-plugins.spec.ts`, 5 tests in both themes, against two hand-written bundles in
+  `tests/support/e2e_ui_plugins/` (`hello`: a nav item, a page, a dashboard widget and a stylesheet; `boom`:
+  a page that throws) — the page draws in a shadow root (its text is not in the shell's DOM), the stylesheet
+  applies (`rgb(1, 2, 3)`), the `@property` is in `document.adoptedStyleSheets`, the wrapper's `data-theme` is
+  the page's, the widget is on the dashboard, and `boom` is an error card with the shell still working.
+  **CSP, settled:** `ui-plugins.spec.ts` asserts the page's answer carries udl's policy (`default-src 'self'`,
+  no `unsafe-inline`, no `unsafe-eval`), that no `securitypolicyviolation` fires, and that the plugin's
+  adopted style still computes (`rgb(1, 2, 3)`): adopted sheets hold under the CSP in Chromium; Firefox is
+  not installed here. The policy needed one widening — `img-src 'self' data:` — because daisyUI's own CSS
+  draws its spinners as `data:` images (found by the violation assertion). A plugin's `@property` cannot be
+  registered from its shadow root, hence the hoist.
+
 **18.10 The proof, and a template** · needs 18.9
 - Build:
   - `web/examples/shadcn`: Tailwind 4 with a config of its own (scanning only its own files), and
@@ -4614,9 +4651,12 @@ Versions are whatever `pnpm add` gives when 18.1 starts (pinned by `pnpm-lock.ya
   routes). `/` redirects to `/ui/` when a browser asks for HTML. The API keeps its paths: they are
   documented and scripts and MCP clients use them, while the UI needs only one prefix. UI plugins are at
   `/ui/plugins/<name>/` from each plugin's bundle dir.
-- Headers on `/ui`: `Content-Security-Policy: default-src 'self'; connect-src 'self'; frame-ancestors
-  'none'` (styles are adopted stylesheets, so `style-src 'self'` should hold; 18.9 settles it),
-  `Referrer-Policy: same-origin`, `X-Content-Type-Options: nosniff`.
+- Headers on `/ui`: `Content-Security-Policy: default-src 'self'; connect-src 'self'; img-src 'self'
+  data:; frame-ancestors 'none'`, `Referrer-Policy: same-origin`, `X-Content-Type-Options: nosniff`.
+  Styles are adopted stylesheets, so `style-src` stays at `default-src 'self'` and no `unsafe-inline` is
+  needed; **18.9 settled it** in Chromium (an e2e assertion on the header, no `securitypolicyviolation`,
+  and the plugin's adopted style still computing), and `img-src 'self' data:` is there for daisyUI's own
+  `data:` images.
 - The build (`src/udl/interfaces/web/dist/`, and each built-in UI plugin's `ui/`) is package data, built by
   `make web` and not committed. Without it, `/ui/` says "run `make web`".
 - **Without an `api_key`** (localhost, the default) the UI just works, as the API does. **With one**,

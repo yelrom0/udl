@@ -1,7 +1,16 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startFakingMatchMedia, stopFakingMatchMedia, systemIs } from "../test-setup";
-import { applyTheme, followSystem, isTheme, setTheme, systemTheme, theme, useTheme } from "./theme";
+import {
+	applyTheme,
+	followSystem,
+	isTheme,
+	setTheme,
+	shownTheme,
+	systemTheme,
+	theme,
+	useTheme,
+} from "./theme";
 
 beforeEach(() => {
 	startFakingMatchMedia();
@@ -131,5 +140,13 @@ describe("the theme store", () => {
 		act(() => setTheme("system"));
 		systemIs(true);
 		expect(document.documentElement.dataset.theme).toBe("light");
+	});
+
+	it("says what the page is showing, which is the system's while that is the choice", () => {
+		setTheme("dark");
+		expect(shownTheme()).toBe("dark");
+
+		setTheme("system");
+		expect(shownTheme()).toBe(systemTheme());
 	});
 });

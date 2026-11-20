@@ -1,7 +1,9 @@
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NAV } from "./routes/__root";
+import { onNavigate, routerNavigation } from "./plugins/navigation";
+import { OWN_NAV, registerPlugins } from "./plugins/shell";
+import { BASE } from "./router";
 import { routeTree } from "./routeTree.gen";
 import { clear, pushEvent, setRun } from "./stores/live";
 import { setPlugins } from "./stores/plugins";
@@ -43,6 +45,31 @@ function udl({ signedIn = true }: { signedIn?: boolean } = {}): void {
 	);
 }
 
+/** What a bundle's page does in a test: a page test cannot import one from a URL. */
+type Page = (
+	target: HTMLElement,
+	props: unknown,
+	ctx: { navigate: (to: string) => void },
+) => { update(props: unknown): void; unmount(): void };
+
+/** The page the mocked bundle's `inbox` is (each test says what it does). */
+const bundle = vi.hoisted(() => ({ page: null as Page | null }));
+
+// (A plugin's bundle is an ES module of the page's; here it is the mount the test gives it.)
+vi.mock("./plugins/load", () => ({
+	forgetPlugins: () => {},
+	loadPlugin: async () => ({
+		routes: {
+			inbox: (target: HTMLElement, props: unknown, ctx: { navigate: (to: string) => void }) => {
+				if (bundle.page === null) {
+					throw new Error("the test gave no page");
+				}
+				return bundle.page(target, props, ctx);
+			},
+		},
+	}),
+}));
+
 /** The page at `path` (`/ui` is its base, as udl serves it). */
 function draw(path: string) {
 	const router = createRouter({
@@ -50,6 +77,8 @@ function draw(path: string) {
 		basepath: "/ui",
 		history: createMemoryHistory({ initialEntries: [path] }),
 	});
+	// (As `main.tsx` does it: a plugin's `ctx.navigate` moves the router.)
+	onNavigate(routerNavigation(router.history, BASE));
 	render(<RouterProvider router={router} />);
 	return router;
 }
@@ -59,6 +88,8 @@ beforeEach(() => {
 	session.setState({ state: "unknown" });
 	clear();
 	localStorage.clear();
+	// (The page's own pages, as `main.tsx` registers them before the first route is drawn.)
+	registerPlugins([]);
 });
 
 afterEach(() => {
@@ -71,12 +102,12 @@ afterEach(() => {
 describe("the shell", () => {
 	it("reaches every page of the nav", async () => {
 		udl();
-		for (const item of NAV) {
+		for (const item of OWN_NAV) {
 			draw(item.to === "/" ? "/ui/" : `/ui${item.to}`);
 			const heading =
 				item.to === "/"
 					? await screen.findByRole("heading", { level: 1, name: "Dashboard" })
-					: await screen.findByRole("heading", { level: 1, name: item.label });
+					: await screen.findByRole("heading", { level: 1, name: item.title });
 			expect(heading).toBeTruthy();
 		}
 	});
@@ -86,8 +117,8 @@ describe("the shell", () => {
 		draw("/ui/downloads");
 
 		await screen.findByRole("heading", { name: "Downloads" });
-		for (const item of NAV) {
-			expect(screen.getAllByRole("link", { name: item.label }).length).toBeGreaterThan(0);
+		for (const item of OWN_NAV) {
+			expect(screen.getAllByRole("link", { name: item.title }).length).toBeGreaterThan(0);
 		}
 		expect(screen.getByRole("combobox", { name: "Theme" })).toBeTruthy();
 		expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
@@ -237,13 +268,84 @@ describe("the shell", () => {
 		expect(await screen.findByRole("alert")).toHaveProperty("textContent", "udl is unwell");
 	});
 
-	it("says a plugin page it knows, with the plugin's name", async () => {
+	it("says a plugin page the plugin has no route for", async () => {
 		udl();
-		setPlugins([{ name: "gmail", version: "0.1.0", entry: "index.js" }]);
-		draw("/ui/p/gmail/inbox");
+		const gmail = {
+			name: "gmail",
+			version: "0.1.0",
+			base_url: "/ui/plugins/gmail/",
+			entry_url: "/ui/plugins/gmail/index.js",
+			styles: [],
+			isolation: "shadow" as const,
+			contributes: { routes: ["inbox"] },
+			plugin: "gmail",
+		};
+		setPlugins([gmail], []);
+		registerPlugins([gmail]);
+		draw("/ui/p/gmail/compose");
 
 		expect(await screen.findByRole("heading", { level: 1, name: "gmail 0.1.0" })).toBeTruthy();
-		expect(screen.getByText(/The page "inbox" this plugin brings/)).toBeTruthy();
+		expect(screen.getByText(/This plugin has no page "compose"/)).toBeTruthy();
+	});
+
+	it("says an unknown plugin, and the shell carries on", async () => {
+		udl();
+		draw("/ui/p/nobody/inbox");
+
+		expect(await screen.findByRole("heading", { level: 1, name: "nobody" })).toBeTruthy();
+		expect(screen.getByText(/No UI plugin named "nobody"/)).toBeTruthy();
+	});
+
+	it("shows a plugin's page, and an error card in its place when it fails", async () => {
+		udl();
+		const gmail = {
+			name: "gmail",
+			version: "0.1.0",
+			base_url: "/ui/plugins/gmail/",
+			entry_url: "/ui/plugins/gmail/index.js",
+			styles: [],
+			isolation: "shadow" as const,
+			contributes: { routes: ["inbox"] },
+			plugin: "gmail",
+		};
+		setPlugins([gmail], []);
+		registerPlugins([gmail]);
+		bundle.page = () => {
+			throw new Error("its page fails");
+		};
+		draw("/ui/p/gmail/inbox");
+
+		// (One card in the plugin's place, and the shell's own pages are still there.)
+		expect(await screen.findByRole("alert")).toHaveProperty(
+			"textContent",
+			expect.stringContaining("its page fails"),
+		);
+		expect(screen.getAllByRole("link", { name: "Dashboard" }).length).toBeGreaterThan(0);
+	});
+
+	it("moves the shell when a plugin's page navigates", async () => {
+		udl();
+		const gmail = {
+			name: "gmail",
+			version: "0.1.0",
+			base_url: "/ui/plugins/gmail/",
+			entry_url: "/ui/plugins/gmail/index.js",
+			styles: [],
+			isolation: "shadow" as const,
+			contributes: { routes: ["inbox"] },
+			plugin: "gmail",
+		};
+		setPlugins([gmail], []);
+		registerPlugins([gmail]);
+		bundle.page = (_target, _props, ctx) => {
+			ctx.navigate("/sites");
+			return { update: () => {}, unmount: () => {} };
+		};
+
+		draw("/ui/p/gmail/inbox");
+
+		// (The router's own navigation, with the page's base: no reload, no `/sites` from udl.)
+		expect(await screen.findByRole("heading", { level: 1, name: "Sites" })).toBeTruthy();
 	});
 
 	it("says where the live connection is: connecting until its stream opens", async () => {

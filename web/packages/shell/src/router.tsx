@@ -6,7 +6,10 @@
 import { createRouter } from "@tanstack/react-router";
 import { routeTree } from "./routeTree.gen";
 
-export const router = createRouter({ routeTree, basepath: "/ui" });
+/** The page's base: udl serves the shell at `/ui/`, and its routes are paths of that. */
+export const BASE = "/ui";
+
+export const router = createRouter({ routeTree, basepath: BASE });
 
 declare module "@tanstack/react-router" {
 	interface Register {
