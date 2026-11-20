@@ -187,10 +187,10 @@ async def _assign(
         # (A person's task is something only they can do: it is their action from the moment it
         # is theirs, 28.2. The action is planned here and written in the same batch, so a task
         # is never queued without it — the batch is one write, or none.)
-        planned = await actions.plan_for_task(
+        action = await actions.plan_for_task(
             actions.ActionRecords(tasks.records), placed, assignee=agent
         )
-        also.append(planned)
+        also.append(action)
     saved = await tasks.save_all(writes, also=also)
     return next((one for one in saved if one.id == placed.id), placed)
 
