@@ -16,6 +16,18 @@ function recording(fake = new FakeUdl()) {
 	return { fake, inits, sent, fetch };
 }
 
+/** A fetch that records what it is sent and answers `{}` (for a route the schema does not hold). */
+function anything() {
+	const sent: Request[] = [];
+	const fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+		sent.push(new Request(input, init).clone());
+		return Promise.resolve(
+			new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } }),
+		);
+	};
+	return { sent, fetch };
+}
+
 describe("createUdlClient", () => {
 	it("sends a read to its route, with no CSRF header and no body", async () => {
 		const { fake, sent, fetch } = recording();
@@ -202,6 +214,49 @@ describe("createUdlClient", () => {
 		await api.client.POST("/probe", { body: { url: "https://example.com", all_tools: false } });
 
 		expect(sent[0]?.headers.get("X-UDL-CSRF")).toBe("1");
+	});
+
+	it("calls an operation named at runtime, as a generated page has it", async () => {
+		// (24.6: the operation's name is a string udl sent — `check_account` here, whose route
+		// has a path parameter and no body.)
+		const { fake, sent, fetch } = recording();
+		fake.handle("check_account", () => ({ account: "gmail:work", ok: true }));
+		const api = createUdlClient({ baseUrl: "http://udl.test", fetch });
+
+		await api.callNamed("check_account", undefined, { account: "gmail:work" });
+
+		expect(sent[0]?.method).toBe("POST");
+		expect(sent[0]?.url).toBe("http://udl.test/accounts/gmail%3Awork/check");
+		expect(sent[0]?.headers.get("X-UDL-CSRF")).toBe("1");
+	});
+
+	it("calls a plugin's operation by the route udl named", async () => {
+		// (A plugin's route is not the API's schema: the fake answers anything it is sent.)
+		const { sent, fetch } = anything();
+		const api = createUdlClient({ baseUrl: "http://udl.test", fetch });
+
+		await api.callAt("POST", "/integrations/fake/list_things", { account: "fake:work" });
+
+		expect(sent[0]?.method).toBe("POST");
+		expect(sent[0]?.url).toBe("http://udl.test/integrations/fake/list_things");
+		expect(sent[0]?.headers.get("X-UDL-CSRF")).toBe("1");
+		expect(await sent[0]?.json()).toEqual({ account: "fake:work" });
+	});
+
+	it("fills a route's path parameters", async () => {
+		const { sent, fetch } = anything();
+		const api = createUdlClient({ baseUrl: "http://udl.test", fetch });
+
+		await api.callAt("GET", "/integrations/fake/thing/{thing}", undefined, { thing: "t 1" });
+
+		expect(sent[0]?.url).toBe("http://udl.test/integrations/fake/thing/t%201");
+		expect(sent[0]?.headers.get("Content-Type")).toBeNull();
+	});
+
+	it("refuses a name that is no operation", async () => {
+		const api = createUdlClient({ baseUrl: "http://udl.test", fetch: recording().fetch });
+
+		expect(() => api.callNamed("no_such_operation")).toThrow(/no operation/);
 	});
 
 	it("uses the page's own fetch when it is given none", async () => {

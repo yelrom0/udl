@@ -15,7 +15,7 @@
  * `react` entry, so a UI plugin draws the same form udl's own pages do.
  */
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import type { JsonValue } from "./index";
 import {
 	type FieldSpec,
@@ -75,6 +75,9 @@ export function SchemaForm({
 	widgets = {},
 	disabled = false,
 }: SchemaFormProps) {
+	// (A page may draw two forms with a field of the same name — a plugin's operations page draws
+	// one per operation — so each form's field ids are its own.)
+	const prefix = useId();
 	const drawn = resolveRefs(schema, document);
 	const fields = fieldsOf(drawn);
 	const plain = fields.filter((field) => !field.advanced);
@@ -95,6 +98,7 @@ export function SchemaForm({
 				<Field
 					key={field.name}
 					field={field}
+					prefix={prefix}
 					value={value}
 					onChange={onChange}
 					errors={errors}
@@ -112,6 +116,7 @@ export function SchemaForm({
 							<Field
 								key={field.name}
 								field={field}
+								prefix={prefix}
 								value={value}
 								onChange={onChange}
 								errors={errors}
@@ -130,12 +135,15 @@ export function SchemaForm({
 
 interface FieldProps extends Omit<SchemaFormProps, "schema" | "document" | "value" | "onChange"> {
 	readonly field: FieldSpec;
+	/** What makes this form's field ids its own: two forms on a page may name a field alike. */
+	readonly prefix: string;
 	readonly value: FormValue;
 	readonly onChange: (value: FormValue) => void;
 }
 
 function Field({
 	field,
+	prefix,
 	value,
 	onChange,
 	errors = {},
@@ -175,6 +183,7 @@ function Field({
 						<Field
 							key={inner.name}
 							field={inner}
+							prefix={prefix}
 							value={value}
 							onChange={onChange}
 							errors={errors}
@@ -193,6 +202,7 @@ function Field({
 	const control =
 		own === undefined ? (
 			<Control
+				id={`${prefix}-${key}`}
 				field={field}
 				value={current}
 				onChange={set}
@@ -207,7 +217,7 @@ function Field({
 
 	return (
 		<div className="form-control" data-field={key}>
-			<label className="label" htmlFor={`field-${key}`}>
+			<label className="label" htmlFor={`${prefix}-${key}`}>
 				<span className="label-text font-medium">
 					{field.label}
 					{field.required ? (
@@ -233,6 +243,8 @@ function Field({
 }
 
 interface ControlProps {
+	/** The field's element id, this form's own (see `Field`'s `prefix`). */
+	readonly id: string;
 	readonly field: FieldSpec;
 	readonly value: JsonValue | undefined;
 	readonly onChange: (value: JsonValue) => void;
@@ -243,8 +255,7 @@ interface ControlProps {
 	readonly secret: boolean;
 }
 
-function Control({ field, value, onChange, onClear, disabled, invalid, secret }: ControlProps) {
-	const id = `field-${keyOf(field)}`;
+function Control({ id, field, value, onChange, onClear, disabled, invalid, secret }: ControlProps) {
 	const className = `input w-full${invalid ? " input-error" : ""}`;
 	const text = typeof value === "string" || typeof value === "number" ? String(value) : "";
 
