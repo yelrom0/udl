@@ -836,13 +836,13 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
 - Build: a batch write on the database kind, `DatabasePlugin.upsert_records(records: Sequence[Record]) -> list[Record]`, all or nothing.
   - SQL (`sqlalchemy.py`, and so `sqlite` and `postgres`): one transaction.
   - `memory`: validate every record first, then apply them.
-  - `mongodb`: a session transaction (`with_transaction`) when the deployment supports one (a replica set or sharded). On a standalone server, the writes go in order, and `health()` warns that a replica set is needed. Say so in `docs/plugins.md`.
+  - `mongodb`: a session transaction (`with_transaction`) when the deployment supports one (a replica set or sharded). On a standalone server, the writes go in order: `connect()` logs one warning that a replica set is needed, and the plugin's `transactions: bool` property says which mode it got (`health()` only returns a `bool`). Say so in `docs/plugins.md`.
   - `DBManager.upsert_records` and `AppRecords.save_all()` pass it through.
-  - `orch.queue`'s `_place`, `assign`, `reorder` and `unassign` write through `save_all()`, and each takes a per-(project, assignee) `asyncio.Lock`, so two calls in one process can't interleave their read and write.
+  - `orch.queue`'s `_place`, `assign`, `reorder` and `unassign` write through `save_all()`, and each takes a per-(project, assignee) `asyncio.Lock`, so two calls in one process can't interleave their read and write. A reassign changes two queues, so it takes both assignees' locks, in sorted order, so two opposite reassigns (A→B and B→A) can't deadlock.
 - Tests first:
   - The database contract: a batch with one invalid record writes none.
   - The queue: a failure on the second write leaves the queue as it was.
-  - Two concurrent reorders (`asyncio.gather`) leave dense positions `0..n-1` with no doubles, and so does a reassign racing a reorder.
+  - Two concurrent reorders (`asyncio.gather`) leave dense positions `0..n-1` with no doubles, and so does a reassign racing a reorder of the old assignee's queue. Two opposite reassigns at once both finish (under `asyncio.timeout`). A standalone MongoDB's warning is asserted with `caplog`, and `transactions` is false.
 - Done when: every queue change is one `upsert_records` call, and 27.3's "Known gap" note is replaced by what was built.
 
 **27.4 Suggested next tasks** · needs 27.3
