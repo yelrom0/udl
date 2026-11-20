@@ -2764,7 +2764,7 @@ export interface components {
          * @description A stable, machine-readable code for each error type.
          * @enum {string}
          */
-        ErrorCode: "udl_error" | "config_error" | "plugin_error" | "plugin_failed" | "database_error" | "duplicate_key" | "download_error" | "unsupported_url" | "extraction_failed" | "auth_required" | "rate_limited" | "network_error" | "not_found" | "tool_unavailable" | "no_strategy_found" | "cancelled" | "interrupted" | "does_not_exist" | "not_allowed" | "unauthorized" | "secret_store_error" | "template_failed" | "reauth_required" | "invalid_filter" | "already_exists" | "action_failed" | "in_use" | "ambiguous_account" | "challenge_required" | "provider_unavailable";
+        ErrorCode: "udl_error" | "config_error" | "plugin_error" | "plugin_failed" | "database_error" | "duplicate_key" | "download_error" | "unsupported_url" | "extraction_failed" | "auth_required" | "rate_limited" | "network_error" | "not_found" | "tool_unavailable" | "no_strategy_found" | "cancelled" | "interrupted" | "does_not_exist" | "not_allowed" | "unauthorized" | "secret_store_error" | "template_failed" | "reauth_required" | "invalid_filter" | "already_exists" | "action_failed" | "in_use" | "ambiguous_account" | "challenge_required" | "provider_unavailable" | "login_by_hand";
         /**
          * ErrorInfo
          * @description A UDLError as data, for API / MCP responses and --json output.

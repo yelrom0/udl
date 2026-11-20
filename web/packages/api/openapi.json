@@ -2006,7 +2006,8 @@
           "in_use",
           "ambiguous_account",
           "challenge_required",
-          "provider_unavailable"
+          "provider_unavailable",
+          "login_by_hand"
         ],
         "title": "ErrorCode",
         "type": "string"

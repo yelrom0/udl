@@ -37,6 +37,7 @@ from udl.plugins.requirements import Requirement
 from udl.plugins.runners.base import (
     AgentEvent,
     AgentRunner,
+    LoginByHand,
     AnAgentRunner,
     RunnerHealth,
     RunnerLimited,
@@ -337,7 +338,8 @@ async def test_a_runner_that_cannot_install_or_sign_in_says_so(runner: AnAgentRu
         assert isinstance(runner.install(None), AsyncIterator)
 
     if type(runner).login is _BASE_LOGIN:
-        with pytest.raises(PluginError, match="cannot sign in"):
+        # (A sign-in that needs a terminal is a LoginByHand: the caller answers with its command.)
+        with pytest.raises(LoginByHand, match="cannot sign in"):
             await runner.login()
     else:
         # (Its own sign-in starts a program, so the contract only says it has one: the manage
