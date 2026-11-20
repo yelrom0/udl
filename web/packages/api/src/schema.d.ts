@@ -1192,6 +1192,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/suggest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The tasks to do next, best first, each with the agent it suits and why.
+         * @description The tasks to do next, best first, each with the agent it suits and why.
+         *
+         *     A task is a candidate once everything it needs is merged (or done) — or `ready`, when it
+         *     may start on that task's branch instead. An active feature, the agent's last task and the
+         *     tasks it unblocks all count. With no agent, each task is paired with the idle agent it
+         *     suits best.
+         */
+        post: operations["orch_suggest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/orch/unassign": {
         parameters: {
             query?: never;
@@ -6340,6 +6365,73 @@ export interface components {
             url: components["schemas"]["RequestURL"];
         };
         /**
+         * SuggestRequest
+         * @description What is suggested next: a project's tasks, for one agent or for whoever is idle (27.4).
+         */
+        SuggestRequest: {
+            /** @description Whose tasks to suggest (None: each task is paired with the idle agent it suits best). */
+            agent?: components["schemas"]["Name"] | null;
+            /**
+             * Limit
+             * @description How many to suggest at most.
+             * @default 10
+             */
+            limit: number;
+            /** @description The project (None: the only one, as every task operation allows). */
+            project?: components["schemas"]["Name"] | null;
+        };
+        /**
+         * Suggestion
+         * @description A task suggested next, with the agent it suits and why (27.4).
+         */
+        Suggestion: {
+            /** @description The agent it suits best. */
+            agent: components["schemas"]["Name"];
+            /**
+             * Feature
+             * @description The feature it is part of (its key).
+             */
+            feature: string;
+            /**
+             * Reasons
+             * @description Why it was suggested, in the order they were counted.
+             */
+            reasons?: string[];
+            /**
+             * Score
+             * @description How well it suits it: higher comes first.
+             */
+            score: number;
+            /**
+             * Stack On
+             * @description The task whose branch it stacks on (its need is `ready`, not merged yet).
+             */
+            stack_on?: string | null;
+            /**
+             * Task
+             * @description The task's key.
+             */
+            task: string;
+            /**
+             * Title
+             * @description What it is, in a line.
+             */
+            title: string;
+        };
+        /**
+         * Suggestions
+         * @description What is suggested next, best first (27.4).
+         */
+        Suggestions: {
+            /** @description The project they are of. */
+            project: components["schemas"]["Name"];
+            /**
+             * Suggestions
+             * @description The tasks suggested, best first (empty: nothing is ready to start).
+             */
+            suggestions?: components["schemas"]["Suggestion"][];
+        };
+        /**
          * SyncCounts
          * @description How many records of one kind a sync added, replaced and found the same.
          */
@@ -10955,6 +11047,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunnerSetup"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_suggest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuggestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Suggestions"];
                 };
             };
             /** @description Bad Request */

@@ -8625,6 +8625,132 @@
         "title": "SuggestChainRequest",
         "type": "object"
       },
+      "SuggestRequest": {
+        "additionalProperties": false,
+        "description": "What is suggested next: a project's tasks, for one agent or for whoever is idle (27.4).",
+        "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whose tasks to suggest (None: each task is paired with the idle agent it suits best)."
+          },
+          "limit": {
+            "default": 10,
+            "description": "How many to suggest at most.",
+            "exclusiveMinimum": 0.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project (None: the only one, as every task operation allows)."
+          }
+        },
+        "title": "SuggestRequest",
+        "type": "object"
+      },
+      "Suggestion": {
+        "additionalProperties": false,
+        "description": "A task suggested next, with the agent it suits and why (27.4).",
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The agent it suits best."
+          },
+          "feature": {
+            "description": "The feature it is part of (its key).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Feature",
+            "type": "string"
+          },
+          "reasons": {
+            "description": "Why it was suggested, in the order they were counted.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "score": {
+            "description": "How well it suits it: higher comes first.",
+            "title": "Score",
+            "type": "integer"
+          },
+          "stack_on": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The task whose branch it stacks on (its need is `ready`, not merged yet).",
+            "title": "Stack On"
+          },
+          "task": {
+            "description": "The task's key.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Task",
+            "type": "string"
+          },
+          "title": {
+            "description": "What it is, in a line.",
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "title",
+          "feature",
+          "agent",
+          "score"
+        ],
+        "title": "Suggestion",
+        "type": "object"
+      },
+      "Suggestions": {
+        "additionalProperties": false,
+        "description": "What is suggested next, best first (27.4).",
+        "properties": {
+          "project": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The project they are of."
+          },
+          "suggestions": {
+            "description": "The tasks suggested, best first (empty: nothing is ready to start).",
+            "items": {
+              "$ref": "#/components/schemas/Suggestion"
+            },
+            "title": "Suggestions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project"
+        ],
+        "title": "Suggestions",
+        "type": "object"
+      },
       "SyncCounts": {
         "additionalProperties": false,
         "description": "How many records of one kind a sync added, replaced and found the same.",
@@ -15156,6 +15282,103 @@
           }
         ],
         "summary": "Write a harness's deny policies and its agent files on a host (idempotent), and set",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/suggest": {
+      "post": {
+        "description": "The tasks to do next, best first, each with the agent it suits and why.\n\nA task is a candidate once everything it needs is merged (or done) \u2014 or `ready`, when it\nmay start on that task's branch instead. An active feature, the agent's last task and the\ntasks it unblocks all count. With no agent, each task is paired with the idle agent it\nsuits best.",
+        "operationId": "orch_suggest",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuggestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Suggestions"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "The tasks to do next, best first, each with the agent it suits and why.",
         "tags": [
           "orch"
         ]

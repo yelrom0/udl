@@ -71,6 +71,7 @@ export const operations = {
 	orch_runner_login_status: { method: "post", path: "/plugins/orch/runner_login_status" },
 	orch_runner_logout: { method: "post", path: "/plugins/orch/runner_logout" },
 	orch_runner_setup: { method: "post", path: "/plugins/orch/runner_setup" },
+	orch_suggest: { method: "post", path: "/plugins/orch/suggest" },
 	orch_unassign: { method: "post", path: "/plugins/orch/unassign" },
 	preview_schedule: { method: "post", path: "/schedules/preview" },
 	probe_url: { method: "post", path: "/probe" },
