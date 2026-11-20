@@ -1,8 +1,10 @@
 import type { ResultViewProps } from "@udl/ui-sdk";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-/** One thing a list answered, as much of it as this draws. */
+/** One thing a list answered, as much of it as this draws: the account it came from is part of
+ * its identity (every account lists the same ids). */
 interface Thing {
+	readonly account: string;
 	readonly id: string;
 	readonly text: string;
 }
@@ -18,7 +20,7 @@ export function ResultView({ operation, value }: ResultViewProps) {
 				<p className="text-sm text-muted-foreground">Drawn by shadcn/ui, not by udl.</p>
 				<ul className="list-disc pl-4 text-sm">
 					{thingsOf(value).map((thing) => (
-						<li key={thing.id}>{thing.text}</li>
+						<li key={`${thing.account}:${thing.id}`}>{thing.text}</li>
 					))}
 				</ul>
 			</CardContent>
@@ -40,13 +42,13 @@ function thingsOf(value: unknown): Thing[] {
 		if (typeof found !== "object" || found === null) {
 			return [];
 		}
-		const item = (found as { item?: unknown }).item;
-		if (typeof item !== "object" || item === null) {
+		const { account, item } = found as { account?: unknown; item?: unknown };
+		if (typeof account !== "string" || typeof item !== "object" || item === null) {
 			return [];
 		}
 		const one = item as Record<string, unknown>;
 		return typeof one.id === "string" && typeof one.text === "string"
-			? [{ id: one.id, text: one.text }]
+			? [{ account, id: one.id, text: one.text }]
 			: [];
 	});
 }
