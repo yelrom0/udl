@@ -612,9 +612,7 @@ class Orch(AppPlugin[OrchSettings]):
 
     async def _pull_url(self, project: str, key: str) -> str:
         """The URL of the task `key`'s pull, or "" when it has none."""
-        links = await stored.LinkRecords(self.records).for_owner(
-            project, OwnerKind.TASK, key
-        )
+        links = await stored.LinkRecords(self.records).for_owner(project, OwnerKind.TASK, key)
         return next((link.url for link in links if link.link_kind == "pull"), "")
 
     async def _assess(self, task: stored.Task, pull: Pull, project: str) -> Readiness:
