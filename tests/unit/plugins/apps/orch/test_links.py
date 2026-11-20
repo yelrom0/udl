@@ -20,7 +20,7 @@ from pathlib import Path
 
 # Package Imports
 import pytest
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 # Local Imports
 from udl.clock import SystemClock
@@ -466,9 +466,22 @@ async def test_a_task_key_in_backticks_becomes_a_link() -> None:
     ]
 
 
-async def test_what_is_not_a_task_key() -> None:
+@pytest.mark.parametrize("key", ["F-1.1", "PROJ-1.4", "26.2", "26.12", "18.7"])
+def test_a_task_key_is_a_counter_s_key_or_a_plan_s(key: str) -> None:
 
-    found = links_in_proj("A `v1.2.3`, a `python3.14` and a feature `F-1` are not tasks.")
+    found = links_in_proj(f"Needs `{key}` first.")
+
+    assert [link.url for link in found] == [f"udl:task/udl/{key}"]
+
+
+@pytest.mark.parametrize(
+    "key",
+    # (A version: one digit before the dot, three parts, or a part with a leading zero.)
+    ["v1.2.3", "python3.14", "3.14", "0.5", "1.2.3", "10.2.3", "20.04", "26.2abc", "F-1"],
+)
+def test_what_is_not_a_task_key(key: str) -> None:
+
+    found = links_in_proj(f"A `{key}` is not a task.")
 
     assert found == []
 
@@ -490,6 +503,30 @@ def test_a_sentence_punctuation_is_not_part_of_the_url() -> None:
     found = links_in_proj("See (https://github.com/yelrom0/udl/pull/33).")
 
     assert [link.url for link in found] == ["https://github.com/yelrom0/udl/pull/33"]
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        {"state": "closed!"},
+        {"checks": "ok"},
+        {"review": "fine"},
+        {"state": "merged", "checks": "pass", "review": "approved"},
+    ],
+)
+def test_a_pull_s_words_are_the_ones_a_link_keeps(words: dict[str, str]) -> None:
+    # (Three words, each one of a few: a word outside them is refused when the link is stored,
+    # not kept as a string that reads as nothing.)
+    if words.get("state") == "merged":
+        assert PullState(**words).model_dump() == {
+            "state": "merged",
+            "head_sha": "",
+            "checks": "pass",
+            "review": "approved",
+        }
+    else:
+        with pytest.raises(ValidationError):
+            PullState(**words)
 
 
 # ---------------------------------------------------------------------------------------------

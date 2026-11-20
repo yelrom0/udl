@@ -32,8 +32,10 @@ from udl.plugins.apps.orch.models import (
     Link,
     LinkKind,
     OwnerKind,
+    PullChecksWord,
     PullReader,
     PullState,
+    PullStateWord,
 )
 
 # (The store is orch.records': one copy, so a save and the service use one rule. It is imported
@@ -79,15 +81,14 @@ GITHUB_URL: Final = re.compile(
 """A GitHub URL in a text: what a sentence writes as a URL, its trailing punctuation left out."""
 
 TASK_KEY: Final = re.compile(
-    r"`(?P<key>(?:[A-Z][A-Z0-9_]*-[0-9]+(?:\.[0-9]+)+|[0-9]{2,}(?:\.[0-9]+)+))`"
+    r"`(?P<key>(?:[A-Z][A-Z0-9_]*-[0-9]+(?:\.[0-9]+)+|[0-9]{2,}\.[1-9][0-9]*))`"
 )
 """A task key in backticks: a counter's own key (`F-1.1`, `PROJ-1.4`) or the plan's (`26.2`).
 
-A version (`v1.2.3`, `0.5`, `3.14`) is neither: a version's first number is one digit or it has
-three parts, and a counter's key is capitals, a dash and a number. A task number with one digit
-before the dot (`0.5`) is a version, and a spec that must cite one should say "version 0.5" —
-a key udl hands out is `26.2` at the earliest (its phases are two digits). A feature's own key
-(`F-1`) is not a task's: it has no dot."""
+A version is neither, and the pattern refuses all three shapes it comes in: one digit before the
+dot (`0.5`, `3.14` — a key udl hands out is `26.2` at the earliest, since its phases are two
+digits), a third part (`10.2.3`), or a part with a leading zero (`20.04`). A counter's key is
+capitals, a dash and a number, and a feature's own key (`F-1`) is not a task's: it has no dot."""
 
 _TRAILING: Final = ".,;:!?)]}'\""
 """What a sentence puts after a URL that is the sentence's, not the URL's."""
@@ -248,7 +249,7 @@ class _PullDetail(BaseModel):
     checks: list[_Check] = Field(default_factory=list[_Check])
 
 
-def _check_word(checks: list[_Check]) -> str:
+def _check_word(checks: list[_Check]) -> PullChecksWord:
     """One word for a pull's checks: pass, fail, pending or none (what a link keeps)."""
     if not checks:
         return "none"
@@ -262,23 +263,24 @@ def _check_word(checks: list[_Check]) -> str:
 
 def _pull_state(detail: object) -> PullState:
     """A `github_get_pull` answer as a pull link's own state: where the pull is, its head, its
-    checks and its review (the card's four)."""
+    checks and its review (the card's four).
+
+    The review is `none`: udl's `github_get_pull` answers a pull and its comments, not its
+    reviews (O-C5), so an answer has no review word to read yet."""
     raw = _PullDetail.model_validate(detail)
     return PullState(
-        state=raw.state or "open",
+        state=_state_word(raw.state),
         head_sha=raw.head_sha,
         checks=_check_word(raw.checks),
-        review=_review_of(detail),
+        review="none",
     )
 
 
-def _review_of(detail: object) -> str:
-    """The review word an answer carries, if it has one.
-
-    udl's `github_get_pull` answers a pull and its comments, not its reviews (O-C5), so this is
-    `none` for it; an answer that grows a review word is read as it is."""
-    extra = getattr(detail, "review", "")
-    return extra if isinstance(extra, str) and extra else "none"
+def _state_word(state: str) -> PullStateWord:
+    """GitHub's word for where a pull is, as a link's own (`open` for anything else, which is
+    what a pull a person has not touched is)."""
+    word = state.strip().lower()
+    return "closed" if word == "closed" else "merged" if word == "merged" else "open"
 
 
 async def refresh_pull(link: StoredLink, *, github: PullReader) -> StoredLink:

@@ -16,7 +16,7 @@ it is given are the project's own text.
 import string
 from collections.abc import Mapping
 from enum import StrEnum
-from typing import Annotated, Any, Final, Literal, Protocol, get_args
+from typing import Annotated, Final, Literal, Protocol, get_args
 
 # Package Imports
 from pydantic import (
@@ -459,13 +459,21 @@ class Feature(_Model):
     """Where it sits among its project's features."""
 
 
+PullStateWord = Literal["open", "closed", "merged"]
+"""Where a pull is (GitHub's own word: a merged pull is never closed)."""
+PullChecksWord = Literal["pass", "fail", "pending", "none"]
+"""How a pull's checks are, in one word."""
+PullReviewWord = Literal["approved", "changes", "pending", "none"]
+"""How a pull's review is, in one word."""
+
+
 class PullReader(Protocol):
     """What refreshing a pull needs of a service: udl's own `github_get_pull` operation.
 
     It is udl's `UDLService.call` (an operation's name and its request, as plain data), so the
     hub's service is a PullReader and so is a test's fake of one."""
 
-    async def call(self, name: str, request: BaseModel | Mapping[str, Any]) -> BaseModel:
+    async def call(self, name: str, request: BaseModel | Mapping[str, object]) -> BaseModel:
         """Run the operation called `name` with `request`."""
         ...
 
@@ -474,15 +482,17 @@ class PullState(_Model):
     """What a pull link keeps: where a pull is, its head, its checks and its review.
 
     `state` is GitHub's own word (open, closed or merged — merged is never closed), `checks` and
-    `review` one word each for the pull, so a link says at a glance where its pull is."""
+    `review` one word each for the pull, so a link says at a glance where its pull is. Each is a
+    `Literal`: a word outside them is refused when the link is stored, not kept as a string that
+    reads as nothing."""
 
-    state: str = "open"
+    state: PullStateWord = "open"
     """Where the pull is: open, closed or merged."""
     head_sha: str = ""
     """The commit at its head."""
-    checks: str = "none"
+    checks: PullChecksWord = "none"
     """How its checks are: pass, fail, pending or none."""
-    review: str = "none"
+    review: PullReviewWord = "none"
     """How its review is: approved, changes, pending or none."""
 
 

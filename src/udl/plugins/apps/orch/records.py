@@ -38,7 +38,7 @@ from typing import Final, Self
 from uuid import UUID
 
 # Package Imports
-from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt
+from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt, ValidationError
 
 # Local Imports
 from udl.db.models import JsonObject, utcnow
@@ -520,7 +520,7 @@ async def _scan(
 
     try:
         wanted = {link.url: link for link in links_in(text, project=project)}
-    except Exception as error:  # noqa: BLE001 - (a scan never breaks the save)
+    except ValidationError as error:  # (a scan never breaks the save)
         log.warning("orch could not scan %s %s: %s", owner_kind, owner, error)
         return
     links = LinkRecords(records)
