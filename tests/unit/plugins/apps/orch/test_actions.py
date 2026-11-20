@@ -13,6 +13,7 @@ from the moment it is assigned to `human:<name>`: finishing that action moves th
 """
 
 # System Imports
+from collections.abc import Sequence
 from pathlib import Path
 
 # Package Imports
@@ -21,7 +22,8 @@ import pytest
 # Local Imports
 from support.engine import databases, registry, settings
 from udl.config import Settings
-from udl.errors import DoesNotExist, NotAllowed
+from udl.db.records import Record
+from udl.errors import DatabaseError, DoesNotExist, NotAllowed
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch.actions import (
@@ -453,3 +455,68 @@ async def test_unassigning_a_person_s_task_takes_the_action_off_them(
     assert after is not None
     assert after.assignee is None
     assert after.state == OPEN
+
+
+class _CannotWriteActions(AppRecords):
+    """A store that cannot write an action: the queue's own write must carry it, or nothing is
+    written at all (28.2's review: a person's task and its action are one write)."""
+
+    async def save[R: Record](self, record: R) -> R:
+        if isinstance(record, HumanAction):
+            raise DatabaseError("the action could not be written")
+        return await super().save(record)
+
+    async def save_all[R: Record](self, records: Sequence[R]) -> list[R]:
+        if any(isinstance(one, HumanAction) for one in records):
+            raise DatabaseError("the action could not be written")
+        return await super().save_all(records)
+
+
+async def _a_store_that_cannot_write_actions(
+    tmp_path: Path,
+) -> tuple[AppRecords, TaskRecords]:
+    """A working store and the same database behind a store that refuses actions."""
+    plugins = registry()
+    config: Settings = settings(tmp_path)
+    db = databases(config, plugins)
+    await db.connect()
+    records = AppRecords(db)
+    await ProjectRecords(records).save_project(Project(name="udl", title="udl"))
+    await FeatureRecords(records).save_feature(Feature(project="udl", key="F-1", title="The queue"))
+    return records, TaskRecords(_CannotWriteActions(db))
+
+
+async def test_a_person_s_task_and_its_action_are_one_write(tmp_path: Path) -> None:
+    """A store that cannot write the action writes neither: before this, the task was queued
+    and the action was missing (two writes, the gap 27.3a closed)."""
+    working, tasks = await _a_store_that_cannot_write_actions(tmp_path)
+    await TaskRecords(working).save_task(
+        Task(project="udl", feature="F-1", key="F-1.1", title="Merge it", task_kind="human")  # pyright: ignore[reportArgumentType]
+    )
+
+    with pytest.raises(DatabaseError, match="the action could not be written"):
+        await queues.assign(tasks, "F-1.1", "human:claude", project="udl")
+
+    found = await TaskRecords(working).task("udl", "F-1.1")
+    assert found is not None
+    assert (found.state, found.assignee) == ("open", None)
+    assert await ActionRecords(working).actions("udl", state=None) == []
+
+
+async def test_unassigning_a_person_s_task_writes_the_action_off_them_with_it(tmp_path: Path) -> None:
+    """The action's `assignee` is cleared in the same write as the queue's (one write, or none)."""
+    working, tasks = await _a_store_that_cannot_write_actions(tmp_path)
+    mine = TaskRecords(working)
+    await mine.save_task(
+        Task(project="udl", feature="F-1", key="F-1.1", title="Merge it", task_kind="human")  # pyright: ignore[reportArgumentType]
+    )
+    await queues.assign(mine, "F-1.1", "human:claude", project="udl")
+
+    with pytest.raises(DatabaseError, match="the action could not be written"):
+        await queues.unassign(tasks, project="udl", key="F-1.1")
+
+    found = await mine.task("udl", "F-1.1")
+    assert found is not None
+    assert (found.state, found.assignee) == ("queued", "human:claude")
+    action = (await ActionRecords(working).actions("udl", state=None))[0]
+    assert action.assignee == "human:claude"
