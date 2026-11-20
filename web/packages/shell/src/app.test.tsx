@@ -203,10 +203,33 @@ describe("the shell", () => {
 
 	it("says a plugin page it has no plugin for", async () => {
 		udl();
+		setGenerated({ plugins: [] }, null);
 		draw("/ui/p/gmail/inbox");
 
 		expect(await screen.findByRole("heading", { level: 1, name: "gmail" })).toBeTruthy();
 		expect(screen.getByText(/There is no plugin named/)).toBeTruthy();
+	});
+
+	it("waits for the generated list before saying a plugin is unknown", async () => {
+		// (A reload or a direct link asks for `/ui/generated.json` and draws the route at once:
+		// "there is no plugin named gmail" would be said before udl had answered.)
+		udl();
+		draw("/ui/p/gmail/inbox");
+
+		expect(await screen.findByLabelText("Loading the plugin")).toBeTruthy();
+		expect(screen.queryByText(/There is no plugin named/)).toBeNull();
+	});
+
+	it("says why the generated list could not be read", async () => {
+		udl();
+		setGenerated(null, "the plugin list could not be read");
+		draw("/ui/p/gmail/inbox");
+
+		expect(await screen.findByRole("alert")).toHaveProperty(
+			"textContent",
+			expect.stringContaining("the plugin list could not be read"),
+		);
+		expect(screen.queryByText(/There is no plugin named/)).toBeNull();
 	});
 
 	it("switches the theme, and keeps the choice", async () => {
@@ -292,6 +315,7 @@ describe("the shell", () => {
 
 	it("says an unknown plugin, and the shell carries on", async () => {
 		udl();
+		setGenerated({ plugins: [] }, null);
 		draw("/ui/p/nobody/inbox");
 
 		expect(await screen.findByRole("heading", { level: 1, name: "nobody" })).toBeTruthy();

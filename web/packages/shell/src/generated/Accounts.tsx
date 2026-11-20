@@ -232,14 +232,17 @@ function ConnectForm({
 				...(tokensWanted && Object.keys(tokens).length > 0 ? { tokens: strings(tokens) } : {}),
 				...(Object.keys(options).length > 0 ? { options } : {}),
 			});
-			if (answered.authorization_url !== null) {
-				// (OAuth: udl is waiting for the browser to come back; the page says where to go.)
-				setWaiting(answered.authorization_url ?? null);
+			// (OAuth: udl is waiting for the browser to come back, and the page says where to go.
+			// Left out is no OAuth at all, not one without a page.)
+			const page = answered.authorization_url ?? null;
+			if (page !== null) {
+				setWaiting(page);
 			} else {
 				setName("");
 				setTokens({});
 				setOptions({});
-				setAccess([]);
+				// (What it is connected for starts where it started: the first level udl lists.)
+				setAccess(accounts.access_levels.slice(0, 1));
 				onConnected();
 			}
 		} catch (error) {
@@ -313,7 +316,7 @@ function ConnectForm({
 				)}
 				<div className="card-actions items-center">
 					<button type="submit" className="btn btn-primary btn-sm" disabled={busy || name === ""}>
-						{tokensWanted ? "Connect" : "Sign in"}
+						{method === "oauth" ? "Sign in" : "Connect"}
 					</button>
 				</div>
 				{waiting !== null && (

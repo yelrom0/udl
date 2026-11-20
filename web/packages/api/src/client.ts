@@ -80,6 +80,10 @@ export interface UdlApi {
 // refused. See the API's module docstring.)
 const WRITES = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+// (A read's request is its query, not its body: `fetch` refuses a body on a GET, and the API
+// takes a read's fields as query parameters — `limit`, `status`, `max_chars` and the rest.)
+const QUERIES = new Set(["GET", "HEAD", "DELETE"]);
+
 const csrf: Middleware = {
 	onRequest({ request }) {
 		if (WRITES.has(request.method)) request.headers.set("X-UDL-CSRF", "1");
@@ -140,15 +144,25 @@ async function sendTo(
 	body?: unknown,
 	params?: Readonly<Record<string, unknown>>,
 ): Promise<unknown> {
+	const verb = method.toUpperCase();
+	const asQuery = QUERIES.has(verb);
 	const init: RequestInit = {
-		method: method.toUpperCase(),
+		method: verb,
 		credentials: "same-origin",
-		headers: headersFor(method, body !== undefined),
+		headers: headersFor(verb, body !== undefined && !asQuery),
 	};
-	if (body !== undefined) init.body = JSON.stringify(body);
+	let route = fill(path, params);
+	if (body !== undefined) {
+		if (asQuery) {
+			const query = searchOf(body);
+			if (query !== "") route += `${route.includes("?") ? "&" : "?"}${query}`;
+		} else {
+			init.body = JSON.stringify(body);
+		}
+	}
 	// (Joined as openapi-fetch joins it: a base that is a page's own origin is "", and one behind
 	// a reverse proxy's prefix keeps it.)
-	const response = await doFetch(`${baseUrl.replace(/\/+$/, "")}${fill(path, params)}`, init);
+	const response = await doFetch(`${baseUrl.replace(/\/+$/, "")}${route}`, init);
 	const data: unknown = parse(response.status === 204 ? "" : await response.text());
 	if (!response.ok) throw new UdlError(asErrorInfo(data), response.status);
 	return data;
@@ -164,6 +178,19 @@ function fill(path: string, params: Readonly<Record<string, unknown>> | undefine
 		if (value === undefined) throw new Error(`${path} needs a path parameter: ${name}`);
 		return encodeURIComponent(value);
 	});
+}
+
+/** `body` as a query string: a read's fields, a list repeated (as FastAPI takes one). */
+function searchOf(body: unknown): string {
+	if (typeof body !== "object" || body === null) return "";
+	const query = new URLSearchParams();
+	for (const [field, value] of Object.entries(body)) {
+		for (const one of Array.isArray(value) ? value : [value]) {
+			if (one === undefined) continue;
+			query.append(field, one === null ? "" : String(one));
+		}
+	}
+	return query.toString();
 }
 
 function headersFor(method: string, hasBody: boolean): Record<string, string> {

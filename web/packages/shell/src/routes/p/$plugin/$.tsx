@@ -12,7 +12,11 @@ import { Placeholder } from "../../../components/Placeholder";
 import { PluginPage as GeneratedPage, NoSuchPlugin } from "../../../generated/PluginPage";
 import { matchRoute, searchOf } from "../../../plugins/routes";
 import { PluginSlot } from "../../../plugins/slot";
-import { useGeneratedPlugin } from "../../../stores/generated";
+import {
+	useGeneratedError,
+	useGeneratedLoaded,
+	useGeneratedPlugin,
+} from "../../../stores/generated";
 import { usePlugins } from "../../../stores/plugins";
 
 export const Route = createFileRoute("/p/$plugin/$")({
@@ -24,6 +28,8 @@ function PluginPage() {
 	const search = Route.useSearch();
 	const manifests = usePlugins();
 	const generated = useGeneratedPlugin(plugin);
+	const loaded = useGeneratedLoaded();
+	const error = useGeneratedError();
 	const known = manifests.find((manifest) => manifest.name === plugin);
 
 	if (known !== undefined) {
@@ -53,6 +59,24 @@ function PluginPage() {
 				title={`${known.name} ${known.version}`}
 				note={`This plugin has no page "${_splat ?? ""}".`}
 			/>
+		);
+	}
+	// (Before `/ui/generated.json` has answered — a reload, a direct link — the page does not yet
+	// know whether the plugin exists; and a list that could not be read is said as itself.)
+	if (!loaded) {
+		return (
+			<section className="my-6">
+				<output className="loading loading-spinner" aria-label="Loading the plugin" />
+			</section>
+		);
+	}
+	if (error !== null) {
+		return (
+			<section className="my-6">
+				<div role="alert" className="alert alert-error">
+					<span>{error}</span>
+				</div>
+			</section>
 		);
 	}
 	return (

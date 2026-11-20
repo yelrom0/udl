@@ -36,6 +36,11 @@ export const useGenerated = () => useStore(generated, (state) => state.ui);
 /** Why the page has no generated UI, as a hook. */
 export const useGeneratedError = () => useStore(generated, (state) => state.error);
 
+/** Whether `/ui/generated.json` has been read — answered, or failed: until it has, a page says it
+ * is loading rather than that a plugin does not exist. */
+export const useGeneratedLoaded = () =>
+	useStore(generated, (state) => state.ui !== null || state.error !== null);
+
 /** The plugin `name`'s page, as a hook. */
 export function useGeneratedPlugin(name: string): GeneratedPlugin | undefined {
 	return useStore(generated, (state) => pluginFor(state.ui, name));

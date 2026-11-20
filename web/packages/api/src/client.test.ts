@@ -253,6 +253,21 @@ describe("createUdlClient", () => {
 		expect(sent[0]?.headers.get("Content-Type")).toBeNull();
 	});
 
+	it("sends a read's fields as its query, not its body", async () => {
+		// (24.6: a generated page's form for one of udl's own reads — `list_downloads` takes
+		// `limit`, `offset`, `site_key` and `status` as query parameters, and `fetch` refuses a
+		// body on a GET.)
+		const { fake, sent, fetch } = recording();
+		fake.handle("list_downloads", () => ({ downloads: [] }));
+		const api = createUdlClient({ baseUrl: "http://udl.test", fetch });
+
+		await api.callNamed("list_downloads", { limit: 5, status: ["done", "failed"] });
+
+		expect(sent[0]?.method).toBe("GET");
+		expect(sent[0]?.url).toBe("http://udl.test/downloads?limit=5&status=done&status=failed");
+		expect(sent[0]?.headers.get("Content-Type")).toBeNull();
+	});
+
 	it("refuses a name that is no operation", async () => {
 		const api = createUdlClient({ baseUrl: "http://udl.test", fetch: recording().fetch });
 

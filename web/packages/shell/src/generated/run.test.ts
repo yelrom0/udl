@@ -103,7 +103,9 @@ describe("an operation's request", () => {
 		});
 	});
 
-	it("sends a GET's values as its query, not its body", async () => {
+	it("hands a read's fields to the client, which makes them its query", async () => {
+		// (A GET cannot have a body, and udl takes a read's fields as query parameters: the
+		// client builds that, from the same body a write would be sent.)
 		let sent: unknown = null;
 		const at = (method: string, path: string, body?: unknown) => {
 			sent = { method, path, body };
@@ -122,9 +124,28 @@ describe("an operation's request", () => {
 
 		expect(sent).toEqual({
 			method: "GET",
-			path: "/integrations/fake/find/{id}?text=one+two&tags=a&tags=b",
-			body: undefined,
+			path: "/integrations/fake/find/{id}",
+			body: { text: "one two", tags: ["a", "b"] },
 		});
+	});
+
+	it("runs udl's own read by name, with its fields", async () => {
+		// (24.6's item: `list_downloads` takes `limit`, `offset`, `site_key` and `status` as its
+		// query — a read the page may type into and run again.)
+		const named: unknown[] = [];
+		const api = {
+			...new FakeUdl().api(),
+			callNamed: (id: string, body?: unknown, params?: Record<string, string>) => {
+				named.push({ id, body, params });
+				return Promise.resolve({});
+			},
+		};
+
+		await runOperation(api, operation("list_downloads", { method: null, path: null }), {
+			limit: 5,
+		});
+
+		expect(named).toEqual([{ id: "list_downloads", body: { limit: 5 }, params: {} }]);
 	});
 
 	it("splits a route's path parameters out of the body", () => {

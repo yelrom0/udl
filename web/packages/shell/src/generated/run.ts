@@ -51,24 +51,8 @@ export async function runOperation(
 	// (A plugin's operation has a route of its own, which the API's schema does not hold: it is
 	// called by that. udl's own are hand-written routes, which the client knows by name.)
 	if (operation.method !== null && operation.path !== null) {
-		const method = operation.method.toUpperCase();
-		if (method === "GET" || method === "DELETE") {
-			// (A read's request is its query — a list repeated, as FastAPI takes one.)
-			const query = new URLSearchParams();
-			for (const [field, value] of Object.entries(body ?? {})) {
-				for (const one of Array.isArray(value) ? value : [value]) {
-					query.append(field, one === null || one === undefined ? "" : String(one));
-				}
-			}
-			const search = query.toString();
-			return api.callAt(
-				operation.method,
-				search === "" ? operation.path : `${operation.path}?${search}`,
-				undefined,
-				params,
-			);
-		}
-		// (A body is what its route asks for, even when every field may be left out.)
+		// (A body is what its route asks for, even when every field may be left out. The client
+		// makes a read's fields its query, whether the route is the plugin's or the API's.)
 		return api.callAt(operation.method, operation.path, body ?? {}, params);
 	}
 	return api.callNamed(operation.name, body, params);

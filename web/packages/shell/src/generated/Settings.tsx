@@ -28,12 +28,18 @@ export interface SettingsTabProps {
 	readonly api: UdlApi;
 }
 
-/** What to send: `values`, without the secrets udl gave as a mask and the page did not change
- * (sending one back would store the mask as the secret). */
+/** What to send: only what the user changed, and never a file-only field. (udl answers with the
+ * whole layered model — a file-only field, one the config file sets, the defaults — and it
+ * refuses a file-only field in a save; sending an unchanged value back would also shadow the
+ * config file from then on. A secret it gave as a mask, untouched, is unchanged, so it goes
+ * nowhere: sending it back would store the mask as the secret.) */
 function unsent(info: SettingsInfo | null, seed: JsonObject, values: JsonObject): JsonObject {
 	const kept: JsonObject = {};
 	for (const [field, value] of Object.entries(values)) {
-		if (info?.secrets.includes(field) === true && value === seed[field]) {
+		if (info?.file_only.includes(field) === true) {
+			continue;
+		}
+		if (value === seed[field]) {
 			continue;
 		}
 		kept[field] = value;

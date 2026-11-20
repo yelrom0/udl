@@ -266,6 +266,66 @@ describe("an integration's accounts", () => {
 		expect(screen.queryByLabelText("wrong")).toBeNull();
 	});
 
+	it("keeps the access it starts with for the next account", async () => {
+		// (What for starts at the integration's first level: connecting one account must not
+		// leave the form sending none at all — with one level, the fieldset is not even shown.)
+		const fake = draw(
+			plugin({
+				accounts: { connect: ["tokens"], access_levels: ["read", "send"], options_schema: {} },
+			}),
+		);
+		fake.handle("list_accounts", () => ({ accounts: [] }));
+		fake.handle("connect_account", () => ({
+			account: account("gmail", "work"),
+			authorization_url: null,
+		}));
+
+		await screen.findByText("No accounts yet.");
+		fireEvent.change(screen.getByLabelText("Name"), { target: { value: "one" } });
+		fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+		await waitFor(() =>
+			expect(fake.calls.filter((call) => call.id === "connect_account")).toHaveLength(1),
+		);
+
+		fireEvent.change(screen.getByLabelText("Name"), { target: { value: "two" } });
+		fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+		await waitFor(() =>
+			expect(fake.calls.filter((call) => call.id === "connect_account")[1]?.body).toMatchObject({
+				name: "two",
+				access: ["read"],
+			}),
+		);
+	});
+
+	it("takes an answer without an authorization url as connected", async () => {
+		// (`authorization_url` is optional in the schema: left out is no OAuth, not an OAuth
+		// without a page.)
+		const fake = draw(
+			plugin({ accounts: { connect: ["tokens"], access_levels: ["read"], options_schema: {} } }),
+		);
+		fake.handle("list_accounts", () => ({ accounts: [] }));
+		fake.handle("connect_account", () => ({ account: account("gmail", "work") }));
+
+		await screen.findByText("No accounts yet.");
+		fireEvent.change(screen.getByLabelText("Name"), { target: { value: "work" } });
+		fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+		// (The accounts are read again, and the form is ready for the next one.)
+		await waitFor(() =>
+			expect(fake.calls.filter((call) => call.id === "list_accounts")).toHaveLength(2),
+		);
+		expect(screen.queryByText(/Finish connecting it in your browser/)).toBeNull();
+		expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("");
+	});
+
+	it("says Connect for a form, and Sign in only for OAuth", async () => {
+		draw(plugin({ accounts: { connect: ["none"], access_levels: [], options_schema: {} } }));
+
+		expect(await screen.findByRole("button", { name: "Connect" })).toBeTruthy();
+		expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+	});
+
 	it("says where an OAuth connection finishes", async () => {
 		const fake = draw(
 			plugin({ accounts: { connect: ["oauth"], access_levels: ["read"], options_schema: {} } }),

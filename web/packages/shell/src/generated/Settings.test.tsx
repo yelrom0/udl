@@ -82,6 +82,47 @@ describe("a plugin's settings", () => {
 		expect(screen.getByLabelText("token")).toHaveProperty("value", "");
 	});
 
+	it("sends nothing it did not change, and never a file-only field", async () => {
+		// (udl's answer is the whole layered model: a file-only field, one the config file sets
+		// and the defaults are all in it. udl refuses a file-only field in a save, and sending
+		// an unchanged value back would shadow the config file from then on.)
+		const fake = new FakeUdl().handle("get_plugin_settings", () => ({
+			...info(),
+			values: { client_id: "the-one-the-config-file-sets", label: "the inbox" },
+		}));
+		let sent: unknown = null;
+		fake.handle("set_plugin_settings", ({ body }) => {
+			sent = body;
+			return info();
+		});
+		render(<SettingsTab plugin={plugin()} api={fake.api()} />);
+
+		fireEvent.change(await screen.findByLabelText("label"), { target: { value: "inbox" } });
+		fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+		await waitFor(() => expect(sent).not.toBeNull());
+		expect(sent).toEqual({ values: { label: "inbox" } });
+	});
+
+	it("sends no value at all when nothing changed", async () => {
+		const fake = new FakeUdl().handle("get_plugin_settings", () => ({
+			...info(),
+			values: { label: "the inbox" },
+		}));
+		let sent: unknown = null;
+		fake.handle("set_plugin_settings", ({ body }) => {
+			sent = body;
+			return info();
+		});
+		render(<SettingsTab plugin={plugin()} api={fake.api()} />);
+
+		await screen.findByLabelText("label");
+		fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+		await waitFor(() => expect(sent).not.toBeNull());
+		expect(sent).toEqual({ values: {} });
+	});
+
 	it("does not send a secret it did not touch, only the mask udl gave it", async () => {
 		// (udl says a set secret as a mask; sending that back would store the mask as the secret.)
 		const fake = new FakeUdl().handle("get_plugin_settings", () => ({
@@ -103,7 +144,7 @@ describe("a plugin's settings", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
 		await waitFor(() => expect(sent).not.toBeNull());
-		expect(sent).toEqual({ values: { label: "the inbox" } });
+		expect(sent).toEqual({ values: {} });
 	});
 
 	it("sends a secret that was typed in", async () => {
@@ -122,7 +163,8 @@ describe("a plugin's settings", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
 		await waitFor(() => expect(sent).not.toBeNull());
-		expect(sent).toEqual({ values: { label: "the inbox", token: "new-one" } });
+		// (Only the secret: the label beside it is unchanged, and is not sent again.)
+		expect(sent).toEqual({ values: { token: "new-one" } });
 	});
 
 	it("sends what was changed, and says it saved", async () => {
