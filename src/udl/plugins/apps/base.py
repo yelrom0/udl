@@ -414,7 +414,8 @@ class AppPlugin[S: AppSettings](ABC):
         ui: UISpec | None = None,
     ) -> Operation:
         """The operation called `name` (offered as `<its name>_<name>`): the app's own async
-        method of that name, `(self, request) -> response`, whose docstring describes it.
+        method of that name, `(self, request) -> response` (or `(self, request, *, service)`,
+        when it needs udl's records or its secret store), whose docstring describes it.
 
         It runs on the app of its name this service has (udl.automations.apps.AppSupervisor), so
         an app's operations are offered on the CLI, the API and MCP with no further work.
@@ -432,19 +433,25 @@ class AppPlugin[S: AppSettings](ABC):
             )
         method = found
 
-        async def call(service: UDLService, request: BaseModel) -> BaseModel:
-            app = await service.apps.get(cls.name)
-            return await method(app, request)
-
         # (Operation.of reads an operation's models and description from its function.)
         forward = annotationlib.Format.FORWARDREF
         annotations = annotationlib.get_annotations(method, format=forward)
         parameters = list(inspect.signature(method, annotation_format=forward).parameters)
-        if len(parameters) != 2:
+        extra = [name for name in parameters if name not in ("self", "request", "service")]
+        if len(parameters) < 2 or len(parameters) > 3 or extra:
             raise PluginError(
-                f"{what} is not an operation: it takes (self, request), not "
-                f"{', '.join(parameters) or 'nothing'}"
+                f"{what} is not an operation: it takes (self, request), or "
+                f"(self, request, *, service) when it needs udl's own records, not "
+                f"({', '.join(parameters) or 'nothing'})"
             )
+        wants_service = "service" in parameters
+
+        async def call(service: UDLService, request: BaseModel) -> BaseModel:
+            app = await service.apps.get(cls.name)
+            if wants_service:
+                return await method(app, request, service=service)
+            return await method(app, request)
+
         request = annotations.get(parameters[1])
         response = annotations.get("return")
         for label, annotation in (("request", request), ("response", response)):

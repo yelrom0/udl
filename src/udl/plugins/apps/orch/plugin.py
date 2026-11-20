@@ -7,13 +7,14 @@ Orch: udl's orchestrator (Phase 26), an app plugin (udl.apps) whose data is the 
 tracks — projects and their repos, features and their tasks, links and notes.
 
 Its records are in orch.records (a Project, a Repo, a Feature, a Task, a Note); its shapes are in
-orch.models. Its queue operations are here (27.3), and the rest of its operations come in 26.6:
-importing this module registers them, as importing any other app's module does.
+orch.models. Its queue operations are here (27.3), its issue_token (27.2) and the rest of its
+operations come in 26.6: importing this module registers them, as importing any other app's
+module does.
 """
 
 # System Imports
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 # Local Imports
 from udl.automations.events import EventType
@@ -38,6 +39,16 @@ from udl.plugins.apps.orch.models import (
     UnassignTaskRequest,
 )
 from udl.plugins.apps.orch.settings import OrchSettings
+from udl.plugins.apps.orch.tokens import (
+    IssueTokenRequest,
+    IssueTokenResponse,
+)
+from udl.plugins.apps.orch.tokens import (
+    issue_token as issue,
+)
+
+if TYPE_CHECKING:
+    from udl.core.service import UDLService
 
 __all__ = ["Orch"]
 
@@ -57,8 +68,8 @@ class Orch(AppPlugin[OrchSettings]):
     @classmethod
     def record_kinds(cls) -> Sequence[type[Record]]:
         """The kinds of record orch defines: a project, a repo, a feature, a task, a note and the
-        counter their keys come from (26.2-26.5), and an agent, its session and the events of it
-        (27.1)."""
+        counter their keys come from (26.2-26.5), an agent, its session and the events of it
+        (27.1), and the tokens its agents call udl with (27.2)."""
         return (
             stored.Project,
             stored.Repo,
@@ -69,7 +80,27 @@ class Orch(AppPlugin[OrchSettings]):
             stored.Agent,
             stored.AgentSession,
             stored.SessionEvent,
+            stored.AgentToken,
         )
+
+    @classmethod
+    def operations(cls) -> list[Operation]:
+        """The operations orch adds (the rest are 26.6's)."""
+        return [
+            cls.operation(
+                "issue_token",
+                title="Issue an agent's token",
+                hints=OperationHints(admin=True),
+            )
+        ]
+
+    async def issue_token(
+        self, request: IssueTokenRequest, *, service: UDLService
+    ) -> IssueTokenResponse:
+        """Issue a new token for the agent called `agent` (rotating the one it had, which stops
+        working at once). The token is given here, once, and kept in udl's secret store, so the
+        dispatcher can hand it to the agent's runner."""
+        return IssueTokenResponse(agent=request.agent, token=await issue(service, request.agent))
 
     @classmethod
     def event_types(cls) -> Sequence[EventType[Any]]:

@@ -112,7 +112,7 @@ def add_web_routes(app: FastAPI, settings: Settings, dist: Path | None = None) -
     async def generated_json(request: Request) -> Response:
         # (The same auth as the API's — the key, or a signed-in session's cookie, which is what
         # the shell has: it says what every plugin does, and with what.)
-        authenticate(request.app.state.settings, request)
+        await authenticate(request.app.state.settings, request)
         service = request.app.state.service
         body = generated(service.operations, service.registry).model_dump_json(by_alias=True)
         etag = f'"{hashlib.sha256(body.encode()).hexdigest()[:32]}"'

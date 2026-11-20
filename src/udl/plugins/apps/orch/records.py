@@ -27,6 +27,7 @@ sit over it, so nothing here knows about a database.
 """
 
 # System Imports
+import hashlib
 from datetime import datetime
 from decimal import Decimal
 from typing import Self
@@ -415,6 +416,40 @@ class SessionEvent(Record):
         )
 
 
+def hash_token(token: str) -> str:
+    """The SHA-256 of a token (hex): what an AgentToken keeps, so the token itself is never
+    stored outside udl's secret store."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+class AgentToken(Record):
+    """A token an agent calls udl with (27.2), as it is stored: its SHA-256, never the token
+    itself (that is in udl's secret store, at apps/orch/agents/<name>/token).
+
+    It is unique by its hash, so a token is found by hashing the one presented, and issuing one
+    for an agent replaces the one it had (rotating)."""
+
+    kind = "orch_agent_token"
+    indexed = ("agent", "hash")
+    unique = (("hash",),)
+
+    agent: Name
+    """The agent it belongs to."""
+    hash: str
+    """The SHA-256 of the token (hex)."""
+    # (created_at is the record's own: when it was issued.)
+    last_used_at: datetime | None = None
+    """When it was last used, if it has been."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            agent="deepseek-a",
+            hash=hashlib.sha256(b"udl_agent_example").hexdigest(),
+            last_used_at=None,
+        )
+
+
 class ProjectRecords:
     """Where orch keeps its projects: over an app's records (udl.db.records), so they are
     stored as any other record is."""
@@ -787,6 +822,11 @@ class AgentRecords:
         """The records the agents are kept in (what a SessionRecords is made over too)."""
         return self._records
 
+    @property
+    def tokens(self) -> AgentTokenRecords:
+        """The tokens its agents call udl with (27.2)."""
+        return AgentTokenRecords(self._records)
+
     async def save_agent(self, agent: Agent) -> Agent:
         """Store `agent` (by its id, so storing one again replaces it), after checking its place
         in the hierarchy. Raises DuplicateKey for another agent with the same name,
@@ -897,6 +937,45 @@ class NoteRecords:
             Note, RecordQuery(where={"owner_kind": owner_kind, "owner": owner})
         )
         return sorted(found, key=lambda note: (note.at, note.created_at))
+
+
+class AgentTokenRecords:
+    """Where orch keeps the tokens its agents call udl with: only their hashes (the token itself
+    is in udl's secret store). One token per agent — issuing one replaces the one it had."""
+
+    def __init__(self, records: AppRecords) -> None:
+        self._records = records
+
+    async def issue(self, agent: str, token: str) -> AgentToken:
+        """Keep the hash of `token` for `agent`, replacing any it had (so the old one stops
+        working at once)."""
+        digest = hash_token(token)
+        for old in await self.for_agent(agent):
+            await self._records.delete(AgentToken, old.id)
+        return await self._records.save(AgentToken(agent=agent, hash=digest, created_at=utcnow()))
+
+    async def for_agent(self, agent: str) -> list[AgentToken]:
+        """The tokens of `agent` (one, unless one is being rotated)."""
+        return sorted(
+            await self._records.list(AgentToken, RecordQuery(where={"agent": agent})),
+            key=lambda one: one.created_at,
+        )
+
+    async def by_hash(self, digest: str) -> AgentToken | None:
+        """The token with that hash, or None when there is none."""
+        found = await self._records.list(AgentToken, RecordQuery(where={"hash": digest}))
+        return found[0] if found else None
+
+    async def touch(self, token: AgentToken) -> AgentToken:
+        """Note that `token` was just used."""
+        return await self._records.save(token.model_copy(update={"last_used_at": utcnow()}))
+
+    async def delete_for(self, agent: str) -> bool:
+        """Forget every token of `agent` (when it is deleted). Returns whether it had one."""
+        found = await self.for_agent(agent)
+        for token in found:
+            await self._records.delete(AgentToken, token.id)
+        return bool(found)
 
 
 class SessionRecords:
