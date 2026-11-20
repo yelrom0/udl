@@ -25,6 +25,7 @@ own list, never in an agent's queue (28.2's To action).
 import asyncio
 import contextlib
 from collections.abc import AsyncGenerator, Sequence
+from weakref import WeakKeyDictionary
 
 # Local Imports
 from udl.db.records import Record
@@ -49,21 +50,25 @@ from udl.plugins.apps.orch.records import (
 
 __all__ = ["HUMAN", "assign", "next_task", "queue_of", "reorder", "unassign"]
 
-_locks: dict[tuple[str, str], asyncio.Lock] = {}
-"""One lock per (project, assignee) queue: two calls in this udl cannot interleave the read of a
-queue with the write that renumbers it (another udl's can, so a batch is all or nothing on the
-database's side: 27.3a)."""
+_locks: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[tuple[str, str], asyncio.Lock]] = (
+    WeakKeyDictionary()
+)
+"""One lock per (project, assignee) queue, per event loop: two calls in this udl cannot
+interleave the read of a queue with the write that renumbers it (another udl's can, so a batch is
+all or nothing on the database's side: 27.3a). A loop's locks go when the loop does, so a test's
+loop does not keep a lock a later one would wait on, and a queue is one entry while it is used."""
 
 HUMAN = "human:"
 """What a person's assignee begins with (`human:<name>`)."""
 
 
 def _lock(project: str, agent: str) -> asyncio.Lock:
-    """The lock of one queue (made the first time it is asked for)."""
+    """The lock of one queue (made the first time this event loop asks for it)."""
+    held = _locks.setdefault(asyncio.get_running_loop(), {})
     key = (project, agent)
-    found = _locks.get(key)
+    found = held.get(key)
     if found is None:
-        found = _locks[key] = asyncio.Lock()
+        found = held[key] = asyncio.Lock()
     return found
 
 
@@ -105,15 +110,27 @@ async def assign(
 
     The two queues are written in one write, under both of their locks (27.3a): a queue is never
     seen, or stored, half renumbered."""
-    task = await _task(tasks, project, key)
-    # (Which queues the write touches is read before the locks are taken; a reassign takes
-    # both, in a fixed order.)
+    while True:
+        task = await _task(tasks, project, key)
+        # (Which queues the write touches is read before the locks are taken; a reassign takes
+        # both, in a fixed order.)
+        held = _queues_of(project, task, agent)
+        async with _locked(*held):
+            task = await _task(tasks, project, key)  # (again: it may have moved while we waited)
+            if _queues_of(project, task, agent) != held:
+                # (It changed hands while this call waited: the queue it is on now is not held,
+                # so it is read again and both queues taken, from the start.)
+                continue
+            return await _assign(tasks, task, agent, project=project, position=position, by=by)
+
+
+def _queues_of(project: str, task: Task, agent: str) -> list[tuple[str, str]]:
+    """The queues an assignment of `task` to `agent` writes: the agent's, and the one it leaves
+    (in a fixed order, so two opposite reassigns cannot deadlock)."""
     held = [(project, agent)]
     if task.assignee is not None and task.assignee != agent:
         held.append((project, task.assignee))
-    async with _locked(*held):
-        task = await _task(tasks, project, key)  # (again: it may have moved while we waited)
-        return await _assign(tasks, task, agent, project=project, position=position, by=by)
+    return sorted(held)
 
 
 async def _assign(
@@ -156,7 +173,7 @@ async def _assign(
         planned = transitions.move(planned, QUEUED, by=_by(by, role))
     placed = planned.model_copy(update={"assignee": agent, "position": at})
     order = [*others[:at], placed, *others[at:]]
-    writes = [_at(one, index) for index, one in enumerate(order)]
+    writes = _renumbered(order, was=others)
     also: list[Record] = []
     if stopped is not None:
         left = [
@@ -164,10 +181,10 @@ async def _assign(
             for found in await queue_of(tasks, project=project, agent=stopped)
             if found.key != key
         ]
-        writes += [_at(one, index) for index, one in enumerate(left)]
+        writes += _renumbered(left, was=left)
         also.append(_stopped(placed, stopped=stopped, agent=agent))
     saved = await tasks.save_all(writes, also=also)
-    return saved[at]
+    return next((one for one in saved if one.id == placed.id), placed)
 
 
 async def _check_agent(tasks: TaskRecords, task: Task, agent: str, *, key: str) -> None:
@@ -281,7 +298,7 @@ async def unassign(
             for found in await queue_of(tasks, project=project, agent=agent)
             if found.key != key
         ]
-        saved = await tasks.save_all([freed, *(_at(one, index) for index, one in enumerate(left))])
+        saved = await tasks.save_all([freed, *_renumbered(left, was=left)])
         return saved[0]
 
 
@@ -308,15 +325,24 @@ async def next_task(tasks: TaskRecords, *, project: str, agent: str) -> Task | N
 async def _place(tasks: TaskRecords, order: Sequence[Task]) -> list[Task]:
     """`order`, stored as a queue: each task at its index, and only the ones that moved saved —
     all of them in one write, so a queue is never stored half renumbered (27.3a)."""
-    moved = [
-        task.model_copy(update={"position": index})
-        for index, task in enumerate(order)
-        if task.position != index
-    ]
+    moved = _renumbered(order, was=order)
     if not moved:
         return list(order)
     saved = {task.id: task for task in await tasks.save_all(moved)}
     return [saved.get(task.id, task) for task in order]
+
+
+def _renumbered(order: Sequence[Task], *, was: Sequence[Task]) -> list[Task]:
+    """`order` at its places, keeping only the tasks that are not stored as they are here (a write
+    bumps a record's `updated_at`, and on MongoDB it is one more document in the transaction). A
+    task that `was` does not have — the one just placed — is always kept."""
+    stored = {one.id: one for one in was}
+    kept: list[Task] = []
+    for index, one in enumerate(order):
+        placed = one.model_copy(update={"position": index})
+        if placed != stored.get(one.id):
+            kept.append(placed)
+    return kept
 
 
 def _stopped(task: Task, *, stopped: str, agent: str) -> Note:
@@ -329,11 +355,6 @@ def _stopped(task: Task, *, stopped: str, agent: str) -> Note:
         text=f"Moved to {agent}'s queue: {stopped} must stop working on it.",
         author="udl",
     )
-
-
-def _at(task: Task, position: int) -> Task:
-    """`task` at `position` (a copy, whether or not it moved)."""
-    return task if task.position == position else task.model_copy(update={"position": position})
 
 
 async def _task(tasks: TaskRecords, project: str, key: str) -> Task:

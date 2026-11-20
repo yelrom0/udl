@@ -67,6 +67,7 @@ SCHEMA_VERSION: Final = 2
 
 _SCHEMES: Final = ("mongodb", "mongodb+srv")
 _DEFAULT_DATABASE: Final = "udl"  # when the URL names none
+_NO_TRANSACTIONS: Final = 20  # (pymongo's "Transaction numbers are only allowed on a replica set)
 _ASCENDING: Final = 1
 _DESCENDING: Final = -1
 _AFTER: Final = True  # (pymongo.ReturnDocument.AFTER: return the document as updated)
@@ -224,12 +225,16 @@ class MongoDBPlugin(DatabasePlugin):
         sharded = hello.get("msg") == "isdbgrid"
         self._transactions = sharded or "setName" in hello
         if not self._transactions:
-            log.warning(
-                "The %r MongoDB is a standalone server: it has no transactions, so a batch of "
-                "record writes goes in order, and a failure part way leaves the ones before it "
-                "(a replica set or a sharded cluster makes one all or nothing)",
-                self.connection.name,
-            )
+            self._say_standalone()
+
+    def _say_standalone(self) -> None:
+        """Say, once, that this deployment has no transactions and what that means for a batch."""
+        log.warning(
+            "The %r MongoDB is a standalone server: it has no transactions, so a batch of "
+            "record writes goes in order, and a failure part way leaves the ones before it "
+            "(a replica set or a sharded cluster makes one all or nothing)",
+            self.connection.name,
+        )
 
     async def close(self) -> None:
         if self._client is not None:
@@ -459,19 +464,32 @@ class MongoDBPlugin(DatabasePlugin):
         return (await self.upsert_records([record]))[0]
 
     async def upsert_records[R: Record](self, records: Sequence[R]) -> list[R]:
+        """Store `records` as one write: all of them, or none where the deployment has
+        transactions (a standalone server writes them in order)."""
         if not records:
             return []
+        if self._client is None:
+            raise DatabaseError(f"The {self.connection.name!r} database is not connected")
         if not self._transactions:
             # (A standalone server: in order, and a failure part way keeps the ones before it.)
             return [await self._store(record) for record in records]
-        if self._client is None:
-            raise DatabaseError(f"The {self.connection.name!r} database is not connected")
+        from pymongo.errors import OperationFailure, PyMongoError
+
         try:
             session = self._client.start_session()
             async with session, await session.start_transaction():
                 return [await self._store(record, session=session) for record in records]
-        except _Duplicate as e:
-            raise _duplicate(records[-1], e) from e
+        except DatabaseError as e:
+            cause = e.__cause__
+            if not (isinstance(cause, OperationFailure) and cause.code == _NO_TRANSACTIONS):
+                raise
+            # (connect() could not ask the deployment — `hello` failed — so this batch found
+            # out: it has none. Say so once, as connect() would have, and write in order.)
+            self._transactions = False
+            self._say_standalone()
+            return [await self._store(record) for record in records]
+        except PyMongoError as e:  # (a session or a commit that failed: udl's own error)
+            raise self._error(e) from e
 
     async def _store[R: Record](self, record: R, *, session: AsyncClientSession | None = None) -> R:
         """Store one record: replaced by id, or inserted, then read back (in `session`)."""

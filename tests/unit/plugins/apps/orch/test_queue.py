@@ -461,6 +461,90 @@ async def test_a_queue_change_is_one_write(tasks: TaskRecords) -> None:
     assert writes == [2]
 
 
+async def test_a_reassign_writes_only_the_tasks_whose_place_changed(
+    tasks: TaskRecords,
+) -> None:
+    # (The ones that keep their place are not written: a write bumps updated_at, and on MongoDB
+    # it is one more document in the transaction.)
+    for key in ("F-1.1", "F-1.2", "F-1.3"):
+        await a_task(tasks, key)
+        await assign(tasks, key, "ernie-c", project="udl", by=ME)
+    writes: list[list[str]] = []
+    saving = tasks.records.save_all
+
+    async def counted[R: Record](records: Sequence[R]) -> list[R]:
+        writes.append([getattr(record, "key", "?") for record in records])
+        return await saving(records)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(tasks.records, "save_all", counted)
+        # (F-1.3 leaves ernie-c's queue: F-1.1 and F-1.2 keep their places there.)
+        await assign(tasks, "F-1.3", "deepseek-b", project="udl", by=ME)
+
+    # (The moved task, and the system note that says ernie-c must stop: nothing else.)
+    assert writes == [["F-1.3", "?"]]
+    assert len(writes) == 1
+
+
+class MovedFirst(TaskRecords):
+    """A store whose first read of a task is the one before it changed hands (27.3a's retry)."""
+
+    def __init__(self, records: AppRecords) -> None:
+        super().__init__(records)
+        self.reads = 0
+        self.stale: Task | None = None
+
+    async def task(self, project: str, key: str) -> Task | None:
+        found = await super().task(project, key)
+        self.reads += 1
+        if self.reads == 1 and self.stale is not None:
+            return self.stale
+        return found
+
+
+async def test_an_assign_that_finds_the_task_moved_while_it_waited_starts_over(
+    tasks: TaskRecords,
+) -> None:
+    # (The queues to lock are read before the lock is taken. If the task changed hands while the
+    # call waited, the queue it is on now is not held: it is read again and both taken, so the
+    # write never touches an unheld queue.)
+    await a_task(tasks, "F-1.1")
+    await a_task(tasks, "F-1.2")
+    await assign(tasks, "F-1.1", "ernie-c", project="udl", by=ME)
+    await assign(tasks, "F-1.2", "deepseek-b", project="udl", by=ME)
+    stale = await tasks.task("udl", "F-1.2")
+    assert stale is not None
+    moved = MovedFirst(tasks.records)
+    moved.stale = stale.model_copy(update={"assignee": "ernie-c", "position": 0})
+
+    assigned = await assign(moved, "F-1.2", "deepseek-b", project="udl", by=ME)
+
+    assert (assigned.key, assigned.assignee) == ("F-1.2", "deepseek-b")
+    assert moved.reads == 4  # (read, read under the lock, then both again: 4 in all)
+    assert await keys_of(tasks, "deepseek-b") == ["F-1.2"]
+    assert await keys_of(tasks, "ernie-c") == ["F-1.1"]
+
+
+async def test_an_unassign_writes_only_the_tasks_whose_place_changed(
+    tasks: TaskRecords,
+) -> None:
+    for key in ("F-1.1", "F-1.2", "F-1.3"):
+        await a_task(tasks, key)
+        await assign(tasks, key, "ernie-c", project="udl", by=ME)
+    writes: list[list[str]] = []
+    saving = tasks.records.save_all
+
+    async def counted[R: Record](records: Sequence[R]) -> list[R]:
+        writes.append([getattr(record, "key", "?") for record in records])
+        return await saving(records)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(tasks.records, "save_all", counted)
+        await unassign(tasks, project="udl", key="F-1.3", by=ME)
+
+    assert writes == [["F-1.3"]]  # (the one that left, and no other: 0 and 1 are still 0 and 1)
+
+
 async def test_a_queue_change_that_fails_leaves_the_queue_as_it_was(
     tasks: TaskRecords,
 ) -> None:

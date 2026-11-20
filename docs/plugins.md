@@ -361,8 +361,10 @@ queue's positions are written that way, so a queue is never stored half renumber
 the batch on one connection, in one transaction. MongoDB runs it in a session transaction, which
 only a **replica set or a sharded cluster** has: on a standalone server the records go in order,
 a failure part way keeps the ones before it, `connect()` logs one warning saying a replica set is
-needed, and `transactions` is `False` (it is `True` everywhere else). A plugin of another kind
-that cannot make a batch atomic says so the same way.
+needed, and `transactions` is `False` (it is `True` everywhere else). When `connect()` could not
+ask the deployment (`hello` failed), the first batch finds out instead: it falls back to writing
+in order, logs the same warning once, and `transactions` is `False` from then on. A plugin of
+another kind that cannot make a batch atomic says so the same way.
 
 ## Testing a plugin
 
