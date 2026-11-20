@@ -110,6 +110,7 @@ class ScriptedShell(HostShell):
         within: timedelta | None = None,
         cancel: CancelToken | None = None,
         check: bool = True,
+        tail: bool = False,
     ) -> ProcessResult:
         self.runs.append(list(argv))
         self.secret_envs.append(dict(secret_env or {}))

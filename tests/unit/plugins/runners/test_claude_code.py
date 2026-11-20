@@ -72,6 +72,7 @@ class FakeShell:
         within: timedelta | None = None,
         cancel: CancelToken | None = None,
         check: bool = True,
+        tail: bool = False,
     ) -> ProcessResult:
         self.runs.append((list(argv), stdin))
         if argv[0] == "sh" and "umask 077" in argv[2]:

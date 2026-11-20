@@ -201,6 +201,18 @@ async def test_both_shells_fail_when_the_program_fails(both: list[tuple[str, Hos
             await shell.run(_python("import sys; sys.exit(3)"))
 
 
+async def test_both_shells_keep_the_end_of_a_program_that_prints_too_much(
+    both: list[tuple[str, HostShell]],
+) -> None:
+    """(A gate's failure is at the end of its output, not its first 64 KiB: `tail=True`, 27.5.)"""
+    loud = _python("for i in range(3000): print('x' * 100, i)\nprint('the summary')")
+    for name, shell in both:
+        whole = await shell.run(loud, tail=True)
+
+        assert whole.stdout.strip().endswith("the summary"), name
+        assert f"{'x' * 100} 0" not in whole.stdout, name
+
+
 async def test_both_shells_give_a_failure_back_when_it_is_not_an_error(
     both: list[tuple[str, HostShell]],
 ) -> None:

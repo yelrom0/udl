@@ -318,7 +318,7 @@ async def push(
         gate = await _gate(shell, repo.gate, path, within=within, key=task.key)
     ran = GateRun(
         exit_code=gate.returncode,
-        output=_last("\n".join(one for one in (gate.stdout, gate.stderr) if one)),
+        output=_tails(gate.stdout, gate.stderr),
         seconds=round((service.clock.now() - started).total_seconds(), 1),
     )
     if gate.returncode != 0:
@@ -435,6 +435,16 @@ def _last(output: str, lines: int = 200) -> str:
     return "\n".join(found[-lines:])
 
 
+def _tails(stdout: str, stderr: str, lines: int = 100) -> str:
+    """The end of each of a gate's two streams (half the card's 200 lines each, so neither one
+    pushes the other's tail out: a suite's summary is on stdout, a compiler's error on stderr)."""
+    found = [
+        *(_last(stdout, lines).splitlines() if stdout.strip() else []),
+        *(_last(stderr, lines).splitlines() if stderr.strip() else []),
+    ]
+    return "\n".join(found[-2 * lines :])
+
+
 async def _contains(shell: HostShell, path: str, commit: str) -> bool:
     """Whether the worktree at `path` already has `commit` in it (nothing to rebase onto)."""
     return await _succeeds(shell, ["-C", path, "merge-base", "--is-ancestor", commit, "HEAD"])
@@ -459,7 +469,7 @@ async def _gate(
     answer, not an error (its exit code and the end of its output are what the agent is told),
     and one that runs past its time or is not installed is NotAllowed with what happened."""
     try:
-        return await shell.run(gate, cwd=path, within=within, check=False)
+        return await shell.run(gate, cwd=path, within=within, check=False, tail=True)
     except TimeoutError as slow:
         raise NotAllowed(
             f"the gate ran past the {within} it gets",

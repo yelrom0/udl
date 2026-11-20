@@ -264,10 +264,14 @@ async def test_an_agent_that_is_not_the_task_s_assignee_is_refused(
 async def test_a_failing_gate_pushes_nothing(
     service: UDLService, worktree: Path, home: Path, as_agent: None
 ) -> None:
-    await set_gate(service, ["sh", "no-such-gate.sh"])
+    script = home / "no-gate.sh"
+    script.write_text("echo 'the gate says no'\nexit 5\n")
+    await set_gate(service, ["sh", str(script)])
 
-    with pytest.raises(NotAllowed, match="the gate failed with exit code 127"):
+    with pytest.raises(NotAllowed, match="the gate failed with exit code 5") as refused:
         await pushed(service, key="F-1.1", title="It")
+
+    assert "the gate says no" in (refused.value.hint or "")
 
     assert (
         git("for-each-ref", "--format=%(refname:short)", "refs/heads", cwd=home / "origin.git")
@@ -293,6 +297,26 @@ async def test_a_long_failing_gate_says_its_code_and_the_end_of_its_output(
     hint = refused.value.hint or ""
     assert "line 299" in hint
     assert "line 0" not in hint
+
+
+async def test_a_gate_that_prints_more_than_udl_keeps_its_end(
+    service: UDLService, worktree: Path, home: Path, as_agent: None
+) -> None:
+    """(A suite that prints more than udl keeps: what a failure says is at the end, not the
+    first 64 KiB, 27.5.)"""
+    script = home / "loud.sh"
+    script.write_text(
+        'i=0\nwhile [ $i -lt 3000 ]; do echo "noise line $i of the run, with some padding to '
+        'make it long"; i=$((i+1)); done\necho "the summary: 2 failed, 1 passed"\nexit 2\n'
+    )
+    await set_gate(service, ["sh", str(script)])
+
+    with pytest.raises(NotAllowed, match="exit code 2") as refused:
+        await pushed(service, key="F-1.1", title="It")
+
+    hint = refused.value.hint or ""
+    assert "the summary: 2 failed, 1 passed" in hint
+    assert "noise line 0" not in hint
 
 
 # ---------------------------------------------------------------------------------------------

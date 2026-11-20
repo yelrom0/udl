@@ -149,14 +149,17 @@ async def run_process(
     cwd: Path | None = None,
     max_output: int | None = None,
     cancelled: str = _DOWNLOAD_CANCELLED,
+    tail: bool = False,
 ) -> ProcessResult:
     """Run a program to completion, calling `on_tick` every `interval` seconds while it runs.
 
     It is given `stdin` (or no input), `env` as its whole environment (else udl's) and `cwd` as
     its folder. With `max_output`, the first `max_output` bytes of its stdout and the last of its
-    stderr are kept (the rest is read and dropped). Raises Cancelled (saying `cancelled`, once
-    it has stopped) when `cancel` is cancelled; if the awaiting task is cancelled, the program is
-    stopped too. A program that is not installed is ToolUnavailable.
+    stderr are kept (the rest is read and dropped); with `tail`, the last of its stdout is kept
+    instead of the first (a failing gate says what went wrong at the end, 27.5). Raises
+    Cancelled (saying `cancelled`, once it has stopped) when `cancel` is cancelled; if the
+    awaiting task is cancelled, the program is stopped too. A program that is not installed is
+    ToolUnavailable.
     """
     cancel.check(cancelled)
     log.debug("Running %s", " ".join(args))
@@ -174,7 +177,7 @@ async def run_process(
     output = asyncio.ensure_future(
         asyncio.gather(
             _feed(process, stdin),
-            _first(process.stdout, max_output),
+            (_last if tail else _first)(process.stdout, max_output),
             _last(process.stderr, max_output),
         )
     )

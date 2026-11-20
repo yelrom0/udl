@@ -148,6 +148,7 @@ class FakeShell(HostShell):
         within: timedelta | None = None,
         cancel: CancelToken | None = None,
         check: bool = True,
+        tail: bool = False,
     ) -> ProcessResult:
         self.runs.append(list(argv))
         answered = self._answer(argv, stdin=stdin)
