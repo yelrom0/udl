@@ -1132,6 +1132,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/pr_status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Whether the task `key`'s pull may be merged (27.6), and with `wait`, holding until
+         * @description Whether the task `key`'s pull may be merged (27.6), and with `wait`, holding until
+         *     GitHub's checks and the review bot have finished with this head (or until the time it
+         *     is given runs out).
+         *
+         *     A pull that is not ready for a reason waiting cannot change (a draft, a failed check,
+         *     an open item) is answered at once, as is one that has no pull yet.
+         */
+        post: operations["orch_pr_status"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/push": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Push a task's work: its branch to origin, then its pull request (27.5).
+         * @description Push a task's work: its branch to origin, then its pull request (27.5).
+         *
+         *     Only the task's own agent may (or udl's owner), in the task's worktree on the agent's
+         *     host: nothing uncommitted, rebased on the base, the repo's gate run in its host's lane,
+         *     and on a pass the push, the pull, and the pull's link on the task.
+         */
+        post: operations["orch_push"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/orch/readiness": {
         parameters: {
             query?: never;
@@ -3800,6 +3849,27 @@ export interface components {
             follow: true;
         };
         /**
+         * GateRun
+         * @description The gate a push ran: how it ended, and the end of what it printed.
+         */
+        GateRun: {
+            /**
+             * Exit Code
+             * @description Its exit code (0: it passed, which is the only way a push goes on).
+             */
+            exit_code: number;
+            /**
+             * Output
+             * @description The last of its output (the end, which is where a failure says why).
+             */
+            output: string;
+            /**
+             * Seconds
+             * @description How long it took, in seconds.
+             */
+            seconds: number;
+        };
+        /**
          * GithubCommentRequest
          * @description Comment on a pull request.
          */
@@ -4814,6 +4884,32 @@ export interface components {
             ui: boolean;
         };
         /**
+         * PrStatusRequest
+         * @description Asking whether a task's pull is ready, and holding until it is (27.5).
+         */
+        PrStatusRequest: {
+            /**
+             * Key
+             * @description The task whose pull is asked about.
+             */
+            key: string;
+            /**
+             * Minutes
+             * @description How long the wait may take, in minutes (None: orch's `wait_minutes`).
+             */
+            minutes?: number | null;
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /**
+             * Wait
+             * @description Whether to hold until GitHub's checks and the review bot have finished with this head
+             *     (an answer that is not ready for another reason comes at once: waiting would not change
+             *     it).
+             * @default false
+             */
+            wait: boolean;
+        };
+        /**
          * PreviewScheduleRequest
          * @description When a schedule would fire, without saving anything.
          */
@@ -5071,6 +5167,55 @@ export interface components {
         /** @enum {string} */
         PullStateFilter: "open" | "closed" | "all";
         /**
+         * PushRequest
+         * @description Push a task's work (27.5): its branch to origin, then its pull request.
+         */
+        PushRequest: {
+            /**
+             * Body
+             * @description What the pull says, as markdown (the task's key is added to it).
+             */
+            body?: string | null;
+            /**
+             * Key
+             * @description The task whose work it is.
+             */
+            key: string;
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /**
+             * Title
+             * @description The pull's title (None: the task's own).
+             */
+            title?: string | null;
+        };
+        /**
+         * PushResult
+         * @description What a push did: the branch it pushed, the gate it passed, and the pull it opened (or
+         *     updated).
+         */
+        PushResult: {
+            /**
+             * Branch
+             * @description The branch it pushed.
+             */
+            branch: string;
+            /** @description The gate it passed first. */
+            gate: components["schemas"]["GateRun"];
+            /**
+             * Key
+             * @description The task whose work it is.
+             */
+            key: string;
+            /** @description The project the task is of. */
+            project: components["schemas"]["Name"];
+            /**
+             * Pull
+             * @description The pull request's URL.
+             */
+            pull: string;
+        };
+        /**
          * QueueEntry
          * @description A task on a queue, as the operations answer with it: what a board shows, and nothing that
          *     is not needed to show it.
@@ -5147,7 +5292,7 @@ export interface components {
             held: boolean;
             /**
              * Open Items
-             * @description The review bot's items that are not fixed, for the task's note.
+             * @description The review bot's items it still lists as open (empty: nothing).
              */
             open_items?: components["schemas"]["ReviewItem"][];
             /**
@@ -5155,6 +5300,13 @@ export interface components {
              * @description Whether it may be merged now.
              */
             ready: boolean;
+            /**
+             * Waited
+             * @description How long the answer waited for GitHub's checks and the review bot, in seconds (0: it did
+             *     not: `orch_pr_status` without `wait`, 27.5).
+             * @default 0
+             */
+            waited: number;
         };
         /**
          * ReadinessRequest
@@ -11266,6 +11418,162 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MyTaskResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_pr_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PrStatusRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Readiness"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_push: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PushRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushResult"];
                 };
             };
             /** @description Bad Request */

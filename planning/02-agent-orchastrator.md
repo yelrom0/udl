@@ -920,6 +920,28 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - `orch_pr_status` (`task`, `wait: bool`, `timeout`): the readiness of 27.6; with `wait`, it returns when the head's checks and the bot's comment for that head are both in, or at the timeout.
 - Tests first: `tests/integration/plugins/apps/orch/test_workspace.py` on a temp git repo with a local bare `origin` and `FakeGitHub`: a failing gate pushes nothing; a pass pushes and opens the PR once, and a second push updates it; the lane serialises two pushes.
 - Done when: the agent's whole path to a PR is `orch_push`.
+- **Built (deepseek-b, 21 Nov, PR #52):** `workspace.py` — `prepare()` (fetch, `worktree add -b
+  <branch> origin/<base>` or the stacked task's branch, an existing worktree reused, and with
+  `tasks=` the branch and path saved on the task), `remove()` (worktree and local branch, and
+  nothing when they are already gone), `GateLane` (a `Lease` `orch-gate:<host>`, so one gate runs
+  at a time per host and a killed one frees it when its lease expires) and `push()`: uncommitted
+  work refused with `git status`'s summary, a rebase on the base when it moved (a conflict is
+  `NotAllowed` with git's hint, and nothing is pushed), the repo's `gate` in the lane under
+  `[apps.orch] gate_minutes` (60), then `git push --force-with-lease`, `github_open_pull` (as udl,
+  not as the agent: an implementer may not call it) with the body's "Task: `<key>`" and
+  "Merge after #N" for each needed task that has a pull, and the `pull` link on the task.
+  `orch_push` refuses an agent that is not the task's assignee (an owner may push any), and
+  `orch_pr_status` wraps 27.6's `readiness` with `wait`: it holds while the only blockers are
+  things that may still change (the checks running, the bot's comment for this head, GitHub
+  working out mergeability), polling `poll_seconds` (20) up to `wait_minutes` (60) or the
+  request's `minutes`, and answers with `Readiness.waited` (seconds). The tests: 7 in
+  `test_workspace.py`, 4 in `test_gate_lane.py` (two lanes on one host serialise, another host
+  does not wait, an expired lease is taken, a failing gate still releases), 11 in
+  `test_orch_push.py` (on a real temp repo with a bare `origin` and a fake `github`) and 6 in
+  `test_pr_status.py` (on a `FakeClock`). Names: the operation is `orch_pr_status` (as the card
+  wrote it), and `Readiness` grew `waited` for it. Not built here: the dispatcher that calls
+  `prepare()` before an agent works (27.7), and `oc.py`'s `agent-push`/`pr-status` as thin
+  clients of these two operations (they live in `oc-guard`, outside this repo).
 
 **27.6 Readiness** · needs 25.5, 26.4
 - Build: `readiness.py`: `readiness(pull: PullDetail, *, bot: str | None, task, tasks) -> Readiness`, pure. `Readiness`: `ready: bool`, `blockers: list[str]`, `open_items: list[ReviewItem]`.
