@@ -107,18 +107,6 @@ class ActionRecords:
             found, key=lambda action: (_ORDER[ActionWhen(action.when)], action.created_at)
         )
 
-    async def delete_for_task(self, project: str, key: str) -> int:
-        """Delete every action about or after the task called `key`. Returns how many there
-        were (a task that is deleted takes its actions with it)."""
-        gone = 0
-        found = await self._records.list(HumanAction, RecordQuery(where={"project": project}))
-        for action in found:
-            if key in (action.task, action.after):
-                await self._records.delete(HumanAction, action.id)
-                gone += 1
-        return gone
-
-
 async def set_action(
     actions: ActionRecords,
     *,

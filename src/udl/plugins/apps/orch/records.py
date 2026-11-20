@@ -631,7 +631,6 @@ class ProjectRecords:
                 if isinstance(record, Task):
                     await _delete_notes(self._records, "task", record.id)
                     await _delete_links(self._records, record.project, "task", record.key)
-                    await _delete_actions(self._records, record.project, record.key)
                 elif isinstance(record, Feature):
                     await _delete_notes(self._records, "feature", record.id)
                     await _delete_links(self._records, record.project, "feature", record.key)
