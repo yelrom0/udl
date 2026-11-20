@@ -612,6 +612,53 @@
         "title": "AppStatus",
         "type": "object"
       },
+      "AssignTaskRequest": {
+        "additionalProperties": false,
+        "description": "Assigning a task to an agent, at the end of its queue or at a position in it.",
+        "properties": {
+          "agent": {
+            "description": "Who takes it: an agent's name, or `human:<name>` for a person's task.",
+            "title": "Agent",
+            "type": "string"
+          },
+          "key": {
+            "description": "The task to assign (`27.3`).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where in the queue it goes (None: its end).",
+            "title": "Position"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          }
+        },
+        "required": [
+          "key",
+          "agent"
+        ],
+        "title": "AssignTaskRequest",
+        "type": "object"
+      },
       "AtSpec": {
         "additionalProperties": false,
         "description": "A time, once.",
@@ -4433,6 +4480,115 @@
         "title": "Misfire",
         "type": "string"
       },
+      "MyTaskNote": {
+        "additionalProperties": false,
+        "description": "A note on the task an agent is on, as `orch_my_task` answers with it (26.5).",
+        "properties": {
+          "at": {
+            "description": "When it was written.",
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "author": {
+            "description": "Who wrote it: an agent's name, `human:<name>`, or `udl`.",
+            "title": "Author",
+            "type": "string"
+          },
+          "note_kind": {
+            "$ref": "#/components/schemas/NoteKind",
+            "description": "What kind of note it is; `system` is what udl itself writes."
+          },
+          "text": {
+            "description": "What it says, as markdown.",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "note_kind",
+          "text",
+          "author",
+          "at"
+        ],
+        "title": "MyTaskNote",
+        "type": "object"
+      },
+      "MyTaskRequest": {
+        "additionalProperties": false,
+        "description": "Asking what an agent is to work next.",
+        "properties": {
+          "agent": {
+            "description": "Whose queue it is: an agent's name, or `human:<name>`.",
+            "title": "Agent",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          }
+        },
+        "required": [
+          "agent"
+        ],
+        "title": "MyTaskRequest",
+        "type": "object"
+      },
+      "MyTaskResponse": {
+        "additionalProperties": false,
+        "description": "What an agent is on: the task, what it is for, and what it is told before it starts.\n\nEverything an agent's session is given at its start (27.7): the task and its place, its\nfeature and the feature's spec, the task's own spec, its notes, and the project's rules.\nIts links are 26.4's, and are added when they are built.",
+        "properties": {
+          "feature_spec": {
+            "default": "",
+            "description": "The spec of the feature the task is part of (empty when there is no task).",
+            "maxLength": 100000,
+            "title": "Feature Spec",
+            "type": "string"
+          },
+          "notes": {
+            "description": "The task's notes, oldest first.",
+            "items": {
+              "$ref": "#/components/schemas/MyTaskNote"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "rules": {
+            "default": "",
+            "description": "The project's rules: the ground rules every agent on it is given.",
+            "maxLength": 100000,
+            "title": "Rules",
+            "type": "string"
+          },
+          "spec": {
+            "default": "",
+            "description": "The task's own spec.",
+            "maxLength": 100000,
+            "title": "Spec",
+            "type": "string"
+          },
+          "task": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QueueEntry"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The task it is in progress on, or the first on its queue; None when there is none."
+          }
+        },
+        "title": "MyTaskResponse",
+        "type": "object"
+      },
       "Name": {
         "maxLength": 100,
         "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
@@ -4486,6 +4642,18 @@
         ],
         "title": "Not",
         "type": "object"
+      },
+      "NoteKind": {
+        "description": "What kind of note it is: what was done, a decision, a finding, a review, or what udl itself\nsays (a state change, a task moved to another agent's queue).",
+        "enum": [
+          "progress",
+          "decision",
+          "finding",
+          "review",
+          "system"
+        ],
+        "title": "NoteKind",
+        "type": "string"
       },
       "OnePasswordSettings": {
         "additionalProperties": false,
@@ -5230,6 +5398,107 @@
         ],
         "type": "string"
       },
+      "QueueEntry": {
+        "additionalProperties": false,
+        "description": "A task on a queue, as the operations answer with it: what a board shows, and nothing that\nis not needed to show it.",
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An agent's name, or `human:<name>`; None while it is nobody's.",
+            "title": "Assignee"
+          },
+          "feature": {
+            "description": "The feature it is part of (its key).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Feature",
+            "type": "string"
+          },
+          "key": {
+            "description": "Its key within the project (`27.3`).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its place in its queue (0 is the next one).",
+            "title": "Position"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The repo it is done in, or None.",
+            "title": "Repo"
+          },
+          "state": {
+            "$ref": "#/components/schemas/State",
+            "description": "Where it is (a queued task is on a queue; the one an agent is on is in progress)."
+          },
+          "title": {
+            "description": "What it is, in a line.",
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "feature",
+          "title",
+          "state"
+        ],
+        "title": "QueueEntry",
+        "type": "object"
+      },
+      "QueueRequest": {
+        "additionalProperties": false,
+        "description": "Asking what an agent's queue is.",
+        "properties": {
+          "agent": {
+            "description": "Whose queue it is: an agent's name, or `human:<name>`.",
+            "title": "Agent",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          }
+        },
+        "required": [
+          "agent"
+        ],
+        "title": "QueueRequest",
+        "type": "object"
+      },
       "ReadPolicy": {
         "description": "How lookups use several databases.",
         "enum": [
@@ -5256,6 +5525,44 @@
           "regex"
         ],
         "title": "RegexStep",
+        "type": "object"
+      },
+      "ReorderQueueRequest": {
+        "additionalProperties": false,
+        "description": "Setting an agent's queue to exactly these keys, in this order.",
+        "properties": {
+          "agent": {
+            "description": "Whose queue it is: an agent's name, or `human:<name>`.",
+            "title": "Agent",
+            "type": "string"
+          },
+          "keys": {
+            "description": "Its tasks, in the order they will be worked: every one on the queue, each once.",
+            "items": {
+              "maxLength": 40,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+              "type": "string"
+            },
+            "title": "Keys",
+            "type": "array"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          }
+        },
+        "required": [
+          "agent",
+          "keys"
+        ],
+        "title": "ReorderQueueRequest",
         "type": "object"
       },
       "ReplayEventRequestBody": {
@@ -7196,6 +7503,20 @@
         "title": "SolveReport",
         "type": "object"
       },
+      "State": {
+        "enum": [
+          "open",
+          "queued",
+          "in_progress",
+          "blocked",
+          "ready",
+          "merged",
+          "done",
+          "moved",
+          "cancelled"
+        ],
+        "type": "string"
+      },
       "Step": {
         "oneOf": [
           {
@@ -7905,6 +8226,35 @@
         "title": "TagChain",
         "type": "object"
       },
+      "TaskQueue": {
+        "additionalProperties": false,
+        "description": "One agent's queue: the tasks it is on, in the order it works them.",
+        "properties": {
+          "agent": {
+            "description": "Whose queue it is: an agent's name, or `human:<name>`.",
+            "title": "Agent",
+            "type": "string"
+          },
+          "project": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The project the tasks are of."
+          },
+          "tasks": {
+            "description": "Its tasks, in the order they will be worked (empty: it has nothing to do).",
+            "items": {
+              "$ref": "#/components/schemas/QueueEntry"
+            },
+            "title": "Tasks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project",
+          "agent"
+        ],
+        "title": "TaskQueue",
+        "type": "object"
+      },
       "Throttle-Input": {
         "additionalProperties": false,
         "description": "At most `max_runs` runs `per` this long (also written `10 per 1h`).",
@@ -7981,6 +8331,35 @@
           "found"
         ],
         "title": "ToolStatus",
+        "type": "object"
+      },
+      "UnassignTaskRequest": {
+        "additionalProperties": false,
+        "description": "Taking a task out of its agent's queue, back to open.",
+        "properties": {
+          "key": {
+            "description": "The task to take out (`27.3`).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "UnassignTaskRequest",
         "type": "object"
       },
       "UpcomingSchedule": {
@@ -13140,6 +13519,491 @@
         "summary": "List udl's plugins (database engines, downloaders, site plugins, secret stores, kinds",
         "tags": [
           "udl"
+        ]
+      }
+    },
+    "/plugins/orch/assign": {
+      "post": {
+        "description": "Assign a task to an agent: it joins that agent's queue (at its end, or at a position).\n\nA task another agent holds leaves that agent's queue, and a system note says who must\nstop. A person's task is assigned to `human:<name>` (28.2's To action), never to an\nagent. The answer is the agent's queue, in the order it will work it.",
+        "operationId": "orch_assign",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskQueue"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Assign a task to an agent: it joins that agent's queue (at its end, or at a position).",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/get_queue": {
+      "post": {
+        "description": "What an agent's queue is: its tasks, in the order it will work them.\n\nA person's own list is asked for the same way, by `human:<name>`.",
+        "operationId": "orch_get_queue",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueueRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskQueue"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "What an agent's queue is: its tasks, in the order it will work them.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/my_task": {
+      "post": {
+        "description": "What an agent is to work next: the task it is in progress on, else the first on its\nqueue, and nothing when it has none.\n\nThe dispatcher asks this when it starts a session (27.7); an agent asks it when it is\ntold to go on.",
+        "operationId": "orch_my_task",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MyTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyTaskResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "What an agent is to work next: the task it is in progress on, else the first on its",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/reorder_queue": {
+      "post": {
+        "description": "Set an agent's queue to exactly these keys, in this order.\n\nEvery task on the queue is named once: one that is not on it is not the reorder's to\nmove, and one left out would be lost. The answer is the queue as it now is.",
+        "operationId": "orch_reorder_queue",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderQueueRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskQueue"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Set an agent's queue to exactly these keys, in this order.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/unassign": {
+      "post": {
+        "description": "Take a task out of its agent's queue: it is open again, and nobody's.\n\nThe answer is the queue it left, with no gap in it.",
+        "operationId": "orch_unassign",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnassignTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskQueue"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Take a task out of its agent's queue: it is open again, and nobody's.",
+        "tags": [
+          "orch"
         ]
       }
     },

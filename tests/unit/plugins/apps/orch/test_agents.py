@@ -54,6 +54,9 @@ from udl.plugins.apps.orch.records import (
     Feature as FeatureRecord,
 )
 from udl.plugins.apps.orch.records import (
+    Note as NoteRecord,
+)
+from udl.plugins.apps.orch.records import (
     Project as ProjectRecord,
 )
 from udl.plugins.apps.orch.records import (
@@ -430,6 +433,7 @@ def test_orch_brings_its_agent_kinds() -> None:
         RepoRecord,
         FeatureRecord,
         TaskRecord,
+        NoteRecord,
         CounterRecord,
         AgentRecord,
         AgentSessionRecord,

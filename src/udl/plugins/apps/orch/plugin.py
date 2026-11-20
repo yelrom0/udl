@@ -6,8 +6,9 @@
 Orch: udl's orchestrator (Phase 26), an app plugin (udl.apps) whose data is the work udl
 tracks — projects and their repos, features and their tasks, links and notes.
 
-Its records are in orch.records (a Project, a Repo); its operations come in 26.6. Importing this
-module registers them, as importing any other app's module does.
+Its records are in orch.records (a Project, a Repo, a Feature, a Task, a Note); its shapes are in
+orch.models. Its queue operations are here (27.3), and the rest of its operations come in 26.6:
+importing this module registers them, as importing any other app's module does.
 """
 
 # System Imports
@@ -16,9 +17,23 @@ from typing import Any
 
 # Local Imports
 from udl.automations.events import EventType
+from udl.core.operations import Operation, OperationHints
 from udl.db.records import Record
+from udl.errors import DoesNotExist, NotAllowed
 from udl.plugins.apps.base import AppContext, AppPlugin
+from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch import records as stored
+from udl.plugins.apps.orch.models import (
+    AssignTaskRequest,
+    MyTaskNote,
+    MyTaskRequest,
+    MyTaskResponse,
+    QueueEntry,
+    QueueRequest,
+    ReorderQueueRequest,
+    TaskQueue,
+    UnassignTaskRequest,
+)
 from udl.plugins.apps.orch.settings import OrchSettings
 
 __all__ = ["Orch"]
@@ -27,8 +42,8 @@ __all__ = ["Orch"]
 class Orch(AppPlugin[OrchSettings]):
     """udl's orchestrator: the projects and repos it tracks, and the agents that work them.
 
-    It brings its records (a Project, a Repo) and its shapes (orch.models); its operations are
-    26.6's, and its service the dispatcher of Phase 27."""
+    It brings its records (a Project, a Repo) and its shapes (orch.models); its queue operations
+    are here (27.3), the rest are 26.6's, and its service the dispatcher of Phase 27."""
 
     name = "orch"
     title = "Orchestrator"
@@ -38,13 +53,15 @@ class Orch(AppPlugin[OrchSettings]):
 
     @classmethod
     def record_kinds(cls) -> Sequence[type[Record]]:
-        """The kinds of record orch defines: a project, a repo, a feature, a task and the counter
-        their keys come from (26.2-26.5), and an agent, its session and the events of it (27.1)."""
+        """The kinds of record orch defines: a project, a repo, a feature, a task, a note and the
+        counter their keys come from (26.2-26.5), and an agent, its session and the events of it
+        (27.1)."""
         return (
             stored.Project,
             stored.Repo,
             stored.Feature,
             stored.Task,
+            stored.Note,
             stored.Counter,
             stored.Agent,
             stored.AgentSession,
@@ -56,6 +73,33 @@ class Orch(AppPlugin[OrchSettings]):
         """The events orch publishes (its links' and tasks' changes, from 26.4 on)."""
         return ()
 
+    @classmethod
+    def operations(cls) -> list[Operation]:
+        """The operations it adds: the queue's (27.3), each one of its methods."""
+        return [
+            cls.operation(
+                "assign",
+                title="Assign a task",
+                hints=OperationHints(idempotent=True),
+            ),
+            cls.operation(
+                "reorder_queue",
+                title="Reorder a queue",
+                hints=OperationHints(idempotent=True),
+            ),
+            cls.operation("unassign", title="Unassign a task"),
+            cls.operation(
+                "get_queue",
+                title="An agent's queue",
+                hints=OperationHints(read_only=True),
+            ),
+            cls.operation(
+                "my_task",
+                title="What an agent is on",
+                hints=OperationHints(read_only=True),
+            ),
+        ]
+
     async def serve(self, ctx: AppContext) -> None:
         """Orch's service: nothing to run until the dispatcher (Phase 27).
 
@@ -63,3 +107,111 @@ class Orch(AppPlugin[OrchSettings]):
         once); this one waits on `ctx.stop`, so it is a service that runs while the runtime
         holds its lease and ends when the lease goes."""
         await ctx.stop.wait()
+
+    # -- the queue (27.3) ----------------------------------------------------------------------
+
+    async def assign(self, request: AssignTaskRequest) -> TaskQueue:
+        """Assign a task to an agent: it joins that agent's queue (at its end, or at a position).
+
+        A task another agent holds leaves that agent's queue, and a system note says who must
+        stop. A person's task is assigned to `human:<name>` (28.2's To action), never to an
+        agent. The answer is the agent's queue, in the order it will work it."""
+        tasks = stored.TaskRecords(self.records)
+        project = await self._project(request.project)
+        await queues.assign(
+            tasks, request.key, request.agent, project=project, position=request.position
+        )
+        return await self._queue(tasks, project=project, agent=request.agent)
+
+    async def reorder_queue(self, request: ReorderQueueRequest) -> TaskQueue:
+        """Set an agent's queue to exactly these keys, in this order.
+
+        Every task on the queue is named once: one that is not on it is not the reorder's to
+        move, and one left out would be lost. The answer is the queue as it now is."""
+        tasks = stored.TaskRecords(self.records)
+        project = await self._project(request.project)
+        await queues.reorder(tasks, project=project, agent=request.agent, keys=request.keys)
+        return await self._queue(tasks, project=project, agent=request.agent)
+
+    async def unassign(self, request: UnassignTaskRequest) -> TaskQueue:
+        """Take a task out of its agent's queue: it is open again, and nobody's.
+
+        The answer is the queue it left, with no gap in it."""
+        tasks = stored.TaskRecords(self.records)
+        project = await self._project(request.project)
+        task = await tasks.task(project, request.key)
+        if task is None:
+            raise DoesNotExist(f"There is no task called {request.key!r} in {project!r}")
+        agent = task.assignee or ""
+        await queues.unassign(tasks, project=project, key=request.key)
+        return await self._queue(tasks, project=project, agent=agent)
+
+    async def get_queue(self, request: QueueRequest) -> TaskQueue:
+        """What an agent's queue is: its tasks, in the order it will work them.
+
+        A person's own list is asked for the same way, by `human:<name>`."""
+        tasks = stored.TaskRecords(self.records)
+        project = await self._project(request.project)
+        return await self._queue(tasks, project=project, agent=request.agent)
+
+    async def my_task(self, request: MyTaskRequest) -> MyTaskResponse:
+        """What an agent is to work next: the task it is in progress on, else the first on its
+        queue, and nothing when it has none.
+
+        The dispatcher asks this when it starts a session (27.7); an agent asks it when it is
+        told to go on."""
+        tasks = stored.TaskRecords(self.records)
+        project = await self._project(request.project)
+        found = await queues.next_task(tasks, project=project, agent=request.agent)
+        if found is None:
+            return MyTaskResponse()
+        feature = await stored.FeatureRecords(self.records).feature(project, found.feature)
+        project_record = await stored.ProjectRecords(self.records).project(project)
+        notes = await stored.NoteRecords(self.records).notes("task", found.id)
+        return MyTaskResponse(
+            task=_entry(found),
+            feature_spec="" if feature is None else feature.spec,
+            spec=found.spec,
+            rules="" if project_record is None else project_record.rules,
+            notes=[
+                MyTaskNote(note_kind=note.note_kind, text=note.text, author=note.author, at=note.at)
+                for note in notes
+            ],
+        )
+
+    async def _project(self, project: str | None) -> str:
+        """The project an operation is of: `project`, or the only one udl has. Raises NotAllowed
+        when there is none, or more than one and none is named."""
+        if project is not None:
+            return project
+        projects = await stored.ProjectRecords(self.records).projects()
+        if len(projects) == 1:
+            return projects[0].name
+        if not projects:
+            raise NotAllowed(
+                "There is no project to work in",
+                hint="Add one first: a project is what features, tasks and queues are of.",
+            )
+        named = ", ".join(found.name for found in projects)
+        raise NotAllowed(
+            f"Which project? udl has {len(projects)} ({named})",
+            hint="Name the project its task is in.",
+        )
+
+    async def _queue(self, tasks: stored.TaskRecords, *, project: str, agent: str) -> TaskQueue:
+        """`agent`'s queue, as the operations answer with it."""
+        found = await queues.queue_of(tasks, project=project, agent=agent)
+        return TaskQueue(project=project, agent=agent, tasks=[_entry(task) for task in found])
+
+
+def _entry(task: stored.Task) -> QueueEntry:
+    """`task` as the queue's operations answer with it."""
+    return QueueEntry(
+        key=task.key,
+        feature=task.feature,
+        title=task.title,
+        state=task.state,
+        position=task.position,
+        assignee=task.assignee,
+        repo=task.repo,
+    )

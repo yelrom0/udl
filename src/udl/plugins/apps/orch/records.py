@@ -36,7 +36,7 @@ from uuid import UUID
 from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt
 
 # Local Imports
-from udl.db.models import JsonObject
+from udl.db.models import JsonObject, utcnow
 from udl.db.records import Name, Record, RecordQuery, RecordScope, SyncRule
 from udl.errors import (
     ConfigError,
@@ -66,6 +66,8 @@ from udl.plugins.apps.orch.models import (
     HostName,
     Key,
     MergePolicy,
+    NoteKind,
+    OwnerKind,
     Principal,
     Promotion,
     Spec,
@@ -237,6 +239,41 @@ class Task(Record):
             repo="udl",
             branch="feat/26.2-projects",
             updated_by="ernie-c",
+        )
+
+
+class Note(Record):
+    """A note on a task or a feature (26.5): what was done, a decision, a finding, a review, or
+    what udl itself says (a state change, a task moved to another agent's queue).
+
+    Append-only: there is no update, and a correction is another note. Its `owner` is the record
+    it is about (a task's or a feature's id), so a note is found by it whatever its key becomes.
+    (Its kind is `note_kind`: `kind` is the record's own name.)"""
+
+    kind = "orch_note"
+    indexed = ("owner_kind", "owner")
+
+    owner_kind: OwnerKind
+    """What it is about: a feature, a task, a question or an action."""
+    owner: UUID
+    """The id of the record it is about."""
+    note_kind: NoteKind = NoteKind.PROGRESS
+    """What kind of note it is; `system` is what udl itself writes."""
+    text: str
+    """What it says, as markdown."""
+    author: str = "udl"
+    """Who wrote it: an agent's name, `human:<name>`, or `udl`."""
+    at: AwareDatetime = Field(default_factory=utcnow)
+    """When it was written."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            owner_kind=OwnerKind.TASK,
+            owner=UUID("6f1c2f0e-9d4a-4a37-8c1e-0d2b7a5c9e11"),
+            note_kind=NoteKind.SYSTEM,
+            text="Moved to deepseek-b's queue: ernie-c must stop working on it.",
+            author="udl",
         )
 
 
@@ -412,13 +449,17 @@ class ProjectRecords:
         return sorted(await self._records.list(Project, RecordQuery()), key=lambda p: p.name)
 
     async def delete_project(self, name: str) -> bool:
-        """Delete the project called `name` and everything of it: its repos, features, tasks and
-        the counters its keys came from. Returns whether there was one."""
+        """Delete the project called `name` and everything of it: its repos, features, tasks,
+        their notes and the counters its keys came from. Returns whether there was one."""
         project = await self.project(name)
         if project is None:
             return False
         for kind in (Repo, Feature, Task, Counter):
             for record in await self._records.list(kind, RecordQuery(where={"project": name})):
+                if isinstance(record, Task):
+                    await _delete_notes(self._records, "task", record.id)
+                elif isinstance(record, Feature):
+                    await _delete_notes(self._records, "feature", record.id)
                 await self._records.delete(kind, record.id)
         return await self._records.delete(Project, project.id)
 
@@ -524,7 +565,9 @@ class FeatureRecords:
         if feature is None:
             return False
         for task in await TaskRecords(self._records, self._projects).tasks(project, feature=key):
+            await _delete_notes(self._records, "task", task.id)
             await self._records.delete(Task, task.id)
+        await _delete_notes(self._records, "feature", feature.id)
         return await self._records.delete(Feature, feature.id)
 
 
@@ -661,9 +704,13 @@ class TaskRecords:
         )
 
     async def delete_task(self, project: str, key: str) -> bool:
-        """Delete the task called `key` of `project`. Returns whether there was one."""
+        """Delete the task called `key` of `project`, and its notes. Returns whether there was
+        one."""
         task = await self.task(project, key)
-        return task is not None and await self._records.delete(Task, task.id)
+        if task is None:
+            return False
+        await _delete_notes(self._records, "task", task.id)
+        return await self._records.delete(Task, task.id)
 
 
 class Counters:
@@ -828,6 +875,30 @@ class AgentRecords:
             )
 
 
+class NoteRecords:
+    """Where orch keeps its notes: appended, and read by the record they are about, oldest
+    first (so a task's history reads top to bottom, 26.5)."""
+
+    def __init__(self, records: AppRecords) -> None:
+        self._records = records
+
+    @property
+    def records(self) -> AppRecords:
+        """The records the notes are kept in."""
+        return self._records
+
+    async def add(self, note: Note) -> Note:
+        """Store `note`: notes are appended, never replaced (a correction is another note)."""
+        return await self._records.save(note)
+
+    async def notes(self, owner_kind: str, owner: UUID) -> list[Note]:
+        """Every note on the record `owner` of `owner_kind`, oldest first."""
+        found = await self._records.list(
+            Note, RecordQuery(where={"owner_kind": owner_kind, "owner": owner})
+        )
+        return sorted(found, key=lambda note: (note.at, note.created_at))
+
+
 class SessionRecords:
     """Where orch keeps its agents' sessions and their transcripts: the newest session first,
     the transcript in the order things happened."""
@@ -870,3 +941,11 @@ class SessionRecords:
         by when it was stored)."""
         found = await self._records.list(SessionEvent, RecordQuery(where={"session": session}))
         return sorted(found, key=lambda one: (one.turn, one.created_at))
+
+
+async def _delete_notes(records: AppRecords, owner_kind: str, owner: UUID) -> None:
+    """Delete every note on the record `owner` of `owner_kind` (what deleting it takes with it)."""
+    for note in await records.list(
+        Note, RecordQuery(where={"owner_kind": owner_kind, "owner": owner})
+    ):
+        await records.delete(Note, note.id)
