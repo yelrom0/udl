@@ -472,11 +472,17 @@ async def test_a_task_still_going_is_nudged_and_then_blocked_as_stalled(
     assert sum(1 for prompt in PROMPTS if "F-1.1" in prompt) == 4, "a turn, then 3 nudges"
 
 
-async def test_a_nudge_says_where_it_is_and_to_carry_on(service: UDLService) -> None:
-    await ran(service, clock=FakeClock(), turns=2)
+async def test_a_turn_says_what_changed_and_then_nudges_when_nothing_did(
+    service: UDLService,
+) -> None:
+    await ran(service, clock=FakeClock(), turns=3)
 
-    assert "orch_add_note" in PROMPTS[1]
-    assert "orch_ready" in PROMPTS[1]
+    assert "What changed on F-1.1: its pull is ready to merge" in PROMPTS[1]
+    assert "orch_push" in PROMPTS[1]
+    # (the same news twice is not news: the turn after it is a nudge)
+    assert "You are still on F-1.1" in PROMPTS[2]
+    assert "orch_add_note" in PROMPTS[2]
+    assert "orch_ready" in PROMPTS[2]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -691,3 +697,96 @@ async def test_a_server_with_no_api_key_starts_no_session(tmp_path: Path) -> Non
         assert PROMPTS == []
         every = await tasks_of(running)
         assert every["F-1.1"].state == QUEUED
+
+
+async def test_a_turn_says_what_its_pull_says(tmp_path: Path) -> None:
+    """(The card's 3: a turn adds the pull's checks and the bot's comment.)"""
+    async with UDLService(
+        settings(tmp_path, api=APISettings(api_key=SecretStr("test-key"))),
+        registry=orch_registry(),
+    ) as running:
+        SERVICE.append(running)
+        records = AppRecords(running.db)
+        await ProjectRecords(records).save_project(
+            Project(name="udl", title="udl", review_bot="claude[bot]")
+        )
+        await FeatureRecords(records).save_feature(Feature(project="udl", key="F-1", title="It"))
+        await AgentRecords(records).save_agent(
+            Agent(name=AGENT, title=AGENT, runner="fake", host="local")
+        )
+        tasks = TaskRecords(records)
+        task = Task(project="udl", feature="F-1", key="F-1.1", title="It 1", assignee=AGENT)
+        await tasks.save_task(task)
+        await tasks.move(task, QUEUED, by=Principal(kind="system", role="assign"))
+        await LinkRecords(records).add(
+            project="udl",
+            owner_kind=OwnerKind.TASK,
+            owner="F-1.1",
+            kind="pull",
+            url="https://github.com/yelrom0/udl/pull/7",
+        )
+
+        github = await running.apps.get("github")
+        assert isinstance(github, FakeGitHub)
+        github.pull = FakePull(draft=True, checks=[], comments=[])
+
+        await ran(running, clock=FakeClock(), turns=2)
+
+    assert "What changed on F-1.1: its pull is not ready" in PROMPTS[1]
+    assert "it is a draft" in PROMPTS[1]
+
+
+async def test_only_so_many_agents_are_mid_turn_at_once(tmp_path: Path) -> None:
+    """(The card's 5: `max_agents_running` agents mid-turn at once, the rest waiting.)"""
+
+    midturn: list[str] = []
+
+    async def hold(runner: FakeRunner, session: SessionRef) -> AsyncIterator[AgentEvent]:
+        midturn.append(session.id)
+        await runner.waiting(session)  # (a turn that only ends when its session is stopped)
+        yield TextDelta(text="done.")
+
+    SCRIPT[first_prompt_of("F-1.1")] = hold
+    SCRIPT[first_prompt_of("F-1.2")] = hold
+    async with UDLService(
+        settings(tmp_path, api=APISettings(api_key=SecretStr("test-key"))),
+        registry=orch_registry(),
+    ) as running:
+        SERVICE.append(running)
+        records = AppRecords(running.db)
+        await ProjectRecords(records).save_project(Project(name="udl", title="udl"))
+        await FeatureRecords(records).save_feature(Feature(project="udl", key="F-1", title="It"))
+        agents = AgentRecords(records)
+        tasks = TaskRecords(records)
+        for number in (1, 2):
+            await agents.save_agent(
+                Agent(name=f"agent-{number}", title=f"Agent {number}", runner="fake", host="local")
+            )
+            task = Task(
+                project="udl",
+                feature="F-1",
+                key=f"F-1.{number}",
+                title=f"It {number}",
+                assignee=f"agent-{number}",
+            )
+            await tasks.save_task(task)
+            await tasks.move(task, QUEUED, by=Principal(kind="system", role="assign"))
+
+        clock = FakeClock()
+        found, _ = await dispatcher(
+            running, clock=clock, settings=OrchSettings(max_agents_running=1)
+        )
+        running_task = asyncio.ensure_future(found.run())
+        try:
+            for _ in range(20):
+                if midturn:
+                    break
+                await clock.advance(timedelta(seconds=31))
+            await asyncio.sleep(0)
+            turning = len(midturn)
+        finally:
+            running_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await running_task
+
+    assert turning == 1, "the second agent waits for the first turn's place"

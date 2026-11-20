@@ -52,10 +52,6 @@ class OrchSettings(AppSettings):
     """Where agents on other hosts reach udl's MCP server (`/mcp`), when they are not on this
     machine. File-only, never on the API: it is the address a session is pointed at (27.7)."""
 
-    bot_wait: PositiveInt = 60
-    """How long the dispatcher waits for the review bot's comment after a pull's checks are
-    done, in minutes, before it asks for the checks to run again (27.7)."""
-
     max_agents_running: PositiveInt = 4
     """How many agents may be mid-turn at once (27.7): the rest wait their turn."""
 

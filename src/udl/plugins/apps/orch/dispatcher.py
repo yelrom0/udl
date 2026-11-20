@@ -50,7 +50,9 @@ from udl.plugins.apps.orch.models import (
     IN_PROGRESS,
     MERGED,
     QUEUED,
+    OwnerKind,
     Principal,
+    Readiness,
     Role,
 )
 from udl.plugins.apps.orch.settings import OrchSettings
@@ -118,6 +120,15 @@ def nudge(task: stored.Task) -> str:
     )
 
 
+def changed(task: stored.Task, what: str) -> str:
+    """What a session that is still on its task is told when something did: what changed (the
+    pull's checks, the bot's items), and what to do about it."""
+    return (
+        f"What changed on {task.key}: {what}\n\n"
+        "Carry on: push with `orch_push`, and say it is done with `orch_ready`."
+    )
+
+
 class Dispatcher:
     """The dispatcher: one loop per enabled agent, until udl's app stops (the lease going)."""
 
@@ -136,6 +147,7 @@ class Dispatcher:
         self._clock = ctx.clock
         self._settings = OrchSettings.model_validate(ctx.settings.model_dump())
         self._stop = ctx.stop
+        self._turns = asyncio.Semaphore(self._settings.max_agents_running)
         self._harnesses = harnesses
         self._prepare = prepare if prepare is not None else self._prepared
         self._tick = tick
@@ -157,6 +169,7 @@ class Dispatcher:
             )
             await self._stop.wait()
             return
+        self._turns = asyncio.Semaphore(self._settings.max_agents_running)
         agents = [one for one in await stored.AgentRecords(self._records).agents() if one.enabled]
         if not agents:
             await self._stop.wait()
@@ -399,7 +412,7 @@ class Dispatcher:
         elif session.turns == 0:
             prompt = first_prompt(task)
         else:
-            prompt = nudge(task)
+            prompt, session = await self._next_prompt(task, session)
         while True:
             if not await self._turn(agent, session, prompt):
                 return
@@ -416,7 +429,45 @@ class Dispatcher:
             if session.nudges > agent.max_nudges:
                 await self._stalled(agent, now, session)
                 return
-            prompt = nudge(now)
+            prompt, session = await self._next_prompt(now, session)
+
+    async def _next_prompt(
+        self, task: stored.Task, session: stored.AgentSession
+    ) -> tuple[str, stored.AgentSession]:
+        """What a session still on its task is told — what changed since the last turn (its pull's
+        checks, the review bot's open items), or with nothing new a nudge (the card's 3) — and the
+        session, remembering what it was told so that the same news is not told twice."""
+        what = await self._what_changed(task)
+        if what is None or what == session.last_text:
+            return nudge(task), session
+        session = await stored.SessionRecords(self._records).save_session(
+            session.model_copy(update={"last_text": what})
+        )
+        return changed(task, what), session
+
+    async def _what_changed(self, task: stored.Task) -> str | None:
+        """What is new about `task`'s pull, as a line a session can act on: its checks and the
+        bot's open items, or that it may be merged. None when there is nothing to read."""
+        links = await stored.LinkRecords(self._records).for_owner(
+            task.project, OwnerKind.TASK, task.key
+        )
+        if not any(one.link_kind == "pull" for one in links):
+            return "it has no pull yet"
+        try:
+            found = await self._service.call("orch_readiness", {"key": task.key})
+        except (PluginError, UDLError) as error:
+            return f"its pull could not be read: {error}"
+        if not isinstance(found, Readiness):
+            return None
+        if found.ready:
+            return "its pull is ready to merge: say so with `orch_ready`"
+        parts = [f"its pull is not ready ({'; '.join(found.blockers)})"]
+        if found.open_items:
+            items = "; ".join(
+                f"{one.text} ({one.status})" if one.status else one.text for one in found.open_items
+            )
+            parts.append(f"the review bot still lists: {items}")
+        return ". ".join(parts)
 
     async def _stalled(
         self, agent: stored.Agent, task: stored.Task, session: stored.AgentSession
@@ -431,6 +482,13 @@ class Dispatcher:
     async def _turn(self, agent: stored.Agent, session: stored.AgentSession, prompt: str) -> bool:
         """Send one turn and stream it: its events into the transcript and the live events, and
         what its end says into the session (the card's 3, 4 and 6)."""
+        async with self._turns:  # (at most `max_agents_running` turns at once)
+            return await self._one_turn(agent, session, prompt)
+
+    async def _one_turn(
+        self, agent: stored.Agent, session: stored.AgentSession, prompt: str
+    ) -> bool:
+        """One turn, streamed (what `_turn` does once it has a turn's place)."""
         sessions = stored.SessionRecords(self._records)
         session = await sessions.save_session(
             session.model_copy(update={"state": SessionState.RUNNING})
