@@ -284,10 +284,12 @@ def test_a_task_with_two_ready_needs_is_not_suggested() -> None:
 
 
 def test_a_queued_task_is_not_the_agents_last_task() -> None:
-    # (It has not worked it yet, so it says nothing about what follows.)
+    # (It has not worked it yet: what it did in F-1 is what says F-1.2 follows, even though the
+    # queued task in F-2 was touched later.)
     tasks = [
-        task("F-1.1", feature="F-1", state="queued", assignee="fake-a", minutes=9),
-        task("F-2.1", feature="F-2"),
+        task("F-1.1", feature="F-1", state="merged", assignee="fake-a", minutes=1),
+        task("F-1.2", feature="F-1"),
+        task("F-2.1", feature="F-2", state="queued", assignee="fake-a", minutes=9),
     ]
     features = [
         feature("F-1", status="planned", order=1),
@@ -296,8 +298,8 @@ def test_a_queued_task_is_not_the_agents_last_task() -> None:
 
     (found,) = suggest(tasks, features, [agent()], agent="fake-a")
 
-    assert found.score == 0
-    assert "your last task was in this feature" not in found.reasons
+    assert found.score == 3
+    assert found.reasons == ["your last task was in this feature"]
 
 
 def test_a_busy_agent_is_not_suggested_anything_across_projects() -> None:
