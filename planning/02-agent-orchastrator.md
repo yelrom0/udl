@@ -928,7 +928,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - `orch_ready` (`task`, `note`): refuses with the blockers unless ready; then moves the task to `ready`, writes the note as `progress`, publishes `orch.task.ready`. Where the project's `merge = agent` and the caller is the assignee, it merges instead (28.3's path) and the task goes to `merged`.
 - Tests first: `tests/unit/plugins/apps/orch/test_readiness.py`: the phase's third bullet. Bot comments are real ones copied from udl's first PRs (23.2) into `tests/fixtures/reviews/`.
 - Done when: a comment with one PARTIALLY FIXED row is not ready, by test.
-- **Built (deepseek-b, 20 Nov, PR #N):** `readiness.py` — `readiness()` (pure) over a `Pull` that
+- **Built (deepseek-b, 20 Nov, PR #50):** `readiness.py` — `readiness()` (pure) over a `Pull` that
   keeps only what a verdict needs, and `parse_review()` for the bot's status table and its
   numbered and bulleted lists; an approve line never overrides an open item, and a comment
   written before the head's commit does not count. `Readiness` adds `held`, and `open_items` are
