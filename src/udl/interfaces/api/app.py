@@ -103,7 +103,10 @@ async def require_api_key(request: Request, key: Annotated[str | None, Security(
     # (The key's header, or a live session's cookie: udl.interfaces.web.sessions. The header is
     # asked for here as well as read there, so the schema documents it.)
     service: UDLService = request.app.state.service
-    await authenticate(request.app.state.settings, request, given=key, tokens=_tokens(service))
+    from udl.plugins.apps.orch.tokens import tokens_for
+
+    # (Which sets current_principal as well: the operations the request runs are held to it.)
+    await authenticate(request.app.state.settings, request, given=key, tokens=tokens_for(service))
 
 
 def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService) -> FastAPI:
@@ -140,7 +143,9 @@ def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService)
         app.include_router(router)
     add_routes(app, service.operations)  # (the operations plugins add)
     # (A route rather than a mount, which would answer only /mcp/...)
-    app.router.routes.append(Route(MCP_PATH, KeyRequired(mcp_app, settings, _tokens(service))))
+    from udl.plugins.apps.orch.tokens import tokens_for
+
+    app.router.routes.append(Route(MCP_PATH, KeyRequired(mcp_app, settings, tokens_for(service))))
     # (Before /accounts/{account}; and a route of Starlette's, so no API key is asked for: the
     # authorization's one-time state is what it is checked by.)
     app.router.routes.insert(0, Route(CALLBACK_PATH, accounts.callback, methods=["GET"]))
@@ -206,16 +211,6 @@ class KeyRequired:
             await self.app(scope, receive, send)
         finally:
             current_principal.reset(called)
-
-
-def _tokens(service: UDLService) -> AgentTokens | None:
-    """The book of agent tokens on `service` (orch's), for an agent's own token to be looked up
-    in. None for a udl with no orch app, which has no agents to issue them to."""
-    try:
-        from udl.plugins.apps.orch.tokens import tokens_for
-    except ImportError:  # pragma: no cover - (orch is one of udl's own plugins)
-        return None
-    return tokens_for(service)
 
 
 def is_local(host: str) -> bool:

@@ -46,7 +46,7 @@ from udl.core.models import DownloadRequest, JobEvent
 from udl.core.operations import Caller, Operation, OperationRegistry, current_caller
 from udl.core.service import UDLService
 from udl.errors import UDLError
-from udl.interfaces.security import API_KEY_HEADER, AgentTokens
+from udl.interfaces.security import API_KEY_HEADER
 
 DEFAULT_WAIT: Final = 120.0
 """Seconds the download tool waits for its downloads, unless the agent says otherwise."""
@@ -149,21 +149,12 @@ async def _as_caller(ctx: Context, service: UDLService) -> None:
     if not isinstance(request, Request):
         return
     from udl.interfaces.security import authenticate, current_principal
-
-    principal = await authenticate(
-        service.settings,
-        request.headers.get(API_KEY_HEADER),
-        _tokens(service),
-    )
-    current_principal.set(principal)
-
-
-def _tokens(service: UDLService) -> AgentTokens | None:
-    """The book of agent tokens (orch's), so an agent's own token may call the tools its role
-    allows."""
     from udl.plugins.apps.orch.tokens import tokens_for
 
-    return tokens_for(service)
+    principal = await authenticate(
+        service.settings, request.headers.get(API_KEY_HEADER), tokens_for(service)
+    )
+    current_principal.set(principal)
 
 
 def _tool[Q: BaseModel](
