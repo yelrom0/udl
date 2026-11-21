@@ -4298,6 +4298,8 @@ export interface components {
              * @description Its tasks, by key.
              */
             tasks?: components["schemas"]["Task"][];
+            /** @description The feature's points: what its tasks come to (26.8). */
+            totals?: components["schemas"]["Totals"];
         };
         /** @enum {string} */
         FeatureStatus: "planned" | "active" | "done" | "parked";
@@ -4316,6 +4318,8 @@ export interface components {
              * @description The project they are of.
              */
             project: string;
+            /** @description The project's points: what its features' tasks come to (26.8). */
+            totals?: components["schemas"]["Totals"];
         };
         /**
          * FetchAttempt
@@ -8354,6 +8358,11 @@ export interface components {
              */
             repo?: string | null;
             /**
+             * Size
+             * @description How big it is: S, M, L or XL (an agent sets it only with the `plan` power, 26.8).
+             */
+            size?: ("S" | "M" | "L" | "XL") | null;
+            /**
              * Spec
              * @description Its spec, as markdown.
              */
@@ -9160,6 +9169,11 @@ export interface components {
              */
             needs?: string[];
             /**
+             * Points
+             * @description What its size is worth (None while it has no size).
+             */
+            readonly points: number | null;
+            /**
              * Position
              * @description Its place in its assignee's queue.
              */
@@ -9171,6 +9185,11 @@ export interface components {
              * @description The repo it is done in (a repo of its project), or None.
              */
             repo?: string | null;
+            /**
+             * Size
+             * @description How big it is (None: not sized yet).
+             */
+            size?: ("S" | "M" | "L" | "XL") | null;
             /**
              * Spec
              * @description Its spec, as markdown (its card, when it was imported).
@@ -9312,6 +9331,37 @@ export interface components {
              * @description What `--version` says, when it is installed and told us.
              */
             version?: string | null;
+        };
+        /**
+         * Totals
+         * @description What a feature's or a project's tasks come to, in points (26.8): the tasks nobody is
+         *     going to do (cancelled) are not counted, and the ones without a size are counted instead.
+         */
+        Totals: {
+            /**
+             * Points
+             * @description The points of every sized task.
+             * @default 0
+             */
+            points: number;
+            /**
+             * Points Merged
+             * @description The points of the tasks that are merged or done.
+             * @default 0
+             */
+            points_merged: number;
+            /**
+             * Points Ready
+             * @description The points of the tasks whose PRs are green, waiting to be merged.
+             * @default 0
+             */
+            points_ready: number;
+            /**
+             * Unsized
+             * @description How many of its tasks have no size yet.
+             * @default 0
+             */
+            unsized: number;
         };
         /**
          * UnassignTaskRequest
