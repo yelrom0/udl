@@ -78,6 +78,7 @@ export const operations = {
 	orch_get_question: { method: "post", path: "/plugins/orch/get_question" },
 	orch_get_queue: { method: "post", path: "/plugins/orch/get_queue" },
 	orch_get_task: { method: "post", path: "/plugins/orch/get_task" },
+	orch_import_plan: { method: "post", path: "/plugins/orch/import_plan" },
 	orch_issue_token: { method: "post", path: "/plugins/orch/issue_token" },
 	orch_list_actions: { method: "post", path: "/plugins/orch/list_actions" },
 	orch_list_features: { method: "post", path: "/plugins/orch/list_features" },

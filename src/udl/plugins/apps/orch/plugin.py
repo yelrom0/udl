@@ -51,6 +51,11 @@ from udl.plugins.apps.orch import transitions
 from udl.plugins.apps.orch import workspace as space
 from udl.plugins.apps.orch.agents import AgentRole
 from udl.plugins.apps.orch.dispatcher import Dispatcher
+from udl.plugins.apps.orch.importer import (
+    ParsedTask,
+    merge,
+    read_plan_file,
+)
 from udl.plugins.apps.orch.links import (
     LINK_CHANGED,
     LinkChanged,
@@ -91,6 +96,8 @@ from udl.plugins.apps.orch.models import (
     GetProjectRequest,
     GetQuestionRequest,
     GetTaskRequest,
+    ImportPlanRequest,
+    ImportReport,
     Link,
     Links,
     ListActionsRequest,
@@ -640,6 +647,12 @@ class Orch(AppPlugin[OrchSettings]):
                 title="Write a note on a task or a feature",
                 cli=CLISpec(path=("orch", "note"), arguments=("owner", "text")),
             ),
+            cls.operation(
+                "import_plan",
+                title="Read plan files into udl",
+                hints=OperationHints(admin=True, idempotent=True),
+                cli=CLISpec(path=("orch", "import"), arguments=("files",)),
+            ),
         ]
 
     # -- the harnesses (25.11) -----------------------------------------------------------------
@@ -935,6 +948,94 @@ class Orch(AppPlugin[OrchSettings]):
         belongs to, however the URL is written."""
         found = await LinkRecords(self.records).by_url(request.url)
         return Links(url=canonical(request.url), links=[as_shape(Link, one) for one in found])
+
+    async def import_plan(self, request: ImportPlanRequest) -> ImportReport:
+        """Read plan files into udl: their features and their tasks, by key (26.7).
+
+        A feature or a task the plan names and udl does not have is made; one udl has is changed
+        where the plan changed it, and left alone where it did not. A task's state is udl's: a
+        plan's mark never moves a task udl has moved on, and the report says where they differ.
+        A `dry_run` reports what it would do and writes nothing."""
+        project = await self._project(request.project)
+        plan = merge(*(read_plan_file(name) for name in request.files))
+        features = stored.FeatureRecords(self.records)
+        tasks = stored.TaskRecords(self.records)
+        report = ImportReport(unplaced=plan.unplaced)
+        for parsed in plan.features:
+            found = await features.feature(project, parsed.key)
+            title = parsed.title or parsed.key
+            if found is None:
+                report.created.append(parsed.key)
+                if not request.dry_run:
+                    await features.save_feature(
+                        stored.Feature(
+                            project=project,
+                            key=parsed.key,
+                            title=title,
+                            spec=parsed.spec,
+                            order=int(parsed.key) if parsed.key.isdigit() else 0,
+                        )
+                    )
+            else:
+                changed: dict[str, object] = {}
+                if found.title != title:
+                    changed["title"] = title
+                if parsed.spec and found.spec != parsed.spec:
+                    changed["spec"] = parsed.spec
+                if changed:
+                    report.updated.append(parsed.key)
+                    if not request.dry_run:
+                        await features.save_feature(found.model_copy(update=changed))
+                else:
+                    report.unchanged.append(parsed.key)
+            for one in parsed.tasks:
+                await self._imported(tasks, project, parsed.key, one, request.dry_run, report)
+        return report
+
+    async def _imported(
+        self,
+        tasks: stored.TaskRecords,
+        project: str,
+        feature: str,
+        parsed: ParsedTask,
+        dry_run: bool,
+        report: ImportReport,
+    ) -> None:
+        """One task of a plan, made or changed in udl (`import_plan`'s own step)."""
+        found = await tasks.task(project, parsed.key)
+        title = parsed.title or parsed.key
+        if found is None:
+            report.created.append(parsed.key)
+            if not dry_run:
+                await tasks.import_task(
+                    stored.Task(
+                        project=project,
+                        feature=feature,
+                        key=parsed.key,
+                        title=title,
+                        spec=parsed.spec,
+                        needs=parsed.needs,
+                        state=parsed.state,
+                    )
+                )
+            return
+        changed: dict[str, object] = {}
+        if found.title != title:
+            changed["title"] = title
+        if parsed.spec and found.spec != parsed.spec:
+            changed["spec"] = parsed.spec
+        if parsed.needs and found.needs != parsed.needs:
+            changed["needs"] = parsed.needs
+        if changed:
+            report.updated.append(parsed.key)
+            if not dry_run:
+                await tasks.import_task(found.model_copy(update=changed))
+        else:
+            report.unchanged.append(parsed.key)
+        if parsed.state != found.state:
+            report.kept.append(
+                f"{parsed.key}: udl has it {found.state}, the plan says {parsed.state}"
+            )
 
     async def add_note(self, request: AddNoteRequest) -> NoteInfo:
         """Write a note on a feature or a task (appended: a correction is another note), as

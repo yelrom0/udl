@@ -1338,6 +1338,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/import_plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read plan files into udl: their features and their tasks, by key (26.7).
+         * @description Read plan files into udl: their features and their tasks, by key (26.7).
+         *
+         *     A feature or a task the plan names and udl does not have is made; one udl has is changed
+         *     where the plan changed it, and left alone where it did not. A task's state is udl's: a
+         *     plan's mark never moves a task udl has moved on, and the report says where they differ.
+         *     A `dry_run` reports what it would do and writes nothing.
+         */
+        post: operations["orch_import_plan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/orch/issue_token": {
         parameters: {
             query?: never;
@@ -5231,6 +5256,56 @@ export interface components {
              *     clearance works only with the User-Agent it was given to).
              */
             user_agent?: string | null;
+        };
+        /**
+         * ImportPlanRequest
+         * @description Reading plan files into udl (26.7).
+         */
+        ImportPlanRequest: {
+            /**
+             * Dry Run
+             * @description Whether to report what it would do, and write nothing.
+             * @default false
+             */
+            dry_run: boolean;
+            /**
+             * Files
+             * @description The plan files, by path.
+             */
+            files: string[];
+            /** @description The project (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+        };
+        /**
+         * ImportReport
+         * @description What an import did, or would do.
+         */
+        ImportReport: {
+            /**
+             * Created
+             * @description The features and tasks it made, by key.
+             */
+            created?: string[];
+            /**
+             * Kept
+             * @description The tasks whose state udl has moved on from what the plan says, kept as udl has them.
+             */
+            kept?: string[];
+            /**
+             * Unchanged
+             * @description The ones the plan says what udl already has.
+             */
+            unchanged?: string[];
+            /**
+             * Unplaced
+             * @description Every line it could not place, with its line number.
+             */
+            unplaced?: components["schemas"]["UnplacedLine"][];
+            /**
+             * Updated
+             * @description The ones it changed.
+             */
+            updated?: string[];
         };
         /** ImportedChains */
         ImportedChains: {
@@ -9250,6 +9325,32 @@ export interface components {
             key: string;
             /** @description The project it is in (None: the only one, while udl has one). */
             project?: components["schemas"]["Name"] | null;
+        };
+        /**
+         * UnplacedLine
+         * @description A line of a plan file the importer could not place (26.7).
+         */
+        UnplacedLine: {
+            /**
+             * Line
+             * @description Its line number, from 1.
+             */
+            line: number;
+            /**
+             * Source
+             * @description The file it is in.
+             */
+            source: string;
+            /**
+             * Text
+             * @description The line itself.
+             */
+            text: string;
+            /**
+             * Why
+             * @description What the importer could not read of it.
+             */
+            why: string;
         };
         /**
          * UpcomingSchedule
@@ -14214,6 +14315,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskInfo"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_import_plan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportPlanRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportReport"];
                 };
             };
             /** @description Bad Request */

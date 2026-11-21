@@ -999,6 +999,22 @@ class TaskRecords:
         await _scan(self._records, task.project, OwnerKind.TASK, task.key, task.spec)
         return saved
 
+    async def import_task(self, task: Task) -> Task:
+        """Store `task` as a plan file has it, its state included (26.7).
+
+        The one path that writes a state without a move: an import records what a plan says
+        happened, and a plan's `[x]` is not a move of what udl is doing (`save_task`'s rule,
+        which holds for every caller but this one). Its project and its feature must be there."""
+        await self._projects.require(task.project)
+        if (
+            await FeatureRecords(self._records, self._projects).feature(task.project, task.feature)
+            is None
+        ):
+            raise DoesNotExist(f"There is no feature {task.feature!r} in {task.project!r}")
+        saved = await self._store(task)
+        await _scan(self._records, task.project, OwnerKind.TASK, task.key, task.spec)
+        return saved
+
     async def save_all(self, tasks: Sequence[Task], *, also: Sequence[Record] = ()) -> list[Task]:
         """Store tasks as one write — all of them, or none — and `also` in the same write (a
         queue's system note, 26.5), keeping each feature's status in step with its tasks.

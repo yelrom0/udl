@@ -4990,6 +4990,99 @@
         "title": "ImportCookiesRequest",
         "type": "object"
       },
+      "ImportPlanRequest": {
+        "additionalProperties": false,
+        "description": "Reading plan files into udl (26.7).",
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "description": "Whether to report what it would do, and write nothing.",
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "files": {
+            "description": "The plan files, by path.",
+            "items": {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Files",
+            "type": "array"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project (None: the only one, while udl has one)."
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "title": "ImportPlanRequest",
+        "type": "object"
+      },
+      "ImportReport": {
+        "additionalProperties": false,
+        "description": "What an import did, or would do.",
+        "properties": {
+          "created": {
+            "description": "The features and tasks it made, by key.",
+            "items": {
+              "maxLength": 40,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+              "type": "string"
+            },
+            "title": "Created",
+            "type": "array"
+          },
+          "kept": {
+            "description": "The tasks whose state udl has moved on from what the plan says, kept as udl has them.",
+            "items": {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            "title": "Kept",
+            "type": "array"
+          },
+          "unchanged": {
+            "description": "The ones the plan says what udl already has.",
+            "items": {
+              "maxLength": 40,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+              "type": "string"
+            },
+            "title": "Unchanged",
+            "type": "array"
+          },
+          "unplaced": {
+            "description": "Every line it could not place, with its line number.",
+            "items": {
+              "$ref": "#/components/schemas/UnplacedLine"
+            },
+            "title": "Unplaced",
+            "type": "array"
+          },
+          "updated": {
+            "description": "The ones it changed.",
+            "items": {
+              "maxLength": 40,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+              "type": "string"
+            },
+            "title": "Updated",
+            "type": "array"
+          }
+        },
+        "title": "ImportReport",
+        "type": "object"
+      },
       "ImportedChains": {
         "additionalProperties": false,
         "properties": {
@@ -12322,6 +12415,44 @@
         "title": "UnassignTaskRequest",
         "type": "object"
       },
+      "UnplacedLine": {
+        "additionalProperties": false,
+        "description": "A line of a plan file the importer could not place (26.7).",
+        "properties": {
+          "line": {
+            "description": "Its line number, from 1.",
+            "exclusiveMinimum": 0.0,
+            "title": "Line",
+            "type": "integer"
+          },
+          "source": {
+            "description": "The file it is in.",
+            "maxLength": 2000,
+            "title": "Source",
+            "type": "string"
+          },
+          "text": {
+            "description": "The line itself.",
+            "maxLength": 2000,
+            "title": "Text",
+            "type": "string"
+          },
+          "why": {
+            "description": "What the importer could not read of it.",
+            "maxLength": 2000,
+            "title": "Why",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "line",
+          "text",
+          "why"
+        ],
+        "title": "UnplacedLine",
+        "type": "object"
+      },
       "UpcomingSchedule": {
         "additionalProperties": false,
         "description": "A schedule, and when it fires next.",
@@ -19223,6 +19354,103 @@
           }
         ],
         "summary": "A task, with its feature, its links, its notes and its open questions.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/import_plan": {
+      "post": {
+        "description": "Read plan files into udl: their features and their tasks, by key (26.7).\n\nA feature or a task the plan names and udl does not have is made; one udl has is changed\nwhere the plan changed it, and left alone where it did not. A task's state is udl's: a\nplan's mark never moves a task udl has moved on, and the report says where they differ.\nA `dry_run` reports what it would do and writes nothing.",
+        "operationId": "orch_import_plan",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportPlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Read plan files into udl: their features and their tasks, by key (26.7).",
         "tags": [
           "orch"
         ]
