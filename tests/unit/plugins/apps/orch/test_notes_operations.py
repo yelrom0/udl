@@ -17,7 +17,8 @@ import pytest
 # Local Imports
 from udl.core.operations import OperationHints
 from udl.core.service import UDLService
-from udl.errors import DoesNotExist
+from udl.errors import DoesNotExist, NotAllowed
+from udl.interfaces.security import Principal, PrincipalKind, current_principal
 from udl.plugins.apps.orch.models import (
     AddNoteRequest,
     FeatureInfo,
@@ -55,10 +56,9 @@ async def test_a_note_is_written_on_a_task(service: UDLService) -> None:
         owner="26.2",
         text="Its links are scanned as it is saved.",
         note_kind="finding",
-        author="deepseek-a",
     )
 
-    assert (made.note_kind, made.author) == ("finding", "deepseek-a")
+    assert (made.note_kind, made.author) == ("finding", "human:owner")
     read = await service.call("orch_get_task", {"key": "26.2"})
     assert isinstance(read, TaskInfo)
     assert [note.text for note in read.notes] == ["Its links are scanned as it is saved."]
@@ -91,8 +91,35 @@ def test_a_note_of_no_owner_kind_is_refused() -> None:
         AddNoteRequest.model_validate({"owner": "26.1", "text": "Nothing to say."})
 
 
-async def test_a_note_is_udl_s_own_when_nobody_says(service: UDLService) -> None:
+async def test_a_note_is_the_owner_s_when_the_cli_writes_it(service: UDLService) -> None:
+    # (No interface set a caller: the person at the keyboard, who is udl's owner.)
     made = await a_note(service, owner_kind="task", owner="26.1", text="Noted.")
 
-    assert made.author == "udl"
+    assert made.author == "human:owner"
     assert made.note_kind == "progress"
+
+
+async def test_an_agent_s_note_is_the_agent_s(service: UDLService) -> None:
+    # (An implementer may add a note (27.2), and the note says who wrote it, not who it says.)
+    caller = current_principal.set(
+        Principal(kind=PrincipalKind.AGENT, name="deepseek-a", role="implementer")
+    )
+    try:
+        made = await a_note(service, owner_kind="task", owner="26.1", text="Noted.")
+    finally:
+        current_principal.reset(caller)
+
+    assert made.author == "deepseek-a"
+
+
+async def test_a_caller_cannot_write_a_system_note(service: UDLService) -> None:
+    # (A system note is udl's own: the moves and the splits write them.)
+    with pytest.raises(NotAllowed, match="system"):
+        await a_note(service, owner_kind="task", owner="26.1", text="Moved.", note_kind="system")
+
+
+def test_a_note_s_author_is_not_the_caller_s_to_say() -> None:
+    with pytest.raises(ValueError, match="author"):
+        AddNoteRequest.model_validate(
+            {"owner_kind": "task", "owner": "26.1", "text": "By me.", "author": "human:claude"}
+        )

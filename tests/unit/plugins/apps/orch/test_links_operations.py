@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 # Local Imports
+from udl.core.models import Deleted as DeletedShape
 from udl.core.operations import OperationHints
 from udl.core.service import UDLService
 from udl.errors import ConfigError, DoesNotExist
@@ -28,7 +29,6 @@ from udl.plugins.apps.orch.models import (
     OwnerKind,
     RemoveLinkRequest,
 )
-from udl.plugins.apps.orch.models import Deleted as DeletedShape
 from udl.plugins.apps.orch.plugin import Orch
 
 LINK_OPERATIONS: list[str] = ["add_link", "remove_link", "find_links"]

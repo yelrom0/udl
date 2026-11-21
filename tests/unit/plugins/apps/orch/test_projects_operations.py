@@ -17,10 +17,10 @@ from typing import Any
 import pytest
 
 # Local Imports
+from udl.core.models import Deleted as DeletedShape
 from udl.core.operations import OperationHints
 from udl.core.service import UDLService
 from udl.errors import DoesNotExist, NotAllowed
-from udl.plugins.apps.orch.models import Deleted as DeletedShape
 from udl.plugins.apps.orch.models import (
     DeleteProjectRequest,
     DeleteRepoRequest,

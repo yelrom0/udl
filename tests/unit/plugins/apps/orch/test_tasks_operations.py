@@ -22,6 +22,8 @@ import pytest
 from udl.core.operations import OperationHints
 from udl.core.service import UDLService
 from udl.errors import DoesNotExist, NotAllowed
+from udl.interfaces.security import Principal as Caller
+from udl.interfaces.security import PrincipalKind, current_principal
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.models import (
     GetTaskRequest,
@@ -225,6 +227,17 @@ async def test_a_task_of_a_feature_that_is_not_there_is_refused(service: UDLServ
         await service.call("orch_set_task", {"key": "22.1", "feature": "22", "title": "One"})
 
 
+async def test_a_new_task_s_key_must_be_of_the_feature_it_names(service: UDLService) -> None:
+    # (26.1 is a task of 26: a key of 27's given with 26's feature is a mistake, not a task.)
+    with pytest.raises(NotAllowed, match=r"27\.1"):
+        await _a_task(service, key="27.1", feature="26", title="Something else")
+
+
+async def test_a_task_does_not_change_its_feature(service: UDLService) -> None:
+    with pytest.raises(NotAllowed, match=r"not of '22'"):
+        await _a_task(service, key="26.2", feature="22", title="Features and tasks")
+
+
 # ---------------------------------------------------------------------------------------------
 # Moving them
 # ---------------------------------------------------------------------------------------------
@@ -243,9 +256,32 @@ async def test_a_move_writes_the_note_that_says_so(service: UDLService) -> None:
     found = await service.call("orch_get_task", {"key": "26.1"})
 
     assert isinstance(found, TaskInfo)
+    # (A system note is udl's own voice, and it says who moved the task.)
     assert [(note.note_kind, note.text, note.author) for note in found.notes] == [
-        ("system", "open → cancelled, by udl.", "udl")
+        ("system", "open → cancelled, by human:owner.", "udl")
     ]
+
+
+async def test_the_cli_s_user_may_move_a_task_to_done(service: UDLService) -> None:
+    # (The person at the keyboard is the owner, as over the API: only an agent is held to the
+    # table's own-task rule and kept from `done` (27.2, 26.3).)
+    for state in ("ready", "merged", "done"):
+        moved = await service.call("orch_move_task", {"key": "26.1", "to": state})
+        assert isinstance(moved, Task)
+        assert moved.state == state
+
+
+async def test_an_agent_does_not_move_a_task_itself(service: UDLService) -> None:
+    # (An implementer moves its work with `orch_start`, `orch_ready` and the rest: 27.2's table
+    # does not let it call `orch_move_task` at all, so `_by`'s agent branch is the note's.)
+    caller = current_principal.set(
+        Caller(kind=PrincipalKind.AGENT, name="deepseek-a", role="implementer")
+    )
+    try:
+        with pytest.raises(NotAllowed, match="not one of the operations"):
+            await service.call("orch_move_task", {"key": "26.1", "to": "cancelled"})
+    finally:
+        current_principal.reset(caller)
 
 
 async def test_a_blocked_task_keeps_what_it_waits_on(service: UDLService) -> None:
@@ -255,11 +291,6 @@ async def test_a_blocked_task_keeps_what_it_waits_on(service: UDLService) -> Non
 
     assert isinstance(moved, Task)
     assert moved.blocked_on == "Q-7: memory is read-only"
-
-
-async def test_a_move_the_table_does_not_allow_is_refused(service: UDLService) -> None:
-    with pytest.raises(NotAllowed, match="done"):
-        await service.call("orch_move_task", {"key": "26.1", "to": "done"})
 
 
 async def test_moving_a_task_that_is_not_there_is_refused(service: UDLService) -> None:

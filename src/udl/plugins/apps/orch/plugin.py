@@ -27,6 +27,7 @@ from pydantic import BaseModel, ValidationError
 # Local Imports
 from udl.automations.events import EventType
 from udl.clock import Clock
+from udl.core.models import Deleted
 from udl.core.operations import CLISpec, Operation, OperationHints
 from udl.db.models import JsonObject
 from udl.db.records import Record
@@ -71,7 +72,6 @@ from udl.plugins.apps.orch.models import (
     AddLinkRequest,
     AddNoteRequest,
     AssignTaskRequest,
-    Deleted,
     DeleteProjectRequest,
     DeleteRepoRequest,
     DropActionRequest,
@@ -196,16 +196,14 @@ cleared. The table allows `ready` from `in_progress` only.)"""
 
 
 def _by(who: security.Principal | None) -> Principal:
-    """Who an `orch_move_task` is by: udl itself when no interface set a caller (the CLI, a
-    test), the agent when one is calling, and a person for the server's owner.
+    """Who a move or a note is by: the person at the keyboard when no interface set a caller
+    (the CLI, a test), the agent when one is calling, and a person for the server's owner.
 
     A person may move a task anywhere (the table is for the agents, orch.transitions); an agent
     is held to its own tasks and to the roles its state allows."""
-    if who is None:
-        return Principal(kind="system")
-    if who.is_agent:
+    if who is not None and who.is_agent:
         return Principal(kind="agent", name=who.name)
-    return Principal(kind="human", name=f"human:{who.name}")
+    return Principal(kind="human", name=f"human:{who.name if who is not None else 'owner'}")
 
 
 def _listed(keys: Sequence[str]) -> str:
@@ -798,6 +796,11 @@ class Orch(AppPlugin[OrchSettings]):
             key = request.key or await self._next_key(tasks, project, feature)
             found = stored.Task(project=project, feature=feature, key=key, **given)
         else:
+            if request.feature is not None and request.feature != found.feature:
+                raise NotAllowed(
+                    f"{found.key!r} is a task of {found.feature!r}, not of {request.feature!r}",
+                    hint="A task does not move between features: set the one it is of.",
+                )
             found = found.model_copy(update=given)
         return as_shape(Task, await tasks.save_task(found))
 
@@ -849,7 +852,7 @@ class Orch(AppPlugin[OrchSettings]):
         return Tasks(project=project, tasks=[as_shape(Task, one) for one in saved])
 
     async def add_link(self, request: AddLinkRequest) -> Link:
-        """Link something to a feature, task, question or action (one URL is one link: adding it
+        """Link something to a feature or a task (one URL is one link: adding it
         again gives the one that is there)."""
         project = await self._project(request.project)
         await self._owner_ids(project, request.owner_kind, request.owner)
@@ -886,16 +889,24 @@ class Orch(AppPlugin[OrchSettings]):
         return Links(url=canonical(request.url), links=[as_shape(Link, one) for one in found])
 
     async def add_note(self, request: AddNoteRequest) -> NoteInfo:
-        """Write a note on a feature or a task (appended: a correction is another note)."""
+        """Write a note on a feature or a task (appended: a correction is another note), as
+        whoever is calling: an agent's note is the agent's, and a system note is udl's own."""
+        if request.note_kind is NoteKind.SYSTEM:
+            raise NotAllowed(
+                "A system note is udl's own: the moves and the splits write them",
+                hint="Write a note of another kind: a progress, a decision, a finding or a review.",
+            )
         project = await self._project(request.project)
         owners = await self._owner_ids(project, request.owner_kind, request.owner)
+        from udl.core.service import principal  # (the caller's, as each interface set it)
+
         note = await stored.NoteRecords(self.records).add(
             stored.Note(
                 owner_kind=request.owner_kind,
                 owner=owners[0],
                 note_kind=request.note_kind,
                 text=request.text,
-                author=request.author,
+                author=_by(principal()).who,
             )
         )
         return as_shape(NoteInfo, note)
@@ -932,6 +943,13 @@ class Orch(AppPlugin[OrchSettings]):
                 hint="Name the feature (26), or give the key it is to have (26.3).",
             )
         await self._require_feature(project, feature)
+        if request.key is not None and "." in request.key:
+            numbered = request.key.split(".", 1)[0]
+            if numbered != feature:
+                raise NotAllowed(
+                    f"{request.key!r} is numbered from {numbered!r}, not from {feature!r}",
+                    hint="A task's key is `<feature key>.<n>`: give the one its feature numbers.",
+                )
         return feature
 
     async def _next_key(self, tasks: stored.TaskRecords, project: str, feature: str) -> str:

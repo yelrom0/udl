@@ -965,8 +965,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Link something to a feature, task, question or action (one URL is one link: adding it
-         * @description Link something to a feature, task, question or action (one URL is one link: adding it
+         * Link something to a feature or a task (one URL is one link: adding it
+         * @description Link something to a feature or a task (one URL is one link: adding it
          *     again gives the one that is there).
          */
         post: operations["orch_add_link"];
@@ -986,8 +986,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Write a note on a feature or a task (appended: a correction is another note).
-         * @description Write a note on a feature or a task (appended: a correction is another note).
+         * Write a note on a feature or a task (appended: a correction is another note), as
+         * @description Write a note on a feature or a task (appended: a correction is another note), as
+         *     whoever is calling: an agent's note is the agent's, and a system note is udl's own.
          */
         post: operations["orch_add_note"];
         delete?: never;
@@ -2718,7 +2719,7 @@ export interface components {
         };
         /**
          * AddLinkRequest
-         * @description Linking something to a feature, task, question or action.
+         * @description Linking something to a feature or a task (a question and an action come with 28.x).
          */
         AddLinkRequest: {
             /** @description What it points at. */
@@ -2750,13 +2751,7 @@ export interface components {
          */
         AddNoteRequest: {
             /**
-             * Author
-             * @description Who is writing it.
-             * @default udl
-             */
-            author: string;
-            /**
-             * @description What kind of note it is.
+             * @description What kind of note it is (not `system`: that is udl's own).
              * @default progress
              */
             note_kind: components["schemas"]["NoteKind"];
@@ -3480,6 +3475,14 @@ export interface components {
             name: components["schemas"]["Name"];
             /** @description Its project's name (None: the only one, while udl has one). */
             project?: components["schemas"]["Name"] | null;
+        };
+        /** Deleted */
+        Deleted: {
+            /**
+             * Deleted
+             * @description False when there was nothing to delete.
+             */
+            deleted: boolean;
         };
         /** Disconnected */
         Disconnected: {
@@ -5059,7 +5062,8 @@ export interface components {
         Length: components["schemas"]["Duration-Input"];
         /**
          * Link
-         * @description A typed pointer from a feature, task, question or action to something else (26.4).
+         * @description A typed pointer from a feature or a task to something else (26.4); a question's and an
+         *     action's, with 28.x.
          *
          *     `url` is the canonical form (a `udl:` URL for an internal kind, so a task's link is
          *     `udl:task/udl/26.2`), and `state` is what is known about it — for a pull its `state`,
@@ -5680,7 +5684,8 @@ export interface components {
         };
         /**
          * OwnerKind
-         * @description What a note (or a link) is about: a feature, a task, a question or an action (26.4-26.5).
+         * @description What a note (or a link) is about: a feature or a task (26.4-26.5); a question or an
+         *     action, with 28.x.
          * @enum {string}
          */
         OwnerKind: "feature" | "task" | "question" | "action";
@@ -8889,25 +8894,6 @@ export interface components {
          */
         WritePolicy: "primary" | "all";
         ZoneName: string | null;
-        /** Deleted */
-        udl__core__models__Deleted: {
-            /**
-             * Deleted
-             * @description False when there was nothing to delete.
-             */
-            deleted: boolean;
-        };
-        /**
-         * Deleted
-         * @description What a delete answers: what went, and whether it was there.
-         */
-        udl__plugins__apps__orch__models__Deleted: {
-            /**
-             * Deleted
-             * @description Whether there was one.
-             */
-            deleted: boolean;
-        };
     };
     responses: never;
     parameters: never;
@@ -9702,7 +9688,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["udl__core__models__Deleted"];
+                    "application/json": components["schemas"]["Deleted"];
                 };
             };
             /** @description Bad Request */
@@ -10015,7 +10001,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["udl__core__models__Deleted"];
+                    "application/json": components["schemas"]["Deleted"];
                 };
             };
             /** @description Bad Request */
@@ -11760,7 +11746,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["udl__core__models__Deleted"];
+                    "application/json": components["schemas"]["Deleted"];
                 };
             };
             /** @description Bad Request */
@@ -12637,7 +12623,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["udl__plugins__apps__orch__models__Deleted"];
+                    "application/json": components["schemas"]["Deleted"];
                 };
             };
             /** @description Bad Request */
@@ -12715,7 +12701,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["udl__plugins__apps__orch__models__Deleted"];
+                    "application/json": components["schemas"]["Deleted"];
                 };
             };
             /** @description Bad Request */
@@ -14574,7 +14560,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["udl__plugins__apps__orch__models__Deleted"];
+                    "application/json": components["schemas"]["Deleted"];
                 };
             };
             /** @description Bad Request */
@@ -16532,7 +16518,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["udl__core__models__Deleted"];
+                    "application/json": components["schemas"]["Deleted"];
                 };
             };
             /** @description Bad Request */
@@ -16906,7 +16892,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["udl__core__models__Deleted"];
+                    "application/json": components["schemas"]["Deleted"];
                 };
             };
             /** @description Validation Error */
@@ -17447,7 +17433,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["udl__core__models__Deleted"];
+                    "application/json": components["schemas"]["Deleted"];
                 };
             };
             /** @description Bad Request */

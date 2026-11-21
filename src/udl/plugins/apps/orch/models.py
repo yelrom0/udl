@@ -65,7 +65,6 @@ __all__ = [
     "BranchPattern",
     "DeleteProjectRequest",
     "DeleteRepoRequest",
-    "Deleted",
     "DropActionRequest",
     "Feature",
     "FeatureInfo",
@@ -194,7 +193,8 @@ Title = Annotated[str, StringConstraints(min_length=1), AfterValidator(_not_empt
 
 
 class OwnerKind(StrEnum):
-    """What a note (or a link) is about: a feature, a task, a question or an action (26.4-26.5)."""
+    """What a note (or a link) is about: a feature or a task (26.4-26.5); a question or an
+    action, with 28.x."""
 
     FEATURE = "feature"
     TASK = "task"
@@ -571,7 +571,8 @@ class PullState(_Model):
 
 
 class Link(_Model):
-    """A typed pointer from a feature, task, question or action to something else (26.4).
+    """A typed pointer from a feature or a task to something else (26.4); a question's and an
+    action's, with 28.x.
 
     `url` is the canonical form (a `udl:` URL for an internal kind, so a task's link is
     `udl:task/udl/26.2`), and `state` is what is known about it — for a pull its `state`,
@@ -1225,13 +1226,6 @@ class DeleteProjectRequest(_Model):
     """The project's name."""
 
 
-class Deleted(_Model):
-    """What a delete answers: what went, and whether it was there."""
-
-    deleted: bool
-    """Whether there was one."""
-
-
 class SetRepoRequest(_Model):
     """Creating or editing a repo of a project, by its name: what is not given is kept.
 
@@ -1428,7 +1422,7 @@ class SplitTaskRequest(_Model):
 
 
 class AddLinkRequest(_Model):
-    """Linking something to a feature, task, question or action."""
+    """Linking something to a feature or a task (a question and an action come with 28.x)."""
 
     owner_kind: OwnerKind
     """What it hangs on."""
@@ -1483,8 +1477,6 @@ class AddNoteRequest(_Model):
     text: Spec
     """The note, as markdown."""
     note_kind: NoteKind = NoteKind.PROGRESS
-    """What kind of note it is."""
-    author: Text = "udl"
-    """Who is writing it."""
+    """What kind of note it is (not `system`: that is udl's own)."""
     project: Name | None = None
     """The project (None: the only one, while udl has one)."""

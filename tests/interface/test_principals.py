@@ -7,9 +7,9 @@ Who udl answers (27.2): the server's owner (its API key), and an agent with its 
 may call only what its role allows. Over the API and over MCP's /mcp, since both answer the same
 operations on the same service.
 
-The role table's own operations (`orch_*`, and `github_get_pull`) come with 26.6 and 25.5, so the
-table is given one of udl's own operations here (`get_status`) — what is being tested is the
-gate, and that an agent that may call one thing may not call another.
+The table is given one of udl's own operations here (`get_status`) rather than an `orch_*` one:
+what is being tested is the gate, and that an agent that may call one thing may not call another
+(the role table's own operations have their tests with their tasks: 26.6's, 27.2's).
 """
 
 # System Imports
@@ -67,7 +67,8 @@ def keyed(tmp_path: Path) -> Harness:
 
 @pytest.fixture
 def may_call_get_status(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A role table that lets an agent call `get_status` (the orch_* operations come with 26.6)."""
+    """A role table that lets an agent call `get_status` (one of udl's own: the gate is the
+    subject, not the table)."""
     monkeypatch.setitem(ROLE_OPERATIONS, AgentRole.IMPLEMENTER, frozenset({STATUS}))
 
 

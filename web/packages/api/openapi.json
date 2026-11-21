@@ -613,7 +613,7 @@
       },
       "AddLinkRequest": {
         "additionalProperties": false,
-        "description": "Linking something to a feature, task, question or action.",
+        "description": "Linking something to a feature or a task (a question and an action come with 28.x).",
         "properties": {
           "link_kind": {
             "$ref": "#/components/schemas/LinkKind",
@@ -664,17 +664,10 @@
         "additionalProperties": false,
         "description": "Writing a note on a feature or a task (appended: a correction is another note).",
         "properties": {
-          "author": {
-            "default": "udl",
-            "description": "Who is writing it.",
-            "maxLength": 2000,
-            "title": "Author",
-            "type": "string"
-          },
           "note_kind": {
             "$ref": "#/components/schemas/NoteKind",
             "default": "progress",
-            "description": "What kind of note it is."
+            "description": "What kind of note it is (not `system`: that is udl's own)."
           },
           "owner": {
             "description": "What it hangs on: a task's or a feature's key.",
@@ -1990,6 +1983,21 @@
           "name"
         ],
         "title": "DeleteRepoRequest",
+        "type": "object"
+      },
+      "Deleted": {
+        "additionalProperties": false,
+        "properties": {
+          "deleted": {
+            "description": "False when there was nothing to delete.",
+            "title": "Deleted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "title": "Deleted",
         "type": "object"
       },
       "Disconnected": {
@@ -5030,7 +5038,7 @@
       },
       "Link": {
         "additionalProperties": false,
-        "description": "A typed pointer from a feature, task, question or action to something else (26.4).\n\n`url` is the canonical form (a `udl:` URL for an internal kind, so a task's link is\n`udl:task/udl/26.2`), and `state` is what is known about it \u2014 for a pull its `state`,\n`head_sha`, `checks` and `review`.",
+        "description": "A typed pointer from a feature or a task to something else (26.4); a question's and an\naction's, with 28.x.\n\n`url` is the canonical form (a `udl:` URL for an internal kind, so a task's link is\n`udl:task/udl/26.2`), and `state` is what is known about it \u2014 for a pull its `state`,\n`head_sha`, `checks` and `review`.",
         "properties": {
           "added_by": {
             "default": "",
@@ -6126,7 +6134,7 @@
         "type": "object"
       },
       "OwnerKind": {
-        "description": "What a note (or a link) is about: a feature, a task, a question or an action (26.4-26.5).",
+        "description": "What a note (or a link) is about: a feature or a task (26.4-26.5); a question or an\naction, with 28.x.",
         "enum": [
           "feature",
           "task",
@@ -12015,37 +12023,6 @@
             "type": "null"
           }
         ]
-      },
-      "udl__core__models__Deleted": {
-        "additionalProperties": false,
-        "properties": {
-          "deleted": {
-            "description": "False when there was nothing to delete.",
-            "title": "Deleted",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "deleted"
-        ],
-        "title": "Deleted",
-        "type": "object"
-      },
-      "udl__plugins__apps__orch__models__Deleted": {
-        "additionalProperties": false,
-        "description": "What a delete answers: what went, and whether it was there.",
-        "properties": {
-          "deleted": {
-            "description": "Whether there was one.",
-            "title": "Deleted",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "deleted"
-        ],
-        "title": "Deleted",
-        "type": "object"
       }
     },
     "securitySchemes": {
@@ -12877,7 +12854,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/udl__core__models__Deleted"
+                  "$ref": "#/components/schemas/Deleted"
                 }
               }
             },
@@ -13492,7 +13469,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/udl__core__models__Deleted"
+                  "$ref": "#/components/schemas/Deleted"
                 }
               }
             },
@@ -16140,7 +16117,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/udl__core__models__Deleted"
+                  "$ref": "#/components/schemas/Deleted"
                 }
               }
             },
@@ -16928,7 +16905,7 @@
     },
     "/plugins/orch/add_link": {
       "post": {
-        "description": "Link something to a feature, task, question or action (one URL is one link: adding it\nagain gives the one that is there).",
+        "description": "Link something to a feature or a task (one URL is one link: adding it\nagain gives the one that is there).",
         "operationId": "orch_add_link",
         "requestBody": {
           "content": {
@@ -17017,7 +16994,7 @@
             "APIKeyHeader": []
           }
         ],
-        "summary": "Link something to a feature, task, question or action (one URL is one link: adding it",
+        "summary": "Link something to a feature or a task (one URL is one link: adding it",
         "tags": [
           "orch"
         ]
@@ -17025,7 +17002,7 @@
     },
     "/plugins/orch/add_note": {
       "post": {
-        "description": "Write a note on a feature or a task (appended: a correction is another note).",
+        "description": "Write a note on a feature or a task (appended: a correction is another note), as\nwhoever is calling: an agent's note is the agent's, and a system note is udl's own.",
         "operationId": "orch_add_note",
         "requestBody": {
           "content": {
@@ -17114,7 +17091,7 @@
             "APIKeyHeader": []
           }
         ],
-        "summary": "Write a note on a feature or a task (appended: a correction is another note).",
+        "summary": "Write a note on a feature or a task (appended: a correction is another note), as",
         "tags": [
           "orch"
         ]
@@ -17236,7 +17213,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/udl__plugins__apps__orch__models__Deleted"
+                  "$ref": "#/components/schemas/Deleted"
                 }
               }
             },
@@ -17333,7 +17310,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/udl__plugins__apps__orch__models__Deleted"
+                  "$ref": "#/components/schemas/Deleted"
                 }
               }
             },
@@ -19641,7 +19618,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/udl__plugins__apps__orch__models__Deleted"
+                  "$ref": "#/components/schemas/Deleted"
                 }
               }
             },
@@ -22022,7 +21999,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/udl__core__models__Deleted"
+                  "$ref": "#/components/schemas/Deleted"
                 }
               }
             },
@@ -22687,7 +22664,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/udl__core__models__Deleted"
+                  "$ref": "#/components/schemas/Deleted"
                 }
               }
             },
@@ -23269,7 +23246,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/udl__core__models__Deleted"
+                  "$ref": "#/components/schemas/Deleted"
                 }
               }
             },
