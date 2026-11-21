@@ -3,11 +3,11 @@
 - codex.py -
 --------------
 
-The `codex` runner against the real Codex CLI on this machine (jeff-wiggle): the one thing the
+The `codex` runner against the real Codex CLI on the machine udl runs on: the one thing the
 fake cannot tell us — that its `--json` stream is the shape the runner parses, that a turn really
 ends, and that `login status` says what the runner reads. It runs on the local llama.cpp router
-through the `local` profile Claude wrote in `~/.codex/config.toml`, not on OpenAI: the user's
-ChatGPT plan is not udl's to spend.
+through a local profile in `~/.codex/config.toml` (a router's own provider), not on OpenAI:
+the user's ChatGPT plan is not udl's to spend.
 
 It needs the CLI (0.171.0), a signed-in or configured provider and the router's key in
 `LLAMA_API_KEY`, so it never runs by default: `uv run pytest -m network`. Claude runs it at
