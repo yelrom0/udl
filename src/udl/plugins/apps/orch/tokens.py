@@ -147,7 +147,11 @@ def refused(
 
 
 async def refused_for(service: UDLService, principal: Principal, name: str, *, admin: bool) -> None:
-    """`refused()`, with the powers the agent's record gives it (27.8)."""
+    """`refused()`, with the powers the agent's record gives it (27.8).
+
+    It reads the agent's record on every agent call, before the operation runs: one read per
+    request is the price of a power that changes without a restart. If agents ever get chatty
+    enough for it to show, cache the record per request (the service's principal is the key)."""
     powers: ManagerPowers | None = None
     if principal.name:
         found = await AgentRecords(AppRecords(service.db)).agent(principal.name)

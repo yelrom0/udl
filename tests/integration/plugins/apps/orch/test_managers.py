@@ -658,3 +658,87 @@ async def test_a_manager_s_suggest_is_its_reports_work(service: UDLService) -> N
 
     assert isinstance(found, Suggestions)
     assert [one.task for one in found.suggestions] == ["F-1.5"]
+
+
+# ---------------------------------------------------------------------------------------------
+# The review's fixes (round 1)
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_manager_may_not_review_its_own_work(service: UDLService) -> None:
+    """(A review is someone else's: a manager reviewing a task it holds would be its own OK.)"""
+    tasks = TaskRecords(AppRecords(service.db))
+    mine = await tasks.task("udl", "F-1.1")
+    assert mine is not None
+    await tasks.save_task(mine.model_copy(update={"assignee": BOSS}))
+
+    token = as_boss()
+    try:
+        with pytest.raises(NotAllowed, match="own work"):
+            await review(service, key="F-1.1", verdict="approve")
+    finally:
+        current_principal.reset(token)
+
+
+async def test_a_review_under_another_name_is_not_the_manager_s_ok(
+    service: UDLService,
+) -> None:
+    """(Readiness asks the manager above the assignee, and takes only *its* review: one saved
+    under another name — a report's own, or another manager's — is not the OK.)"""
+    await ReviewRecords(AppRecords(service.db)).save_review(
+        Review(project="udl", task="F-1.1", head=HEAD, verdict="approve", by=STRANGER)
+    )
+
+    token = as_agent(ONE, role="implementer")
+    try:
+        with pytest.raises(NotAllowed, match="has not reviewed this head"):
+            await service.call("orch_ready", {"project": "udl", "key": "F-1.1"})
+    finally:
+        current_principal.reset(token)
+
+
+async def test_a_manager_cannot_take_a_task_another_managers_report_holds(
+    service: UDLService,
+) -> None:
+    """(`assign` reaches its own reports: a task another manager's report is on is not its to
+    move — and moving it would stop that report's session.)"""
+    token = as_boss()
+    try:
+        with pytest.raises(NotAllowed, match="not in ernie-c's subtree"):
+            await service.call("orch_assign", {"project": "udl", "key": "F-1.4", "agent": ONE})
+    finally:
+        current_principal.reset(token)
+
+    assert (await task_of(service, "F-1.4")).assignee == STRANGER
+
+
+async def test_a_manager_plans_only_in_features_its_reports_work_on(
+    service: UDLService,
+) -> None:
+    """(`plan` is its reports' work: a feature none of them has a task in is not its to add to.)"""
+    await FeatureRecords(AppRecords(service.db)).save_feature(
+        Feature(project="udl", key="F-2", title="Nobody's")
+    )
+
+    token = as_boss()
+    try:
+        with pytest.raises(NotAllowed, match="none of ernie-c's reports"):
+            await service.call(
+                "orch_set_task",
+                {"project": "udl", "key": "F-2.1", "feature": "F-2", "title": "Not mine"},
+            )
+    finally:
+        current_principal.reset(token)
+
+
+async def test_a_manager_may_not_suggest_for_another_managers_report(
+    service: UDLService,
+) -> None:
+    """(`assign` reaches its own reports, so a suggestion for another manager's report is
+    refused rather than answered.)"""
+    token = as_boss()
+    try:
+        with pytest.raises(NotAllowed, match="not in ernie-c's subtree"):
+            await service.call("orch_suggest", {"project": "udl", "agent": STRANGER})
+    finally:
+        current_principal.reset(token)

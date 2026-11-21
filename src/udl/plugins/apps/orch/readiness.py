@@ -37,6 +37,7 @@ from udl.plugins.apps.orch.models import (
     DONE,
     MERGED,
     Assessment,
+    ManagerVerdict,
     Readiness,
     ReviewItem,
     ReviewStatus,
@@ -210,7 +211,7 @@ def readiness(
     task: TaskLike,
     tasks: Mapping[str, str],
     manager: str | None = None,
-    approval: str | None = None,
+    approval: ManagerVerdict | None = None,
 ) -> Readiness:
     """Whether `pull` may be merged for `task`, and why not.
 
@@ -245,7 +246,7 @@ def _blockers(
     needs: list[str],
     tasks: Mapping[str, str],
     manager: str | None = None,
-    approval: str | None = None,
+    approval: ManagerVerdict | None = None,
 ) -> tuple[list[str], list[str]]:
     """Why `pull` may not be merged, in the order a person would look at them (before the
     hold, which is udl's own decision and not GitHub's), and which of them are only a matter of

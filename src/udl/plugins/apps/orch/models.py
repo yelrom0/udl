@@ -275,8 +275,11 @@ ROLE: Final[tuple[Role, ...]] = get_args(Role.__value__)
 """Every role, read from `Role` (one list of them)."""
 
 type TaskKind = Literal["build", "human", "review"]
-type ManagerVerdict = Literal["approve", "changes"]
 """What kind of work a task is (the card's build | human | review)."""
+
+type ManagerVerdict = Literal["approve", "changes"]
+"""A manager's verdict on a report's pull (27.8): `approve` is its OK for that head, `changes`
+is what the report must do before it may be ready."""
 
 type FeatureStatus = Literal["planned", "active", "done", "parked"]
 """Where a feature is: its own setting, or what its tasks make it (orch.records)."""

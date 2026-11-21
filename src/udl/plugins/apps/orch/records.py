@@ -517,6 +517,8 @@ class Agent(Record):
     offline: bool = False
     """Whether its host could not be reached: what a failed `check_host` sets, so no session is
     started there until it answers again (27.7)."""
+    last_news: str = ""
+    """What a manager was last told about its reports (27.8): the same news again is no turn."""
 
     @classmethod
     def example(cls) -> Self:
@@ -850,6 +852,19 @@ class LinkRecords:
     async def for_url(self, url: str) -> list[Link]:
         """Every link to `url`, however it was written (canonicalised first)."""
         return await self.by_url(url)
+
+    async def head_of(self, project: str, key: str) -> str | None:
+        """The head a task's pull last had: the newest pull link of `key` that has one, or None
+        when it has no pull udl knows (27.5's pushes, read by 27.8's reviews)."""
+        found = [
+            one
+            for one in await self.for_owner(project, OwnerKind.TASK, key)
+            if one.link_kind == "pull" and one.state.head_sha
+        ]
+        if not found:
+            return None
+        newest = max(found, key=lambda one: (one.updated_at, str(one.id)))
+        return newest.state.head_sha
 
     async def for_owner(self, project: str, owner_kind: OwnerKind, owner: str) -> list[Link]:
         """Every link hanging on `project`/`owner_kind`/`owner`, by URL."""

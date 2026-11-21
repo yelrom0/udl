@@ -17,7 +17,7 @@ never another manager's reports:
 - `plan` → `orch_set_task`, `orch_split_task`
 
 Nothing here writes: the operations check `in_subtree()`, the role table asks `switched_on()`, and
-the dispatcher asks `work_for()` what a manager's next turn is about.
+the dispatcher asks `dispatcher.manager_prompt()` for the news a manager's turn is told.
 """
 
 # System Imports

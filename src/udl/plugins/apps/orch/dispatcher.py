@@ -369,21 +369,42 @@ class Dispatcher:
             one.name
             for one in await managers.reports(stored.AgentRecords(self._records), agent.name)
         ]
+        told = await stored.AgentRecords(self._records).agent(agent.name)
+        agent = told or agent
         items = await self._needs(agent, reports)
+        news = "\n".join(items)
+
         if not items:
+            if agent.last_news:
+                await self._told(agent, "")
             return False
+        if news == agent.last_news:
+            return False  # (told already, and nothing it did changed that: no turn, 27.8)
         task = await self._standing(agent)
+        if task is None:
+            return False
+        await self._told(agent, news)
         session = await self._session_for(agent, task)
         if session is None:
             return False
         await self._work(agent, task, session, resume=session.state is SessionState.RUNNING)
         return True
 
-    async def _standing(self, agent: stored.Agent) -> stored.Task:
+    async def _told(self, agent: stored.Agent, news: str) -> None:
+        """Remember what the manager was last told, so the same news is not a turn again."""
+        await stored.AgentRecords(self._records).save_agent(
+            agent.model_copy(update={"last_news": news})
+        )
+
+    async def _standing(self, agent: stored.Agent) -> stored.Task | None:
         """The manager's standing task (27.8): a `review` task of its own, made once and never
         finished, so its sessions always have something to be on."""
         tasks = stored.TaskRecords(self._records)
-        project = (await self._projects_of_any() or ["udl"])[0]
+        # (One of the manager's own projects: its `projects` when it names them, else any that
+        # udl has — and none at all means there is nothing to manage, 27.8.)
+        project = (await self._projects_of(agent) or [""])[0]
+        if not project:
+            return None  # (no project, nothing to manage)
         for one in await tasks.tasks(project):
             if one.task_kind == "review" and one.assignee == agent.name:
                 return one
@@ -441,19 +462,22 @@ class Dispatcher:
                     for one in await tasks.tasks(project):
                         if one.assignee != name or one.state not in (IN_PROGRESS, READY):
                             continue
-                        head = await self._head_of(project, one.key)
-                        if head is None:
+                        try:
+                            ready = await self._service.call("orch_readiness", {"key": one.key})
+                        except PluginError, UDLError:
                             continue
-                        done = await stored.ReviewRecords(self._records).for_head(
-                            project, one.key, head
+                        if not isinstance(ready, Readiness) or ready.ready:
+                            continue
+                        # (What it waits on is its manager's OK for this head: nothing else, or
+                        # the report could not act on it anyway, 27.8.)
+                        if not any(one.startswith("its manager ") for one in ready.blockers):
+                            continue
+                        found.append(
+                            f"review: {name}'s {one.key} ({one.title}) has a pull its manager has "
+                            f"not reviewed for this head (project {project}). Read the diff "
+                            f"against the task's spec, then `orch_review_task` with `approve` or "
+                            f"`changes` and the reasons."
                         )
-                        if done is None:
-                            found.append(
-                                f"review: {name}'s {one.key} ({one.title}) has a pull at "
-                                f"{head[:7]} that no one has reviewed (project {project}). Read "
-                                f"the diff against the task's spec, then `orch_review_task` with "
-                                f"`approve` or `changes` and the reasons."
-                            )
         if powers.answer:
             for project in await self._projects_of_any():
                 for one in await questions.questions(
@@ -466,14 +490,6 @@ class Dispatcher:
                         f"escalate it (`orch_escalate`)."
                     )
         return found
-
-    async def _head_of(self, project: str, key: str) -> str | None:
-        """The head a task's pull last had, or None when it has no pull udl knows."""
-        links = await stored.LinkRecords(self._records).for_owner(project, OwnerKind.TASK, key)
-        for link in links:
-            if link.link_kind == "pull" and link.state.head_sha:
-                return link.state.head_sha
-        return None
 
     async def _reaching(self, agent: stored.Agent) -> None:
         """Check `agent`'s host, then wait: an agent whose host does not answer is `offline`, so no
@@ -534,6 +550,10 @@ class Dispatcher:
             )[0]
         for project in projects:
             for one in await queues.queue_of(tasks, project=project, agent=agent.name):
+                # (A manager's standing task is not work to pick: its turn is `_managing`'s, and
+                # picking it would move it to `in_progress` and leave it there, 27.8.)
+                if one.task_kind == "review":
+                    continue
                 if await self._allowed(tasks, one):
                     return one
         return None
@@ -595,7 +615,15 @@ class Dispatcher:
         session per agent and task, the card's 2). None when it cannot be started."""
         sessions = stored.SessionRecords(self._records)
         current = await sessions.current(agent.name)
-        if current is not None and current.task == task.key:
+        if (
+            current is not None
+            and current.task == task.key
+            and current.state
+            not in (
+                SessionState.ENDED,
+                SessionState.FAILED,
+            )
+        ):
             return current
         if current is not None:
             await self._end(agent, current)
@@ -786,6 +814,10 @@ class Dispatcher:
             return None, session, False
         if found.ready:
             return "its pull is ready to merge: say so with `orch_ready`", session, False
+        if found.blockers and all(one.startswith("its manager ") for one in found.blockers):
+            # (Its manager has not reviewed this head: nothing the session can do about it, so it
+            # holds no turn, as it does while only time stands in the way, 27.8.)
+            return None, session, True
         if found.pending and set(found.pending) == set(found.blockers):
             # (Only time stands in the way, and the rerun that would hurry it needs an operation
             # udl lacks: the session holds no turn, and 28.1's question asks how long to wait.)

@@ -42,6 +42,7 @@ from udl.plugins.apps.base import (
     AppRecords,
 )
 from udl.plugins.apps.orch import actions as acted
+from udl.plugins.apps.orch import managers as bosses
 from udl.plugins.apps.orch import merge as merged
 from udl.plugins.apps.orch import questions as asked
 from udl.plugins.apps.orch import queue as queues
@@ -106,6 +107,7 @@ from udl.plugins.apps.orch.models import (
     ListProjectsRequest,
     ListQuestionsRequest,
     ListTasksRequest,
+    ManagerVerdict,
     Merged,
     MergeList,
     MergeListRequest,
@@ -859,6 +861,7 @@ class Orch(AppPlugin[OrchSettings]):
                     f"{request.key or 'A new task'} is a new task, so it needs a title",
                     hint="Set one: it is how the task is shown, in its queue and its PR.",
                 )
+            await self._plans_in(project, feature)
             key = request.key or await self._next_key(tasks, project, feature)
             found = stored.Task(project=project, feature=feature, key=key, **given)
         else:
@@ -1316,6 +1319,8 @@ class Orch(AppPlugin[OrchSettings]):
         tasks it unblocks all count. With no agent, each task is paired with the idle agent it
         suits best."""
         project = await self._project(request.project)
+        if request.agent:
+            await self._in_subtree(request.agent)
         # (An agent on a task of another project is not idle here: a task of this project
         # cannot know about another's, so they are read across every project.)
         on = [one for one in await self.records.list(stored.Task) if one.state == "in_progress"]
@@ -1947,7 +1952,7 @@ class Orch(AppPlugin[OrchSettings]):
 
     async def _reviewed(
         self, project: str, task: stored.Task, head: str
-    ) -> tuple[str | None, str | None]:
+    ) -> tuple[str | None, ManagerVerdict | None]:
         """The manager whose OK `task` needs for `head`, and what it said (None when it has not
         looked): the nearest agent above the task's assignee that has the `review` power (27.8)."""
         if not task.assignee or task.assignee.startswith("human:"):
@@ -1958,8 +1963,30 @@ class Orch(AppPlugin[OrchSettings]):
             if not one.manages.review:
                 continue
             found = await stored.ReviewRecords(self.records).for_head(project, task.key, head)
-            return one.name, found.verdict if found is not None else None
+            # (Only this manager's review is its OK: one saved under another name — a report's
+            # own, say — is not the manager's verdict, 27.8.)
+            return one.name, found.verdict if found is not None and found.by == one.name else None
         return None, None
+
+    async def _plans_in(self, project: str, feature: str) -> None:
+        """Refuse a new task in a feature none of the caller's reports works on (27.8: `plan`
+        is its reports' work). A person, or an agent with no reports, plans anywhere."""
+        who = _caller()
+        if who is None or not who.is_agent:
+            return
+        found = await stored.AgentRecords(self.records).agent(who.name)
+        if found is None or not found.manages.plan:
+            return
+        below = {
+            one.name for one in await bosses.reports(stored.AgentRecords(self.records), who.name)
+        }
+        tasks = await stored.TaskRecords(self.records).tasks(project)
+        if any(one.feature == feature and one.assignee in below for one in tasks):
+            return
+        raise NotAllowed(
+            f"{feature!r} has none of {who.name}'s reports' tasks",
+            hint="A manager plans in the features its reports work on (27.8).",
+        )
 
     async def _in_subtree(self, other: str) -> None:
         """Refuse an agent acting on `other` unless it is itself or reports to it (27.8: a
@@ -1997,12 +2024,17 @@ class Orch(AppPlugin[OrchSettings]):
         task = await tasks.task(project, request.key)
         if task is None:
             raise DoesNotExist(f"There is no task called {request.key!r} in {project!r}")
+        if (task.assignee or "") == who.name:
+            raise NotAllowed(
+                f"{request.key!r} is {who.name}'s own work",
+                hint="A review is someone else's: a manager reviews its reports' work (27.8).",
+            )
         if not task.assignee or not await in_subtree(agents, who.name, task.assignee):
             raise NotAllowed(
                 f"{request.key!r} is not one of {who.name}'s reports' tasks",
                 hint="A manager reviews its own reports' work (27.8).",
             )
-        head = request.head or (await self._head_of(project, request.key))
+        head = request.head or await stored.LinkRecords(self.records).head_of(project, request.key)
         if head is None:
             raise NotAllowed(
                 f"{request.key!r} has no pull to review",
@@ -2037,14 +2069,6 @@ class Orch(AppPlugin[OrchSettings]):
             at=review.at,
         )
 
-    async def _head_of(self, project: str, key: str) -> str | None:
-        """The head a task's pull last had, or None when it has no pull udl knows."""
-        links = await stored.LinkRecords(self.records).for_owner(project, OwnerKind.TASK, key)
-        for link in links:
-            if link.link_kind == "pull" and link.state.head_sha:
-                return link.state.head_sha
-        return None
-
     # -- the queue (27.3) ----------------------------------------------------------------------
 
     async def assign(self, request: AssignTaskRequest) -> TaskQueue:
@@ -2056,6 +2080,11 @@ class Orch(AppPlugin[OrchSettings]):
         tasks = stored.TaskRecords(self.records)
         project = await self._project(request.project)
         await self._in_subtree(request.agent)
+        held = await tasks.task(project, request.key)
+        if held is not None and held.assignee:
+            # (A task another manager's report holds is not the caller's to move: moving it
+            # would stop that report's session, 27.8.)
+            await self._in_subtree(held.assignee)
         await queues.assign(
             tasks, request.key, request.agent, project=project, position=request.position
         )
