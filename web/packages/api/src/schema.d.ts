@@ -1108,6 +1108,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge the pull of the task `key` (28.3), once more against its current head: it must be
+         * @description Merge the pull of the task `key` (28.3), once more against its current head: it must be
+         *     ready, `confirm` must say which pull it is (`owner/repo#number`), and the head that was
+         *     checked is the commit merged, so a pull that changed since is not merged blind.
+         *
+         *     A person merges, or — where the project's `merge` is `agent` — the task's own assignee.
+         *     After it the task is `merged` (and `done` at once when a person merged and nothing follows
+         *     the base), and each task stacked on it is told to rebase and push again. Its worktree is
+         *     taken away by 27.5's `remove()`, which this PR does not reach (it is in #52, not in
+         *     `main`).
+         */
+        post: operations["orch_merge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/merge_list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What there is to merge (28.3): the ready ones in merge order, grouped by repo; the ones
+         * @description What there is to merge (28.3): the ready ones in merge order, grouped by repo; the ones
+         *     still coming, with what they wait on; the held ones; and what merged in the last 14 days,
+         *     with what followed each. It reads: nothing changes.
+         */
+        post: operations["orch_merge_list"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/orch/my_task": {
         parameters: {
             query?: never;
@@ -1151,6 +1201,48 @@ export interface paths {
          *     an open item) is answered at once, as is one that has no pull yet.
          */
         post: operations["orch_pr_status"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark the tasks a promotion carried done (28.3), after its pull merged: `note` is written
+         * @description Mark the tasks a promotion carried done (28.3), after its pull merged: `note` is written
+         *     on each as a `progress` note. A task that is not `merged` is refused.
+         */
+        post: operations["orch_promote"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/promotion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What a promotion would carry (28.3): the tasks merged and not done, per repo, for a
+         * @description What a promotion would carry (28.3): the tasks merged and not done, per repo, for a
+         *     project whose branches go on after the base.
+         */
+        post: operations["orch_promotion"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4560,8 +4652,68 @@ export interface components {
          * @enum {string}
          */
         MediaKind: "file" | "hls" | "dash";
+        /**
+         * MergeList
+         * @description What there is to merge (28.3), as a person reads it: the ready ones in merge order (grouped
+         *     by repo), the ones still coming (with what they wait on), the held ones, and what merged
+         *     lately.
+         */
+        MergeList: {
+            /**
+             * Coming
+             * @description With an open pull that is not ready yet, each with its blockers.
+             */
+            coming?: components["schemas"]["MergeRow"][];
+            /**
+             * Done
+             * @description Merged in the last 14 days, with what followed each.
+             */
+            done?: components["schemas"]["MergeRow"][];
+            /**
+             * Held
+             * @description Held (built now, merged later), each with its hold as its blocker.
+             */
+            held?: components["schemas"]["MergeRow"][];
+            /**
+             * Ready
+             * @description Ready to merge, grouped by repo, each after what it needs.
+             */
+            ready?: components["schemas"]["MergeRow"][];
+        };
+        /**
+         * MergeListRequest
+         * @description Asking what there is to merge (28.3).
+         */
+        MergeListRequest: {
+            /** @description The project (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+        };
         /** @enum {string} */
         MergeMethod: "merge" | "squash" | "rebase";
+        /**
+         * MergeRequest
+         * @description Merging a task's pull (28.3): the task, and what it must be confirmed as.
+         */
+        MergeRequest: {
+            /**
+             * Confirm
+             * @description `owner/repo#number`, as `github_merge_pull` asks: the merge says which pull it is.
+             */
+            confirm: string;
+            /**
+             * Key
+             * @description The task whose pull is merged.
+             */
+            key: string;
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /**
+             * Sha
+             * @description The head the caller saw (`orch_merge_list`'s row): the pull is merged only at that head,
+             *     and one that moved since is refused rather than merged blind.
+             */
+            sha: string;
+        };
         /**
          * MergeResult
          * @description What merging a pull request did.
@@ -4584,6 +4736,100 @@ export interface components {
              * @default
              */
             sha: string;
+        };
+        /**
+         * MergeRow
+         * @description One task in a merge list (28.3): its pull, where it is, and what it waits on.
+         */
+        MergeRow: {
+            /**
+             * Blockers
+             * @description Why it may not be merged yet (empty: it may).
+             */
+            blockers?: string[];
+            /**
+             * Feature
+             * @description The feature it belongs to.
+             */
+            feature: string;
+            /**
+             * Followed
+             * @description The tasks that needed it (what followed a merge: they rebase and push again).
+             */
+            followed?: string[];
+            /**
+             * Hold
+             * @description Whether it is held: built now, merged later.
+             * @default false
+             */
+            hold: boolean;
+            /**
+             * Needs
+             * @description The tasks that must be merged first, by key.
+             */
+            needs?: string[];
+            /**
+             * Number
+             * @description Its pull's number.
+             */
+            number: number;
+            /** @description The project it is in. */
+            project: components["schemas"]["Name"];
+            /**
+             * Repo
+             * @description Its repo, in full (`owner/name`).
+             */
+            repo: string;
+            /**
+             * Sha
+             * @description The commit at its pull's head.
+             */
+            sha: string;
+            /**
+             * Since
+             * @description When it reached where it is: ready, or merged.
+             */
+            since?: string | null;
+            /** @description Where the task is. */
+            state: components["schemas"]["State"];
+            /**
+             * Task
+             * @description The task's key.
+             */
+            task: string;
+            /**
+             * Title
+             * @description What it is, in a line.
+             */
+            title: string;
+            /**
+             * Url
+             * @description Its pull's page.
+             */
+            url: string;
+        };
+        /**
+         * Merged
+         * @description A pull that was merged (28.3): the task, its pull and the commit merged.
+         */
+        Merged: {
+            /**
+             * Sha
+             * @description The commit that was merged.
+             */
+            sha: string;
+            /** @description Where the task is now: merged, or done at once when nothing follows the base. */
+            state: components["schemas"]["State"];
+            /**
+             * Task
+             * @description The task's key.
+             */
+            task: string;
+            /**
+             * Url
+             * @description Its pull's page.
+             */
+            url: string;
         };
         /**
          * Misfire
@@ -4995,6 +5241,62 @@ export interface components {
             title?: string | null;
             /** Tool */
             tool: string;
+        };
+        /**
+         * PromoteRequest
+         * @description Marking tasks done after a promotion's pull merged (28.3).
+         */
+        PromoteRequest: {
+            /**
+             * Note
+             * @description What to write as each task's note (empty: a line saying it was promoted).
+             * @default
+             */
+            note: string;
+            /** @description The project they are in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /**
+             * Tasks
+             * @description The tasks the promotion carried.
+             */
+            tasks: string[];
+        };
+        /**
+         * Promoted
+         * @description The tasks a promotion marked done (28.3).
+         */
+        Promoted: {
+            /**
+             * Tasks
+             * @description The tasks that are done now.
+             */
+            tasks?: string[];
+        };
+        /**
+         * PromotionList
+         * @description What is merged but not done (28.3): the tasks a promotion would mark done, per repo.
+         */
+        PromotionList: {
+            /** @description The project. */
+            project: components["schemas"]["Name"];
+            /**
+             * Promotion
+             * @description Its branches after the base, in order (empty: nothing to promote).
+             */
+            promotion?: string[];
+            /**
+             * Rows
+             * @description The tasks that are merged and not done, grouped by repo.
+             */
+            rows?: components["schemas"]["MergeRow"][];
+        };
+        /**
+         * PromotionRequest
+         * @description Asking what a promotion would mark done (28.3).
+         */
+        PromotionRequest: {
+            /** @description The project (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
         };
         /**
          * PullDetail
@@ -11406,6 +11708,162 @@ export interface operations {
             };
         };
     };
+    orch_merge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MergeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Merged"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_merge_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MergeListRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MergeList"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
     orch_my_task: {
         parameters: {
             query?: never;
@@ -11504,6 +11962,162 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Readiness"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_promote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PromoteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Promoted"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_promotion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PromotionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromotionList"];
                 };
             };
             /** @description Bad Request */

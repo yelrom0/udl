@@ -21,7 +21,17 @@ from udl.plugins.apps.orch.models import Repo
 from udl.plugins.apps.orch.records import Task
 from udl.plugins.apps.orch.workspace import prepare, remove
 
-GIT: list[str] = ["git", "-c", "user.name=udl", "-c", "user.email=udl@example.com"]
+# (A repo of the test's own: its own identity, and no signing — the machine's git signs with
+# 1Password, which refuses under load and would fail the test for something udl did not do.)
+GIT: list[str] = [
+    "git",
+    "-c",
+    "user.name=udl",
+    "-c",
+    "user.email=udl@example.com",
+    "-c",
+    "commit.gpgsign=false",
+]
 
 
 def git(*args: str, cwd: Path) -> str:

@@ -994,3 +994,121 @@ class ReadyRequest(_Model):
     """What to write as the task's `progress` note (empty: a line saying it is ready)."""
     project: Name | None = None
     """The project it is in (None: the only one, while udl has one)."""
+
+
+class MergeRow(_Model):
+    """One task in a merge list (28.3): its pull, where it is, and what it waits on."""
+
+    project: Name
+    """The project it is in."""
+    task: Key
+    """The task's key."""
+    feature: Key
+    """The feature it belongs to."""
+    title: Title
+    """What it is, in a line."""
+    repo: str
+    """Its repo, in full (`owner/name`)."""
+    number: int
+    """Its pull's number."""
+    url: str
+    """Its pull's page."""
+    sha: str
+    """The commit at its pull's head."""
+    state: State
+    """Where the task is."""
+    needs: list[Key] = Field(default_factory=list[Key])
+    """The tasks that must be merged first, by key."""
+    blockers: list[str] = Field(default_factory=list[str])
+    """Why it may not be merged yet (empty: it may)."""
+    hold: bool = False
+    """Whether it is held: built now, merged later."""
+    since: AwareDatetime | None = None
+    """When it reached where it is: ready, or merged."""
+    followed: list[Key] = Field(default_factory=list[Key])
+    """The tasks that needed it (what followed a merge: they rebase and push again)."""
+
+
+class MergeList(_Model):
+    """What there is to merge (28.3), as a person reads it: the ready ones in merge order (grouped
+    by repo), the ones still coming (with what they wait on), the held ones, and what merged
+    lately."""
+
+    ready: list[MergeRow] = Field(default_factory=list[MergeRow])
+    """Ready to merge, grouped by repo, each after what it needs."""
+    coming: list[MergeRow] = Field(default_factory=list[MergeRow])
+    """With an open pull that is not ready yet, each with its blockers."""
+    held: list[MergeRow] = Field(default_factory=list[MergeRow])
+    """Held (built now, merged later), each with its hold as its blocker."""
+    done: list[MergeRow] = Field(default_factory=list[MergeRow])
+    """Merged in the last 14 days, with what followed each."""
+
+
+class MergeListRequest(_Model):
+    """Asking what there is to merge (28.3)."""
+
+    project: Name | None = None
+    """The project (None: the only one, while udl has one)."""
+
+
+class MergeRequest(_Model):
+    """Merging a task's pull (28.3): the task, and what it must be confirmed as."""
+
+    key: Key
+    """The task whose pull is merged."""
+    confirm: str
+    """`owner/repo#number`, as `github_merge_pull` asks: the merge says which pull it is."""
+    sha: str
+    """The head the caller saw (`orch_merge_list`'s row): the pull is merged only at that head,
+    and one that moved since is refused rather than merged blind."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class Merged(_Model):
+    """A pull that was merged (28.3): the task, its pull and the commit merged."""
+
+    task: Key
+    """The task's key."""
+    url: str
+    """Its pull's page."""
+    sha: str
+    """The commit that was merged."""
+    state: State
+    """Where the task is now: merged, or done at once when nothing follows the base."""
+
+
+class PromotionList(_Model):
+    """What is merged but not done (28.3): the tasks a promotion would mark done, per repo."""
+
+    project: Name
+    """The project."""
+    promotion: list[str] = Field(default_factory=list[str])
+    """Its branches after the base, in order (empty: nothing to promote)."""
+    rows: list[MergeRow] = Field(default_factory=list[MergeRow])
+    """The tasks that are merged and not done, grouped by repo."""
+
+
+class PromotionRequest(_Model):
+    """Asking what a promotion would mark done (28.3)."""
+
+    project: Name | None = None
+    """The project (None: the only one, while udl has one)."""
+
+
+class PromoteRequest(_Model):
+    """Marking tasks done after a promotion's pull merged (28.3)."""
+
+    tasks: list[Key]
+    """The tasks the promotion carried."""
+    note: Spec = ""
+    """What to write as each task's note (empty: a line saying it was promoted)."""
+    project: Name | None = None
+    """The project they are in (None: the only one, while udl has one)."""
+
+
+class Promoted(_Model):
+    """The tasks a promotion marked done (28.3)."""
+
+    tasks: list[Key] = Field(default_factory=list[Key])
+    """The tasks that are done now."""

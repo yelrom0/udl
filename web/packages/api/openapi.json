@@ -4993,6 +4993,65 @@
         "title": "MediaKind",
         "type": "string"
       },
+      "MergeList": {
+        "additionalProperties": false,
+        "description": "What there is to merge (28.3), as a person reads it: the ready ones in merge order (grouped\nby repo), the ones still coming (with what they wait on), the held ones, and what merged\nlately.",
+        "properties": {
+          "coming": {
+            "description": "With an open pull that is not ready yet, each with its blockers.",
+            "items": {
+              "$ref": "#/components/schemas/MergeRow"
+            },
+            "title": "Coming",
+            "type": "array"
+          },
+          "done": {
+            "description": "Merged in the last 14 days, with what followed each.",
+            "items": {
+              "$ref": "#/components/schemas/MergeRow"
+            },
+            "title": "Done",
+            "type": "array"
+          },
+          "held": {
+            "description": "Held (built now, merged later), each with its hold as its blocker.",
+            "items": {
+              "$ref": "#/components/schemas/MergeRow"
+            },
+            "title": "Held",
+            "type": "array"
+          },
+          "ready": {
+            "description": "Ready to merge, grouped by repo, each after what it needs.",
+            "items": {
+              "$ref": "#/components/schemas/MergeRow"
+            },
+            "title": "Ready",
+            "type": "array"
+          }
+        },
+        "title": "MergeList",
+        "type": "object"
+      },
+      "MergeListRequest": {
+        "additionalProperties": false,
+        "description": "Asking what there is to merge (28.3).",
+        "properties": {
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project (None: the only one, while udl has one)."
+          }
+        },
+        "title": "MergeListRequest",
+        "type": "object"
+      },
       "MergeMethod": {
         "enum": [
           "merge",
@@ -5000,6 +5059,47 @@
           "rebase"
         ],
         "type": "string"
+      },
+      "MergeRequest": {
+        "additionalProperties": false,
+        "description": "Merging a task's pull (28.3): the task, and what it must be confirmed as.",
+        "properties": {
+          "confirm": {
+            "description": "`owner/repo#number`, as `github_merge_pull` asks: the merge says which pull it is.",
+            "title": "Confirm",
+            "type": "string"
+          },
+          "key": {
+            "description": "The task whose pull is merged.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          },
+          "sha": {
+            "description": "The head the caller saw (`orch_merge_list`'s row): the pull is merged only at that head,\nand one that moved since is refused rather than merged blind.",
+            "title": "Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "confirm",
+          "sha"
+        ],
+        "title": "MergeRequest",
+        "type": "object"
       },
       "MergeResult": {
         "additionalProperties": false,
@@ -5027,6 +5127,155 @@
           "merged"
         ],
         "title": "MergeResult",
+        "type": "object"
+      },
+      "MergeRow": {
+        "additionalProperties": false,
+        "description": "One task in a merge list (28.3): its pull, where it is, and what it waits on.",
+        "properties": {
+          "blockers": {
+            "description": "Why it may not be merged yet (empty: it may).",
+            "items": {
+              "type": "string"
+            },
+            "title": "Blockers",
+            "type": "array"
+          },
+          "feature": {
+            "description": "The feature it belongs to.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Feature",
+            "type": "string"
+          },
+          "followed": {
+            "description": "The tasks that needed it (what followed a merge: they rebase and push again).",
+            "items": {
+              "maxLength": 40,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+              "type": "string"
+            },
+            "title": "Followed",
+            "type": "array"
+          },
+          "hold": {
+            "default": false,
+            "description": "Whether it is held: built now, merged later.",
+            "title": "Hold",
+            "type": "boolean"
+          },
+          "needs": {
+            "description": "The tasks that must be merged first, by key.",
+            "items": {
+              "maxLength": 40,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+              "type": "string"
+            },
+            "title": "Needs",
+            "type": "array"
+          },
+          "number": {
+            "description": "Its pull's number.",
+            "title": "Number",
+            "type": "integer"
+          },
+          "project": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The project it is in."
+          },
+          "repo": {
+            "description": "Its repo, in full (`owner/name`).",
+            "title": "Repo",
+            "type": "string"
+          },
+          "sha": {
+            "description": "The commit at its pull's head.",
+            "title": "Sha",
+            "type": "string"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When it reached where it is: ready, or merged.",
+            "title": "Since"
+          },
+          "state": {
+            "$ref": "#/components/schemas/State",
+            "description": "Where the task is."
+          },
+          "task": {
+            "description": "The task's key.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Task",
+            "type": "string"
+          },
+          "title": {
+            "description": "What it is, in a line.",
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "description": "Its pull's page.",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "task",
+          "feature",
+          "title",
+          "repo",
+          "number",
+          "url",
+          "sha",
+          "state"
+        ],
+        "title": "MergeRow",
+        "type": "object"
+      },
+      "Merged": {
+        "additionalProperties": false,
+        "description": "A pull that was merged (28.3): the task, its pull and the commit merged.",
+        "properties": {
+          "sha": {
+            "description": "The commit that was merged.",
+            "title": "Sha",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/State",
+            "description": "Where the task is now: merged, or done at once when nothing follows the base."
+          },
+          "task": {
+            "description": "The task's key.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Task",
+            "type": "string"
+          },
+          "url": {
+            "description": "Its pull's page.",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "url",
+          "sha",
+          "state"
+        ],
+        "title": "Merged",
         "type": "object"
       },
       "Misfire": {
@@ -5762,6 +6011,113 @@
           "ok"
         ],
         "title": "ProbeResult",
+        "type": "object"
+      },
+      "PromoteRequest": {
+        "additionalProperties": false,
+        "description": "Marking tasks done after a promotion's pull merged (28.3).",
+        "properties": {
+          "note": {
+            "default": "",
+            "description": "What to write as each task's note (empty: a line saying it was promoted).",
+            "maxLength": 100000,
+            "title": "Note",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project they are in (None: the only one, while udl has one)."
+          },
+          "tasks": {
+            "description": "The tasks the promotion carried.",
+            "items": {
+              "maxLength": 40,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+              "type": "string"
+            },
+            "title": "Tasks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tasks"
+        ],
+        "title": "PromoteRequest",
+        "type": "object"
+      },
+      "Promoted": {
+        "additionalProperties": false,
+        "description": "The tasks a promotion marked done (28.3).",
+        "properties": {
+          "tasks": {
+            "description": "The tasks that are done now.",
+            "items": {
+              "maxLength": 40,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+              "type": "string"
+            },
+            "title": "Tasks",
+            "type": "array"
+          }
+        },
+        "title": "Promoted",
+        "type": "object"
+      },
+      "PromotionList": {
+        "additionalProperties": false,
+        "description": "What is merged but not done (28.3): the tasks a promotion would mark done, per repo.",
+        "properties": {
+          "project": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The project."
+          },
+          "promotion": {
+            "description": "Its branches after the base, in order (empty: nothing to promote).",
+            "items": {
+              "type": "string"
+            },
+            "title": "Promotion",
+            "type": "array"
+          },
+          "rows": {
+            "description": "The tasks that are merged and not done, grouped by repo.",
+            "items": {
+              "$ref": "#/components/schemas/MergeRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project"
+        ],
+        "title": "PromotionList",
+        "type": "object"
+      },
+      "PromotionRequest": {
+        "additionalProperties": false,
+        "description": "Asking what a promotion would mark done (28.3).",
+        "properties": {
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project (None: the only one, while udl has one)."
+          }
+        },
+        "title": "PromotionRequest",
         "type": "object"
       },
       "PullDetail": {
@@ -15641,6 +15997,200 @@
         ]
       }
     },
+    "/plugins/orch/merge": {
+      "post": {
+        "description": "Merge the pull of the task `key` (28.3), once more against its current head: it must be\nready, `confirm` must say which pull it is (`owner/repo#number`), and the head that was\nchecked is the commit merged, so a pull that changed since is not merged blind.\n\nA person merges, or \u2014 where the project's `merge` is `agent` \u2014 the task's own assignee.\nAfter it the task is `merged` (and `done` at once when a person merged and nothing follows\nthe base), and each task stacked on it is told to rebase and push again. Its worktree is\ntaken away by 27.5's `remove()`, which this PR does not reach (it is in #52, not in\n`main`).",
+        "operationId": "orch_merge",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MergeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Merged"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Merge the pull of the task `key` (28.3), once more against its current head: it must be",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/merge_list": {
+      "post": {
+        "description": "What there is to merge (28.3): the ready ones in merge order, grouped by repo; the ones\nstill coming, with what they wait on; the held ones; and what merged in the last 14 days,\nwith what followed each. It reads: nothing changes.",
+        "operationId": "orch_merge_list",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MergeListRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MergeList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "What there is to merge (28.3): the ready ones in merge order, grouped by repo; the ones",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
     "/plugins/orch/my_task": {
       "post": {
         "description": "What an agent is to work next: the task it is in progress on, else the first on its\nqueue, and nothing when it has none.\n\nThe dispatcher asks this when it starts a session (27.7); an agent asks it when it is\ntold to go on.",
@@ -15830,6 +16380,200 @@
           }
         ],
         "summary": "Whether the task `key`'s pull may be merged (27.6), and with `wait`, holding until",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/promote": {
+      "post": {
+        "description": "Mark the tasks a promotion carried done (28.3), after its pull merged: `note` is written\non each as a `progress` note. A task that is not `merged` is refused.",
+        "operationId": "orch_promote",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromoteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Promoted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Mark the tasks a promotion carried done (28.3), after its pull merged: `note` is written",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/promotion": {
+      "post": {
+        "description": "What a promotion would carry (28.3): the tasks merged and not done, per repo, for a\nproject whose branches go on after the base.",
+        "operationId": "orch_promotion",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromotionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromotionList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "What a promotion would carry (28.3): the tasks merged and not done, per repo, for a",
         "tags": [
           "orch"
         ]
