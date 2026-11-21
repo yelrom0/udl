@@ -503,6 +503,29 @@ async def test_its_models_are_the_server_s(service: FakeOpenCode, shell: FakeShe
     assert service.calls[-1] == ("GET", "/api/model", {})
 
 
+async def test_an_openai_model_is_listed_by_its_provider_and_id() -> None:
+    """25.13: a model the service offers through OpenAI's key is `openai/<id>`, the name an
+    agent's `model` is set to — the same path any other provider's model takes."""
+    fake = FakeOpenCode(
+        models=[
+            {
+                "id": "gpt-5",
+                "name": "GPT-5",
+                "providerID": "openai",
+                "modelID": "gpt-5",
+                "family": "gpt",
+                "enabled": True,
+            }
+        ]
+    )
+    runner = _runner(fake, FakeShell(), options=OpenCodeOptions(models=["openai/gpt-5"]))
+
+    models = await runner.models()
+
+    assert [model.id for model in models] == ["openai/gpt-5"]
+    assert models[0].name == "GPT-5"
+
+
 async def test_the_models_it_may_run_are_the_ones_it_lists(service: FakeOpenCode) -> None:
     runner = _runner(
         service, FakeShell(), options=OpenCodeOptions(models=["openrouter/other/model"])

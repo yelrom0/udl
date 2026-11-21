@@ -589,7 +589,7 @@ OPENAI_URL: Final = "https://api.openai.com/v1"
 """Where OpenAI's API is (its models, its chats)."""
 
 _REFUSED: Final = "OpenAI: the key was refused"
-"""What a 401 is said as: OpenAI does not say why, only that the key is not its own."""
+"""What a 401 or a 403 is said as: OpenAI does not say why, only that the key is not its own."""
 
 
 class OpenAIProviderOptions(OpenAIOptions):

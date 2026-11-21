@@ -310,6 +310,12 @@ class FakeOpenCode:
                 "connections": [],
             },
             {
+                "id": "openai",
+                "name": "OpenAI",
+                "methods": [{"type": "env", "names": ["OPENAI_API_KEY"]}],
+                "connections": [],
+            },
+            {
                 "id": "anthropic",
                 "name": "Anthropic",
                 "methods": [{"type": "env", "names": ["ANTHROPIC_API_KEY"]}],

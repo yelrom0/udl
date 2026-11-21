@@ -19,20 +19,27 @@ from pathlib import Path
 from typing import Final
 
 # Package Imports
+import httpx
 import pytest
 from pydantic import SecretStr
 
 # Local Imports
 from support.clock import FakeClock
 from support.engine import databases, registry, settings
+from support.opencode import FakeOpenCode, FakeShell
 from support.secrets import FakeResolver
-from udl.clock import SystemClock
+from udl.clock import Clock, SystemClock
 from udl.config import SecretsSettings
+from udl.core.service import UDLService
 from udl.db.manager import DBManager
+from udl.hosts.shell import Host, HostShell
 from udl.plugins.ai.base import AIProviderConnection
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.plugin import Orch
 from udl.plugins.apps.orch.settings import OrchSettings
+from udl.plugins.registry import RUNNERS, PluginRegistry
+from udl.plugins.runners.manage import SetupRunnerRequest
+from udl.plugins.runners.opencode import OpenCode, OpenCodeOptions
 from udl.plugins.secrets.base import SecretRef, SecretStore
 from udl.plugins.secrets.memory import MemorySecretStore
 from udl.plugins.secrets.resolvers import ResolvingStore
@@ -175,3 +182,57 @@ async def test_a_connection_without_a_key_sends_nothing(app: Orch, db: DBManager
     )
 
     assert await app.provider_keys(db, await store(kept={})) == {}
+
+
+# ---------------------------------------------------------------------------------------------
+# Through the harnesses: the keys reach the service's credential store, never an argv
+# ---------------------------------------------------------------------------------------------
+
+
+def _opencode_against(fake: FakeOpenCode) -> type[OpenCode]:
+    """The real `opencode` runner, against a fake service (a test's transport, as
+    tests/unit/plugins/runners/test_opencode.py gives it one)."""
+
+    class Runner(OpenCode):
+        def __init__(self, options: OpenCodeOptions, *, shell: HostShell, clock: Clock) -> None:
+            super().__init__(
+                options, shell=shell, clock=clock, transport=httpx.ASGITransport(app=fake.app)
+            )
+
+    return Runner
+
+
+async def test_a_setup_gives_the_harness_the_keys_and_no_argv(tmp_path: Path) -> None:
+    """`orch_runner_setup` end to end: the key udl keeps for a connection reaches the service's
+    own credential store (`POST /api/credential`), and is in no command on the host."""
+    fake = FakeOpenCode()
+    shell = FakeShell()
+    registry = PluginRegistry.discover(builtin_only=True)
+    registry.register(RUNNERS, _opencode_against(fake))
+    service = UDLService(
+        settings(tmp_path),
+        registry=registry,
+        clock=FakeClock(),
+        secrets=MemorySecretStore(SecretsSettings()),
+    )
+
+    def shell_for(found: Host) -> FakeShell:
+        """Every host answers through the one fake shell."""
+        return shell
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("udl.hosts.manager.shell_for", shell_for)
+        async with service:
+            await service.db.upsert_record(Host.local("/w"))
+            await connection(service.db, name="oa", plugin="openai", ref=OPENAI_REF)
+            await service.secrets.set(SecretRef(OPENAI_REF), SecretStr("sk-openai"))
+            app = await service.apps.get("orch")
+            assert isinstance(app, Orch)
+
+            setup = await app.runner_setup(
+                SetupRunnerRequest(host="local", runner="opencode"), service=service
+            )
+
+    assert setup.files[0].endswith("opencode.json")
+    assert all("sk-openai" not in " ".join(argv) for argv in shell.runs)
+    assert fake.credentials["udl-openai"]["value"] == {"type": "key", "key": "sk-openai"}
