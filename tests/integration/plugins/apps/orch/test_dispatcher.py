@@ -29,13 +29,13 @@ from pydantic import BaseModel, SecretStr
 from support.clock import FakeClock
 from support.engine import registry, settings
 from support.runners import FakeRunner, FakeRunnerOptions, Sessions, Turn
-from udl.automations.models import EventList
+from udl.automations.models import EventInfo, EventList
 from udl.clock import Clock
 from udl.config import APISettings
 from udl.core.models import PluginSettingsRequest, SetPluginSettingsRequest
 from udl.core.operations import OperationHints
 from udl.core.service import UDLService
-from udl.errors import NotAllowed
+from udl.errors import NotAllowed, PluginFailed
 from udl.hosts.shell import HostShell
 from udl.plugins.apps.base import (
     AppContext,
@@ -78,6 +78,7 @@ from udl.plugins.apps.orch.records import (
     TaskRecords,
 )
 from udl.plugins.apps.orch.settings import OrchSettings
+from udl.plugins.apps.orch.tokens import secret_ref
 from udl.plugins.registry import APPS, RUNNERS, PluginRegistry
 from udl.plugins.runners.base import (
     AgentEvent,
@@ -154,6 +155,8 @@ class FakeGitHub(AppPlugin[AppSettings]):
         self.pull = FakePull()
         self.reads = 0
         """How many pulls it was asked for (what a test counts a wake by)."""
+        self.fails: Exception | None = None
+        """What reading the pull raises, when a test wants one that cannot be read."""
 
     @classmethod
     def operations(cls) -> list[Any]:
@@ -166,6 +169,8 @@ class FakeGitHub(AppPlugin[AppSettings]):
     async def get_pull(self, request: GetPullRequest) -> FakePull:
         """The pull the test set (whatever number it asks for)."""
         self.reads += 1
+        if self.fails is not None:
+            raise self.fails
         return self.pull
 
 
@@ -401,6 +406,13 @@ async def two_agents(service: UDLService, second: str = "other") -> None:
     task = await tasks.task("udl", "F-1.2")
     assert task is not None
     await tasks.save_task(task.model_copy(update={"assignee": second}))
+
+
+async def events_of(service: UDLService, type_: str) -> list[EventInfo]:
+    """The events published so far whose type matches `type_`."""
+    published = await service.call("list_events", {"type": type_, "limit": 200})
+    assert isinstance(published, EventList)
+    return published.events
 
 
 async def scripted(service: UDLService, key: str, *, prompt: str | None = None) -> None:
@@ -1275,3 +1287,102 @@ async def test_the_transcripts_older_than_session_days_are_pruned(tmp_path: Path
     assert stale.id not in left, "forgotten when the dispatcher started"
     assert kept.id in left
     assert later.id not in after, "forgotten on the tick, in a udl that keeps running"
+
+
+async def test_a_pull_that_cannot_be_read_is_fenced_like_the_bot_s_text(
+    service: UDLService,
+) -> None:
+    """(Text from outside is data: an error from GitHub is fenced and labelled as well.)"""
+    github = await service.apps.get("github")
+    assert isinstance(github, FakeGitHub)
+    github.fails = PluginFailed("the checks' log had ``` in it")
+
+    await ran(service, clock=FakeClock(), turns=2)
+
+    told = PROMPTS[1]
+    assert told.startswith("What changed on F-1.1: its pull could not be read:")
+    assert "````udl\nthe checks' log had ``` in it\n````" in told
+
+
+async def test_two_things_said_alike_in_one_turn_are_two_events(service: UDLService) -> None:
+    """(The bus drops a repeat by its key: a key made from what was said would drop the second
+    `"."` of a turn, or the second time `make check` started.)"""
+
+    async def twice(runner: FakeRunner, _: SessionRef) -> AsyncIterator[AgentEvent]:
+        yield TextDelta(text=".")
+        yield TextDelta(text=".")
+        yield TurnEnded(reason=TurnReason.DONE, text="done.")
+
+    SCRIPT[first_prompt_of("F-1.1")] = twice
+
+    await ran(service, clock=FakeClock(), turns=2)
+
+    sessions = SessionRecords(AppRecords(service.db))
+    session = await session_of(service)
+    assert session is not None
+    transcript = await sessions.transcript(session.id)
+    said = [one for one in transcript if one.event.kind == "text_delta"]
+    assert len(said) >= 2, "the turn said the same thing twice"
+
+    published = await events_of(service, "orch.session.event")
+    deltas = [
+        one
+        for one in published
+        if one.data["kind"] == "text_delta" and one.data["session"] == str(session.id)
+    ]
+    assert len(deltas) == len(said), "every one was published, none dropped as its twin's repeat"
+
+
+async def test_a_restart_s_first_live_event_is_not_the_last_run_s_repeat(
+    service: UDLService,
+) -> None:
+    """(A key that counted from 0 made each run's first events the last run's repeats, which the
+    bus drops without a warning.)"""
+
+    async def for_a_while(clock: FakeClock, ticks: int) -> list[EventInfo]:
+        """Run a dispatcher for up to `ticks`, then stop it: what it published."""
+        found, _ = await dispatcher(service, clock=clock)
+        running = asyncio.ensure_future(found.run())
+        try:
+            for _ in range(ticks):
+                await clock.advance(timedelta(seconds=31))
+                if await events_of(service, "orch.session.event"):
+                    break
+        finally:
+            running.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await running
+        return await events_of(service, "orch.session.event")
+
+    first = await for_a_while(FakeClock(), 1)
+    assert first, "the first run published what its turn said"
+
+    # (something left for the restarted udl to do: a second agent with a task of its own)
+    records = AppRecords(service.db)
+    await AgentRecords(records).save_agent(
+        Agent(name="second", title="Second", runner="fake", host="local", brief="Build it.")
+    )
+    tasks = TaskRecords(records)
+    later = Task(project="udl", feature="F-1", key="F-1.9", title="It 9", assignee="second")
+    await tasks.save_task(later)
+    await tasks.move(later, QUEUED, by=Principal(kind="system", role="assign"))
+
+    # (a new dispatcher, as a restart makes: it publishes its own turns' events)
+    second = await for_a_while(FakeClock(), 5)
+
+    assert len(second) > len(first), "what the second run published was not dropped as a repeat"
+
+
+async def test_a_token_stored_before_the_run_is_the_one_a_session_gets(
+    service: UDLService,
+) -> None:
+    """(A token a person issued is the one its sessions get: issuing one rotates it.)"""
+    stored = SecretStr("udl_agent_kept_by_a_person")
+    await service.secrets.set(secret_ref(AGENT), stored)
+
+    await ran(service, clock=FakeClock())
+
+    spec = next(iter(STORE.specs.values()))
+    assert spec.mcp is not None
+    assert spec.mcp.token is not None
+    assert spec.mcp.token.get_secret_value() == stored.get_secret_value()

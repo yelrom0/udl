@@ -25,8 +25,6 @@ gives it a FakeClock).
 # System Imports
 import asyncio
 import contextlib
-import hashlib
-import json
 import logging
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
@@ -88,11 +86,10 @@ FAILURES: Final = 3
 """How many times a turn that failed is retried before its session is `failed`."""
 
 BACKOFF: Final = timedelta(seconds=30)
-"""How long a retry waits, times the failures it has had."""
+"""How long the first retry of a failed turn waits (`FAILURES` multiplies it)."""
 
 PRUNE_EVERY: Final = timedelta(hours=6)
 """How often the transcripts older than `session_days` are forgotten (and once at start-up)."""
-"""How long the first retry of a failed turn waits (`FAILURES` multiplies it)."""
 
 type Preparing = Callable[[stored.Task, stored.Agent], Awaitable[stored.Task]]
 """What makes a task's worktree: the task, with its branch and path, or a refusal."""
@@ -180,8 +177,6 @@ class Dispatcher:
         self._settings = OrchSettings.model_validate(ctx.settings.model_dump())
         self._stop = ctx.stop
         self._turns = asyncio.Semaphore(self._settings.max_agents_running)
-        self._published = 0
-        """How many live events were published: what keeps two of them apart in the bus."""
         self._tokens: dict[str, SecretStr] = {}
         """The MCP token issued per agent, kept for as long as udl runs: issuing one rotates it,
         so a session started twice must not invalidate the other's."""
@@ -475,6 +470,7 @@ class Dispatcher:
                 "host": agent.host,
                 "runner": agent.runner,
             },
+            dedupe=str(made.id),
         )
         return made
 
@@ -663,11 +659,13 @@ class Dispatcher:
     ) -> None:
         """One thing the runner said: its transcript record, its live event, and what it cost."""
         sessions = stored.SessionRecords(self._records)
-        await sessions.save_event(
+        said = await sessions.save_event(
             stored.SessionEvent(
                 agent=agent.name, session=session.id, turn=session.turns, event=event
             )
         )
+        # (Its own record's id: two things said in one turn are two events, even when they say
+        # the same, and the same thing said again after a restart is not the last run's repeat.)
         await self._live(
             "orch.session.event",
             {
@@ -677,7 +675,7 @@ class Dispatcher:
                 "turn": session.turns,
                 "kind": event.kind,
             },
-            dedupe=f"{session.id}:{session.turns}:{_digest_of(event.model_dump(mode='json'))}",
+            dedupe=str(said.id),
         )
         if isinstance(event, Usage):
             await sessions.save_session(
@@ -715,6 +713,7 @@ class Dispatcher:
                     "session": str(session.id),
                     "until": until.isoformat() if until is not None else None,
                 },
+                dedupe=f"{session.id}:{session.turns}",
             )
             return Outcome.LIMITED
         if failed is not None or (ended is not None and ended.reason is TurnReason.ERROR):
@@ -755,6 +754,7 @@ class Dispatcher:
                 "task": session.task,
                 "why": why,
             },
+            dedupe=f"{session.id}:{session.turns}",
         )
         task = await self._task_of(session)
         if task is not None:
@@ -805,22 +805,21 @@ class Dispatcher:
                     "task": ended.task,
                     "state": str(session.state),
                 },
+                dedupe=f"{ended.id}:{ended.turns}",
             )
         self._harnesses.ended(agent.host, agent.runner, session.ref.id)
 
-    async def _live(
-        self, event_type: str, data: Mapping[str, object], *, dedupe: str | None = None
-    ) -> None:
+    async def _live(self, event_type: str, data: Mapping[str, object], *, dedupe: str) -> None:
         """Publish one of the session's live events, as its own type has it (one that cannot be
         published is logged, never fatal: the transcript is the record).
 
-        Its dedupe key is what was published, not when: the bus drops a repeat, and a key that
-        counted from 0 would make this run's first events the last run's repeats. `dedupe` is
-        for what the data cannot tell apart (two deltas of the same kind in one turn)."""
+        Its dedupe key is something stored and unique (`dedupe`: a record's id, a session and its
+        turn), never what the event says and never a count: the bus drops a repeat, so a key from
+        what was said would drop two of the same thing in one turn, and a key that counted from 0
+        would make this run's first events the last run's repeats."""
         try:
             payload: JsonObject = {name: _plain(value) for name, value in data.items()}
-            key = dedupe if dedupe is not None else _digest_of(payload)
-            await self._events.emit(event_type, payload, dedupe_key=f"{event_type}:{key}")
+            await self._events.emit(event_type, payload, dedupe_key=f"{event_type}:{dedupe}")
         except (PluginError, UDLError) as error:
             log.warning("publishing %s: %s", event_type, error)
 
@@ -829,11 +828,6 @@ def _an_event(event: AgentEvent) -> AnAgentEvent:
     """`event` as the transcript holds it: the kinds are the same, so this reads it as one of
     them (`kind` says which)."""
     return _AN_EVENT.validate_python(event)
-
-
-def _digest_of(value: object) -> str:
-    """A short digest of what `value` says, so a repeat is one comparison."""
-    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
 def _address(host: str) -> str:
