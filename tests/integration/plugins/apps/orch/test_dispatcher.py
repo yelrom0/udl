@@ -2138,8 +2138,9 @@ async def test_a_manager_keeps_two_reports_busy_across_four_tasks(service: UDLSe
                 break
             await clock.advance(timedelta(seconds=31))
         else:
+            now = await tasks_of(service)
             raise AssertionError(
-                f"never got there: {[(k, t.state, t.assignee) for k, t in every.items()]}"
+                f"never got there: {[(k, t.state, t.assignee) for k, t in now.items()]}"
                 f" sent: {PROMPTS[-6:]}"
             )
     finally:
