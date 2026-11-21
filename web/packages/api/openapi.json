@@ -611,6 +611,106 @@
         "title": "Actions",
         "type": "object"
       },
+      "AddLinkRequest": {
+        "additionalProperties": false,
+        "description": "Linking something to a feature, task, question or action.",
+        "properties": {
+          "link_kind": {
+            "$ref": "#/components/schemas/LinkKind",
+            "description": "What it points at."
+          },
+          "owner": {
+            "description": "What it hangs on, by key.",
+            "title": "Owner",
+            "type": "string"
+          },
+          "owner_kind": {
+            "$ref": "#/components/schemas/OwnerKind",
+            "description": "What it hangs on."
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project (None: the only one, while udl has one)."
+          },
+          "title": {
+            "default": "",
+            "description": "What it is called, when it is known.",
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "description": "The URL (canonicalised as it is stored).",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner_kind",
+          "owner",
+          "link_kind",
+          "url"
+        ],
+        "title": "AddLinkRequest",
+        "type": "object"
+      },
+      "AddNoteRequest": {
+        "additionalProperties": false,
+        "description": "Writing a note on a feature or a task (appended: a correction is another note).",
+        "properties": {
+          "author": {
+            "default": "udl",
+            "description": "Who is writing it.",
+            "maxLength": 2000,
+            "title": "Author",
+            "type": "string"
+          },
+          "note_kind": {
+            "$ref": "#/components/schemas/NoteKind",
+            "default": "progress",
+            "description": "What kind of note it is."
+          },
+          "owner": {
+            "description": "What it hangs on: a task's or a feature's key.",
+            "title": "Owner",
+            "type": "string"
+          },
+          "owner_kind": {
+            "$ref": "#/components/schemas/OwnerKind",
+            "description": "What it hangs on."
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project (None: the only one, while udl has one)."
+          },
+          "text": {
+            "description": "The note, as markdown.",
+            "maxLength": 100000,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner_kind",
+          "owner",
+          "text"
+        ],
+        "title": "AddNoteRequest",
+        "type": "object"
+      },
       "AllOf-Input": {
         "additionalProperties": false,
         "description": "Every one of its filters matches.",
@@ -1851,19 +1951,45 @@
         "title": "DatabaseList",
         "type": "object"
       },
-      "Deleted": {
+      "DeleteProjectRequest": {
         "additionalProperties": false,
+        "description": "Deleting a project, its repos, its features and its tasks.",
         "properties": {
-          "deleted": {
-            "description": "False when there was nothing to delete.",
-            "title": "Deleted",
-            "type": "boolean"
+          "name": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The project's name."
           }
         },
         "required": [
-          "deleted"
+          "name"
         ],
-        "title": "Deleted",
+        "title": "DeleteProjectRequest",
+        "type": "object"
+      },
+      "DeleteRepoRequest": {
+        "additionalProperties": false,
+        "description": "Deleting a repo of a project.",
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The repo's name."
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its project's name (None: the only one, while udl has one)."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "DeleteRepoRequest",
         "type": "object"
       },
       "Disconnected": {
@@ -2686,6 +2812,126 @@
           "items"
         ],
         "title": "FanOutResult[PullInfo]",
+        "type": "object"
+      },
+      "Feature": {
+        "additionalProperties": false,
+        "description": "A goal with a spec: the top tier (udl's 26.3, or an imported 22).",
+        "properties": {
+          "key": {
+            "description": "Its key within the project (`F-<n>`, or an imported key like `22`).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "order": {
+            "default": 0,
+            "description": "Where it sits among its project's features.",
+            "title": "Order",
+            "type": "integer"
+          },
+          "project": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The project it belongs to."
+          },
+          "spec": {
+            "default": "",
+            "description": "Its spec, as markdown.",
+            "maxLength": 100000,
+            "title": "Spec",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/FeatureStatus",
+            "default": "planned",
+            "description": "Where it is: its own setting, or what its tasks make it (orch.records)."
+          },
+          "title": {
+            "description": "What it is, in a line.",
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "key",
+          "title"
+        ],
+        "title": "Feature",
+        "type": "object"
+      },
+      "FeatureInfo": {
+        "additionalProperties": false,
+        "description": "A feature, with what hangs on it.",
+        "properties": {
+          "feature": {
+            "$ref": "#/components/schemas/Feature",
+            "description": "The feature itself."
+          },
+          "links": {
+            "description": "What points at it.",
+            "items": {
+              "$ref": "#/components/schemas/Link"
+            },
+            "title": "Links",
+            "type": "array"
+          },
+          "notes": {
+            "description": "Its notes, oldest first.",
+            "items": {
+              "$ref": "#/components/schemas/NoteInfo"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "tasks": {
+            "description": "Its tasks, by key.",
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            },
+            "title": "Tasks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "feature"
+        ],
+        "title": "FeatureInfo",
+        "type": "object"
+      },
+      "FeatureStatus": {
+        "enum": [
+          "planned",
+          "active",
+          "done",
+          "parked"
+        ],
+        "type": "string"
+      },
+      "Features": {
+        "additionalProperties": false,
+        "description": "A project's features, in their order.",
+        "properties": {
+          "features": {
+            "description": "The features themselves.",
+            "items": {
+              "$ref": "#/components/schemas/Feature"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "project": {
+            "description": "The project they are of.",
+            "title": "Project",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project"
+        ],
+        "title": "Features",
         "type": "object"
       },
       "FetchAttempt": {
@@ -3625,6 +3871,22 @@
           }
         ]
       },
+      "FindLinksRequest": {
+        "additionalProperties": false,
+        "description": "Asking what hangs on a URL (the other way round: the tasks a PR belongs to).",
+        "properties": {
+          "url": {
+            "description": "The URL, however it was written.",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "FindLinksRequest",
+        "type": "object"
+      },
       "FinishActionRequest": {
         "additionalProperties": false,
         "description": "Finishing something only a person could do, with what came of it.",
@@ -3702,6 +3964,79 @@
           "seconds"
         ],
         "title": "GateRun",
+        "type": "object"
+      },
+      "GetFeatureRequest": {
+        "additionalProperties": false,
+        "description": "Asking for one feature: its tasks, its links and its notes.",
+        "properties": {
+          "key": {
+            "description": "The feature's key.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project (None: the only one, while udl has one)."
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "GetFeatureRequest",
+        "type": "object"
+      },
+      "GetProjectRequest": {
+        "additionalProperties": false,
+        "description": "Asking for one project and its repos.",
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The project's name."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "GetProjectRequest",
+        "type": "object"
+      },
+      "GetTaskRequest": {
+        "additionalProperties": false,
+        "description": "Asking for one task: its feature, its links, its notes and its questions.",
+        "properties": {
+          "key": {
+            "description": "The task's key.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project (None: the only one, while udl has one)."
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "GetTaskRequest",
         "type": "object"
       },
       "GithubCommentRequest": {
@@ -4693,6 +5028,99 @@
       "Length": {
         "$ref": "#/components/schemas/Duration-Input"
       },
+      "Link": {
+        "additionalProperties": false,
+        "description": "A typed pointer from a feature, task, question or action to something else (26.4).\n\n`url` is the canonical form (a `udl:` URL for an internal kind, so a task's link is\n`udl:task/udl/26.2`), and `state` is what is known about it \u2014 for a pull its `state`,\n`head_sha`, `checks` and `review`.",
+        "properties": {
+          "added_by": {
+            "default": "",
+            "description": "Who added it (an agent, `human:<name>`, or `scan`).",
+            "maxLength": 2000,
+            "title": "Added By",
+            "type": "string"
+          },
+          "link_kind": {
+            "$ref": "#/components/schemas/LinkKind",
+            "description": "What it points at (not `kind`: a record's `kind` is the name of its kind)."
+          },
+          "owner": {
+            "description": "What it hangs on, by key (the task's key, `Q-7`).",
+            "title": "Owner",
+            "type": "string"
+          },
+          "owner_kind": {
+            "$ref": "#/components/schemas/OwnerKind",
+            "description": "What it hangs on."
+          },
+          "state": {
+            "$ref": "#/components/schemas/PullState",
+            "description": "What is known about it (for a pull: its state, head sha, checks and review)."
+          },
+          "title": {
+            "default": "",
+            "description": "What it is called, when it has been seen.",
+            "maxLength": 2000,
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "description": "The canonical form of the URL it points at.",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner_kind",
+          "owner",
+          "link_kind",
+          "url"
+        ],
+        "title": "Link",
+        "type": "object"
+      },
+      "LinkKind": {
+        "enum": [
+          "pull",
+          "issue",
+          "commit",
+          "branch",
+          "ci_run",
+          "file",
+          "url",
+          "doc",
+          "stitch",
+          "task",
+          "feature",
+          "question"
+        ],
+        "type": "string"
+      },
+      "Links": {
+        "additionalProperties": false,
+        "description": "What hangs on a URL.",
+        "properties": {
+          "links": {
+            "description": "What points at it, by owner.",
+            "items": {
+              "$ref": "#/components/schemas/Link"
+            },
+            "title": "Links",
+            "type": "array"
+          },
+          "url": {
+            "description": "The canonical URL it was asked for.",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "Links",
+        "type": "object"
+      },
       "ListActionsRequest": {
         "additionalProperties": false,
         "description": "Asking what is to be done, in the order it is due.",
@@ -4746,6 +5174,25 @@
         "title": "ListActionsRequest",
         "type": "object"
       },
+      "ListFeaturesRequest": {
+        "additionalProperties": false,
+        "description": "Asking for a project's features (all of them, when none is named).",
+        "properties": {
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project (None: the only one, while udl has one)."
+          }
+        },
+        "title": "ListFeaturesRequest",
+        "type": "object"
+      },
       "ListRunnersRequest": {
         "additionalProperties": false,
         "description": "Which harnesses to show.",
@@ -4764,6 +5211,74 @@
           }
         },
         "title": "ListRunnersRequest",
+        "type": "object"
+      },
+      "ListTasksRequest": {
+        "additionalProperties": false,
+        "description": "Asking for a project's tasks, with what to narrow them by.",
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only the tasks of this agent (or `human:<name>`).",
+            "title": "Assignee"
+          },
+          "feature": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only the tasks of this feature.",
+            "title": "Feature"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project (None: the only one, while udl has one)."
+          },
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/State"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only the tasks in this state."
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only the tasks whose title or spec holds this text.",
+            "title": "Text"
+          }
+        },
+        "title": "ListTasksRequest",
         "type": "object"
       },
       "LoginAttempt": {
@@ -5060,6 +5575,15 @@
         ],
         "type": "string"
       },
+      "MergePolicy": {
+        "description": "Who merges a ready PR (O-D3): a human, or the task's own agent when it is green.",
+        "enum": [
+          "human",
+          "agent"
+        ],
+        "title": "MergePolicy",
+        "type": "string"
+      },
       "MergeRequest": {
         "additionalProperties": false,
         "description": "Merging a task's pull (28.3): the task, and what it must be confirmed as.",
@@ -5287,6 +5811,46 @@
         "title": "Misfire",
         "type": "string"
       },
+      "MoveTaskRequest": {
+        "additionalProperties": false,
+        "description": "Moving a task to another state (the table is orch.transitions').",
+        "properties": {
+          "key": {
+            "description": "The task's key.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "note": {
+            "default": "",
+            "description": "What it waits on, or why it was cancelled or moved.",
+            "title": "Note",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project (None: the only one, while udl has one)."
+          },
+          "to": {
+            "$ref": "#/components/schemas/State",
+            "description": "The state it is moving to."
+          }
+        },
+        "required": [
+          "key",
+          "to"
+        ],
+        "title": "MoveTaskRequest",
+        "type": "object"
+      },
       "MyTaskNote": {
         "additionalProperties": false,
         "description": "A note on the task an agent is on, as `orch_my_task` answers with it (26.5).",
@@ -5450,6 +6014,42 @@
         "title": "Not",
         "type": "object"
       },
+      "NoteInfo": {
+        "additionalProperties": false,
+        "description": "A note as an operation answers it (the record is orch.records.Note).",
+        "properties": {
+          "at": {
+            "description": "When it was written.",
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "author": {
+            "default": "udl",
+            "description": "Who wrote it: an agent, `human:<name>`, or `udl`.",
+            "maxLength": 2000,
+            "title": "Author",
+            "type": "string"
+          },
+          "note_kind": {
+            "$ref": "#/components/schemas/NoteKind",
+            "description": "What kind of note it is."
+          },
+          "text": {
+            "description": "What it says, as markdown.",
+            "maxLength": 100000,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "note_kind",
+          "text",
+          "at"
+        ],
+        "title": "NoteInfo",
+        "type": "object"
+      },
       "NoteKind": {
         "description": "What kind of note it is: what was done, a decision, a finding, a review, or what udl itself\nsays (a state change, a task moved to another agent's queue).",
         "enum": [
@@ -5524,6 +6124,17 @@
         },
         "title": "OrchSettings",
         "type": "object"
+      },
+      "OwnerKind": {
+        "description": "What a note (or a link) is about: a feature, a task, a question or an action (26.4-26.5).",
+        "enum": [
+          "feature",
+          "task",
+          "question",
+          "action"
+        ],
+        "title": "OwnerKind",
+        "type": "string"
       },
       "PageFormat": {
         "description": "What a page is given as.",
@@ -6013,6 +6624,106 @@
         "title": "ProbeResult",
         "type": "object"
       },
+      "Project": {
+        "additionalProperties": false,
+        "description": "A body of work (udl, liively): its repos and its merge policy.\n\n`promotion` names the branches after the repo's base, in order (e.g. [\"rc\", \"main\"]); a\nproject whose base is its last branch (udl's `main`) has none, and its reviewer's merge is\nits review. `rules` is the markdown every agent on this project is given: the ground rules.",
+        "properties": {
+          "description": {
+            "default": "",
+            "description": "What it is, in a line or two.",
+            "title": "Description",
+            "type": "string"
+          },
+          "merge": {
+            "$ref": "#/components/schemas/MergePolicy",
+            "default": "human",
+            "description": "Who merges a ready PR (O-D3)."
+          },
+          "name": {
+            "$ref": "#/components/schemas/Name",
+            "description": "What the project is called (unique; e.g. udl)."
+          },
+          "promotion": {
+            "description": "The branches after the repo's base, in order (e.g. [\"rc\", \"main\"]); empty for udl.",
+            "items": {
+              "maxLength": 200,
+              "pattern": "^[^\\s~^:?*\\[\\\\]+$",
+              "type": "string"
+            },
+            "title": "Promotion",
+            "type": "array"
+          },
+          "review_bot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The review bot's login, whose verdict a ready PR waits on (e.g. claude[bot]).",
+            "title": "Review Bot"
+          },
+          "rules": {
+            "default": "",
+            "description": "The ground rules, as markdown, given to every agent on this project.",
+            "title": "Rules",
+            "type": "string"
+          },
+          "title": {
+            "description": "How it is shown (e.g. udl).",
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "title"
+        ],
+        "title": "Project",
+        "type": "object"
+      },
+      "ProjectInfo": {
+        "additionalProperties": false,
+        "description": "A project, with its repos.",
+        "properties": {
+          "project": {
+            "$ref": "#/components/schemas/Project",
+            "description": "The project itself."
+          },
+          "repos": {
+            "description": "Its repos, by name.",
+            "items": {
+              "$ref": "#/components/schemas/Repo"
+            },
+            "title": "Repos",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project"
+        ],
+        "title": "ProjectInfo",
+        "type": "object"
+      },
+      "Projects": {
+        "additionalProperties": false,
+        "description": "Every project udl knows.",
+        "properties": {
+          "projects": {
+            "description": "The projects, by name.",
+            "items": {
+              "$ref": "#/components/schemas/Project"
+            },
+            "title": "Projects",
+            "type": "array"
+          }
+        },
+        "title": "Projects",
+        "type": "object"
+      },
       "PromoteRequest": {
         "additionalProperties": false,
         "description": "Marking tasks done after a promotion's pull merged (28.3).",
@@ -6363,6 +7074,55 @@
           "html_url"
         ],
         "title": "PullInfo",
+        "type": "object"
+      },
+      "PullState": {
+        "additionalProperties": false,
+        "description": "What a pull link keeps: where a pull is, its head, its checks and its review.\n\n`state` is GitHub's own word (open, closed or merged \u2014 merged is never closed), `checks` and\n`review` one word each for the pull, so a link says at a glance where its pull is. Each is a\n`Literal`: a word outside them is refused when the link is stored, not kept as a string that\nreads as nothing.",
+        "properties": {
+          "checks": {
+            "default": "none",
+            "description": "How its checks are: pass, fail, pending or none.",
+            "enum": [
+              "pass",
+              "fail",
+              "pending",
+              "none"
+            ],
+            "title": "Checks",
+            "type": "string"
+          },
+          "head_sha": {
+            "default": "",
+            "description": "The commit at its head.",
+            "title": "Head Sha",
+            "type": "string"
+          },
+          "review": {
+            "default": "none",
+            "description": "How its review is: approved, changes, pending or none.",
+            "enum": [
+              "approved",
+              "changes",
+              "pending",
+              "none"
+            ],
+            "title": "Review",
+            "type": "string"
+          },
+          "state": {
+            "default": "open",
+            "description": "Where the pull is: open, closed or merged.",
+            "enum": [
+              "open",
+              "closed",
+              "merged"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "title": "PullState",
         "type": "object"
       },
       "PullStateFilter": {
@@ -6716,6 +7476,44 @@
         "title": "RegexStep",
         "type": "object"
       },
+      "RemoveLinkRequest": {
+        "additionalProperties": false,
+        "description": "Unlinking something from what it hangs on.",
+        "properties": {
+          "owner": {
+            "description": "What it hangs on, by key.",
+            "title": "Owner",
+            "type": "string"
+          },
+          "owner_kind": {
+            "$ref": "#/components/schemas/OwnerKind",
+            "description": "What it hangs on."
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project (None: the only one, while udl has one)."
+          },
+          "url": {
+            "description": "The URL, as it was stored (canonicalised again).",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner_kind",
+          "owner",
+          "url"
+        ],
+        "title": "RemoveLinkRequest",
+        "type": "object"
+      },
       "ReorderQueueRequest": {
         "additionalProperties": false,
         "description": "Setting an agent's queue to exactly these keys, in this order.",
@@ -6770,6 +7568,77 @@
           }
         },
         "title": "ReplayEventRequestBody",
+        "type": "object"
+      },
+      "Repo": {
+        "additionalProperties": false,
+        "description": "A GitHub repository of a project: where it is, what it is called, its base branch, its\ngate, its main checkout on each host, and how its task branches are named.",
+        "properties": {
+          "account": {
+            "description": "The github account udl reaches it through (25.4).",
+            "pattern": "^github:[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Account",
+            "type": "string"
+          },
+          "base_branch": {
+            "default": "main",
+            "description": "The branch PRs go into.",
+            "maxLength": 200,
+            "pattern": "^[^\\s~^:?*\\[\\\\]+$",
+            "title": "Base Branch",
+            "type": "string"
+          },
+          "branch_pattern": {
+            "default": "{type}/{key}-{slug}",
+            "description": "How its task branches are named: {type}/{key}-{slug} (23.1).",
+            "maxLength": 200,
+            "title": "Branch Pattern",
+            "type": "string"
+          },
+          "checkouts": {
+            "description": "Host name \u2192 the main checkout's path there (empty: udl does not know where it is yet).",
+            "patternProperties": {
+              "^[A-Za-z0-9][A-Za-z0-9_.-]*$": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "maxLength": 64
+            },
+            "title": "Checkouts",
+            "type": "object"
+          },
+          "gate": {
+            "description": "The argv that is its gate (e.g. [\"make\", \"check\"]), run before a push.",
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": "Gate",
+            "type": "array"
+          },
+          "github": {
+            "description": "Its GitHub repository: owner/repo.",
+            "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$",
+            "title": "Github",
+            "type": "string"
+          },
+          "name": {
+            "$ref": "#/components/schemas/Name",
+            "description": "What the repo is called within the project (unique with its project)."
+          },
+          "project": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The project it belongs to."
+          }
+        },
+        "required": [
+          "project",
+          "name",
+          "github",
+          "account"
+        ],
+        "title": "Repo",
         "type": "object"
       },
       "RequestURL": {
@@ -8491,6 +9360,84 @@
         "title": "SetActionRequestBody",
         "type": "object"
       },
+      "SetFeatureRequest": {
+        "additionalProperties": false,
+        "description": "Creating or editing a feature, by its key: what is not given is kept.\n\nA new feature needs a title.",
+        "properties": {
+          "key": {
+            "description": "Its key within the project (`F-<n>`, or an imported key like `22`).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where it sits among its project's features.",
+            "title": "Order"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project (None: the only one, while udl has one)."
+          },
+          "spec": {
+            "anyOf": [
+              {
+                "maxLength": 100000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its spec, as markdown.",
+            "title": "Spec"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FeatureStatus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where it is: its own setting, or what its tasks make it."
+          },
+          "title": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What it is, in a line (needed when it is a new feature).",
+            "title": "Title"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "SetFeatureRequest",
+        "type": "object"
+      },
       "SetHostRequest": {
         "additionalProperties": false,
         "description": "Add or change a host.",
@@ -8508,6 +9455,213 @@
           "host"
         ],
         "title": "SetHostRequest",
+        "type": "object"
+      },
+      "SetProjectRequest": {
+        "additionalProperties": false,
+        "description": "Creating or editing a project, by its name: what is not given is kept.\n\nA new project needs a title; the rest it has by default.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What it is, in a line or two.",
+            "title": "Description"
+          },
+          "merge": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MergePolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who merges a ready PR (O-D3)."
+          },
+          "name": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The project's name (what it is found, and set, by)."
+          },
+          "promotion": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 200,
+                  "pattern": "^[^\\s~^:?*\\[\\\\]+$",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The branches after the repo's base, in order (e.g. [\"rc\", \"main\"]).",
+            "title": "Promotion"
+          },
+          "review_bot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The review bot's login, whose verdict a ready PR waits on (e.g. claude[bot]).",
+            "title": "Review Bot"
+          },
+          "rules": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The ground rules, as markdown, given to every agent on this project.",
+            "title": "Rules"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How it is shown (needed when it is a new project).",
+            "title": "Title"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "SetProjectRequest",
+        "type": "object"
+      },
+      "SetRepoRequest": {
+        "additionalProperties": false,
+        "description": "Creating or editing a repo of a project, by its name: what is not given is kept.\n\nA new repo needs a GitHub repository and the account udl reaches it through.",
+        "properties": {
+          "account": {
+            "anyOf": [
+              {
+                "pattern": "^github:[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The github account udl reaches it through (needed when it is a new repo).",
+            "title": "Account"
+          },
+          "base_branch": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "pattern": "^[^\\s~^:?*\\[\\\\]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The branch PRs go into.",
+            "title": "Base Branch"
+          },
+          "branch_pattern": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How its task branches are named: {type}/{key}-{slug} (23.1).",
+            "title": "Branch Pattern"
+          },
+          "checkouts": {
+            "anyOf": [
+              {
+                "patternProperties": {
+                  "^[A-Za-z0-9][A-Za-z0-9_.-]*$": {
+                    "type": "string"
+                  }
+                },
+                "propertyNames": {
+                  "maxLength": 64
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Host name \u2192 the main checkout's path there.",
+            "title": "Checkouts"
+          },
+          "gate": {
+            "anyOf": [
+              {
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The argv that is its gate (e.g. [\"make\", \"check\"]), run before a push.",
+            "title": "Gate"
+          },
+          "github": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its GitHub repository: owner/repo (needed when it is a new repo).",
+            "title": "Github"
+          },
+          "name": {
+            "$ref": "#/components/schemas/Name",
+            "description": "What the repo is called within the project."
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its project's name (None: the only one, while udl has one)."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "SetRepoRequest",
         "type": "object"
       },
       "SetScheduleRequestBody": {
@@ -8702,6 +9856,131 @@
           "actions"
         ],
         "title": "SetSubscriptionRequestBody",
+        "type": "object"
+      },
+      "SetTaskRequest": {
+        "additionalProperties": false,
+        "description": "Creating or editing a task, by its key: what is not given is kept.\n\nA new task needs its feature and a title; without a key it is the feature's next one.",
+        "properties": {
+          "feature": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The feature it is part of (needed when it is a new task).",
+            "title": "Feature"
+          },
+          "hold": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why it is held (built now, merged later).",
+            "title": "Hold"
+          },
+          "key": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its key within the project (`<feature key>.<n>`), or none to take the next one.",
+            "title": "Key"
+          },
+          "needs": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 40,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tasks that must be done first, by key.",
+            "title": "Needs"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project (None: the only one, while udl has one)."
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The repo it is done in (a repo of its project).",
+            "title": "Repo"
+          },
+          "spec": {
+            "anyOf": [
+              {
+                "maxLength": 100000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its spec, as markdown.",
+            "title": "Spec"
+          },
+          "task_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskKind"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What kind of work it is: a build, a person's, or a review's."
+          },
+          "title": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What it is, in a line (needed when it is a new task).",
+            "title": "Title"
+          }
+        },
+        "title": "SetTaskRequest",
         "type": "object"
       },
       "SetToken": {
@@ -9137,6 +10416,69 @@
           "waiting"
         ],
         "title": "SolveReport",
+        "type": "object"
+      },
+      "Split": {
+        "additionalProperties": false,
+        "description": "One of the tasks a split makes.",
+        "properties": {
+          "spec": {
+            "default": "",
+            "description": "Its spec, as markdown.",
+            "maxLength": 100000,
+            "title": "Spec",
+            "type": "string"
+          },
+          "title": {
+            "description": "What it is, in a line.",
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "Split",
+        "type": "object"
+      },
+      "SplitTaskRequest": {
+        "additionalProperties": false,
+        "description": "Splitting a task into several (the first keeps its key and its history).",
+        "properties": {
+          "into": {
+            "description": "The tasks it becomes, in order.",
+            "items": {
+              "$ref": "#/components/schemas/Split"
+            },
+            "minItems": 1,
+            "title": "Into",
+            "type": "array"
+          },
+          "key": {
+            "description": "The task's key.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project (None: the only one, while udl has one)."
+          }
+        },
+        "required": [
+          "key",
+          "into"
+        ],
+        "title": "SplitTaskRequest",
         "type": "object"
       },
       "StartLoginRequest": {
@@ -10022,6 +11364,217 @@
         "title": "TagChain",
         "type": "object"
       },
+      "Task": {
+        "additionalProperties": false,
+        "description": "One piece of a feature that one agent (or one human) does, usually one PR.",
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An agent's name, or `human:<name>`; None while it is nobody's.",
+            "title": "Assignee"
+          },
+          "blocked_on": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The question's key or free text it waits on, while it is blocked.",
+            "title": "Blocked On"
+          },
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The branch it is done on (its repo's branch pattern), once it has one.",
+            "title": "Branch"
+          },
+          "feature": {
+            "description": "The feature it is part of (its key: a task always links back).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Feature",
+            "type": "string"
+          },
+          "hold": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why it is held (built now, merged later), or None.",
+            "title": "Hold"
+          },
+          "key": {
+            "description": "Its key within the project (`<feature key>.<n>`, or the key it was given).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "needs": {
+            "description": "The tasks that must be done first, by key.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Needs",
+            "type": "array"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its place in its assignee's queue.",
+            "title": "Position"
+          },
+          "project": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The project it belongs to."
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The repo it is done in (a repo of its project), or None.",
+            "title": "Repo"
+          },
+          "spec": {
+            "default": "",
+            "description": "Its spec, as markdown (its card, when it was imported).",
+            "maxLength": 100000,
+            "title": "Spec",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/State",
+            "default": "open",
+            "description": "Where it is (the Concepts table); set only by move() (orch.transitions)."
+          },
+          "task_kind": {
+            "$ref": "#/components/schemas/TaskKind",
+            "default": "build",
+            "description": "What kind of work it is: a build, a person's, or a review's. (Not `kind`: a record's\n`kind` is the name of its kind, and a field may not shadow it.)"
+          },
+          "title": {
+            "description": "What it is, in a line.",
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_by": {
+            "default": "",
+            "description": "Who last moved it (a role, or an agent's name).",
+            "title": "Updated By",
+            "type": "string"
+          },
+          "worktree": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The worktree it is done in, once the dispatcher has made one.",
+            "title": "Worktree"
+          }
+        },
+        "required": [
+          "project",
+          "feature",
+          "key",
+          "title"
+        ],
+        "title": "Task",
+        "type": "object"
+      },
+      "TaskInfo": {
+        "additionalProperties": false,
+        "description": "A task, with what hangs on it.",
+        "properties": {
+          "feature": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Feature"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The feature it is part of."
+          },
+          "links": {
+            "description": "What points at it.",
+            "items": {
+              "$ref": "#/components/schemas/Link"
+            },
+            "title": "Links",
+            "type": "array"
+          },
+          "notes": {
+            "description": "Its notes, oldest first.",
+            "items": {
+              "$ref": "#/components/schemas/NoteInfo"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "questions": {
+            "description": "Its open questions (28.1's record: none yet, so this is empty).",
+            "items": {
+              "$ref": "#/components/schemas/JsonObject"
+            },
+            "title": "Questions",
+            "type": "array"
+          },
+          "task": {
+            "$ref": "#/components/schemas/Task",
+            "description": "The task itself."
+          }
+        },
+        "required": [
+          "task"
+        ],
+        "title": "TaskInfo",
+        "type": "object"
+      },
+      "TaskKind": {
+        "enum": [
+          "build",
+          "human",
+          "review"
+        ],
+        "type": "string"
+      },
       "TaskQueue": {
         "additionalProperties": false,
         "description": "One agent's queue: the tasks it is on, in the order it works them.",
@@ -10049,6 +11602,30 @@
           "agent"
         ],
         "title": "TaskQueue",
+        "type": "object"
+      },
+      "Tasks": {
+        "additionalProperties": false,
+        "description": "A project's tasks, by key.",
+        "properties": {
+          "project": {
+            "description": "The project they are of.",
+            "title": "Project",
+            "type": "string"
+          },
+          "tasks": {
+            "description": "The tasks themselves.",
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            },
+            "title": "Tasks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project"
+        ],
+        "title": "Tasks",
         "type": "object"
       },
       "Throttle-Input": {
@@ -10438,6 +12015,37 @@
             "type": "null"
           }
         ]
+      },
+      "udl__core__models__Deleted": {
+        "additionalProperties": false,
+        "properties": {
+          "deleted": {
+            "description": "False when there was nothing to delete.",
+            "title": "Deleted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "title": "Deleted",
+        "type": "object"
+      },
+      "udl__plugins__apps__orch__models__Deleted": {
+        "additionalProperties": false,
+        "description": "What a delete answers: what went, and whether it was there.",
+        "properties": {
+          "deleted": {
+            "description": "Whether there was one.",
+            "title": "Deleted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "title": "Deleted",
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -11269,7 +12877,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Deleted"
+                  "$ref": "#/components/schemas/udl__core__models__Deleted"
                 }
               }
             },
@@ -11884,7 +13492,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Deleted"
+                  "$ref": "#/components/schemas/udl__core__models__Deleted"
                 }
               }
             },
@@ -14532,7 +16140,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Deleted"
+                  "$ref": "#/components/schemas/udl__core__models__Deleted"
                 }
               }
             },
@@ -15318,6 +16926,200 @@
         ]
       }
     },
+    "/plugins/orch/add_link": {
+      "post": {
+        "description": "Link something to a feature, task, question or action (one URL is one link: adding it\nagain gives the one that is there).",
+        "operationId": "orch_add_link",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Link"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Link something to a feature, task, question or action (one URL is one link: adding it",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/add_note": {
+      "post": {
+        "description": "Write a note on a feature or a task (appended: a correction is another note).",
+        "operationId": "orch_add_note",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddNoteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Write a note on a feature or a task (appended: a correction is another note).",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
     "/plugins/orch/assign": {
       "post": {
         "description": "Assign a task to an agent: it joins that agent's queue (at its end, or at a position).\n\nA task another agent holds leaves that agent's queue, and a system note says who must\nstop. A person's task is assigned to `human:<name>` (28.2's To action), never to an\nagent. The answer is the agent's queue, in the order it will work it.",
@@ -15410,6 +17212,200 @@
           }
         ],
         "summary": "Assign a task to an agent: it joins that agent's queue (at its end, or at a position).",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/delete_project": {
+      "post": {
+        "description": "Delete a project, with its repos, its features, its tasks and their notes and links.",
+        "operationId": "orch_delete_project",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteProjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/udl__plugins__apps__orch__models__Deleted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Delete a project, with its repos, its features, its tasks and their notes and links.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/delete_repo": {
+      "post": {
+        "description": "Delete a repo of a project (its tasks stay: a task names its repo, it does not hang\non it).",
+        "operationId": "orch_delete_repo",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteRepoRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/udl__plugins__apps__orch__models__Deleted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Delete a repo of a project (its tasks stay: a task names its repo, it does not hang",
         "tags": [
           "orch"
         ]
@@ -15512,6 +17508,103 @@
         ]
       }
     },
+    "/plugins/orch/find_links": {
+      "post": {
+        "description": "What hangs on a URL (the other way round from a task's own links): the tasks a PR\nbelongs to, however the URL is written.",
+        "operationId": "orch_find_links",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FindLinksRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Links"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "What hangs on a URL (the other way round from a task's own links): the tasks a PR",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
     "/plugins/orch/finish_action": {
       "post": {
         "description": "Finish something only a person could do: the result is written as a note on the task\nit is about, and that task, when it is a person's, is `merged`.",
@@ -15609,6 +17702,200 @@
         ]
       }
     },
+    "/plugins/orch/get_feature": {
+      "post": {
+        "description": "A feature, with its tasks, its links and its notes.",
+        "operationId": "orch_get_feature",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GetFeatureRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "A feature, with its tasks, its links and its notes.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/get_project": {
+      "post": {
+        "description": "A project, with its repos.",
+        "operationId": "orch_get_project",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GetProjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "A project, with its repos.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
     "/plugins/orch/get_queue": {
       "post": {
         "description": "What an agent's queue is: its tasks, in the order it will work them.\n\nA person's own list is asked for the same way, by `human:<name>`.",
@@ -15701,6 +17988,103 @@
           }
         ],
         "summary": "What an agent's queue is: its tasks, in the order it will work them.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/get_task": {
+      "post": {
+        "description": "A task, with its feature, its links, its notes and its open questions.",
+        "operationId": "orch_get_task",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GetTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "A task, with its feature, its links, its notes and its open questions.",
         "tags": [
           "orch"
         ]
@@ -15900,6 +18284,180 @@
         ]
       }
     },
+    "/plugins/orch/list_features": {
+      "post": {
+        "description": "A project's features, in their order.",
+        "operationId": "orch_list_features",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListFeaturesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Features"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "A project's features, in their order.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/list_projects": {
+      "post": {
+        "description": "Every project udl knows, by name.",
+        "operationId": "orch_list_projects",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Projects"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Every project udl knows, by name.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
     "/plugins/orch/list_runners": {
       "post": {
         "description": "Every harness on every host: its version, whether it is signed in and on which plan,\nwhat it can run there, and what its own doctor says is wrong.",
@@ -15992,6 +18550,103 @@
           }
         ],
         "summary": "Every harness on every host: its version, whether it is signed in and on which plan,",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/list_tasks": {
+      "post": {
+        "description": "A project's tasks, by key, narrowed by feature, state, assignee and text.",
+        "operationId": "orch_list_tasks",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListTasksRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tasks"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "A project's tasks, by key, narrowed by feature, state, assignee and text.",
         "tags": [
           "orch"
         ]
@@ -16186,6 +18841,103 @@
           }
         ],
         "summary": "What there is to merge (28.3): the ready ones in merge order, grouped by repo; the ones",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/move_task": {
+      "post": {
+        "description": "Move a task to another state, through the table (orch.transitions): what it waits on\nis its note while it is blocked, and the move writes the system note that says so.",
+        "operationId": "orch_move_task",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Move a task to another state, through the table (orch.transitions): what it waits on",
         "tags": [
           "orch"
         ]
@@ -16865,6 +19617,103 @@
           }
         ],
         "summary": "Mark the task `key`'s pull ready: it moves to `ready`, with `note` as its progress",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/remove_link": {
+      "post": {
+        "description": "Unlink something from what it hangs on (canonicalised again, so any form of the URL\nfinds the one stored).",
+        "operationId": "orch_remove_link",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoveLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/udl__plugins__apps__orch__models__Deleted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Unlink something from what it hangs on (canonicalised again, so any form of the URL",
         "tags": [
           "orch"
         ]
@@ -17641,6 +20490,491 @@
           }
         ],
         "summary": "Add something only a person can do: now, after a task merges, or later.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/set_feature": {
+      "post": {
+        "description": "Create or edit a feature, by its key: what is not given is kept (and a new one needs\na title). Its spec is scanned for links as it is saved (26.4).",
+        "operationId": "orch_set_feature",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetFeatureRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Feature"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Create or edit a feature, by its key: what is not given is kept (and a new one needs",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/set_project": {
+      "post": {
+        "description": "Create or edit a project, by its name: what is not given is kept (and a new one needs\na title).",
+        "operationId": "orch_set_project",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetProjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Create or edit a project, by its name: what is not given is kept (and a new one needs",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/set_repo": {
+      "post": {
+        "description": "Create or edit a repo of a project, by its name: what is not given is kept (and a new\none needs its GitHub repository and the account udl reaches it through).",
+        "operationId": "orch_set_repo",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetRepoRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Repo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Create or edit a repo of a project, by its name: what is not given is kept (and a new",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/set_task": {
+      "post": {
+        "description": "Create or edit a task, by its key: what is not given is kept, and its state is never\nset here (it moves, `orch_move_task`). A new task needs its feature and a title; without\na key it takes the feature's next one.",
+        "operationId": "orch_set_task",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Create or edit a task, by its key: what is not given is kept, and its state is never",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/split_task": {
+      "post": {
+        "description": "Split a task into several: the first keeps its key (so its links and its notes stay\nwith it), and each of the others takes the feature's next key.",
+        "operationId": "orch_split_task",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SplitTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tasks"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Split a task into several: the first keeps its key (so its links and its notes stay",
         "tags": [
           "orch"
         ]
@@ -18688,7 +22022,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Deleted"
+                  "$ref": "#/components/schemas/udl__core__models__Deleted"
                 }
               }
             },
@@ -19353,7 +22687,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Deleted"
+                  "$ref": "#/components/schemas/udl__core__models__Deleted"
                 }
               }
             },
@@ -19935,7 +23269,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Deleted"
+                  "$ref": "#/components/schemas/udl__core__models__Deleted"
                 }
               }
             },
