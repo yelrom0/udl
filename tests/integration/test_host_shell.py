@@ -72,7 +72,12 @@ def _ssh(monkeypatch: pytest.MonkeyPatch) -> None:
 async def both(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> AsyncIterator[list[tuple[str, HostShell]]]:
-    """Every shell the contract runs on: (name, shell)."""
+    """Every shell the contract runs on: (name, shell).
+
+    udl's own default (30s) is a server's: here several agents' gates run at once, and an ssh
+    handshake on localhost can take longer than that while the machine is loaded. The timeout's
+    own behaviour is tested where it matters, by the calls that give a `within` of their own."""
+    monkeypatch.setattr("udl.hosts.shell.DEFAULT_TIMEOUT", timedelta(minutes=2))
     _ssh(monkeypatch)
     if shutil.which("ssh") is None:
         pytest.skip("ssh is not installed")
