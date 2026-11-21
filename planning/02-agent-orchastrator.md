@@ -977,7 +977,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - an implementer refused, and a manager with `plan` allowed on its reports' tasks;
   - the importer on a card with and without `· size`.
 - Done when: importing this file gives 26.8 the size in its own header.
-- **Built (deepseek-a, 2026-11-22, PR #69):** `Size` (`S`, `M`, `L`, `XL`) and `POINTS` (1, 3, 5, 8)
+- **Built (`deepseek-a`, 21 Nov 2026, PR #69):** `Size` (`S`, `M`, `L`, `XL`) and `POINTS` (1, 3, 5, 8)
   are `orch/models.py`'s, the one place a size becomes points; `Task.size` (`None`: unsized) is on the
   shape and on the record (a record written before this reads as unsized), and `Task.points` is a
   `@computed_field` from it (so it is in the API's schema and `model_dump()`, and absent from a CLI table,
@@ -997,7 +997,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   an unsized task, the four refusals, the importer on a card with, without and with an unreadable size,
   a word that only ends in `size`, and this file's own 26.8 card) and one in
   `tests/integration/test_orch_cli.py` (the real `udl orch tasks set --size L`, then `features show`).
-- **Review round (deepseek-a, 22 Nov 2026, PR #69):** the importer finds a size in `POINTS`'s own keys
+- **Review round (`deepseek-a`, 21 Nov 2026, PR #69):** the importer finds a size in `POINTS`'s own keys
   (`for size in POINTS`) instead of a `cast()`, so `cast` and `get_args` are gone from it; `_unplaceable`
   has the `Callable[[int, str], None]` its neighbours have; `\bsize` has its word boundaries (a card
   line saying `resize later` says nothing about a size, with a test); and the CLI test asserts on
