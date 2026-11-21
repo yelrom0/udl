@@ -25,6 +25,8 @@ gives it a FakeClock).
 # System Imports
 import asyncio
 import contextlib
+import hashlib
+import json
 import logging
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
@@ -58,7 +60,7 @@ from udl.plugins.apps.orch.models import (
     Role,
 )
 from udl.plugins.apps.orch.settings import OrchSettings
-from udl.plugins.apps.orch.tokens import issue_token
+from udl.plugins.apps.orch.tokens import issue_token, secret_ref
 from udl.plugins.runners.base import (
     AgentEvent,
     McpEndpoint,
@@ -86,6 +88,10 @@ FAILURES: Final = 3
 """How many times a turn that failed is retried before its session is `failed`."""
 
 BACKOFF: Final = timedelta(seconds=30)
+"""How long a retry waits, times the failures it has had."""
+
+PRUNE_EVERY: Final = timedelta(hours=6)
+"""How often the transcripts older than `session_days` are forgotten (and once at start-up)."""
 """How long the first retry of a failed turn waits (`FAILURES` multiplies it)."""
 
 type Preparing = Callable[[stored.Task, stored.Agent], Awaitable[stored.Task]]
@@ -209,9 +215,10 @@ class Dispatcher:
             self._wakes[agent.name] = asyncio.Event()
         loops = [asyncio.create_task(self._loop(agent)) for agent in agents]
         waking = asyncio.create_task(self._woken_by_events())
+        pruning = asyncio.create_task(self._pruning())
         checking = [asyncio.create_task(self._reaching(agent)) for agent in agents]
         stopping = asyncio.create_task(self._stop.wait())
-        everything = [*loops, *checking, waking, stopping]
+        everything = [*loops, *checking, waking, pruning, stopping]
         try:
             await self._stop.wait()  # (a loop never ends on its own: it logs and carries on)
         finally:
@@ -222,13 +229,21 @@ class Dispatcher:
                     await task
 
     async def _pruned(self) -> None:
-        """Forget the transcripts older than `session_days` (once, when the app starts)."""
+        """Forget the transcripts older than `session_days` (when the app starts, and on every
+        `PRUNE_EVERY` tick: a udl that runs for weeks would otherwise never prune)."""
         before = self._clock.now() - timedelta(days=self._settings.session_days)
         pruned = await stored.SessionRecords(self._records).prune(before)
         if pruned:
             log.info(
                 "forgot %d session events older than %d days", pruned, self._settings.session_days
             )
+
+    async def _pruning(self) -> None:
+        """Prune on every `PRUNE_EVERY` tick, for as long as udl runs."""
+        while True:
+            await self._clock.sleep(PRUNE_EVERY)
+            with contextlib.suppress(PluginError, UDLError):
+                await self._pruned()
 
     async def _woken_by_events(self) -> None:
         """Wake every agent's loop on each `orch.*` or `github.pr.*` event: what an agent waits
@@ -345,9 +360,7 @@ class Dispatcher:
         if session.state is SessionState.LIMITED:
             if session.limited_until is None or session.limited_until > self._clock.now():
                 return None
-            self._harnesses.limited(
-                await self._host_of(session), await self._runner_of(session), None
-            )
+            self._harnesses.limited(await self._host_of(session), session.ref.runner, None)
             return await stored.SessionRecords(self._records).save_session(
                 session.model_copy(update={"state": SessionState.IDLE, "limited_until": None})
             )
@@ -359,10 +372,6 @@ class Dispatcher:
         """The host a session's agent runs on."""
         agent = await stored.AgentRecords(self._records).agent(session.agent)
         return agent.host if agent is not None else "local"
-
-    async def _runner_of(self, session: stored.AgentSession) -> str:
-        """The runner a session's agent runs."""
-        return session.ref.runner
 
     async def _pick(self, agent: stored.Agent) -> stored.Task | None:
         """The task the agent is on: its first `in_progress` one, else the first on its queue
@@ -482,12 +491,23 @@ class Dispatcher:
             # (a wildcard bind is not an address to call: a session on this machine calls the
             # loopback, and one on another host is told `hub_url`)
             host = "127.0.0.1" if api.host in ("0.0.0.0", "::") else api.host  # noqa: S104
-            hub = f"http://{host}:{api.port}/mcp"
+            hub = f"http://{_address(host)}:{api.port}/mcp"
         token = self._tokens.get(agent.name)
         if token is None:
-            token = SecretStr(await issue_token(self._service, agent.name))
+            token = await self._token_of(agent.name)
             self._tokens[agent.name] = token
         return McpEndpoint(url=hub, token=token)
+
+    async def _token_of(self, agent: str) -> SecretStr:
+        """The agent's MCP token: the one udl keeps in its secret store, or a new one when it has
+        none (issuing rotates, so one that is stored is never issued again).
+
+        The store is where 27.2's `orch_issue_token` leaves it, so a token a person issued is the
+        one its sessions get, across restarts."""
+        stored = await self._service.secrets.get(secret_ref(agent))
+        if stored is not None:
+            return stored
+        return SecretStr(await issue_token(self._service, agent))
 
     async def _project_of(self, task: stored.Task) -> stored.Project:
         """The project `task` is in."""
@@ -577,16 +597,12 @@ class Dispatcher:
         try:
             found = await self._service.call("orch_readiness", {"key": task.key})
         except (PluginError, UDLError) as error:
-            return f"its pull could not be read: {error}", session, False
+            return f"its pull could not be read:\n{fenced('udl', str(error))}", session, False
         if not isinstance(found, Readiness):
             return None, session, False
         if found.ready:
             return "its pull is ready to merge: say so with `orch_ready`", session, False
         if found.pending and set(found.pending) == set(found.blockers):
-            if session.waited_since is None:
-                session = await stored.SessionRecords(self._records).save_session(
-                    session.model_copy(update={"waited_since": self._clock.now()})
-                )
             return None, session, True
         parts = [f"its pull is not ready ({'; '.join(found.blockers)})"]
         if found.open_items:
@@ -594,10 +610,6 @@ class Dispatcher:
                 f"{one.text} ({one.status})" if one.status else one.text for one in found.open_items
             )
             parts.append(f"the review bot still lists:\n\n{fenced('review-bot', items)}")
-        if session.waited_since is not None:
-            session = await stored.SessionRecords(self._records).save_session(
-                session.model_copy(update={"waited_since": None})
-            )
         return ". ".join(parts), session, False
 
     async def _stalled(
@@ -665,6 +677,7 @@ class Dispatcher:
                 "turn": session.turns,
                 "kind": event.kind,
             },
+            dedupe=f"{session.id}:{session.turns}:{_digest_of(event.model_dump(mode='json'))}",
         )
         if isinstance(event, Usage):
             await sessions.save_session(
@@ -795,18 +808,19 @@ class Dispatcher:
             )
         self._harnesses.ended(agent.host, agent.runner, session.ref.id)
 
-    async def _live(self, event_type: str, data: Mapping[str, object]) -> None:
+    async def _live(
+        self, event_type: str, data: Mapping[str, object], *, dedupe: str | None = None
+    ) -> None:
         """Publish one of the session's live events, as its own type has it (one that cannot be
         published is logged, never fatal: the transcript is the record).
 
-        Its dedupe key counts what was published rather than when: two things a runner says in
-        the same tick are two events, not one."""
-        self._published += 1
+        Its dedupe key is what was published, not when: the bus drops a repeat, and a key that
+        counted from 0 would make this run's first events the last run's repeats. `dedupe` is
+        for what the data cannot tell apart (two deltas of the same kind in one turn)."""
         try:
             payload: JsonObject = {name: _plain(value) for name, value in data.items()}
-            await self._events.emit(
-                event_type, payload, dedupe_key=f"{event_type}:{self._published}"
-            )
+            key = dedupe if dedupe is not None else _digest_of(payload)
+            await self._events.emit(event_type, payload, dedupe_key=f"{event_type}:{key}")
         except (PluginError, UDLError) as error:
             log.warning("publishing %s: %s", event_type, error)
 
@@ -815,6 +829,16 @@ def _an_event(event: AgentEvent) -> AnAgentEvent:
     """`event` as the transcript holds it: the kinds are the same, so this reads it as one of
     them (`kind` says which)."""
     return _AN_EVENT.validate_python(event)
+
+
+def _digest_of(value: object) -> str:
+    """A short digest of what `value` says, so a repeat is one comparison."""
+    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+def _address(host: str) -> str:
+    """`host` as a URL's host: an IPv6 address goes in brackets (`http://[::1]:8000`)."""
+    return f"[{host}]" if ":" in host and not host.startswith("[") else host
 
 
 def _plain(value: object) -> JsonValue:

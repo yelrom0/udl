@@ -47,7 +47,13 @@ from udl.plugins.apps.base import (
     AppSubscription,
 )
 from udl.plugins.apps.orch.agents import SessionState
-from udl.plugins.apps.orch.dispatcher import RULES, Dispatcher, first_prompt
+from udl.plugins.apps.orch.dispatcher import (
+    PRUNE_EVERY,
+    RULES,
+    Dispatcher,
+    fenced,
+    first_prompt,
+)
 from udl.plugins.apps.orch.models import (
     BLOCKED,
     IN_PROGRESS,
@@ -66,6 +72,7 @@ from udl.plugins.apps.orch.records import (
     LinkRecords,
     Project,
     ProjectRecords,
+    SessionEvent,
     SessionRecords,
     Task,
     TaskRecords,
@@ -145,6 +152,8 @@ class FakeGitHub(AppPlugin[AppSettings]):
     def __init__(self, settings_: AppSettings | None = None, **kwargs: object) -> None:
         super().__init__(settings_ or AppSettings(), **kwargs)  # pyright: ignore[reportArgumentType]
         self.pull = FakePull()
+        self.reads = 0
+        """How many pulls it was asked for (what a test counts a wake by)."""
 
     @classmethod
     def operations(cls) -> list[Any]:
@@ -156,6 +165,7 @@ class FakeGitHub(AppPlugin[AppSettings]):
 
     async def get_pull(self, request: GetPullRequest) -> FakePull:
         """The pull the test set (whatever number it asks for)."""
+        self.reads += 1
         return self.pull
 
 
@@ -163,6 +173,8 @@ class FakeGitHub(AppPlugin[AppSettings]):
 # A runner whose turns the test scripts
 # ---------------------------------------------------------------------------------------------
 
+RAISES: dict[str, Exception] = {}
+"""Prompts whose turn raises (not a UDL error: what a loop must survive)."""
 SCRIPT: dict[str, Turn] = {}
 """The scripted turns, by prompt: what this test's turns do."""
 STORE: Sessions = Sessions()
@@ -190,9 +202,17 @@ class ScriptedRunner(FakeRunner):
         )
 
     def send(self, session: SessionRef, prompt: str) -> AsyncIterator[AgentEvent]:
-        """Record the prompt, then send it as the fake does."""
+        """Record the prompt, then send it as the fake does (or raise, if it is scripted to)."""
         PROMPTS.append(prompt)
+        if prompt in RAISES:
+            return _raising(RAISES[prompt])
         return super().send(session, prompt)
+
+
+async def _raising(error: Exception) -> AsyncIterator[AgentEvent]:
+    """A turn that raises `error` (not a UDL error: what a loop must survive)."""
+    raise error
+    yield TextDelta(text="never")  # pragma: no cover (it is what makes this a generator)
 
 
 def orch_registry() -> PluginRegistry:
@@ -266,6 +286,7 @@ async def until(what: Callable[[], Awaitable[bool]], *, steps: int = 50) -> None
 def clean() -> Iterator[None]:
     """A fresh script and store for each test."""
     SCRIPT.clear()
+    RAISES.clear()
     PROMPTS.clear()
     STORE.specs.clear()
     STORE.stopped.clear()
@@ -368,6 +389,18 @@ async def ran(
         running.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await running
+
+
+async def two_agents(service: UDLService, second: str = "other") -> None:
+    """Give a second agent the fixture's second task (both are one agent's to begin with)."""
+    records = AppRecords(service.db)
+    await AgentRecords(records).save_agent(
+        Agent(name=second, title=second, runner="fake", host="local", brief="Build it.")
+    )
+    tasks = TaskRecords(records)
+    task = await tasks.task("udl", "F-1.2")
+    assert task is not None
+    await tasks.save_task(task.model_copy(update={"assignee": second}))
 
 
 async def scripted(service: UDLService, key: str, *, prompt: str | None = None) -> None:
@@ -879,7 +912,7 @@ async def test_a_session_whose_pull_is_only_waiting_holds_no_turn(service: UDLSe
     assert prompts == 1, "the first turn, and then no turn while the checks run"
     session = await session_of(service)
     assert session is not None
-    assert session.waited_since is not None
+    assert session.state is SessionState.IDLE
 
 
 async def test_a_turn_s_live_events_publish(service: UDLService) -> None:
@@ -945,3 +978,300 @@ async def test_the_orch_settings_a_session_is_given_are_file_only(service: UDLSe
         await service.set_plugin_settings(
             SetPluginSettingsRequest(name="orch", values={"deny": []}, reset=[])
         )
+
+
+# ---------------------------------------------------------------------------------------------
+# The review's regressions: one per fix (the bot's N2)
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_loop_survives_what_is_not_a_udl_error_and_the_others_carry_on(
+    service: UDLService,
+) -> None:
+    """(A turn that raises something udl does not know is logged, and the loop carries on: the
+    other agents' loops are not cancelled with it.)"""
+    await two_agents(service)
+    RAISES[first_prompt_of("F-1.1")] = RuntimeError("the harness fell over")
+    SCRIPT["udl restarted; continue where you were."] = ready_turn("F-1.1")
+    await scripted(service, "F-1.2")
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(30):
+            every = await tasks_of(service)
+            if every["F-1.2"].state == READY:
+                break
+            await clock.advance(timedelta(seconds=31))
+        every = await tasks_of(service)
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert every["F-1.2"].state == READY, "the other agent's loop carried on"
+    assert every["F-1.1"].state == READY, "and the loop that raised carried on, and retried"
+
+
+async def test_a_turn_that_made_progress_starts_the_nudge_count_again(
+    service: UDLService,
+) -> None:
+    """(The card's 3: a nudge is a turn that brought nothing new; a turn that said what changed
+    is progress, and the count goes back to 0 — so `max_nudges` counts turns in a row, not in
+    all. With `max_nudges` 1, a first turn and a change are not yet a nudge; the one after them
+    is.)"""
+    agents = AgentRecords(AppRecords(service.db))
+    agent = await agents.agent(AGENT)
+    assert agent is not None
+    await agents.save_agent(agent.model_copy(update={"max_nudges": 1}))
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(20):
+            every = await tasks_of(service)
+            if every["F-1.1"].state == BLOCKED:
+                break
+            await clock.advance(timedelta(seconds=31))
+        every = await tasks_of(service)
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert PROMPTS[1].startswith("What changed on F-1.1")
+    assert sum(1 for one in PROMPTS if "F-1.1" in one) == 3, (
+        "the first turn, the change, and then one nudge: the change started the count again"
+    )
+    assert every["F-1.1"].state == BLOCKED
+
+
+async def test_the_live_session_events_do_not_wake_the_dispatcher(service: UDLService) -> None:
+    """(The card's 3: a turn publishes as it runs, and waking on those would have the dispatcher
+    read every pull again for every line a runner says.)"""
+    github = await service.apps.get("github")
+    assert isinstance(github, FakeGitHub)
+    github.pull = FakePull(checks=[{"name": "check", "status": "in_progress", "conclusion": None}])
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(20):
+            await asyncio.sleep(0)
+        before = github.reads
+        live = AppEvents(service.bus, "orch", Orch.event_types())
+        await live.emit(
+            "orch.session.event",
+            {
+                "agent": AGENT,
+                "session": "00000000-0000-0000-0000-000000000000",
+                "task": "F-1.1",
+                "turn": 1,
+                "kind": "text_delta",
+            },
+            dedupe_key="a-live-event",
+        )
+        for _ in range(20):
+            await asyncio.sleep(0)
+        after_live = github.reads
+
+        await live.emit(
+            "orch.task.ready",
+            {"project": "udl", "task": "F-1.1", "pull": PULL, "sha": HEAD},
+            dedupe_key="a-real-one",
+        )
+        for _ in range(20):
+            await asyncio.sleep(0)
+        after_wake = github.reads
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert after_live == before, "a live session event wakes nobody"
+    assert after_wake > after_live, "another one does"
+
+
+def test_what_a_bot_says_that_carries_backticks_stays_inside_its_fence() -> None:
+    """(What comes from outside is data: text with its own fence cannot close udl's.)"""
+    said = "a comment that quotes code:\n```\nrm -rf /\n```\nand ends"
+    shown = fenced("claude[bot] says", said)
+
+    assert shown.startswith("````claude[bot] says\n")
+    assert shown.endswith("\n````")
+    assert said in shown
+
+
+async def test_a_session_s_task_is_the_one_in_its_own_project(service: UDLService) -> None:
+    """(Two projects may each have a task `F-1.1`: a session is never moved to the other's — its
+    own is `in_progress`, and the other one is `queued`, which would end it.)"""
+    records = AppRecords(service.db)
+    await ProjectRecords(records).save_project(Project(name="other", title="Other"))
+    await FeatureRecords(records).save_feature(Feature(project="other", key="F-1", title="It"))
+    tasks = TaskRecords(records)
+    there = Task(project="other", feature="F-1", key="F-1.1", title="Theirs", assignee=AGENT)
+    await tasks.save_task(there)
+    await tasks.move(there, QUEUED, by=Principal(kind="system", role="assign"))
+    await tasks.move(there, IN_PROGRESS, by=Principal(kind="system", role="start"))
+
+    sessions = SessionRecords(records)
+    made = await sessions.save_session(
+        AgentSession(
+            agent=AGENT,
+            project="other",
+            task="F-1.1",
+            ref=SessionRef(runner="fake", id="fake-1", cwd="/work/F-1.1", host="local"),
+            state=SessionState.RUNNING,
+        )
+    )
+    STORE.specs["fake-1"] = SessionSpec(cwd="/work/F-1.1")
+
+    await ran(service, clock=FakeClock())
+
+    again = await sessions.session(made.id)
+    assert again is not None
+    assert again.project == "other"
+    assert PROMPTS[0] == "udl restarted; continue where you were."
+    # (its own project's task is the one it is told about: `Theirs` has no pull link, while
+    # udl's `It 1` has one, so what it was told says which it read)
+    assert again.last_text == "it has no pull yet"
+    assert any("Theirs" in one for one in PROMPTS)
+
+
+async def test_one_agent_s_token_is_kept_across_its_sessions(service: UDLService) -> None:
+    """(Issuing a token rotates it: a second session must not take the first one's away.)"""
+    await scripted(service, "F-1.1")
+    await scripted(service, "F-1.2")
+
+    await ran(service, clock=FakeClock(), ready=True)
+
+    tokens = {
+        spec.mcp.token.get_secret_value()
+        for spec in STORE.specs.values()
+        if spec.mcp is not None and spec.mcp.token is not None
+    }
+    assert len(STORE.specs) == 2, "two sessions, one agent"
+    assert len(tokens) == 1, "the same token for both"
+
+
+async def test_with_no_hub_url_a_session_is_given_this_machine_s_mcp(service: UDLService) -> None:
+    """(A session with nowhere to call could call nothing, and so never finish a task.)"""
+    await ran(service, clock=FakeClock())
+
+    spec = next(iter(STORE.specs.values()))
+    assert spec.mcp is not None
+    assert spec.mcp.url == f"http://127.0.0.1:{service.settings.api.port}/mcp"
+
+
+async def test_a_good_turn_starts_the_failure_count_again(service: UDLService) -> None:
+    """(The card's 6: a failure is retried; a turn that works is not still failing.)"""
+    hiccups = 0
+
+    async def flaky(runner: FakeRunner, _: SessionRef) -> AsyncIterator[AgentEvent]:
+        nonlocal hiccups
+        if hiccups == 0:
+            hiccups += 1
+            yield RunnerFailed(message="a hiccup")
+            yield TurnEnded(reason=TurnReason.ERROR, text="a hiccup")
+            return
+        yield TextDelta(text="carrying on")
+
+    SCRIPT[first_prompt_of("F-1.1")] = flaky
+
+    await ran(service, clock=FakeClock(), turns=2)
+
+    session = await session_of(service)
+    assert session is not None
+    assert session.failures == 0
+    assert session.state is not SessionState.FAILED
+
+
+async def test_a_backoff_does_not_hold_a_turn_s_place(service: UDLService) -> None:
+    """(The card's 6: a retry waits outside `max_agents_running`, so another agent turns.)"""
+    await two_agents(service)
+
+    async def broken(runner: FakeRunner, _: SessionRef) -> AsyncIterator[AgentEvent]:
+        yield RunnerFailed(message="the harness fell over")
+        yield TurnEnded(reason=TurnReason.ERROR, text="the harness fell over")
+
+    SCRIPT[first_prompt_of("F-1.1")] = broken
+    await scripted(service, "F-1.2")
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock, settings=OrchSettings(max_agents_running=1))
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(10):
+            await clock.advance(timedelta(seconds=31))
+        every = await tasks_of(service)
+        sleeping = clock.sleepers
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert every["F-1.2"].state == READY, "the other agent turned while the first was backing off"
+    assert sleeping >= 1, "and the first is still waiting"
+
+
+async def test_the_transcripts_older_than_session_days_are_pruned(tmp_path: Path) -> None:
+    """(The card's 3: a transcript is kept `session_days`, and a udl that runs for weeks prunes on
+    a tick as well as when it starts.)"""
+    clock = FakeClock()  # (the database stamps with the service's clock: the test moves it)
+    async with UDLService(
+        settings(tmp_path, api=APISettings(api_key=SecretStr("test-key"))),
+        registry=orch_registry(),
+        clock=clock,
+    ) as running:
+        SERVICE.append(running)
+        records = AppRecords(running.db)
+        await ProjectRecords(records).save_project(Project(name="udl", title="udl"))
+        await FeatureRecords(records).save_feature(Feature(project="udl", key="F-1", title="It"))
+        await AgentRecords(records).save_agent(
+            Agent(name=AGENT, title=AGENT, runner="fake", host="local")
+        )
+        tasks = TaskRecords(records)
+        task = Task(project="udl", feature="F-1", key="F-1.1", title="It 1", assignee=AGENT)
+        await tasks.save_task(task)
+        await tasks.move(task, QUEUED, by=Principal(kind="system", role="assign"))
+        sessions = SessionRecords(records)
+        made = await sessions.save_session(
+            AgentSession(
+                agent=AGENT,
+                project="udl",
+                task="F-1.1",
+                ref=SessionRef(runner="fake", id="fake-1", cwd="/work/F-1.1", host="local"),
+            )
+        )
+        stale = await sessions.save_event(
+            SessionEvent(agent=AGENT, session=made.id, turn=1, event=TextDelta(text="stale"))
+        )
+        await clock.advance(timedelta(days=2))
+        kept = await sessions.save_event(
+            SessionEvent(agent=AGENT, session=made.id, turn=2, event=TextDelta(text="kept"))
+        )
+
+        found, _ = await dispatcher(running, clock=clock, settings=OrchSettings(session_days=1))
+        running_task = asyncio.ensure_future(found.run())
+        try:
+            for _ in range(20):
+                await asyncio.sleep(0)
+            left = {one.id for one in await sessions.transcript(made.id)}
+
+            # (one that is old enough, stored after the start-up prune: the tick prunes it)
+            later = await sessions.save_event(
+                SessionEvent(agent=AGENT, session=made.id, turn=3, event=TextDelta(text="old"))
+            )
+            await clock.advance(PRUNE_EVERY + timedelta(days=2))
+            after = {one.id for one in await sessions.transcript(made.id)}
+        finally:
+            running_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await running_task
+
+    assert stale.id not in left, "forgotten when the dispatcher started"
+    assert kept.id in left
+    assert later.id not in after, "forgotten on the tick, in a udl that keeps running"
