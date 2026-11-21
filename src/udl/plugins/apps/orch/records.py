@@ -466,6 +466,9 @@ class AgentSession(Record):
     failures: NonNegativeInt = 0
     """How many turns in a row failed (the dispatcher retries three times, 27.7)."""
     limited_until: AwareDatetime | None = None
+    limits: NonNegativeInt = 0
+    """How many times its runner limited it (a limited turn is not a turn, so this is what tells
+    one limit from the next, 27.7)."""
     tokens_in: NonNegativeInt = 0
     tokens_out: NonNegativeInt = 0
     cost: Decimal | None = None

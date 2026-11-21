@@ -703,8 +703,14 @@ class Dispatcher:
         if limited is not None or (ended is not None and ended.reason is TurnReason.LIMITED):
             until = limited.until if limited is not None else None
             self._harnesses.limited(agent.host, agent.runner, until)
-            await sessions.save_session(
-                session.model_copy(update={"state": SessionState.LIMITED, "limited_until": until})
+            session = await sessions.save_session(
+                session.model_copy(
+                    update={
+                        "state": SessionState.LIMITED,
+                        "limited_until": until,
+                        "limits": session.limits + 1,
+                    }
+                )
             )
             await self._live(
                 "orch.agent.limited",
@@ -713,7 +719,7 @@ class Dispatcher:
                     "session": str(session.id),
                     "until": until.isoformat() if until is not None else None,
                 },
-                dedupe=f"{session.id}:{session.turns}",
+                dedupe=f"{session.id}:{session.limits}",
             )
             return Outcome.LIMITED
         if failed is not None or (ended is not None and ended.reason is TurnReason.ERROR):

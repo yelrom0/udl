@@ -980,6 +980,51 @@ async def test_a_limit_publishes_and_holds_the_agent(service: UDLService) -> Non
     assert session.limited_until == until
 
 
+async def limits_of(service: UDLService) -> EventList:
+    """The `orch.agent.limited` events udl has published."""
+    found = await service.call("list_events", {"type": "orch.agent.limited", "limit": 20})
+    assert isinstance(found, EventList)
+    return found
+
+
+async def test_a_session_limited_twice_publishes_both_limits(service: UDLService) -> None:
+    """(A limited turn is not a turn, so a key of the session and its turn number dropped the
+    second limit: what tells one limit from the next is how many it has had.)"""
+    clock = FakeClock()
+    until = clock.now() + timedelta(minutes=30)
+
+    async def limited(runner: FakeRunner, _: SessionRef) -> AsyncIterator[AgentEvent]:
+        yield RunnerLimited(until=until, message="out of quota")
+        yield TurnEnded(reason=TurnReason.LIMITED, text="out of quota")
+
+    SCRIPT[first_prompt_of("F-1.1")] = limited
+    await ran(service, clock=clock, turns=1)
+
+    before = len((await limits_of(service)).events)
+    assert before == 1
+
+    # (the quota is back, and the same session is limited again on its resumed turn)
+    SCRIPT["udl restarted; continue where you were."] = limited
+    await clock.advance(timedelta(minutes=31))
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(20):
+            await clock.advance(timedelta(seconds=31))
+            if len((await limits_of(service)).events) > before:
+                break
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    seen = await limits_of(service)
+    assert len(seen.events) > before, "the second limit was dropped as a repeat of the first"
+    session = await session_of(service)
+    assert session is not None
+    assert session.limits > 1
+
+
 async def test_the_orch_settings_a_session_is_given_are_file_only(service: UDLService) -> None:
     """(A session's token is limited by the agent's own deny list: a hub URL or a deny list set
     through udl could widen it, so both are the config file's alone.)"""
