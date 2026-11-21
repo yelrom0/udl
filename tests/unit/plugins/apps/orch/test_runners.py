@@ -14,6 +14,7 @@ invented, because a harness signed in with a plan needs none.
 """
 
 # System Imports
+import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Final
@@ -28,10 +29,11 @@ from support.clock import FakeClock
 from support.engine import databases, registry, settings
 from support.opencode import FakeOpenCode, FakeShell
 from support.secrets import FakeResolver
-from udl.clock import Clock, SystemClock
+from udl.clock import Clock
 from udl.config import SecretsSettings
 from udl.core.service import UDLService
 from udl.db.manager import DBManager
+from udl.db.records import RecordQuery
 from udl.hosts.shell import Host, HostShell
 from udl.plugins.ai.base import AIProviderConnection
 from udl.plugins.apps.base import AppRecords
@@ -78,7 +80,7 @@ async def db(tmp_path: Path) -> AsyncIterator[DBManager]:
 @pytest.fixture
 def app(db: DBManager) -> Orch:
     """Orch, with its records (its harnesses are the real manager's)."""
-    return Orch(OrchSettings(), clock=SystemClock(), records=AppRecords(db))
+    return Orch(OrchSettings(), clock=FakeClock(), records=AppRecords(db))
 
 
 async def store(*, kept: dict[str, str]) -> SecretStore:
@@ -233,6 +235,11 @@ async def test_a_setup_gives_the_harness_the_keys_and_no_argv(tmp_path: Path) ->
                 SetupRunnerRequest(host="local", runner="opencode"), service=service
             )
 
+            kept = await service.db.list_records(AIProviderConnection, RecordQuery())
+
     assert setup.files[0].endswith("opencode.json")
     assert all("sk-openai" not in " ".join(argv) for argv in shell.runs)
     assert fake.credentials["udl-openai"]["value"] == {"type": "key", "key": "sk-openai"}
+    # (And no record holds it: the connection keeps where the key is, not the key.)
+    assert len(kept) == 1
+    assert "sk-openai" not in json.dumps(kept[0].options)
