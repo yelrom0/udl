@@ -16,7 +16,6 @@ the operations and what they write.
 """
 
 # System Imports
-import contextlib
 from collections.abc import AsyncIterator, Iterator, Sequence
 from pathlib import Path
 from typing import Any
@@ -35,7 +34,7 @@ from udl.interfaces.security import Principal as Caller
 from udl.interfaces.security import PrincipalKind, current_principal
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch import questions as asked
-from udl.plugins.apps.orch.agents import ManagerPowers
+from udl.plugins.apps.orch.agents import AgentRole, ManagerPowers
 from udl.plugins.apps.orch.models import (
     BLOCKED,
     IN_PROGRESS,
@@ -51,7 +50,6 @@ from udl.plugins.apps.orch.models import (
     Question as Asked,
 )
 from udl.plugins.apps.orch.plugin import Orch
-from udl.plugins.apps.orch.questions import QuestionRecords
 from udl.plugins.apps.orch.records import (
     Agent,
     AgentRecords,
@@ -63,6 +61,7 @@ from udl.plugins.apps.orch.records import (
     Project,
     ProjectRecords,
     Question,
+    QuestionRecords,
     Task,
     TaskRecords,
 )
@@ -107,7 +106,7 @@ async def service(tmp_path: Path) -> AsyncIterator[UDLService]:
                 title=MANAGER,
                 runner="fake",
                 host="local",
-                role="manager",
+                role=AgentRole.MANAGER,
                 manages=ManagerPowers(answer=True),
             )
         )
@@ -119,24 +118,18 @@ async def service(tmp_path: Path) -> AsyncIterator[UDLService]:
         yield running
 
 
-@contextlib.contextmanager
-def _as(who: Caller) -> Iterator[None]:
-    """The caller is `who` for as long as the block runs."""
-    token = current_principal.set(who)
-    try:
-        yield
-    finally:
-        current_principal.reset(token)
+def as_person() -> Any:
+    """The caller is the owner for a while (a person answers and closes what an agent cannot).
+
+    Reset with `current_principal.reset(token)`."""
+    return current_principal.set(Caller(kind=PrincipalKind.OWNER, name="owner"))
 
 
-def as_person() -> contextlib.AbstractContextManager[None]:
-    """The caller is the owner (a person answers and closes what an agent cannot)."""
-    return _as(Caller(kind=PrincipalKind.OWNER, name="owner"))
-
-
-def as_manager() -> contextlib.AbstractContextManager[None]:
-    """The caller is the manager (it answers and passes up its reports' questions)."""
-    return _as(Caller(kind=PrincipalKind.AGENT, name=MANAGER, role="manager"))
+def as_manager() -> Any:
+    """The caller is the manager for a while (it answers and passes up its reports' questions)."""
+    return current_principal.set(
+        Caller(kind=PrincipalKind.AGENT, name=MANAGER, role=AgentRole.MANAGER)
+    )
 
 
 @pytest.fixture
@@ -361,10 +354,10 @@ async def test_the_answer_and_its_notes_are_one_write(service: UDLService) -> No
                 raise DatabaseError("the note could not be written")
             return await super().save(record)
 
-        async def save_all[R: Record](self, batch: Sequence[R]) -> list[R]:
-            if any(isinstance(one, Note) for one in batch):
+        async def save_all[R: Record](self, records: Sequence[R]) -> list[R]:
+            if any(isinstance(one, Note) for one in records):
                 raise DatabaseError("the note could not be written")
-            return await super().save_all(batch)
+            return await super().save_all(records)
 
     with pytest.raises(DatabaseError, match="the note could not be written"):
         await asked.answer(
@@ -451,8 +444,11 @@ async def test_escalating_passes_it_up(service: UDLService, as_agent: None) -> N
     asked_about = await ask(service)
     assert asked_about.to == MANAGER
 
-    with as_manager():
+    token = as_manager()
+    try:
         found = await service.call("orch_escalate", {"project": "udl", "key": asked_about.key})
+    finally:
+        current_principal.reset(token)
 
     assert isinstance(found, Asked)
     assert found.to == HUMANS
@@ -470,15 +466,18 @@ async def test_escalating_from_a_manager_with_one_of_its_own_goes_to_it(
             title="someone",
             runner="fake",
             host="local",
-            role="manager",
+            role=AgentRole.MANAGER,
             manages=ManagerPowers(answer=True),
         )
     )
     await changed(service, MANAGER, manager="someone", manages=ManagerPowers(answer=True))
     asked_about = await ask(service)
 
-    with as_manager():
+    token = as_manager()
+    try:
         found = await service.call("orch_escalate", {"project": "udl", "key": asked_about.key})
+    finally:
+        current_principal.reset(token)
 
     assert isinstance(found, Asked)
     assert found.to == "someone"
@@ -488,11 +487,14 @@ async def test_closing_records_the_outcome(service: UDLService, as_agent: None) 
     """(A question nobody answers is closed with what was done about it instead.)"""
     asked_about = await ask(service, blocking=True)
 
-    with as_person():
+    token = as_person()
+    try:
         found = await service.call(
             "orch_close_question",
             {"project": "udl", "key": asked_about.key, "outcome": "Asked in the queue instead."},
         )
+    finally:
+        current_principal.reset(token)
 
     assert isinstance(found, Asked)
     assert found.state is QuestionState.CLOSED
@@ -505,11 +507,14 @@ async def test_closing_a_blocked_question_leaves_its_task_blocked(
     """(Closing is not answering: the task still waits for a person.)"""
     asked_about = await ask(service, blocking=True)
 
-    with as_person():
+    token = as_person()
+    try:
         await service.call(
             "orch_close_question",
             {"project": "udl", "key": asked_about.key, "outcome": "Never mind."},
         )
+    finally:
+        current_principal.reset(token)
 
     assert (await task_of(service, "F-1.1")).state == BLOCKED
 
