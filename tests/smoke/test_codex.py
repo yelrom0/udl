@@ -12,6 +12,12 @@ ChatGPT plan is not udl's to spend.
 It needs the CLI (0.171.0), a signed-in or configured provider and the router's key in
 `LLAMA_API_KEY`, so it never runs by default: `uv run pytest -m network`. Claude runs it at
 review, as the card says.
+
+What it does not do: the card's own done-when — `get_status` over udl's MCP from inside the turn.
+That needs a hub this process can reach over HTTP (Codex runs as a program, not in-process), so it
+belongs to 27.7's e2e run, where a hub and a dispatcher are started anyway. What is tested for
+here is the turn, the resume and the login status; the MCP wiring itself is the argv, which the
+unit tests read.
 """
 
 # System Imports

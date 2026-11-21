@@ -206,16 +206,18 @@ class Codex(AgentRunner[CodexOptions]):
         whether udl's rules are on the host."""
         try:
             version = await self.shell.run([*self.options.cli, "--version"])
-            status = await self.shell.run([*self.options.cli, "login", "status"])
+            # (Signed out, it says so on stderr and exits 1: read what it said either way,
+            # rather than taking a non-zero exit for a harness that is not there.)
+            status = await self.shell.run([*self.options.cli, "login", "status"], check=False)
         except (ToolUnavailable, PluginFailed) as failure:
             return RunnerHealth(installed=False, detail=str(failure))
         guards = await self._guards()
-        return _health(version.stdout, status.stdout, guards=guards)
+        return _health(version.stdout, f"{status.stdout}{status.stderr}", guards=guards)
 
     async def _guards(self) -> bool:
         """Whether udl's rules file is on the host (what 25.11's setup writes)."""
         try:
-            await self.shell.run(["sh", "-c", 'test -f "$1" || exit 1', "sh", f"~/{_RULES}"])
+            await self.shell.run(["sh", "-c", 'test -f "$HOME/$1" || exit 1', "sh", _RULES])
         except ToolUnavailable, PluginFailed, FileNotFoundError:
             return False
         return True
@@ -252,8 +254,18 @@ class Codex(AgentRunner[CodexOptions]):
         a provider's key is its own config's (`env_key`)."""
         del roles, env  # (Codex's rules are the same for every role, and its key is its own)
         rules = "".join(_rule(pattern) for pattern in _DEFAULT_DENY)
-        await self._write(
-            f"~/{_RULES}", f"# udl's rules: never a push or a merge from an agent.\n{rules}"
+        said = f"# udl's rules: never a push or a merge from an agent.\n{rules}"
+        # (Written through the shell with the path relative to the home: `$HOME` is expanded
+        # there, so udl never has to know where the home is on that host.)
+        await self.shell.run(
+            [
+                "sh",
+                "-c",
+                'target="$HOME/$1"; umask 077; mkdir -p "$(dirname "$target")" && cat > "$target"',
+                "sh",
+                _RULES,
+            ],
+            stdin=said.encode(),
         )
         return [f"~/{_RULES}"]
 
@@ -365,7 +377,14 @@ class Codex(AgentRunner[CodexOptions]):
                 f"sandbox_workspace_write.network_access={str(self.options.network).lower()}",
             ]
         else:
-            argv = [*cli, "exec", "resume", self._thread(session.id), "--json"]
+            thread = self._thread(session.id)
+            if thread is None:
+                # (Nothing started this session's thread — a store that forgot it, or a ref made
+                # elsewhere: say so, rather than resume a thread called by udl's own id.)
+                raise PluginFailed(
+                    f"No codex thread is known for session {session.id!r}: it has had no turn here"
+                )
+            argv = [*cli, "exec", "resume", thread, "--json"]
             # (0.171's resume has no --sandbox/--cd, so the same policy is given as -c keys:
             # every turn runs under it, not only the first.)
             argv += [
@@ -401,9 +420,9 @@ class Codex(AgentRunner[CodexOptions]):
             return prompt
         return f"{spec.instructions}\n\n{prompt}"
 
-    def _thread(self, session: str) -> str:
-        """The codex thread a session is (its own id until the first turn names it)."""
-        return self._sessions.threads.get(session, session)
+    def _thread(self, session: str) -> str | None:
+        """The codex thread a session is (None until the first turn's `thread.started` names it)."""
+        return self._sessions.threads.get(session)
 
     def _events(self, session: SessionRef, line: str) -> list[AgentEvent]:
         """What one line of the stream is (nothing, when udl does not know it)."""
@@ -456,13 +475,6 @@ class Codex(AgentRunner[CodexOptions]):
             RunnerFailed(message=message),
             TurnEnded(reason=TurnReason.ERROR, text=message),
         ]
-
-    async def _write(self, path: str, content: str) -> None:
-        """Write a file on the host, `0600`, through the shell (never from the hub's disk)."""
-        await self.shell.run(
-            ["sh", "-c", 'umask 077; mkdir -p "$(dirname "$1")" && cat > "$1"', "sh", path],
-            stdin=content.encode(),
-        )
 
 
 _TOOLS: Final = frozenset({"command_execution", "mcp_tool_call", "file_change"})

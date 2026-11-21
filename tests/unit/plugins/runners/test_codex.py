@@ -27,7 +27,7 @@ from pydantic import SecretStr
 # Local Imports
 from support.clock import FakeClock
 from udl.errors import ToolUnavailable
-from udl.hosts.shell import Host, Interaction
+from udl.hosts.shell import Host, Interaction, LocalShell
 from udl.plugins.requirements import Requirement
 from udl.plugins.runners.base import (
     AgentEvent,
@@ -43,11 +43,49 @@ from udl.plugins.runners.base import (
     TurnReason,
     Usage,
 )
-from udl.plugins.runners.codex import Codex, CodexOptions
+from udl.plugins.runners.codex import Codex, CodexOptions, CodexSessions
 from udl.process import CancelToken, ProcessResult
 
 RESET = "2027-01-15T08:00:00Z"
 """When a limit's message says the quota is back."""
+
+
+class HomeShell(LocalShell):
+    """A real local shell that runs as if the home were a test's folder (so a test can write to
+    it without touching the real one)."""
+
+    def __init__(self, home: Path) -> None:
+        super().__init__(Host.local(str(home)))
+        self.home = home
+        """The home directory it runs as."""
+        self.calls: list[tuple[list[str], bytes | None]] = []
+        """Every argv it was asked to run, with what was written to it, in order."""
+
+    async def run(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        secret_env: Mapping[str, str] | None = None,
+        stdin: bytes | None = None,
+        within: timedelta | None = None,
+        cancel: CancelToken | None = None,
+        check: bool = True,
+        tail: bool = False,
+    ) -> ProcessResult:
+        self.calls.append((list(argv), stdin))
+        return await super().run(
+            argv,
+            cwd=cwd,
+            env={**(env or {}), "HOME": str(self.home)},
+            secret_env=secret_env,
+            stdin=stdin,
+            within=within,
+            cancel=cancel,
+            check=check,
+            tail=tail,
+        )
 
 
 class FakeShell:
@@ -138,14 +176,11 @@ def runner(shell: FakeShell, **options: object) -> tuple[Codex, CodexOptions]:
 
 
 CODEX = Path(__file__).resolve().parents[3] / "support" / "codex_harness.py"
+"""The fake codex CLI: `--version`, `login status`, and `exec`/`exec resume` printing JSON lines."""
 FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "codex" / "0.171.0"
-"""The installed CLI's own help texts, as 25.12's card asks them to be kept."""
-"""The fake codex CLI: `--version`, `login status`, and `exec`/`exec resume` printing JSON lines."""
-_GUARDS = '-c test -f "$1" || exit 1 sh ~/.codex/rules/udl.rules'
-"""What the runner runs to see whether udl's rules are on the host (as the fake shell keys it)."""
+"""The installed CLI's own help texts and recorded turns, as 25.12's card asks them kept."""
 _RULES_PATH = "~/.codex/rules/udl.rules"
-"""Where the rules are (a path through the shell, so it is the home directory's)."""
-"""The fake codex CLI: `--version`, `login status`, and `exec`/`exec resume` printing JSON lines."""
+"""Where the rules are (the shell expands the home, so it is the home directory's)."""
 
 
 async def turn_of(runner_: Codex, session: SessionRef, prompt: str = "hello") -> list[AgentEvent]:
@@ -457,6 +492,29 @@ async def test_a_stopped_session_says_so() -> None:
     assert events[-1].reason is TurnReason.STOPPED
 
 
+async def test_a_resume_with_no_thread_is_an_error_rather_than_a_guess() -> None:
+    """A session that has had a turn but whose thread udl does not know (a store made elsewhere)
+    is an error: resuming a thread called by udl's own id would only fail on the host."""
+    shell = FakeShell(output=said(thread(), turn_done()))
+    # (A store that knows the spec and the turn, but not the thread: what a runner made with a
+    # bare mapping of specs would have.)
+    store = CodexSessions()
+    given = Codex(
+        CodexOptions(cli=[sys.executable, str(CODEX)]),
+        shell=shell,
+        clock=FakeClock(),
+        sessions=store,
+    )
+    started = await given.start(session())
+    store.sent.add(started.id)
+
+    events = await turn_of(given, started, "again")
+
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.ERROR
+    assert "thread" in events[-1].text
+
+
 async def test_a_session_udl_does_not_know_is_an_error() -> None:
     shell = FakeShell()
     given, _ = runner(shell)
@@ -470,6 +528,26 @@ async def test_a_session_udl_does_not_know_is_an_error() -> None:
 # ---------------------------------------------------------------------------------------------
 # The shapes the CLI really sends (recorded, not guessed)
 # ---------------------------------------------------------------------------------------------
+
+
+async def test_a_recorded_turn_with_tools_becomes_events() -> None:
+    """The recorded turn with a command and an MCP call: a string command, `server`/`tool`, and
+    the reasoning item skipped."""
+    recorded = FIXTURES / "events-tools.jsonl"
+    shell = FakeShell(output=[recorded.read_bytes()])
+    given, _ = runner(shell)
+    started = await given.start(session())
+
+    events = await turn_of(given, started)
+
+    begun = [event.name for event in events if isinstance(event, ToolStarted)]
+    ended = [event.name for event in events if isinstance(event, ToolFinished)]
+    assert begun == ["shell", "udl/get_status"]
+    assert ended == ["shell", "udl/get_status"]
+    said_text = [event.text for event in events if isinstance(event, TextDelta)]
+    assert said_text == ["udl is up, and the folder is empty."]
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.DONE
 
 
 async def test_a_command_item_is_a_string_and_a_shell_tool() -> None:
@@ -596,22 +674,32 @@ async def test_a_resumed_turn_keeps_the_sandbox_and_the_policy() -> None:
 # ---------------------------------------------------------------------------------------------
 
 
+def _flags(argv: Sequence[str]) -> list[str]:
+    """The options a turn's argv passes (its words that begin with `-`; `-` is the prompt)."""
+    return [word for word in argv if word.startswith("-") and word != "-"]
+
+
 def help_text(name: str) -> str:
     """The help text the fixtures hold for `name`."""
     return (FIXTURES / f"{name}-help.txt").read_text()
 
 
-def test_the_flags_the_runner_passes_are_in_the_installed_help() -> None:
-    """A flag the runner passes must be one this CLI has (the card's own test)."""
+async def test_the_flags_the_runner_passes_are_in_the_installed_help() -> None:
+    """A flag the runner passes must be one this CLI has (the card's own test): the argv is the
+    runner's own, so a new or renamed flag fails here."""
+    shell = FakeShell(output=said(thread("thread-9"), turn_done()))
+    given, _ = runner(shell)
+    started = await given.start(session())
+    await turn_of(given, started)
+    await turn_of(given, started, "again")
+
     said_exec = help_text("exec")
     said_resume = help_text("exec-resume")
-    said_login = help_text("login")
-    for flag in ("--json", "--model", "--cd", "--sandbox", "-c", "-"):
-        assert flag in said_exec
-    for flag in ("--json", "-c", "-"):
-        assert flag in said_resume
-    assert "--device-auth" in said_login
-    assert "--with-api-key" in said_login
+    for flag in _flags(shell.streams[0][0]):
+        assert flag in said_exec, f"{flag} is not a flag exec has"
+    for flag in _flags(shell.streams[1][0]):
+        assert flag in said_resume, f"{flag} is not a flag exec resume has"
+    assert "--device-auth" in help_text("login")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -619,45 +707,36 @@ def test_the_flags_the_runner_passes_are_in_the_installed_help() -> None:
 # ---------------------------------------------------------------------------------------------
 
 
-async def test_the_guards_are_reported_from_the_rules_file() -> None:
-    shell = FakeShell()
-    shell.answers = {
-        "--version": ProcessResult(returncode=0, stdout="codex-cli 0.171.0\n", stderr=""),
-        "login status": ProcessResult(returncode=0, stdout="Not logged in\n", stderr=""),
-        'sh -c "test -f \\"$1\\" || exit 1" sh ~/.codex/rules/udl.rules': ProcessResult(
-            returncode=0, stdout="", stderr=""
-        ),
-    }
-    given, _ = runner(shell)
+async def test_the_guards_are_reported_from_the_rules_file(tmp_path: Path) -> None:
+    """Through a real shell with a real home: the rules file is found where setup wrote it, and
+    not found when it is not there (`~` is expanded by the shell, never by udl)."""
+    shell = HomeShell(tmp_path / "home")
+    given = Codex(CodexOptions(cli=[sys.executable, str(CODEX)]), shell=shell, clock=FakeClock())
 
-    health = await given.health()
+    assert not (await given.health()).guards
 
-    assert health.guards
+    await given.setup()
 
-
-def test_the_guards_are_not_reported_without_the_rules_file() -> None:
-    shell = FakeShell()
-    shell.fails = {_GUARDS}
-
-    health = asyncio.run(_health_of(shell))
-
-    assert not health.guards
+    assert (shell.home / ".codex" / "rules" / "udl.rules").is_file()
+    assert (await given.health()).guards
+    said_rules = (shell.home / ".codex" / "rules" / "udl.rules").read_text()
+    assert 'pattern=["git", "push"]' in said_rules
+    assert 'pattern=["gh", "pr", "merge"]' in said_rules
+    assert 'decision="forbidden"' in said_rules
 
 
-def test_the_rules_file_refuses_a_push_and_a_merge(scripted: FakeShell) -> None:
-    """25.11's setup writes Codex's own rules, so a push and a merge are refused on the host."""
-    given, _ = runner(scripted)
+def test_the_rules_file_is_asked_for_where_setup_writes_it(tmp_path: Path) -> None:
+    """`setup()` writes it through the shell (relative to the home) and says where it is."""
+    shell = HomeShell(tmp_path / "home")
+    given = Codex(CodexOptions(cli=[sys.executable, str(CODEX)]), shell=shell, clock=FakeClock())
 
     written = asyncio.run(given.setup())
 
     assert written == ["~/.codex/rules/udl.rules"]
-    [[argv, stdin]] = scripted.runs
+    [[argv, stdin]] = shell.calls
     assert argv[0] == "sh"
-    assert _RULES_PATH in " ".join(argv)
-    said_rules = (stdin or b"").decode()
-    assert 'pattern=["git", "push"]' in said_rules
-    assert 'pattern=["gh", "pr", "merge"]' in said_rules
-    assert 'decision="forbidden"' in said_rules
+    assert argv[-1] == ".codex/rules/udl.rules"  # (the shell expands $HOME around it)
+    assert (stdin or b"").decode().startswith("# udl's rules:")
 
 
 async def test_udl_never_opens_codexs_own_credentials(scripted: FakeShell) -> None:
