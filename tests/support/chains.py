@@ -10,6 +10,7 @@ that make writing them out hard (quotes, >>, |, spaces), and valid chains made o
 # System Imports
 import re
 import string
+import warnings
 from typing import Any
 
 # Package Imports
@@ -48,11 +49,19 @@ def _selectors(draw: st.DrawFn) -> str:
     return parts[0] + "".join(c + p for c, p in zip(combinators, parts[1:], strict=True))
 
 
-def _compiles(pattern: str) -> bool:
-    try:
-        re.compile(pattern)
-    except re.error:
-        return False
+def compiles(pattern: str) -> bool:
+    """Whether `pattern` is a pattern `re` takes.
+
+    Python 3.14 warns (FutureWarning) when a set may be nested — `[[a]]` — which `re` still
+    accepts for now. A test's filterwarnings turns that warning into an error, so it is silenced
+    here: the question is whether it compiles, not whether it is the pattern a future Python
+    will still take."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        try:
+            re.compile(pattern)
+        except re.error:
+            return False
     return True
 
 
@@ -60,7 +69,7 @@ _PATTERNS = st.one_of(
     st.sampled_from(
         [r"\.m3u8", "a|b", r'"file":"([^"]+)"', "a >> b", " spaced ", "'q'", "x | all"]
     ),
-    st.text(min_size=1).filter(_compiles),
+    st.text(min_size=1).filter(compiles),
 )
 _PATHS = st.lists(
     st.text(min_size=1).filter(lambda part: "." not in part), min_size=1, max_size=3
