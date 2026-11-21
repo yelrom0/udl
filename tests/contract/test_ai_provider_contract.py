@@ -25,7 +25,7 @@ import pytest
 
 # Local Imports
 from support.ai import DEFAULT_URL, FakeAI, FakeProviderOptions
-from support.ai_servers import BASE, OPENROUTER_BASE, FakeOpenAI, FakeOpenRouter
+from support.ai_servers import BASE, KEY, OPENROUTER_BASE, FakeOpenAI, FakeOpenRouter
 from support.clock import FakeClock
 from udl.errors import PluginError, ProviderUnavailable
 from udl.plugins.ai.base import (
@@ -40,7 +40,7 @@ from udl.plugins.ai.base import (
     PullProgress,
     ToolSpec,
 )
-from udl.plugins.ai.openai import OpenAICompatibleProvider
+from udl.plugins.ai.openai import OpenAICompatibleProvider, OpenAIProvider, OpenAIProviderOptions
 from udl.plugins.ai.openrouter import OpenRouterProvider
 from udl.plugins.registry import AI, PluginRegistry
 
@@ -98,6 +98,25 @@ def openai_case() -> Case:
     )
 
 
+def openai_provider_case() -> Case:
+    """OpenAI's own provider, against the fake OpenAI API (in-process)."""
+    return Case(
+        plugin=OpenAIProvider,
+        provider=OpenAIProvider(
+            OpenAIProviderOptions.model_validate({"url": BASE, "api_key": KEY}),
+            http=FakeOpenAI().http(),
+            clock=FakeClock(),
+        ),
+        broken=OpenAIProvider(
+            OpenAIProviderOptions.model_validate({"url": BASE, "api_key": KEY}),
+            http=FakeOpenAI(refuse=True).http(),
+            clock=FakeClock(),
+        ),
+        url=BASE,
+        model="fake-1",
+    )
+
+
 def openrouter_case() -> Case:
     """OpenRouter's provider, against the fake OpenRouter API (in-process)."""
     return Case(
@@ -119,7 +138,7 @@ def openrouter_case() -> Case:
 
 CASES: dict[str, Callable[[], Case]] = {
     "fake": fake_case,
-    "openai": openai_case,
+    "openai": openai_provider_case,
     "openrouter": openrouter_case,
 }
 

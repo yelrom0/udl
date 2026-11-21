@@ -235,6 +235,16 @@ def test_a_chain_as_the_chain_commands_take_it(chain: dict[str, object], argumen
     assert command_arguments(TagChain.model_validate(chain)) == arguments
 
 
+def test_a_pattern_python_warns_about_is_still_a_pattern() -> None:
+    """Python 3.14 warns when a set may be nested (`[[a]]`), but `re` still takes it: a pattern
+    hypothesis may generate is not a failure because a future Python may refuse it."""
+    from support.chains import compiles
+
+    assert compiles(r"[[a]]")
+    assert compiles(r"[[a]]+")
+    assert not compiles("[a")
+
+
 # ---------------------------------------------------------------------------------------------
 # Round trips (hypothesis)
 # ---------------------------------------------------------------------------------------------
