@@ -17,6 +17,16 @@ import pytest
 
 # Local Imports
 from support.git import git
+from udl.hosts.shell import REPO_VARIABLES
+
+
+def test_the_repo_variables_are_every_one_this_git_names(tmp_path: Path) -> None:
+    # (REPO_VARIABLES is a copy of `git rev-parse --local-env-vars`: a later git that adds one
+    # fails this, rather than the list falling behind it unnoticed.)
+    named = set(git("rev-parse", "--local-env-vars", cwd=tmp_path).split())
+
+    assert named
+    assert named <= REPO_VARIABLES, sorted(named - REPO_VARIABLES)
 
 
 def test_a_repo_the_test_makes_is_its_own_under_a_hook(
