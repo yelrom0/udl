@@ -71,6 +71,7 @@ from udl.plugins.apps.orch.models import (
     HostName,
     Key,
     LinkKind,
+    ManagerVerdict,
     MergePolicy,
     NoteKind,
     OwnerKind,
@@ -1372,6 +1373,68 @@ def move_note(task: Task, moved: Task, by: Principal) -> Note:
         text=f"{task.state} → {moved.state}, by {by.who}.",
         author="udl",
     )
+
+
+class Review(Record):
+    """A manager's verdict on a report's pull, for one head (27.8): what `orch_review_task`
+    records, and what readiness asks for when the report's manager has the `review` power.
+
+    It is per head, so a new push needs a new review: the verdict on the commit before it says
+    nothing about this one."""
+
+    kind = "orch_review"
+    indexed = ("project", "task", "head")
+
+    project: Name
+    """The project it is in."""
+    task: Key
+    """The task whose pull it is about."""
+    head: str
+    """The commit it is about (the pull's head when the manager read it)."""
+    verdict: ManagerVerdict
+    """What the manager says: `approve`, or `changes`."""
+    reasons: str = ""
+    """Why, as markdown (the changes it wants, or what it checked)."""
+    by: str = ""
+    """The manager's name."""
+    at: AwareDatetime = Field(default_factory=utcnow)
+    """When it said so."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            project="udl",
+            task="27.8",
+            head="dc1fd19aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            verdict="approve",
+            reasons="It does what the card says.",
+            by="deepseek-a",
+        )
+
+
+class ReviewRecords:
+    """Where orch keeps its managers' reviews (27.8): read by task and head, newest first."""
+
+    def __init__(self, records: AppRecords) -> None:
+        self._records = records
+
+    async def save_review(self, review: Review) -> Review:
+        """Keep `review`."""
+        return await self._records.save(review)
+
+    async def for_task(self, project: str, task: str) -> list[Review]:
+        """Every review of `task`'s pull, newest first."""
+        found = await self._records.list(
+            Review, RecordQuery(where={"project": project, "task": task})
+        )
+        return sorted(found, key=lambda one: (one.at, one.created_at), reverse=True)
+
+    async def for_head(self, project: str, task: str, head: str) -> Review | None:
+        """The newest review of `head` (None: nobody has looked at this head)."""
+        for one in await self.for_task(project, task):
+            if one.head == head:
+                return one
+        return None
 
 
 class NoteRecords:

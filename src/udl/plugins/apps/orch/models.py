@@ -103,6 +103,7 @@ __all__ = [
     "ListProjectsRequest",
     "ListQuestionsRequest",
     "ListTasksRequest",
+    "ManagerVerdict",
     "MergePolicy",
     "Message",
     "MoveTaskRequest",
@@ -130,6 +131,7 @@ __all__ = [
     "ReorderQueueRequest",
     "ReplyRequest",
     "Repo",
+    "ReviewVerdict",
     "Role",
     "SetActionRequest",
     "SetFeatureRequest",
@@ -273,6 +275,7 @@ ROLE: Final[tuple[Role, ...]] = get_args(Role.__value__)
 """Every role, read from `Role` (one list of them)."""
 
 type TaskKind = Literal["build", "human", "review"]
+type ManagerVerdict = Literal["approve", "changes"]
 """What kind of work a task is (the card's build | human | review)."""
 
 type FeatureStatus = Literal["planned", "active", "done", "parked"]
@@ -1252,6 +1255,40 @@ class Readiness(_Model):
     """The blockers that are only a matter of time (the checks still running, the review bot not
     done with this head, GitHub not knowing yet): what a wait can change, and the rest of
     `blockers` cannot (27.5)."""
+
+
+class ReviewRequest(_Model):
+    """A manager's verdict on a report's pull (27.8)."""
+
+    key: Key
+    """The task whose pull it is."""
+    verdict: ManagerVerdict
+    """`approve`, or `changes`."""
+    reasons: str = ""
+    """Why, as markdown: what it checked, or the changes it wants."""
+    head: str | None = None
+    """The commit it read (None: the pull's head as udl last read it)."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class Reviewed(_Model):
+    """A review, as `orch_review_task` answers with it."""
+
+    project: Name
+    """The project it is in."""
+    task: Key
+    """The task whose pull it is about."""
+    head: str
+    """The commit it is about."""
+    verdict: ManagerVerdict
+    """What the manager says."""
+    reasons: str = ""
+    """Why."""
+    by: str = ""
+    """The manager's name."""
+    at: AwareDatetime
+    """When it said so."""
 
 
 class ReadinessRequest(_Model):

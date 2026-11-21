@@ -16,6 +16,7 @@ dispatcher does with it.
 # System Imports
 import asyncio
 import contextlib
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -67,7 +68,9 @@ from udl.plugins.apps.orch.models import (
     READY,
     OwnerKind,
     Principal,
+    PullState,
     QuestionState,
+    Suggestions,
 )
 from udl.plugins.apps.orch.plugin import Orch
 from udl.plugins.apps.orch.records import (
@@ -84,6 +87,8 @@ from udl.plugins.apps.orch.records import (
     QuestionRecords,
     Repo,
     RepoRecords,
+    Review,
+    ReviewRecords,
     SessionEvent,
     SessionRecords,
     Task,
@@ -219,11 +224,38 @@ class ScriptedRunner(FakeRunner):
         )
 
     def send(self, session: SessionRef, prompt: str) -> AsyncIterator[AgentEvent]:
-        """Record the prompt, then send it as the fake does (or raise, if it is scripted to)."""
+        """Record the prompt, then send it as the fake does (or raise, if it is scripted to).
+
+        A manager's prompt carries its reports' news, so it is scripted by `MANAGER_KEY` and the
+        turn it gets is the one scripted for `manager`."""
         PROMPTS.append(prompt)
         if prompt in RAISES:
             return _raising(RAISES[prompt])
+        if prompt.startswith(MANAGER_KEY) and "manager" in SCRIPT:
+            # (A turn's body runs when it is first iterated, after other sessions' prompts may
+            # have been recorded: keep this one aside for it.)
+            MANAGER_PROMPT[0] = prompt
+            return self._manager(session, SCRIPT["manager"])
+        named = _A_TASK.search(prompt)
+        if named is not None and f"task:{named.group(0)}" in SCRIPT:
+            # (A task's prompts change as its pull does; a test scripts the task, not each line.)
+            return self._manager(session, SCRIPT[f"task:{named.group(0)}"])
         return super().send(session, prompt)
+
+    async def _manager(self, session: SessionRef, turn: Turn) -> AsyncIterator[AgentEvent]:
+        """`turn`, as a manager's session runs it: the fake's bookkeeping, and its own ending."""
+        STORE.turns += 1
+        async for event in turn(self, session):
+            yield event
+        yield TurnEnded(reason=TurnReason.DONE, text="done")
+
+
+_A_TASK = re.compile(r"[A-Z][A-Z0-9_]*-[0-9]+(?:\.[0-9]+)*")
+"""A task key in a prompt (27.8's done-when scripts a task, whatever its session is told)."""
+MANAGER_PROMPT: list[str] = [""]
+"""The prompt the manager's running turn was given (a turn's body starts after `send`)."""
+MANAGER_KEY: str = "You are ernie-c"
+"""How a manager's prompt starts (its news follows, so it is scripted by this prefix)."""
 
 
 async def _raising(error: Exception) -> AsyncIterator[AgentEvent]:
@@ -1960,3 +1992,164 @@ async def test_a_failed_session_on_a_task_blocked_on_another_question_ends(
     assert session.state is SessionState.ENDED
     thread = await QuestionRecords(records).thread(open_one)
     assert any("session failed" in one.text for one in thread), "the reason is said on its thread"
+
+
+# ---------------------------------------------------------------------------------------------
+# 27.8's done-when: a manager keeps two reports busy across four tasks, with no human
+# ---------------------------------------------------------------------------------------------
+
+
+async def a_manager_and_its_reports(service: UDLService) -> None:
+    """`ernie-c` managing `deepseek-b` and `deepseek-a`, and four open tasks to give out."""
+    records = AppRecords(service.db)
+    agents = AgentRecords(records)
+    await agents.save_agent(
+        Agent(
+            name="ernie-c",
+            title="ernie-c",
+            runner="fake",
+            host="local",
+            role=AgentRole.MANAGER,
+            manages=ManagerPowers(assign=True, answer=True, review=True, plan=True),
+            brief="Keep your reports busy.",
+        )
+    )
+    await agents.save_agent(
+        Agent(name="deepseek-a", title="deepseek-a", runner="fake", host="local", manager="ernie-c")
+    )
+    for name in (AGENT, "deepseek-a"):
+        found = await agents.agent(name)
+        assert found is not None
+        await agents.save_agent(found.model_copy(update={"manager": "ernie-c"}))
+    tasks = TaskRecords(records)
+    for number in (3, 4):
+        key = f"F-1.{number}"
+        task = Task(project="udl", feature="F-1", key=key, title=f"It {number}")
+        await tasks.save_task(task)
+        await LinkRecords(records).add(
+            project="udl",
+            owner_kind=OwnerKind.TASK,
+            owner=key,
+            kind="pull",
+            url=PULL,
+            state=PullState(head_sha=HEAD),
+        )
+    # (The manager has read each pull at its head and said it is fine: a report's ready waits on
+    # its manager's OK (27.8), and these pulls are all at `HEAD`.)
+    reviews = ReviewRecords(records)
+    for number in (1, 2, 3, 4):
+        await reviews.save_review(
+            Review(
+                project="udl",
+                task=f"F-1.{number}",
+                head=HEAD,
+                verdict="approve",
+                reasons="It does what its card says.",
+                by="ernie-c",
+            )
+        )
+
+
+def a_report_s_turn(key: str) -> Turn:
+    """A report's turn on `key`: it says it is ready, and says what it waits on when it cannot
+    (its manager's review, 27.8)."""
+
+    async def turn(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
+        try:
+            await ask("orch_ready", {"key": key})
+        except NotAllowed as error:
+            yield TextDelta(text=f"{key} waits: {error.message}")
+            return
+        yield TextDelta(text=f"{key} is ready.")
+
+    return turn
+
+
+def the_manager_s_turn() -> Turn:
+    """The manager's turn: it reads what its reports need from its prompt, gives a report with
+    nothing to do the next suggested task, and reviews what its reports have pushed."""
+
+    async def turn(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
+        # (As its token's principal: in udl a session's calls reach the MCP server, which
+        # authenticates the agent's token — the fake harness does that here.)
+        token = current_principal.set(
+            Caller(kind=PrincipalKind.AGENT, name="ernie-c", role="manager")
+        )
+        try:
+            async for event in _managing_turn():
+                yield event
+        finally:
+            current_principal.reset(token)
+
+    return turn
+
+
+async def _managing_turn() -> AsyncIterator[AgentEvent]:
+    """What the manager does with its news, as its turn."""
+    said = MANAGER_PROMPT[0]
+    for line in said.splitlines():
+        if line.startswith("- assign: "):
+            name = line.split()[2]
+            suggested = await ask("orch_suggest", {"project": "udl", "agent": name})
+            assert isinstance(suggested, Suggestions)
+            if suggested.suggestions:
+                key = suggested.suggestions[0].task
+                await ask("orch_assign", {"project": "udl", "key": key, "agent": name})
+                # (Its pull is green already, so it reads it and says so while the report
+                # starts: a report's ready waits on its manager's OK, 27.8.)
+                await ask(
+                    "orch_review_task",
+                    {
+                        "project": "udl",
+                        "key": key,
+                        "verdict": "approve",
+                        "reasons": "It does what its card says.",
+                    },
+                )
+        elif line.startswith("- review: "):
+            key = line.split()[3]
+            await ask(
+                "orch_review_task",
+                {"project": "udl", "key": key, "verdict": "approve", "reasons": "It does it."},
+            )
+    yield TextDelta(text="done")
+
+
+async def test_a_manager_keeps_two_reports_busy_across_four_tasks(service: UDLService) -> None:
+    """(27.8's done-when: with all four powers on, a manager keeps two reports busy across four
+    tasks without a human — it gives each one with an empty queue the next task, and approves
+    what they push, so each task reaches `ready`.)"""
+    await a_manager_and_its_reports(service)
+    SCRIPT["manager"] = the_manager_s_turn()
+    for key in ("F-1.1", "F-1.2", "F-1.3", "F-1.4"):
+        SCRIPT[f"task:{key}"] = a_report_s_turn(key)
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(40):
+            every = await tasks_of(service)
+            if all(
+                one.state == READY
+                for key, one in every.items()
+                if key.startswith("F-1.") and not key.startswith("F-1.0")
+            ):
+                break
+            await clock.advance(timedelta(seconds=31))
+        else:
+            raise AssertionError(
+                f"never got there: {[(k, t.state, t.assignee) for k, t in every.items()]}"
+                f" sent: {PROMPTS[-6:]}"
+            )
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    every = {key: one for key, one in (await tasks_of(service)).items() if key != "managing.1"}
+    assert sorted(every) == ["F-1.1", "F-1.2", "F-1.3", "F-1.4"]
+    assert all(one.state == READY for one in every.values())
+    assert {one.assignee for one in every.values()} == {AGENT, "deepseek-a"}, "both were kept busy"
+    reviews = await ReviewRecords(AppRecords(service.db)).for_task("udl", "F-1.1")
+    assert [one.verdict for one in reviews] == ["approve"]

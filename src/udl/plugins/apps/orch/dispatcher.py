@@ -41,6 +41,7 @@ from udl.db.models import JsonObject
 from udl.errors import DoesNotExist, PluginError, UDLError
 from udl.hosts.models import HostRequest
 from udl.plugins.apps.base import AppContext, AppEvent
+from udl.plugins.apps.orch import managers
 from udl.plugins.apps.orch import questions as asked
 from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch import records as stored
@@ -53,6 +54,7 @@ from udl.plugins.apps.orch.models import (
     IN_PROGRESS,
     MERGED,
     QUEUED,
+    READY,
     OwnerKind,
     Principal,
     QuestionState,
@@ -169,6 +171,22 @@ def changed(task: stored.Task, what: str) -> str:
     return (
         f"What changed on {task.key}: {what}\n\n"
         "Carry on: push with `orch_push`, and say it is done with `orch_ready`."
+    )
+
+
+def manager_prompt(agent: stored.Agent, reports: Sequence[str], items: Sequence[str]) -> str:
+    """What a manager is told: what its reports need, as data (27.8), and what it may do about
+    each — its powers are the only ones it has, and what it decides is a note a person can read."""
+    told = "\n".join(f"- {one}" for one in items)
+    return (
+        f"You are {agent.name}, and you manage: {', '.join(reports) or 'nobody yet'}.\n\n"
+        f"Here is what your reports need:\n\n{told}\n\n"
+        "Do what you can with your powers, and nothing else: `orch_suggest` and `orch_assign` "
+        "when a report has nothing to do, `orch_answer` when a question is covered by the spec "
+        "or a recorded decision (say which) and `orch_escalate` when it is not, and "
+        "`orch_review_task` with `approve` or `changes` and the reasons when a report's pull is "
+        "ready. Everything you decide is a note on the task with you as its author, so a person "
+        "sees who decided what."
     )
 
 
@@ -328,6 +346,8 @@ class Dispatcher:
                 return
             await self._work(agent, task, current, resume=True)
             return
+        if await self._managing(agent):
+            return
         task = await self._pick(agent)
         if task is None:
             return
@@ -336,6 +356,124 @@ class Dispatcher:
         if session is None or session.state in (SessionState.FAILED, SessionState.LIMITED):
             return
         await self._work(agent, task, session, resume=False)
+
+    async def _managing(self, agent: stored.Agent) -> bool:
+        """One manager's turn, when its reports need something (27.8): what they need is the
+        prompt's data, the standing review task is what the session is on, and it is never
+        finished — the manager reads its inbox again when there is more in it.
+
+        False when the agent is not a manager with powers, or nothing needs it."""
+        if not managers.switched_on(agent.manages):
+            return False
+        reports = [
+            one.name
+            for one in await managers.reports(stored.AgentRecords(self._records), agent.name)
+        ]
+        items = await self._needs(agent, reports)
+        if not items:
+            return False
+        task = await self._standing(agent)
+        session = await self._session_for(agent, task)
+        if session is None:
+            return False
+        await self._work(agent, task, session, resume=session.state is SessionState.RUNNING)
+        return True
+
+    async def _standing(self, agent: stored.Agent) -> stored.Task:
+        """The manager's standing task (27.8): a `review` task of its own, made once and never
+        finished, so its sessions always have something to be on."""
+        tasks = stored.TaskRecords(self._records)
+        project = (await self._projects_of_any() or ["udl"])[0]
+        for one in await tasks.tasks(project):
+            if one.task_kind == "review" and one.assignee == agent.name:
+                return one
+        feature = "managing"
+        features = stored.FeatureRecords(self._records)
+        if await features.feature(project, feature) is None:
+            await features.save_feature(
+                stored.Feature(project=project, key=feature, title="Managing")
+            )
+        key = await self._next_task_key(tasks, project, feature)
+        made = stored.Task(
+            project=project,
+            feature=feature,
+            key=key,
+            title=f"{agent.name}'s reports",
+            task_kind="review",
+            assignee=agent.name,
+        )
+        await tasks.save_task(made)
+        return await tasks.move(made, QUEUED, by=_system("assign"))
+
+    async def _next_task_key(self, tasks: stored.TaskRecords, project: str, feature: str) -> str:
+        """The next key of `feature`'s tasks (`<feature>.<n>`): the feature's counter, past any
+        key a project already has."""
+        counters = stored.Counters(self._records)
+        for _ in range(100):
+            key = f"{feature}.{await counters.claim(project, f'{feature}.')}"
+            if await tasks.task(project, key) is None:
+                return key
+        raise PluginError(f"No key is free for a task of {feature!r} in {project!r}")
+
+    async def _needs(self, agent: stored.Agent, reports: Sequence[str]) -> list[str]:
+        """What `agent`'s reports need, as the lines its turn is told (27.8): a report with
+        nothing to do (`assign`), a question asked of it (`answer`), and a report's pull that is
+        ready and not reviewed for its head (`review`)."""
+        powers = agent.manages
+        tasks = stored.TaskRecords(self._records)
+        sessions = stored.SessionRecords(self._records)
+        questions = stored.QuestionRecords(self._records)
+        found: list[str] = []
+        for name in reports:
+            if powers.assign and await sessions.current(name) is None:
+                waiting = [
+                    one
+                    for project in await self._projects_of_any()
+                    for one in await queues.queue_of(tasks, project=project, agent=name)
+                ]
+                if not waiting:
+                    found.append(
+                        f"assign: {name} has nothing to do — its queue is empty. Suggest a task "
+                        f"(`orch_suggest`), then assign it (`orch_assign`, agent {name})."
+                    )
+            if powers.review:
+                for project in await self._projects_of_any():
+                    for one in await tasks.tasks(project):
+                        if one.assignee != name or one.state not in (IN_PROGRESS, READY):
+                            continue
+                        head = await self._head_of(project, one.key)
+                        if head is None:
+                            continue
+                        done = await stored.ReviewRecords(self._records).for_head(
+                            project, one.key, head
+                        )
+                        if done is None:
+                            found.append(
+                                f"review: {name}'s {one.key} ({one.title}) has a pull at "
+                                f"{head[:7]} that no one has reviewed (project {project}). Read "
+                                f"the diff against the task's spec, then `orch_review_task` with "
+                                f"`approve` or `changes` and the reasons."
+                            )
+        if powers.answer:
+            for project in await self._projects_of_any():
+                for one in await questions.questions(
+                    project, state=QuestionState.OPEN, to=agent.name
+                ):
+                    found.append(
+                        f'answer: {one.asked_by} asked {one.key} "{one.title}" about '
+                        f"{project}:{one.task} (project {project}). Answer it (`orch_answer`) only "
+                        f"where the spec or a recorded decision covers it, and say which; else "
+                        f"escalate it (`orch_escalate`)."
+                    )
+        return found
+
+    async def _head_of(self, project: str, key: str) -> str | None:
+        """The head a task's pull last had, or None when it has no pull udl knows."""
+        links = await stored.LinkRecords(self._records).for_owner(project, OwnerKind.TASK, key)
+        for link in links:
+            if link.link_kind == "pull" and link.state.head_sha:
+                return link.state.head_sha
+        return None
 
     async def _reaching(self, agent: stored.Agent) -> None:
         """Check `agent`'s host, then wait: an agent whose host does not answer is `offline`, so no
@@ -537,6 +675,20 @@ class Dispatcher:
         sessions = stored.SessionRecords(self._records)
         prompt: str
         kind = "changed"
+        if task.task_kind == "review":
+            # (A manager's standing task is never finished: one turn per batch of news, then the
+            # session is ended and the task waits for the next batch, 27.8.)
+            reports = [
+                one.name
+                for one in await managers.reports(stored.AgentRecords(self._records), agent.name)
+            ]
+            items = await self._needs(agent, reports)
+            outcome = await self._turn(agent, session, manager_prompt(agent, reports, items))
+            session = await sessions.session(session.id) or session
+            if outcome is Outcome.RETRY:
+                await self._retried(agent, session, session.last_error)
+            await self._end(agent, session)
+            return
         if resume:
             said = await self._answers(task, session)
             base = "udl restarted; continue where you were."
