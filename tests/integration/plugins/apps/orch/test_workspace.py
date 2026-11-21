@@ -15,32 +15,13 @@ from pathlib import Path
 import pytest
 
 # Local Imports
+from support.git import GIT, git
 from udl.errors import ConfigError, NotAllowed
 from udl.hosts import Host, shell_for
+from udl.hosts.shell import inherited
 from udl.plugins.apps.orch.models import Repo
 from udl.plugins.apps.orch.records import Task
 from udl.plugins.apps.orch.workspace import prepare, remove
-
-# (A repo of the test's own: its own identity, and no signing — the machine's git signs with
-# 1Password, which refuses under load and would fail the test for something udl did not do.)
-GIT: list[str] = [
-    "git",
-    "-c",
-    "user.name=udl",
-    "-c",
-    "user.email=udl@example.com",
-    "-c",
-    "commit.gpgsign=false",
-]
-
-
-def git(*args: str, cwd: Path) -> str:
-    """Run git in `cwd` and answer what it printed (its own error when it fails)."""
-    done = subprocess.run(  # noqa: S603 - (a test's own argv, never a user's)
-        [*GIT, *args], cwd=cwd, capture_output=True, text=True, check=False
-    )
-    assert done.returncode == 0, done.stderr
-    return done.stdout.strip()
 
 
 @pytest.fixture
@@ -186,6 +167,7 @@ async def test_remove_takes_the_worktree_and_its_branch_away(
         subprocess.run(  # noqa: S603, ASYNC221 - (a test's own argv, a git that ends at once)
             [*GIT, "show-ref", "--verify", f"refs/udl/pushed/{found.branch}"],
             cwd=home / "checkout",
+            env=inherited(),
             capture_output=True,
             check=False,
         ).returncode

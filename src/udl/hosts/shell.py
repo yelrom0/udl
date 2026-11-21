@@ -90,6 +90,30 @@ _SSH_OPTIONS: Final = (
 # whose HOME is not the user's, and a udl that was told another). ssh reads ~/.ssh/config from
 # the passwd entry, not from $HOME, so a test cannot point it there: it gives its own file.
 SSH_CONFIG: Final = "UDL_SSH_CONFIG"
+# What git exports to point a program at one repo (`git rev-parse --local-env-vars`): a hook gets
+# them for the repo it runs in. udl does not pass them on from its own environment, so a program
+# it runs finds its repo by the folder it runs in: on 21 Nov a `make check` under the pre-commit
+# hook passed them on, and a test's `git init --bare` turned the repo it was run from bare. A
+# host's or a command's own env may still set them.
+REPO_VARIABLES: Final = frozenset(
+    {
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_CONFIG",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_DIR",
+        "GIT_GRAFT_FILE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_PREFIX",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_SHALLOW_FILE",
+        "GIT_WORK_TREE",
+    }
+)
 # A name that can be an environment variable in a shell.
 _VAR: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -362,10 +386,15 @@ def _check_cwd(command: Command) -> None:
         raise PluginFailed(f"There is no folder {command.cwd}")
 
 
+def inherited() -> dict[str, str]:
+    """udl's own environment, as a program it runs is given it: without git's REPO_VARIABLES."""
+    return {name: value for name, value in os.environ.items() if name not in REPO_VARIABLES}
+
+
 def _environment(command: Command, host: Host) -> dict[str, str]:
-    """The whole environment a local program runs with: udl's, the host's, the command's and its
-    secrets (which are in no argv, here or there)."""
-    return {**os.environ, **host.env, **command.env, **command.secret_env}
+    """The whole environment a local program runs with: udl's (inherited()), the host's, the
+    command's and its secrets (which are in no argv, here or there)."""
+    return {**inherited(), **host.env, **command.env, **command.secret_env}
 
 
 def remote_line(host: Host, command: Command) -> str:

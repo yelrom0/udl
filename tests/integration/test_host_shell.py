@@ -118,6 +118,33 @@ async def test_both_shells_give_a_programs_environment(both: list[tuple[str, Hos
         assert result.stdout.strip() == "hi", name
 
 
+async def test_the_local_shell_does_not_pass_on_the_repo_udl_runs_in(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (A git hook exports GIT_DIR and GIT_INDEX_FILE for its own repo. A program udl runs finds
+    # its repo by the folder it runs in, so udl under a hook never works on the hook's repo.)
+    monkeypatch.setenv("GIT_DIR", "/elsewhere/.git")
+    monkeypatch.setenv("GIT_INDEX_FILE", "/elsewhere/.git/index")
+    shell = shell_for(Host.local(str(home)))
+
+    result = await shell.run(
+        _python("import os; print(os.environ.get('GIT_DIR'), os.environ.get('GIT_INDEX_FILE'))")
+    )
+
+    assert result.stdout.strip() == "None None"
+
+
+async def test_a_hosts_own_git_dir_is_still_given(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GIT_DIR", "/elsewhere/.git")
+    host = Host.local(str(home)).model_copy(update={"env": {"GIT_DIR": "/mine/.git"}})
+
+    result = await shell_for(host).run(_python("import os; print(os.environ['GIT_DIR'])"))
+
+    assert result.stdout.strip() == "/mine/.git"
+
+
 async def test_both_shells_give_a_secret_to_the_environment_but_not_the_argv(
     both: list[tuple[str, HostShell]],
 ) -> None:

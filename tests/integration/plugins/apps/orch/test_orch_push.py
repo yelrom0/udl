@@ -22,10 +22,12 @@ from pydantic import BaseModel
 
 # Local Imports
 from support.engine import registry, settings
+from support.git import GIT, git
 from udl.core.operations import OperationHints
 from udl.core.service import UDLService
 from udl.errors import NotAllowed
 from udl.hosts import Host
+from udl.hosts.shell import inherited
 from udl.interfaces.security import Principal, PrincipalKind, current_principal
 from udl.plugins.apps.base import AppPlugin, AppRecords, AppSettings
 from udl.plugins.apps.orch.models import IN_PROGRESS, OwnerKind, PushResult
@@ -47,27 +49,7 @@ from udl.plugins.apps.orch.records import (
 from udl.plugins.apps.orch.workspace import prepare
 from udl.plugins.registry import APPS, PluginRegistry
 
-# (A repo of the test's own: its own identity, and no signing — the machine's git signs with
-# 1Password, which refuses under load and would fail the test for something udl did not do.)
-GIT: list[str] = [
-    "git",
-    "-c",
-    "user.name=udl",
-    "-c",
-    "user.email=udl@example.com",
-    "-c",
-    "commit.gpgsign=false",
-]
 AGENT: str = "deepseek-b"
-
-
-def git(*args: str, cwd: Path) -> str:
-    """Run git in `cwd` and answer what it printed (its own error when it fails)."""
-    done = subprocess.run(  # noqa: S603 - (a test's own argv, never a user's)
-        [*GIT, *args], cwd=cwd, capture_output=True, text=True, check=False
-    )
-    assert done.returncode == 0, done.stderr
-    return done.stdout.strip()
 
 
 class OpenPull(BaseModel):
@@ -557,6 +539,7 @@ async def test_the_branch_is_rebased_when_the_base_moved(
     done = subprocess.run(  # noqa: S603, ASYNC221 - (a test's own argv, a git that ends at once)
         [*GIT, "merge-base", "--is-ancestor", moved, "HEAD"],
         cwd=worktree,
+        env=inherited(),
         capture_output=True,
         text=True,
         check=False,
