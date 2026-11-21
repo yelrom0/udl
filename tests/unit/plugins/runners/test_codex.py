@@ -128,8 +128,7 @@ class FakeShell:
         elif command in self.fails:
             raise ToolUnavailable("codex is not on this host")
         else:
-            answer = self.answers.get(command, ProcessResult(returncode=0, stdout="", stderr=""))
-            result = ProcessResult(returncode=0, stdout=answer.stdout, stderr="")
+            result = self.answers.get(command, ProcessResult(returncode=0, stdout="", stderr=""))
         if check and result.returncode != 0:
             # (What a real shell does: a non-zero exit is a failure the caller must handle, so a
             # test can tell whether the runner asked for it or not.)
