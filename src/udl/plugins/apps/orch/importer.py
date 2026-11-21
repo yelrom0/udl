@@ -91,7 +91,7 @@ _PHASE_HEADING: Final = re.compile(
 """A phase's own heading: `## Phase 8: Groundwork`, `# UDL Phase 22: Proxmox plugin`."""
 
 _CARD: Final = re.compile(
-    r"^\*\*(?P<key>[0-9]+(?:\.[0-9]+[a-z]?)?)\s+(?P<title>[^*]+?)\*\*\s*(?:·\s*(?P<rest>.*))?$"
+    r"^\*\*(?P<key>[0-9]+\.[0-9]+[a-z]?)\s+(?P<title>[^*]+?)\*\*\s*(?:·\s*(?P<rest>.*))?$"
 )
 """A card's line: `**26.7 Markdown import** · needs 26.6`."""
 

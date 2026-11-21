@@ -465,6 +465,22 @@ def test_a_card_whose_key_ends_in_a_letter_is_read() -> None:
     assert task_of(plan, "27.3a").spec == "Its own too."
 
 
+def test_bold_prose_is_not_a_card() -> None:
+    # (A card's key is `N.M`, as a task's line is: `**2026 roadmap**` is prose, not a task.)
+    plan = parse_plan(
+        "# A plan\n\n"
+        "**27.3 Queues** · needs 27.2\n"
+        "- Its own bullet.\n"
+        "- Another.\n\n"
+        "**2026 roadmap**\n",
+        source="a.md",
+    )
+
+    assert "2026" not in {feature.key for feature in plan.features}
+    assert [task.key for task in feature_of(plan, "27").tasks] == ["27.3"]
+    assert plan.unplaced == []
+
+
 def test_a_phase_with_an_unknown_mark_files_its_children_nowhere() -> None:
     # (A mark the parser does not know leaves no phase: its children are not the last one's.)
     plan = parse_plan(
