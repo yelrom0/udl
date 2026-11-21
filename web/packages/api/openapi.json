@@ -3168,6 +3168,10 @@
             },
             "title": "Tasks",
             "type": "array"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/Totals",
+            "description": "The feature's points: what its tasks come to (26.8)."
           }
         },
         "required": [
@@ -3201,6 +3205,10 @@
             "description": "The project they are of.",
             "title": "Project",
             "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/Totals",
+            "description": "The project's points: what its features' tasks come to (26.8)."
           }
         },
         "required": [
@@ -10622,6 +10630,24 @@
             "description": "The repo it is done in (a repo of its project).",
             "title": "Repo"
           },
+          "size": {
+            "anyOf": [
+              {
+                "enum": [
+                  "S",
+                  "M",
+                  "L",
+                  "XL"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How big it is: S, M, L or XL (an agent sets it only with the `plan` power, 26.8).",
+            "title": "Size"
+          },
           "spec": {
             "anyOf": [
               {
@@ -12118,6 +12144,19 @@
             "title": "Needs",
             "type": "array"
           },
+          "points": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What its size is worth (None while it has no size).",
+            "readOnly": true,
+            "title": "Points"
+          },
           "position": {
             "anyOf": [
               {
@@ -12145,6 +12184,24 @@
             ],
             "description": "The repo it is done in (a repo of its project), or None.",
             "title": "Repo"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "enum": [
+                  "S",
+                  "M",
+                  "L",
+                  "XL"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How big it is (None: not sized yet).",
+            "title": "Size"
           },
           "spec": {
             "default": "",
@@ -12192,7 +12249,8 @@
           "project",
           "feature",
           "key",
-          "title"
+          "title",
+          "points"
         ],
         "title": "Task",
         "type": "object"
@@ -12384,6 +12442,42 @@
           "found"
         ],
         "title": "ToolStatus",
+        "type": "object"
+      },
+      "Totals": {
+        "additionalProperties": false,
+        "description": "What a feature's or a project's tasks come to, in points (26.8): the tasks nobody is\ngoing to do (cancelled) are not counted, and the ones without a size are counted instead.",
+        "properties": {
+          "points": {
+            "default": 0,
+            "description": "The points of every sized task.",
+            "minimum": 0.0,
+            "title": "Points",
+            "type": "integer"
+          },
+          "points_merged": {
+            "default": 0,
+            "description": "The points of the tasks that are merged or done.",
+            "minimum": 0.0,
+            "title": "Points Merged",
+            "type": "integer"
+          },
+          "points_ready": {
+            "default": 0,
+            "description": "The points of the tasks whose PRs are green, waiting to be merged.",
+            "minimum": 0.0,
+            "title": "Points Ready",
+            "type": "integer"
+          },
+          "unsized": {
+            "default": 0,
+            "description": "How many of its tasks have no size yet.",
+            "minimum": 0.0,
+            "title": "Unsized",
+            "type": "integer"
+          }
+        },
+        "title": "Totals",
         "type": "object"
       },
       "UnassignTaskRequest": {

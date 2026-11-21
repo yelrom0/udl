@@ -82,3 +82,35 @@ async def test_the_cli_finds_a_task_from_its_pull(tmp_path: Path) -> None:
     assert cli.exit_code == 0, cli.output
     assert "26.2" in cli.stdout
     assert "Features and tasks" in cli.stdout
+
+
+async def test_the_cli_sizes_a_task_and_shows_the_totals(tmp_path: Path) -> None:
+    # (26.8's own two commands: a task is sized with `--size`, and a feature's answer prints
+    # each task's size and what they come to.)
+    settings = Settings.load(config(tmp_path))
+    plugins = PluginRegistry.discover(builtin_only=True)
+    async with UDLService(settings, registry=plugins) as service:
+        await service.call("orch_set_project", {"name": "udl", "title": "udl"})
+        await service.call("orch_set_feature", {"key": "26", "title": "Work tracking"})
+        await service.call(
+            "orch_set_task", {"key": "26.2", "feature": "26", "title": "Features and tasks"}
+        )
+
+    runner = CliRunner(env={"COLUMNS": "200"})
+    sized = await asyncio.to_thread(
+        runner.invoke,
+        app,
+        ["--config", str(config(tmp_path)), "orch", "tasks", "set", "26.2", "--size", "L"],
+    )
+    shown = await asyncio.to_thread(
+        runner.invoke,
+        app,
+        ["--config", str(config(tmp_path)), "orch", "features", "show", "26"],
+    )
+
+    assert sized.exit_code == 0, sized.output
+    assert "L" in sized.stdout
+    assert shown.exit_code == 0, shown.output
+    assert "Size" in shown.stdout
+    assert "L" in shown.stdout
+    assert "points: 5" in shown.stdout

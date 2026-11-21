@@ -25,9 +25,10 @@ tracker is either a feature, a task, or an `UnplacedLine`.
 
 # System Imports
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final, Protocol
+from typing import Final, Protocol, cast, get_args
 
 # Package Imports
 from pydantic import BaseModel, ConfigDict, Field
@@ -41,6 +42,7 @@ from udl.plugins.apps.orch.models import (
     MOVED,
     OPEN,
     READY,
+    Size,
     State,
     UnplacedLine,
 )
@@ -98,6 +100,9 @@ _CARD: Final = re.compile(
 _NEEDS: Final = re.compile(r"needs\s+(?P<needs>[^·]+)")
 """What a card's line says it needs: `needs 26.2\u201326.5`."""
 
+_SIZE: Final = re.compile(r"size\s+(?P<size>[A-Za-z]+)")
+"""What a card's line says its size is: `size M` (26.8), in any order with `needs`."""
+
 _RANGE: Final = re.compile(
     r"(?P<first>[0-9]+(?:\.[0-9]+)?)\s*[\u2013-]\s*(?P<last>[0-9]+(?:\.[0-9]+)?)"
 )
@@ -123,6 +128,7 @@ class _Task:
     blocked_on: str | None = None
     spec: list[str] = field(default_factory=list[str])
     needs: list[str] = field(default_factory=list[str])
+    size: Size | None = None
 
 
 @dataclass
@@ -146,6 +152,7 @@ class ParsedTask(BaseModel):
     blocked_on: str | None = None
     spec: str = ""
     needs: list[str] = Field(default_factory=list)
+    size: Size | None = None
 
 
 class ParsedFeature(BaseModel):
@@ -196,8 +203,17 @@ def parse_plan(text: str, *, source: str) -> ParsedPlan:
     if tracker is not None:
         _read_tracker(lines, tracker, single, feature, task, unplaced, source)
     _read_sections(lines, single, feature)
-    _read_cards(lines, feature, task)
+    _read_cards(lines, feature, task, _unplaceable(lines, unplaced, source))
     return _as_plan(features, unplaced)
+
+
+def _unplaceable(lines: list[str], unplaced: list[UnplacedLine], source: str):
+    """What a card's reader reports a line it could not place with: the line's own number."""
+
+    def report(index: int, why: str) -> None:
+        unplaced.append(_unplaced(source, index, lines[index], why))
+
+    return report
 
 
 def merge(*plans: ParsedPlan) -> ParsedPlan:
@@ -220,6 +236,8 @@ def merge(*plans: ParsedPlan) -> ParsedPlan:
                     held.state = one.state
                 if held.blocked_on is None:
                     held.blocked_on = one.blocked_on
+                if held.size is None:
+                    held.size = one.size
                 if one.spec:
                     held.spec.append(one.spec)
                 held.needs = _unique([*held.needs, *one.needs])
@@ -248,6 +266,7 @@ def _as_plan(features: dict[str, _Feature], unplaced: list[UnplacedLine]) -> Par
                         blocked_on=one.blocked_on,
                         spec="\n".join(one.spec),
                         needs=one.needs,
+                        size=one.size,
                     )
                     for one in found.tasks.values()
                 ],
@@ -403,8 +422,14 @@ def _kept_heading(
     feature(PLAN_KEY, "The plan").spec.append(text)
 
 
-def _read_cards(lines: list[str], feature: _Named, task: _Tasked) -> None:
-    """A card's line, and the bullets under it, as a task: its title, its needs and its spec."""
+def _read_cards(
+    lines: list[str],
+    feature: _Named,
+    task: _Tasked,
+    report: Callable[[int, str], None],
+) -> None:
+    """A card's line, and the bullets under it, as a task: its title, its needs, its size and its
+    spec (a size it cannot read is a line it could not place, 26.8)."""
     phase: str | None = None
     for index, raw in enumerate(lines):
         if _HEADING.match(raw):
@@ -417,7 +442,12 @@ def _read_cards(lines: list[str], feature: _Named, task: _Tasked) -> None:
         key = found["key"]
         owner = phase or key.split(".", 1)[0]
         made = task(owner, key, _titled(found["title"]))
-        made.needs = _needs(found["rest"] or "")
+        rest = found["rest"] or ""
+        made.needs = _needs(rest)
+        size, why = _size(rest)
+        if why is not None:
+            report(index, why)
+        made.size = size
         made.spec.extend(_bullets(lines, index + 1))
 
 
@@ -461,6 +491,17 @@ def _after_blocked(text: str) -> str | None:
     """What a `[!]` line waits on: the text after `BLOCKED:`."""
     found = re.search(r"BLOCKED:\s*(?P<why>.+)$", text)
     return found["why"].strip() if found else None
+
+
+def _size(rest: str) -> tuple[Size | None, str | None]:
+    """A card's line's size, and why it is not one the plan has (None, None: it says none)."""
+    found = _SIZE.search(rest)
+    if not found:
+        return None, None
+    said = found["size"].upper()
+    if said not in get_args(Size):
+        return None, f"not a size I know: {found['size']!r}"
+    return cast(Size, said), None
 
 
 def _needs(rest: str) -> list[str]:

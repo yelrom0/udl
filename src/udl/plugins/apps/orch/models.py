@@ -14,10 +14,10 @@ it is given are the project's own text.
 
 # System Imports
 import string
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Final, Literal, Protocol, get_args
+from typing import Annotated, Final, Literal, Protocol, Self, get_args
 
 # Package Imports
 from pydantic import (
@@ -26,8 +26,10 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    NonNegativeInt,
     PositiveInt,
     StringConstraints,
+    computed_field,
 )
 
 # Local Imports
@@ -49,6 +51,7 @@ __all__ = [
     "MOVED",
     "NOW",
     "OPEN",
+    "POINTS",
     "QUEUED",
     "READY",
     "REF_MARKS",
@@ -133,6 +136,8 @@ __all__ = [
     "SetProjectRequest",
     "SetRepoRequest",
     "SetTaskRequest",
+    "Size",
+    "Sized",
     "Spec",
     "Split",
     "SplitTaskRequest",
@@ -146,6 +151,7 @@ __all__ = [
     "TaskQueue",
     "Tasks",
     "Title",
+    "Totals",
     "URLText",
     "UnassignTaskRequest",
     "as_shape",
@@ -329,6 +335,12 @@ MOVED: Final = "moved"
 
 CANCELLED: Final = "cancelled"
 """A task that is not going to be done."""
+
+Size = Literal["S", "M", "L", "XL"]
+"""How big a task is: small, medium, large or extra large (26.8). A task may be unsized."""
+
+POINTS: Final[dict[Size, int]] = {"S": 1, "M": 3, "L": 5, "XL": 8}
+"""What each size is worth, in points: the one place a size becomes points (26.8)."""
 
 NOW: Final = "now"
 """An action that is due now (28.2)."""
@@ -646,6 +658,59 @@ class Task(_Model):
     """The worktree it is done in, once the dispatcher has made one."""
     updated_by: str = ""
     """Who last moved it (a role, or an agent's name)."""
+    size: Size | None = None
+    """How big it is (None: not sized yet)."""
+
+    @computed_field
+    @property
+    def points(self) -> int | None:
+        """What its size is worth (None while it has no size)."""
+        return POINTS[self.size] if self.size is not None else None
+
+
+class Sized(Protocol):
+    """What a total needs of a task: how big it is, and where it is (a shape's or a record's)."""
+
+    @property
+    def size(self) -> Size | None:
+        """How big it is (None: not sized yet)."""
+        ...
+
+    @property
+    def state(self) -> str:
+        """Where it is (the Concepts table)."""
+        ...
+
+
+class Totals(_Model):
+    """What a feature's or a project's tasks come to, in points (26.8): the tasks nobody is
+    going to do (cancelled) are not counted, and the ones without a size are counted instead."""
+
+    points: NonNegativeInt = 0
+    """The points of every sized task."""
+    points_merged: NonNegativeInt = 0
+    """The points of the tasks that are merged or done."""
+    points_ready: NonNegativeInt = 0
+    """The points of the tasks whose PRs are green, waiting to be merged."""
+    unsized: NonNegativeInt = 0
+    """How many of its tasks have no size yet."""
+
+    @classmethod
+    def of(cls, tasks: Iterable[Sized]) -> Self:
+        """`tasks` counted: what is done, what is ready, and what has no size."""
+        points = merged = ready = unsized = 0
+        for one in tasks:
+            if one.state == CANCELLED:
+                continue
+            if one.size is None:
+                unsized += 1
+                continue
+            points += POINTS[one.size]
+            if one.state in (MERGED, DONE):
+                merged += POINTS[one.size]
+            elif one.state == READY:
+                ready += POINTS[one.size]
+        return cls(points=points, points_merged=merged, points_ready=ready, unsized=unsized)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1469,6 +1534,8 @@ class Features(_Model):
     """The project they are of."""
     features: list[Feature] = Field(default_factory=list[Feature])
     """The features themselves."""
+    totals: Totals = Field(default_factory=Totals)
+    """The project's points: what its features' tasks come to (26.8)."""
 
 
 class GetFeatureRequest(_Model):
@@ -1491,6 +1558,8 @@ class FeatureInfo(_Model):
     """What points at it."""
     notes: list[NoteInfo] = Field(default_factory=list[NoteInfo])
     """Its notes, oldest first."""
+    totals: Totals = Field(default_factory=Totals)
+    """The feature's points: what its tasks come to (26.8)."""
 
 
 class SetFeatureRequest(_Model):
@@ -1583,6 +1652,8 @@ class SetTaskRequest(_Model):
     """What kind of work it is: a build, a person's, or a review's."""
     hold: str | None = None
     """Why it is held (built now, merged later)."""
+    size: Size | None = None
+    """How big it is: S, M, L or XL (an agent sets it only with the `plan` power, 26.8)."""
 
 
 class MoveTaskRequest(_Model):

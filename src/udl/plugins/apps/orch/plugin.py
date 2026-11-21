@@ -147,6 +147,7 @@ from udl.plugins.apps.orch.models import (
     SetProjectRequest,
     SetRepoRequest,
     SetTaskRequest,
+    Size,
     SplitTaskRequest,
     Suggestions,
     SuggestRequest,
@@ -154,6 +155,7 @@ from udl.plugins.apps.orch.models import (
     TaskInfo,
     TaskQueue,
     Tasks,
+    Totals,
     UnassignTaskRequest,
     as_shape,
 )
@@ -614,7 +616,7 @@ class Orch(AppPlugin[OrchSettings]):
                 "set_task",
                 title="Create or edit a task",
                 hints=OperationHints(idempotent=True),
-                cli=CLISpec(path=(*_TASKS, "set")),
+                cli=CLISpec(path=(*_TASKS, "set"), arguments=("key",)),
             ),
             cls.operation(
                 "move_task",
@@ -766,7 +768,12 @@ class Orch(AppPlugin[OrchSettings]):
         """A project's features, in their order."""
         project = await self._project(request.project)
         found = await stored.FeatureRecords(self.records).features(project)
-        return Features(project=project, features=[as_shape(Feature, one) for one in found])
+        tasks = await stored.TaskRecords(self.records).tasks(project)
+        return Features(
+            project=project,
+            features=[as_shape(Feature, one) for one in found],
+            totals=Totals.of(tasks),
+        )
 
     async def get_feature(self, request: GetFeatureRequest) -> FeatureInfo:
         """A feature, with its tasks, its links and its notes."""
@@ -780,6 +787,7 @@ class Orch(AppPlugin[OrchSettings]):
             tasks=[as_shape(Task, one) for one in tasks],
             links=[as_shape(Link, one) for one in links],
             notes=[as_shape(NoteInfo, one) for one in notes],
+            totals=Totals.of(tasks),
         )
 
     async def set_feature(self, request: SetFeatureRequest) -> Feature:
@@ -854,7 +862,29 @@ class Orch(AppPlugin[OrchSettings]):
                     hint="A task does not move between features: set the one it is of.",
                 )
             found = found.model_copy(update=given)
+        if request.size is not None:
+            await self._may_size(found, sized=request.size)
         return as_shape(Task, await tasks.save_task(found))
+
+    async def _may_size(self, task: stored.Task, *, sized: Size) -> None:
+        """Whether the caller may set a task's size (26.8): udl and a person may; an agent only
+        with the `plan` power, and never on a task it is the assignee of."""
+        from udl.core.service import principal  # (the caller's, as each interface set it)
+
+        caller = principal()
+        if caller is None or caller.kind is not security.PrincipalKind.AGENT:
+            return
+        agent = await stored.AgentRecords(self.records).agent(caller.name)
+        if agent is None or agent.role is not AgentRole.MANAGER or not agent.manages.plan:
+            raise NotAllowed(
+                f"{caller.name!r} does not size {task.key!r}: it takes the `plan` power",
+                hint="A manager's `plan` power is what sizes work; a person may size anything.",
+            )
+        if task.assignee == caller.name:
+            raise NotAllowed(
+                f"{task.key!r} is {caller.name!r}'s own task, so it does not size it",
+                hint="Who does the work does not say how big it is: its manager, or a person.",
+            )
 
     async def move_task(self, request: MoveTaskRequest) -> Task:
         """Move a task to another state, through the table (orch.transitions): what it waits on
@@ -1016,6 +1046,7 @@ class Orch(AppPlugin[OrchSettings]):
                         spec=parsed.spec,
                         needs=parsed.needs,
                         state=parsed.state,
+                        size=parsed.size,
                     )
                 )
             return
@@ -1026,6 +1057,8 @@ class Orch(AppPlugin[OrchSettings]):
             changed["spec"] = parsed.spec
         if parsed.needs and found.needs != parsed.needs:
             changed["needs"] = parsed.needs
+        if parsed.size is not None and found.size != parsed.size:
+            changed["size"] = parsed.size
         if changed:
             report.updated.append(parsed.key)
             if not dry_run:

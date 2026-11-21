@@ -977,6 +977,26 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - an implementer refused, and a manager with `plan` allowed on its reports' tasks;
   - the importer on a card with and without `· size`.
 - Done when: importing this file gives 26.8 the size in its own header.
+- **Built (deepseek-a, 2026-11-22, PR to follow):** `Size` (`S`, `M`, `L`, `XL`) and `POINTS` (1, 3, 5, 8)
+  are `orch/models.py`'s, the one place a size becomes points; `Task.size` (`None`: unsized) is on the
+  shape and on the record (a record written before this reads as unsized), and `Task.points` is a
+  `@computed_field` from it (so it is in the API's schema and `model_dump()`, and absent from a CLI table,
+  which draws `model_fields`). `Totals.of(tasks)` (a `Sized` protocol: a shape's or a record's) counts
+  every sized task, the merged and done ones, the ready ones, and the unsized ones; a cancelled task is
+  left out. `FeatureInfo.totals` and `Features.totals` carry them, `SetTaskRequest.size` sets one, and
+  the importer reads `· size M` from a card's header in any order with `needs` (a size it cannot read is
+  an unplaced line, and a second import never clears one udl has). `udl orch tasks set` takes its key as
+  an argument now (`udl orch tasks set 27.3 --size L`), and `udl orch features show` prints each task's
+  size (the table's `Size` column) and the totals (the generic renderer's `points: 5, …` line).
+- **Who sizes, and where the rest is:** the operation refuses an agent without a manager's `plan` power,
+  and a manager on its own task (`NotAllowed`); the tests call `Orch.set_task` directly, because 27.2's
+  role table does not let a manager call `orch_set_task` yet — 27.8 is what puts it in a plan-manager's
+  list, and its own test will cover that whole path. There is no `orch_add_task` (26.6 named `set_task`
+  for create and edit), so the size is on `orch_set_task` alone.
+- **Tests:** `tests/unit/plugins/apps/orch/test_sizes.py` (23: the points, the totals with a cancelled and
+  an unsized task, the four refusals, the importer on a card with, without and with an unreadable size,
+  and this file's own 26.8 card) and one in `tests/integration/test_orch_cli.py` (the real `udl orch tasks
+  set --size L`, then `features show`).
 
 **Phase 26 is done when:** `udl orch import planning/03-proxmox.md`, then `udl orch features show 22` prints the feature, its tasks with their states, and each task's spec.
 

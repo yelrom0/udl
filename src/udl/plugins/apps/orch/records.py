@@ -79,6 +79,7 @@ from udl.plugins.apps.orch.models import (
     PullReader,
     PullState,
     QuestionState,
+    Size,
     Spec,
     State,
     TaskKind,
@@ -236,6 +237,8 @@ class Task(Record):
     """The worktree it is done in, once the dispatcher has made one."""
     updated_by: str = ""
     """Who last moved it (a role, or an agent's name)."""
+    size: Size | None = None
+    """How big it is (None: not sized yet, which is how a task written before 26.8 reads)."""
 
     @classmethod
     def example(cls) -> Self:

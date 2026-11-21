@@ -122,7 +122,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 26.5 `Note` records: what was done, decisions, findings, on a task or feature
   - [~] 26.6 Operations (projects, repos, features, tasks, links, notes) via CLI, API and MCP
   - [~] 26.7 Markdown import: a planning file's tracker, cards and spec sections become features and tasks
-  - [ ] 26.8 Task sizes: S, M, L, XL (1, 3, 5, 8 points), set by whoever plans the task; points per feature and project
+  - [~] 26.8 Task sizes: S, M, L, XL (1, 3, 5, 8 points), set by whoever plans the task; points per feature and project
 - [ ] **Phase 27: Agents, assignment and the dispatcher**
   - [x] 27.1 `Agent` records: runner, model, host, role, manager (the hierarchy), permissions
   - [x] 27.2 Agent tokens: an agent calls udl as itself, and only the operations its role allows
@@ -383,6 +383,9 @@ get a failing regression test before the fix, and **fakes over mocks**. What's n
   of waiting.
 - **The frontend is tested first too:** a component, store or SDK function starts as a failing Vitest test;
   a user-visible flow starts as a failing Playwright test.
+- **A new card gives its size in its header** (`**26.8 Task sizes** · needs 26.3, 26.6 · size M`), as the
+  cards of Q-8's answers do: `size S | M | L | XL` is 1, 3, 5 or 8 points, and `udl orch import` reads it
+  (26.8). A card without one is a task udl counts as unsized, and its feature says how many.
 - When a phase is done, it gets a "Decisions made while building Phase N" section here, as Phases 0–7 did.
 
 ### Test layers
