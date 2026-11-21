@@ -13,6 +13,7 @@ says whether udl's rules are on the host, and udl never opens Codex's own `auth.
 # System Imports
 import asyncio
 import json
+import re
 import sys
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
@@ -99,6 +100,8 @@ class FakeShell:
         self.runs: list[tuple[list[str], bytes | None]] = []
         self.streams: list[tuple[list[str], bytes | None, Mapping[str, str]]] = []
         self.answers: dict[str, ProcessResult] = {}
+        self.status: ProcessResult | None = None
+        """What `login status` answers (a signed-out CLI exits 1 and says so on stderr)."""
         self.fails: set[str] = set()
         """The commands that fail as a program that is not there."""
 
@@ -120,6 +123,8 @@ class FakeShell:
         # command a test keys on is what follows it.)
         skip = 2 if argv and Path(argv[0]).name.startswith("python") else 1
         command = " ".join(argv[skip:])
+        if self.status is not None and argv[skip:] == ["login", "status"]:
+            return self.status
         if command in self.fails:
             raise ToolUnavailable("codex is not on this host")
         return self.answers.get(command, ProcessResult(returncode=0, stdout="", stderr=""))
@@ -227,6 +232,22 @@ def test_a_login_status_of_both_kinds_is_read() -> None:
 
     assert health.signed_in
     assert health.plan == "an api key"
+
+
+def test_a_signed_out_login_status_is_read_from_stderr() -> None:
+    """Signed out, it says so on stderr and exits 1: the runner must read it as "not signed in",
+    not as a harness that is not there."""
+    shell = FakeShell()
+    shell.answers = {
+        "--version": ProcessResult(returncode=0, stdout="codex-cli 0.171.0\n", stderr=""),
+    }
+    shell.status = ProcessResult(returncode=1, stdout="", stderr="Not logged in\n")
+
+    health = asyncio.run(_health_of(shell))
+
+    assert health.installed
+    assert health.version == "0.171.0"
+    assert not health.signed_in
 
 
 def test_a_signed_in_line_that_names_its_key_shows_neither() -> None:
@@ -531,10 +552,11 @@ async def test_a_session_udl_does_not_know_is_an_error() -> None:
 
 
 async def test_a_recorded_turn_with_tools_becomes_events() -> None:
-    """The recorded turn with a command and an MCP call: a string command, `server`/`tool`, and
-    the reasoning item skipped."""
-    recorded = FIXTURES / "events-tools.jsonl"
-    shell = FakeShell(output=[recorded.read_bytes()])
+    """A turn with a command and an MCP call, in the CLI's field shapes (the file is written from
+    them, not recorded — see the fixtures' README): a string command, `server`/`tool`, and the
+    reasoning item skipped."""
+    written = FIXTURES / "turn-with-tools.jsonl"
+    shell = FakeShell(output=[written.read_bytes()])
     given, _ = runner(shell)
     started = await given.start(session())
 
@@ -674,6 +696,11 @@ async def test_a_resumed_turn_keeps_the_sandbox_and_the_policy() -> None:
 # ---------------------------------------------------------------------------------------------
 
 
+def _has_flag(said: str, flag: str) -> bool:
+    """Whether a help text has `flag` as an option of its own (not a prefix of a longer one)."""
+    return re.search(rf"(?<![\w-]){re.escape(flag)}(?![\w-])", said) is not None
+
+
 def _flags(argv: Sequence[str]) -> list[str]:
     """The options a turn's argv passes (its words that begin with `-`; `-` is the prompt)."""
     return [word for word in argv if word.startswith("-") and word != "-"]
@@ -693,13 +720,13 @@ async def test_the_flags_the_runner_passes_are_in_the_installed_help() -> None:
     await turn_of(given, started)
     await turn_of(given, started, "again")
 
-    said_exec = help_text("exec")
-    said_resume = help_text("exec-resume")
-    for flag in _flags(shell.streams[0][0]):
-        assert flag in said_exec, f"{flag} is not a flag exec has"
-    for flag in _flags(shell.streams[1][0]):
-        assert flag in said_resume, f"{flag} is not a flag exec resume has"
-    assert "--device-auth" in help_text("login")
+    for argv, text in (
+        (shell.streams[0][0], help_text("exec")),
+        (shell.streams[1][0], help_text("exec-resume")),
+    ):
+        for flag in _flags(argv):
+            assert _has_flag(text, flag), f"{flag} is not a flag this command has"
+    assert _has_flag(help_text("login"), "--device-auth")
 
 
 # ---------------------------------------------------------------------------------------------
