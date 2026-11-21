@@ -1101,6 +1101,8 @@ export interface paths {
         /**
          * Close a question nobody answered, with what was done about it instead.
          * @description Close a question nobody answered, with what was done about it instead.
+         *
+         *     An agent closes only what was asked of it; a person closes any.
          */
         post: operations["orch_close_question"];
         delete?: never;
@@ -1772,6 +1774,8 @@ export interface paths {
         /**
          * Add a follow-up to a question's thread, from either side.
          * @description Add a follow-up to a question's thread, from either side.
+         *
+         *     An agent says its piece only on a question it asked or one asked of it.
          */
         post: operations["orch_reply"];
         delete?: never;

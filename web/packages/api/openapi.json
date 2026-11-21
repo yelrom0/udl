@@ -18066,7 +18066,7 @@
     },
     "/plugins/orch/close_question": {
       "post": {
-        "description": "Close a question nobody answered, with what was done about it instead.",
+        "description": "Close a question nobody answered, with what was done about it instead.\n\nAn agent closes only what was asked of it; a person closes any.",
         "operationId": "orch_close_question",
         "requestBody": {
           "content": {
@@ -21053,7 +21053,7 @@
     },
     "/plugins/orch/reply": {
       "post": {
-        "description": "Add a follow-up to a question's thread, from either side.",
+        "description": "Add a follow-up to a question's thread, from either side.\n\nAn agent says its piece only on a question it asked or one asked of it.",
         "operationId": "orch_reply",
         "requestBody": {
           "content": {
