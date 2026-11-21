@@ -32,10 +32,20 @@ from support.runners import FakeRunner, FakeRunnerOptions, Sessions, Turn
 from udl.automations.models import EventList
 from udl.clock import Clock
 from udl.config import APISettings
+from udl.core.models import PluginSettingsRequest, SetPluginSettingsRequest
 from udl.core.operations import OperationHints
 from udl.core.service import UDLService
+from udl.errors import NotAllowed
 from udl.hosts.shell import HostShell
-from udl.plugins.apps.base import AppContext, AppEvents, AppPlugin, AppRecords, AppSettings
+from udl.plugins.apps.base import (
+    AppContext,
+    AppEvent,
+    AppEvents,
+    AppPlugin,
+    AppRecords,
+    AppSettings,
+    AppSubscription,
+)
 from udl.plugins.apps.orch.agents import SessionState
 from udl.plugins.apps.orch.dispatcher import RULES, Dispatcher, first_prompt
 from udl.plugins.apps.orch.models import (
@@ -310,6 +320,13 @@ def first_prompt_of(key: str) -> str:
     return first_prompt(Task(project="udl", feature="F-1", key=key, title=f"It {key[-1]}"))
 
 
+async def collecting(subscription: AppSubscription, into: list[AppEvent]) -> None:
+    """Take every event `subscription` gives into `into` (until the test cancels it)."""
+    async with subscription as notes:
+        async for event in notes:
+            into.append(event)
+
+
 async def tasks_of(service: UDLService) -> dict[str, Task]:
     """Every task of the project, by key."""
     found = await TaskRecords(AppRecords(service.db)).tasks("udl")
@@ -464,14 +481,16 @@ async def test_the_session_is_ended_when_its_task_moves_on(service: UDLService) 
 async def test_a_task_still_going_is_nudged_and_then_blocked_as_stalled(
     service: UDLService,
 ) -> None:
-    await ran(service, clock=FakeClock(), turns=4)
+    await ran(service, clock=FakeClock(), turns=5)
 
     every = await tasks_of(service)
     assert every["F-1.1"].state == BLOCKED
     assert every["F-1.1"].blocked_on is not None
     assert "stalled" in every["F-1.1"].blocked_on
     assert any("still on F-1.1" in prompt for prompt in PROMPTS)
-    assert sum(1 for prompt in PROMPTS if "F-1.1" in prompt) == 4, "a turn, then 3 nudges"
+    # (one turn that said what changed — progress — then `max_nudges` turns that said nothing
+    # new, and the task is blocked rather than nudged again)
+    assert sum(1 for prompt in PROMPTS if "F-1.1" in prompt) == 5
 
 
 async def test_a_turn_says_what_changed_and_then_nudges_when_nothing_did(
@@ -528,9 +547,12 @@ async def test_a_failed_turn_is_retried_and_then_the_session_fails(
 
     session = await session_of(service)
     assert session is not None
-    assert session.state is SessionState.FAILED
     assert session.failures == 3
+    # (it is ended as well as failed: a failed session that stayed "current" would hold the
+    # agent for good, and its task is `blocked` for a person anyway)
+    assert session.state is SessionState.ENDED
     every = await tasks_of(service)
+    assert every["F-1.1"].state == BLOCKED
     assert "harness fell over" in (every["F-1.1"].blocked_on or "")
 
 
@@ -858,3 +880,68 @@ async def test_a_session_whose_pull_is_only_waiting_holds_no_turn(service: UDLSe
     session = await session_of(service)
     assert session is not None
     assert session.waited_since is not None
+
+
+async def test_a_turn_s_live_events_publish(service: UDLService) -> None:
+    """(The card's 3: the session started, each thing the runner said, and its end, as they
+    happen — the types' own data, so a person watching gets them.)"""
+    seen: list[AppEvent] = []
+    subscription = AppEvents(service.bus, "orch", Orch.event_types()).subscribe("orch.*")
+    taking = asyncio.create_task(collecting(subscription, seen))
+    try:
+        await ran(service, clock=FakeClock(), turns=1)
+        for _ in range(20):
+            await asyncio.sleep(0)
+    finally:
+        taking.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await taking
+
+    names = [one.type for one in seen]
+    assert "orch.session.started" in names
+    assert "orch.session.event" in names
+    assert "orch.session.ended" in names
+    started = next(one for one in seen if one.type == "orch.session.started")
+    assert started.data["host"] == "local"
+    assert started.data["runner"] == "fake"
+
+
+async def test_a_limit_publishes_and_holds_the_agent(service: UDLService) -> None:
+    """(The card's 6: `RunnerLimited` sets `limited_until` and publishes `orch.agent.limited` —
+    whose data has no task, which is why it was never published.)"""
+    until = FakeClock().now() + timedelta(minutes=30)
+
+    async def limited(runner: FakeRunner, _: SessionRef) -> AsyncIterator[AgentEvent]:
+        yield RunnerLimited(until=until, message="out of quota")
+        yield TurnEnded(reason=TurnReason.LIMITED, text="out of quota")
+
+    SCRIPT[first_prompt_of("F-1.1")] = limited
+    seen: list[AppEvent] = []
+    subscription = AppEvents(service.bus, "orch", Orch.event_types()).subscribe("orch.*")
+    taking = asyncio.create_task(collecting(subscription, seen))
+    try:
+        await ran(service, clock=FakeClock(), turns=1)
+        for _ in range(20):
+            await asyncio.sleep(0)
+    finally:
+        taking.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await taking
+
+    assert "orch.agent.limited" in [one.type for one in seen]
+    session = await session_of(service)
+    assert session is not None
+    assert session.state is SessionState.LIMITED
+    assert session.limited_until == until
+
+
+async def test_the_orch_settings_a_session_is_given_are_file_only(service: UDLService) -> None:
+    """(A session's token is limited by the agent's own deny list: a hub URL or a deny list set
+    through udl could widen it, so both are the config file's alone.)"""
+    shown = await service.get_plugin_settings(PluginSettingsRequest(name="orch"))
+
+    assert sorted(shown.file_only) == ["deny", "hub_url"]
+    with pytest.raises(NotAllowed, match="deny"):
+        await service.set_plugin_settings(
+            SetPluginSettingsRequest(name="orch", values={"deny": []}, reset=[])
+        )

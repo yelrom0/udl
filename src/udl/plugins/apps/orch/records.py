@@ -456,6 +456,8 @@ class AgentSession(Record):
     sync = SyncRule.NEVER
 
     agent: Name
+    project: str = ""
+    """The project its task is in (its key is only unique within one)."""
     task: str = ""
     ref: SessionRef
     state: SessionState = SessionState.STARTING
@@ -472,8 +474,8 @@ class AgentSession(Record):
     waited_since: AwareDatetime | None = None
     """When the session was first told its pull is only waiting on time (the checks, the review
     bot): what `bot_wait` counts from (27.7)."""
-    rerun_for: str = ""
-    """The head a rerun was asked for (`github_rerun_checks`), so it is asked for once (27.7)."""
+    last_error: str = ""
+    """Why its last turn failed, as its runner said (what a retry reports, 27.7)."""
 
     @classmethod
     def example(cls) -> Self:

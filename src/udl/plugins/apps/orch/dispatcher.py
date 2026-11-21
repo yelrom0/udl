@@ -26,20 +26,21 @@ gives it a FakeClock).
 import asyncio
 import contextlib
 import logging
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from datetime import timedelta
+from enum import StrEnum
 from pathlib import Path
-from typing import Final, cast
+from typing import Final
 
 # Package Imports
-# Local Imports
-# Local Imports
-from pydantic import JsonValue, SecretStr
+from pydantic import JsonValue, SecretStr, TypeAdapter
 
+# Local Imports
 from udl.db.models import JsonObject
 from udl.errors import DoesNotExist, PluginError, UDLError
 from udl.hosts.models import HostRequest
-from udl.plugins.apps.base import AppContext
+from udl.plugins.apps.base import AppContext, AppEvent
 from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch import records as stored
 from udl.plugins.apps.orch import workspace as space
@@ -91,6 +92,19 @@ type Preparing = Callable[[stored.Task, stored.Agent], Awaitable[stored.Task]]
 """What makes a task's worktree: the task, with its branch and path, or a refusal."""
 
 
+class Outcome(StrEnum):
+    """How a turn ended, as far as the dispatcher's loop cares (the card's 6)."""
+
+    DONE = "done"  # it answered: the task may have moved, or it is told what changed
+    LIMITED = "limited"  # its harness is out of quota: nothing until the quota is back
+    RETRY = "retry"  # it failed: retried with a backoff, until `FAILURES`
+    FAILED = "failed"  # it failed `FAILURES` times: the session is failed, the task waits
+
+
+_AN_EVENT: Final = TypeAdapter(AnAgentEvent)
+"""What turns a runner's event into the transcript's (they are the same kinds)."""
+
+
 def instructions(project: stored.Project, agent: stored.Agent) -> str:
     """What a session is told before it is given a task: udl's rules, the project's, and the
     agent's brief (the card's 2)."""
@@ -123,8 +137,13 @@ def nudge(task: stored.Task) -> str:
 
 def fenced(label: str, text: str) -> str:
     """`text` from outside, in a fenced block labelled with where it came from: what a session is
-    told is never instructions from the bot or a CI log (as 17.7 passes events' text)."""
-    return f"```{label}\n{text}\n```"
+    told is never instructions from the bot or a CI log (as 17.7 passes events' text).
+
+    The fence is longer than any run of backticks in `text`, so text that carries its own fence
+    (a comment quoting code) cannot close it and pass itself off as udl's words."""
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}{label}\n{text}\n{fence}"
 
 
 def changed(task: stored.Task, what: str) -> str:
@@ -155,6 +174,11 @@ class Dispatcher:
         self._settings = OrchSettings.model_validate(ctx.settings.model_dump())
         self._stop = ctx.stop
         self._turns = asyncio.Semaphore(self._settings.max_agents_running)
+        self._published = 0
+        """How many live events were published: what keeps two of them apart in the bus."""
+        self._tokens: dict[str, SecretStr] = {}
+        """The MCP token issued per agent, kept for as long as udl runs: issuing one rotates it,
+        so a session started twice must not invalidate the other's."""
         self._harnesses = harnesses
         self._prepare = prepare if prepare is not None else self._prepared
         self._tick = tick
@@ -176,11 +200,11 @@ class Dispatcher:
             )
             await self._stop.wait()
             return
-        self._turns = asyncio.Semaphore(self._settings.max_agents_running)
         agents = [one for one in await stored.AgentRecords(self._records).agents() if one.enabled]
         if not agents:
             await self._stop.wait()
             return
+        await self._pruned()
         for agent in agents:
             self._wakes[agent.name] = asyncio.Event()
         loops = [asyncio.create_task(self._loop(agent)) for agent in agents]
@@ -189,17 +213,22 @@ class Dispatcher:
         stopping = asyncio.create_task(self._stop.wait())
         everything = [*loops, *checking, waking, stopping]
         try:
-            done, _ = await asyncio.wait({*loops, stopping}, return_when=asyncio.FIRST_COMPLETED)
-            if stopping not in done:
-                for task in done:
-                    if task.exception() is not None:
-                        log.warning("an agent's loop ended: %r", task.exception())
+            await self._stop.wait()  # (a loop never ends on its own: it logs and carries on)
         finally:
             for task in everything:
                 task.cancel()
             for task in everything:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
+
+    async def _pruned(self) -> None:
+        """Forget the transcripts older than `session_days` (once, when the app starts)."""
+        before = self._clock.now() - timedelta(days=self._settings.session_days)
+        pruned = await stored.SessionRecords(self._records).prune(before)
+        if pruned:
+            log.info(
+                "forgot %d session events older than %d days", pruned, self._settings.session_days
+            )
 
     async def _woken_by_events(self) -> None:
         """Wake every agent's loop on each `orch.*` or `github.pr.*` event: what an agent waits
@@ -210,19 +239,30 @@ class Dispatcher:
         ):
             await asyncio.gather(self._waking(orch), self._waking(pulls))
 
-    async def _waking(self, subscription: AsyncIterator[object]) -> None:
-        """Wake every loop on each event `subscription` gives."""
-        async for _ in subscription:
+    async def _waking(self, subscription: AsyncIterator[AppEvent]) -> None:
+        """Wake every loop on each event `subscription` gives — except udl's own live session
+        events, which a turn publishes as it runs: waking on those would have the dispatcher
+        wake itself, and read every pull again, for every line a runner says."""
+        async for event in subscription:
+            if event.type.startswith(("orch.session.", "orch.agent.")):
+                continue
             for wake in self._wakes.values():
                 wake.set()
 
     async def _loop(self, agent: stored.Agent) -> None:
-        """One agent's loop: do what its queue and its session say, then wait to be woken."""
+        """One agent's loop: do what its queue and its session say, then wait to be woken.
+
+        It re-reads the agent every time (a person's pause, a new `max_nudges`, a brief) and never
+        ends on its own: one agent's trouble is logged, and the other agents carry on."""
         while not self._stop.is_set():
             try:
+                fresh = await stored.AgentRecords(self._records).agent(agent.name)
+                if fresh is None:
+                    return  # (it was deleted: nothing to dispatch to)
+                agent = fresh
                 await self._step(agent)
-            except (PluginError, UDLError) as error:
-                log.warning("dispatching to %s: %s", agent.name, error)
+            except Exception as error:  # noqa: BLE001 - (one agent's trouble is not another's)
+                log.warning("dispatching to %s: %r", agent.name, error)
             await self._rest(agent)
 
     async def _rest(self, agent: stored.Agent) -> None:
@@ -328,12 +368,15 @@ class Dispatcher:
         """The task the agent is on: its first `in_progress` one, else the first on its queue
         whose `needs` are done (the card's 1)."""
         tasks = stored.TaskRecords(self._records)
-        for project in await self._projects_of(agent):
-            working = await tasks.tasks(project, assignee=agent.name, state=IN_PROGRESS)
-            if working:
-                return sorted(
-                    working, key=lambda one: (one.position is None, one.position or 0, one.key)
-                )[0]
+        projects = await self._projects_of(agent)
+        working: list[stored.Task] = []
+        for project in projects:  # (an agent works one task at a time, in any of its projects)
+            working.extend(await tasks.tasks(project, assignee=agent.name, state=IN_PROGRESS))
+        if working:
+            return sorted(
+                working, key=lambda one: (one.position is None, one.position or 0, one.key)
+            )[0]
+        for project in projects:
             for one in await queues.queue_of(tasks, project=project, agent=agent.name):
                 if await self._allowed(tasks, one):
                     return one
@@ -412,20 +455,39 @@ class Dispatcher:
         ref = await runner.start(spec)
         self._harnesses.started(agent.host, agent.runner, ref.id)
         made = await sessions.save_session(
-            stored.AgentSession(
-                agent=agent.name, task=task.key, ref=ref, state=SessionState.RUNNING
-            )
+            stored.AgentSession(agent=agent.name, project=task.project, task=task.key, ref=ref)
         )
-        await self._live("orch.session.started", made, {"task": task.key})
+        await self._live(
+            "orch.session.started",
+            {
+                "agent": made.agent,
+                "session": str(made.id),
+                "task": made.task,
+                "host": agent.host,
+                "runner": agent.runner,
+            },
+        )
         return made
 
-    async def _mcp(self, agent: stored.Agent) -> McpEndpoint | None:
-        """The MCP endpoint a session is given: udl's own, with the agent's token. None when udl
-        has no `hub_url` (a session with nowhere to call has no tools to call it with)."""
+    async def _mcp(self, agent: stored.Agent) -> McpEndpoint:
+        """The MCP endpoint a session is given: udl's own, with the agent's token — `hub_url` when
+        udl is told where agents on other hosts reach it, else this machine's API (a session with
+        no endpoint could call nothing, and so never finish a task).
+
+        The token is issued once per agent and kept: issuing one rotates it, so a second session
+        of the same agent would otherwise take the first one's away."""
         hub = self._settings.hub_url
         if hub is None:
-            return None
-        return McpEndpoint(url=hub, token=SecretStr(await issue_token(self._service, agent.name)))
+            api = self._service.settings.api
+            # (a wildcard bind is not an address to call: a session on this machine calls the
+            # loopback, and one on another host is told `hub_url`)
+            host = "127.0.0.1" if api.host in ("0.0.0.0", "::") else api.host  # noqa: S104
+            hub = f"http://{host}:{api.port}/mcp"
+        token = self._tokens.get(agent.name)
+        if token is None:
+            token = SecretStr(await issue_token(self._service, agent.name))
+            self._tokens[agent.name] = token
+        return McpEndpoint(url=hub, token=token)
 
     async def _project_of(self, task: stored.Task) -> stored.Project:
         """The project `task` is in."""
@@ -443,54 +505,63 @@ class Dispatcher:
         first turn says which task it is (or that udl restarted), and each one after it what
         changed — or, with nothing new, a nudge."""
         sessions = stored.SessionRecords(self._records)
-        prompt: str | None
+        prompt: str
+        kind = "changed"
         if resume:
             prompt = "udl restarted; continue where you were."
         elif session.turns == 0:
             prompt = first_prompt(task)
         else:
-            prompt, session = await self._next_prompt(task, session)
-            if prompt is None:
+            next_prompt, session, kind = await self._next_prompt(task, session)
+            if next_prompt is None:
                 return  # (its pull is only waiting on time: the event wakes it)
+            prompt = next_prompt
         while True:
-            if not await self._turn(agent, session, prompt):
-                return
+            outcome = await self._turn(agent, session, prompt)
             session = await sessions.session(session.id) or session
-            if session.state in (SessionState.LIMITED, SessionState.FAILED, SessionState.ENDED):
+            if outcome in (Outcome.LIMITED, Outcome.FAILED):
                 return
+            if outcome is Outcome.RETRY:
+                if not await self._retried(agent, session, session.last_error):
+                    return
+                session = await sessions.session(session.id) or session
+                continue
             now = await self._task_of(session)
             if now is None or now.state != IN_PROGRESS:
                 await self._end(agent, session)
                 return
-            session = await sessions.save_session(
-                session.model_copy(update={"nudges": session.nudges + 1})
-            )
-            if session.nudges > agent.max_nudges:
+            # (`nudges` counts the turns that brought nothing new: a turn that told the session
+            # what changed is progress, and starts the count again.)
+            nudges = 0 if kind == "changed" else session.nudges + 1
+            session = await sessions.save_session(session.model_copy(update={"nudges": nudges}))
+            if nudges >= agent.max_nudges:
                 await self._stalled(agent, now, session)
                 return
-            prompt, session = await self._next_prompt(now, session)
-            if prompt is None:
+            next_prompt, session, kind = await self._next_prompt(now, session)
+            if next_prompt is None:
                 return  # (only time stands in the way: no turn until the pull changes)
+            prompt = next_prompt
 
     async def _next_prompt(
         self, task: stored.Task, session: stored.AgentSession
-    ) -> tuple[str | None, stored.AgentSession]:
+    ) -> tuple[str | None, stored.AgentSession, str]:
         """What a session still on its task is told — what changed since the last turn (its pull's
-        checks, the review bot's open items), or with nothing new a nudge (the card's 3) — and the
-        session, remembering what it was told so that the same news is not told twice.
+        checks, the review bot's open items), or with nothing new a nudge (the card's 3) — the
+        session, remembering what it was told so that the same news is not told twice, and which
+        of the two it was (`changed`, or `nudge`: what tells progress from a nudge).
 
         None means the session holds no turn: its pull is only waiting on time (the checks
         running, the bot not done with this head), and a `github.pr.*` event wakes it (the card's
         5)."""
         what, session, waiting = await self._what_changed(task, session)
         if waiting:
-            return None, session
+            return None, session, "waiting"
         if what is None or what == session.last_text:
-            return nudge(task), session
+            return nudge(task), session, "nudge"
         session = await stored.SessionRecords(self._records).save_session(
             session.model_copy(update={"last_text": what})
         )
-        return changed(task, what), session
+        return changed(task, what), session, "changed"
 
     async def _what_changed(
         self, task: stored.Task, session: stored.AgentSession
@@ -539,7 +610,9 @@ class Dispatcher:
         await tasks.move(task, BLOCKED, by=_system("block"), note=why)
         await self._end(agent, session)
 
-    async def _turn(self, agent: stored.Agent, session: stored.AgentSession, prompt: str) -> bool:
+    async def _turn(
+        self, agent: stored.Agent, session: stored.AgentSession, prompt: str
+    ) -> Outcome:
         """Send one turn and stream it: its events into the transcript and the live events, and
         what its end says into the session (the card's 3, 4 and 6)."""
         async with self._turns:  # (at most `max_agents_running` turns at once)
@@ -547,7 +620,7 @@ class Dispatcher:
 
     async def _one_turn(
         self, agent: stored.Agent, session: stored.AgentSession, prompt: str
-    ) -> bool:
+    ) -> Outcome:
         """One turn, streamed (what `_turn` does once it has a turn's place)."""
         sessions = stored.SessionRecords(self._records)
         session = await sessions.save_session(
@@ -583,7 +656,16 @@ class Dispatcher:
                 agent=agent.name, session=session.id, turn=session.turns, event=event
             )
         )
-        await self._live("orch.session.event", session, {"kind": event.kind, "turn": session.turns})
+        await self._live(
+            "orch.session.event",
+            {
+                "agent": session.agent,
+                "session": str(session.id),
+                "task": session.task,
+                "turn": session.turns,
+                "kind": event.kind,
+            },
+        )
         if isinstance(event, Usage):
             await sessions.save_session(
                 session.model_copy(
@@ -603,7 +685,7 @@ class Dispatcher:
         *,
         limited: RunnerLimited | None,
         failed: RunnerFailed | None,
-    ) -> bool:
+    ) -> Outcome:
         """What a turn's end means for the session (the card's 3, 4 and 6): whether the loop
         carries on with this session, or waits (a limit, a failure) and comes back."""
         sessions = stored.SessionRecords(self._records)
@@ -615,23 +697,32 @@ class Dispatcher:
             )
             await self._live(
                 "orch.agent.limited",
-                session,
-                {"until": until.isoformat() if until is not None else None},
+                {
+                    "agent": session.agent,
+                    "session": str(session.id),
+                    "until": until.isoformat() if until is not None else None,
+                },
             )
-            return False
+            return Outcome.LIMITED
         if failed is not None or (ended is not None and ended.reason is TurnReason.ERROR):
-            await self._retried(
-                agent, session, failed.message if failed is not None else "its turn failed"
+            why = (
+                failed.message if failed is not None else (ended.text if ended is not None else "")
             )
-            return False
+            await sessions.save_session(session.model_copy(update={"last_error": why}))
+            return Outcome.RETRY
         await sessions.save_session(
-            session.model_copy(update={"state": SessionState.IDLE, "turns": session.turns + 1})
+            session.model_copy(
+                update={"state": SessionState.IDLE, "turns": session.turns + 1, "failures": 0}
+            )
         )
-        return True
+        return Outcome.DONE
 
-    async def _retried(self, agent: stored.Agent, session: stored.AgentSession, why: str) -> None:
-        """A turn that failed: retried with a backoff, and after `FAILURES` tries the session is
-        `failed` and its task waits for a person (the card's 6)."""
+    async def _retried(self, agent: stored.Agent, session: stored.AgentSession, why: str) -> bool:
+        """A turn that failed: retried after a backoff, and after `FAILURES` tries the session is
+        `failed` and its task waits for a person (the card's 6). True when it may be tried again.
+
+        The wait is the loop's, not a turn's: a retry does not hold one of the `max_agents_running`
+        places while it waits."""
         sessions = stored.SessionRecords(self._records)
         failures = session.failures + 1
         if failures < FAILURES:
@@ -639,23 +730,40 @@ class Dispatcher:
                 session.model_copy(update={"failures": failures, "state": SessionState.IDLE})
             )
             await self._clock.sleep(BACKOFF * failures)
-            return
-        await sessions.save_session(
+            return True
+        session = await sessions.save_session(
             session.model_copy(update={"failures": failures, "state": SessionState.FAILED})
         )
-        await self._live("orch.session.failed", session, {"why": why})
+        await self._live(
+            "orch.session.failed",
+            {
+                "agent": session.agent,
+                "session": str(session.id),
+                "task": session.task,
+                "why": why,
+            },
+        )
         task = await self._task_of(session)
         if task is not None:
-            await stored.TaskRecords(self._records).save_task(
-                task.model_copy(update={"blocked_on": f"{agent.name}'s session failed: {why}"})
+            await stored.TaskRecords(self._records).move(
+                task,
+                BLOCKED,
+                by=_system("block"),
+                note=f"{agent.name}'s session failed: {why}",
             )
+        await self._end(agent, session)
+        return False
 
     async def _task_of(self, session: stored.AgentSession) -> stored.Task | None:
-        """The task a session is on, or None when there is none (it was deleted)."""
+        """The task a session is on, or None when there is none (it was deleted).
+
+        Its key is looked up in the session's own project: two projects may each have a task
+        `1.1`, and a session is never moved to the other one's."""
         if not session.task:
             return None
         tasks = stored.TaskRecords(self._records)
-        for project in await self._projects_of_any():
+        projects = [session.project] if session.project else await self._projects_of_any()
+        for project in projects:
             found = await tasks.task(project, session.task)
             if found is not None:
                 return found
@@ -670,36 +778,43 @@ class Dispatcher:
         harness is told too, so nothing it was doing goes on)."""
         sessions = stored.SessionRecords(self._records)
         if session.state is not SessionState.ENDED:
-            await sessions.save_session(session.model_copy(update={"state": SessionState.ENDED}))
+            ended = await sessions.save_session(
+                session.model_copy(update={"state": SessionState.ENDED})
+            )
             with contextlib.suppress(PluginError, UDLError):
                 runner = await self._harnesses.runner(agent.host, agent.runner)
                 await runner.stop(session.ref)
+            await self._live(
+                "orch.session.ended",
+                {
+                    "agent": ended.agent,
+                    "session": str(ended.id),
+                    "task": ended.task,
+                    "state": str(session.state),
+                },
+            )
         self._harnesses.ended(agent.host, agent.runner, session.ref.id)
 
-    async def _live(
-        self, event_type: str, session: stored.AgentSession, data: Mapping[str, object]
-    ) -> None:
-        """Publish one of the session's live events (one that cannot be published is logged,
-        never fatal: the transcript is the record)."""
+    async def _live(self, event_type: str, data: Mapping[str, object]) -> None:
+        """Publish one of the session's live events, as its own type has it (one that cannot be
+        published is logged, never fatal: the transcript is the record).
+
+        Its dedupe key counts what was published rather than when: two things a runner says in
+        the same tick are two events, not one."""
+        self._published += 1
         try:
-            payload: JsonObject = {
-                "agent": session.agent,
-                "session": str(session.id),
-                "task": session.task,
-            }
-            payload.update({name: _plain(value) for name, value in data.items()})
+            payload: JsonObject = {name: _plain(value) for name, value in data.items()}
             await self._events.emit(
-                event_type,
-                payload,
-                dedupe_key=f"{event_type}:{session.id}:{session.turns}:{self._clock.now()}",
+                event_type, payload, dedupe_key=f"{event_type}:{self._published}"
             )
         except (PluginError, UDLError) as error:
             log.warning("publishing %s: %s", event_type, error)
 
 
 def _an_event(event: AgentEvent) -> AnAgentEvent:
-    """`event` as the transcript holds it (a runner's own event is one of the kinds that are)."""
-    return cast(AnAgentEvent, event)
+    """`event` as the transcript holds it: the kinds are the same, so this reads it as one of
+    them (`kind` says which)."""
+    return _AN_EVENT.validate_python(event)
 
 
 def _plain(value: object) -> JsonValue:

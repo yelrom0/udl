@@ -11,13 +11,14 @@ other knobs come with 27.7.
 """
 
 # System Imports
-from typing import Final
+from typing import Annotated, Final
 
 # Package Imports
 from pydantic import Field, PositiveInt
 
 # Local Imports
 from udl.plugins.apps.base import AppSettings
+from udl.plugins.settings import FileOnly
 
 __all__ = ["DENIED", "OrchSettings"]
 
@@ -48,14 +49,14 @@ class OrchSettings(AppSettings):
     poll_seconds: PositiveInt = 20
     """How often the wait looks at the pull again, in seconds (27.5)."""
 
-    hub_url: str | None = None
+    hub_url: Annotated[str | None, FileOnly()] = None
     """Where agents on other hosts reach udl's MCP server (`/mcp`), when they are not on this
     machine. File-only, never on the API: it is the address a session is pointed at (27.7)."""
 
     max_agents_running: PositiveInt = 4
     """How many agents may be mid-turn at once (27.7): the rest wait their turn."""
 
-    deny: list[str] = Field(default_factory=lambda: list(DENIED))
+    deny: Annotated[list[str], FileOnly()] = Field(default_factory=lambda: list(DENIED))
     """Commands a session's harness must refuse, given to every session as its deny list: what
     only udl may do for an agent (push, open a pull, merge one), and what would throw away work.
     File-only, like the rest of a server's own settings (27.7)."""
