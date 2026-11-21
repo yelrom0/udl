@@ -40,6 +40,7 @@ from udl.plugins.apps.orch.records import (
     Feature,
     FeatureRecords,
     LinkRecords,
+    Note,
     NoteRecords,
     Project,
     ProjectRecords,
@@ -131,6 +132,13 @@ def orch_registry() -> PluginRegistry:
 # ---------------------------------------------------------------------------------------------
 # What the app offers
 # ---------------------------------------------------------------------------------------------
+
+
+def _only(notes: list[Note], kind: str) -> Note:
+    """The one note of `kind` (a task's setup writes a system note of its own, 26.5)."""
+    found = [note for note in notes if note.note_kind == kind]
+    assert len(found) == 1
+    return found[0]
 
 
 def test_readiness_is_read_only_and_ready_changes_things() -> None:
@@ -238,9 +246,8 @@ async def test_ready_moves_the_task_writes_the_note_and_publishes_the_event(
     task = await TaskRecords(records).task("udl", "F-1.1")
     assert task is not None
     assert task.state == "ready"
-    (note,) = await NoteRecords(records).notes(OwnerKind.TASK, task.id)
+    note = _only(await NoteRecords(records).for_owner(OwnerKind.TASK, task.id), "progress")
     assert note.text == "Green, and the bot is clear."
-    assert note.note_kind == "progress"
 
 
 async def test_ready_writes_a_note_of_its_own_when_none_is_given(service: UDLService) -> None:
@@ -249,7 +256,7 @@ async def test_ready_writes_a_note_of_its_own_when_none_is_given(service: UDLSer
     records = AppRecords(service.db)
     task = await TaskRecords(records).task("udl", "F-1.1")
     assert task is not None
-    (note,) = await NoteRecords(records).notes(OwnerKind.TASK, task.id)
+    note = _only(await NoteRecords(records).for_owner(OwnerKind.TASK, task.id), "progress")
     assert note.text == "Ready to merge: dc1fd19."
 
 
@@ -265,7 +272,10 @@ async def test_ready_refuses_with_what_stops_it_and_writes_nothing(service: UDLS
     task = await TaskRecords(records).task("udl", "F-1.1")
     assert task is not None
     assert task.state == "in_progress"
-    assert await NoteRecords(records).notes(OwnerKind.TASK, task.id) == []
+    # (Only the setup's own "started" note: a refused ready writes nothing of its own.)
+    assert [
+        note.text for note in await NoteRecords(records).for_owner(OwnerKind.TASK, task.id)
+    ] == ["open → in_progress, by udl."]
 
 
 async def test_ready_refuses_a_task_that_has_no_pull(service: UDLService) -> None:

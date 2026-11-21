@@ -42,6 +42,7 @@ from udl.plugins.apps.orch.models import (
     MergeListRequest,
     MergePolicy,
     MergeRequest,
+    NoteKind,
     OwnerKind,
     Principal,
     Promoted,
@@ -531,7 +532,7 @@ async def test_a_merge_tells_the_stacked_tasks_to_rebase(service: UDLService) ->
 
     stacked = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.2")
     assert stacked is not None
-    notes = await NoteRecords(AppRecords(service.db)).notes("task", stacked.id)
+    notes = await NoteRecords(AppRecords(service.db)).for_owner(OwnerKind.TASK, stacked.id)
     assert "Rebase onto the base and push again" in notes[-1].text
 
 
@@ -574,8 +575,8 @@ async def test_a_stack_of_three_merges_in_order_each_prompting_the_next(
         app.pull(number)
 
     first = await merged(service, key="F-1.1", confirm="yelrom0/udl#1")
-    after_first = await NoteRecords(AppRecords(service.db)).notes(
-        "task",
+    after_first = await NoteRecords(AppRecords(service.db)).for_owner(
+        OwnerKind.TASK,
         (await TaskRecords(AppRecords(service.db)).task("udl", "F-1.2")).id,  # pyright: ignore[reportOptionalMemberAccess]
     )
     second = await merged(service, key="F-1.2", confirm="yelrom0/udl#2")
@@ -666,8 +667,9 @@ async def test_promote_marks_them_done_with_its_note(service: UDLService) -> Non
     moved = await tasks.task("udl", "F-1.1")
     assert moved is not None
     assert moved.state == DONE
-    notes = await NoteRecords(AppRecords(service.db)).notes("task", moved.id)
-    assert notes[-1].text == "In rc."
+    notes = await NoteRecords(AppRecords(service.db)).for_owner(OwnerKind.TASK, moved.id)
+    assert [one.text for one in notes if one.note_kind == NoteKind.PROGRESS] == ["In rc."]
+    assert notes[-1].text == "merged → done, by reviewer."
 
 
 async def test_promote_refuses_a_task_that_is_not_merged(service: UDLService) -> None:

@@ -32,6 +32,7 @@ from udl.plugins.apps.orch.models import (
     ActionState,
     ActionWhen,
     NoteKind,
+    OwnerKind,
     Principal,
 )
 from udl.plugins.apps.orch.records import (
@@ -151,9 +152,11 @@ async def test_the_task_says_who_merged_it(service: UDLService) -> None:
 
     found = await TaskRecords(records_of(service)).task("udl", "F-1.1")
     assert found is not None
-    notes = await NoteRecords(records_of(service)).notes("task", found.id)
+    notes = await NoteRecords(records_of(service)).for_owner(OwnerKind.TASK, found.id)
 
-    assert [note.text for note in notes] == ["Merged by yelrom0."]
+    assert [note.text for note in notes if note.text.startswith("Merged by")] == [
+        "Merged by yelrom0."
+    ]
     assert notes[0].note_kind == NoteKind.SYSTEM
 
 
@@ -173,7 +176,7 @@ async def test_each_stacked_task_is_told_to_rebase_and_push(service: UDLService)
     assert [one.key for one in changed] == ["F-1.1", "F-1.2"]
     stacked_task = await TaskRecords(records_of(service)).task("udl", "F-1.2")
     assert stacked_task is not None
-    notes = await NoteRecords(records_of(service)).notes("task", stacked_task.id)
+    notes = await NoteRecords(records_of(service)).for_owner(OwnerKind.TASK, stacked_task.id)
     assert "Rebase onto the base and push again" in notes[-1].text
     assert notes[-1].note_kind == NoteKind.SYSTEM
 
@@ -228,11 +231,13 @@ async def test_a_merge_seen_twice_writes_its_notes_once(service: UDLService) -> 
     assert found is not None
     assert [one.key for one in first] == ["F-1.1", "F-1.2"]
     assert [one.key for one in second] == ["F-1.1"]
-    notes = await NoteRecords(records_of(service)).notes("task", found.id)
+    notes = await NoteRecords(records_of(service)).for_owner(OwnerKind.TASK, found.id)
     assert len([one for one in notes if one.text.startswith("Merged by")]) == 1
     stacked_task = await TaskRecords(records_of(service)).task("udl", "F-1.2")
     assert stacked_task is not None
-    stacked_notes = await NoteRecords(records_of(service)).notes("task", stacked_task.id)
+    stacked_notes = await NoteRecords(records_of(service)).for_owner(
+        OwnerKind.TASK, stacked_task.id
+    )
     assert len([one for one in stacked_notes if "Rebase" in one.text]) == 1
 
 
@@ -245,8 +250,8 @@ async def test_a_pull_closed_without_merging_sends_the_task_back_to_work(
 
     assert found is not None
     assert found.state == IN_PROGRESS
-    notes = await NoteRecords(records_of(service)).notes("task", found.id)
-    assert "Not this way: split it." in notes[-1].text
+    notes = await NoteRecords(records_of(service)).for_owner(OwnerKind.TASK, found.id)
+    assert any("Not this way: split it." in one.text for one in notes)
 
 
 async def test_a_closed_pull_for_a_task_nobody_started_moves_nothing(service: UDLService) -> None:

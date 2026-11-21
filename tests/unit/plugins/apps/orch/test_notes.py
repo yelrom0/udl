@@ -6,7 +6,7 @@
 Notes (udl.plugins.apps.orch.records.Note, NoteRecords): the phase's bullet — a note on a task or
 a feature (what was done, a decision, a finding, a review), append-only, with its author and
 when it was written; ordering and authorship; and the `system` note a state change writes
-("ready → merged, by the GitHub watcher").
+("ready → merged, by …").
 """
 
 # System Imports
@@ -20,6 +20,7 @@ import pytest
 # Local Imports
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.models import (
+    IN_PROGRESS,
     MERGED,
     QUEUED,
     READY,
@@ -194,7 +195,9 @@ async def test_a_notes_author_is_whoever_wrote_it(notes: NoteRecords) -> None:
 
 
 async def test_moving_a_task_writes_a_system_note(tasks: TaskRecords, notes: NoteRecords) -> None:
-    """The card's own example: a state change is a `system` note ("ready → merged, by …")."""
+    """The card's own example: a state change is a `system` note ("ready → merged, by …"),
+    and it names who did it — here the watcher that saw the merge."""
+    # (A person's name is never guessed from the state it moved to.)
     task = await tasks.task("udl", "26.5")
     assert task is not None
     moved = await tasks.move(
@@ -205,9 +208,26 @@ async def test_moving_a_task_writes_a_system_note(tasks: TaskRecords, notes: Not
 
     history = await notes.for_owner(OwnerKind.TASK, moved.id)
 
-    assert [one.text for one in history] == ["ready → merged, by the GitHub watcher."]
+    assert [one.text for one in history] == ["ready → merged, by watcher."]
     assert history[0].note_kind is NoteKind.SYSTEM
     assert history[0].author == "udl"
+
+
+async def test_a_merge_udl_makes_itself_is_not_the_watchers(
+    tasks: TaskRecords, notes: NoteRecords
+) -> None:
+    """The actor is the caller's own name: a merge udl made itself is not the watcher's."""
+    task = await tasks.task("udl", "26.5")
+    assert task is not None
+    moved = await tasks.move(
+        task.model_copy(update={"state": READY}),
+        MERGED,
+        by=Principal(kind="system", name="udl"),
+    )
+
+    history = await notes.for_owner(OwnerKind.TASK, moved.id)
+
+    assert [one.text for one in history] == ["ready → merged, by udl."]
 
 
 async def test_a_move_by_a_person_names_them(tasks: TaskRecords, notes: NoteRecords) -> None:
@@ -263,6 +283,35 @@ async def test_a_note_the_state_change_wrote_is_the_only_one(
         "queued → in_progress, by ernie-c.",
     ]
     assert [one.note_kind for one in history] == [NoteKind.PROGRESS, NoteKind.SYSTEM]
+
+
+@pytest.mark.parametrize("by", ["udl", "watcher"])
+async def test_a_merge_says_who_merged_it(tmp_path: Path, by: str) -> None:
+    """The real path (`after_merge`): the note names who merged — udl itself, or the watcher
+    that saw GitHub merge it — never a guess from the state."""
+    from support.engine import databases, registry, settings
+    from udl.config import Settings
+    from udl.plugins.apps.orch.merge import after_merge
+
+    plugins = registry()
+    config: Settings = settings(tmp_path)
+    db = databases(config, plugins)
+    await db.connect()
+    records = AppRecords(db)
+    notes = NoteRecords(records)
+    await ProjectRecords(records).save_project(Project(name="udl", title="udl"))
+    await FeatureRecords(records).save_feature(Feature(project="udl", key="26", title="Work"))
+    tasks = TaskRecords(records)
+    await tasks.save_task(Task(project="udl", feature="26", key="26.5", title="Notes"))
+    started = await tasks.task("udl", "26.5")
+    assert started is not None
+    queued = await tasks.move(started, QUEUED, by=Principal(kind="system", name="udl"))
+    working = await tasks.move(queued, IN_PROGRESS, by=Principal(kind="system", name="udl"))
+    ready = await tasks.move(working, READY, by=Principal(kind="system", name="udl"))
+    await after_merge(records, project="udl", key="26.5", by=by, reviewed=False, promoted=False)
+
+    history = await notes.for_owner(OwnerKind.TASK, ready.id)
+    assert f"ready → merged, by {by}." in [one.text for one in history]
 
 
 async def test_the_notes_are_stored_as_records(notes: NoteRecords) -> None:

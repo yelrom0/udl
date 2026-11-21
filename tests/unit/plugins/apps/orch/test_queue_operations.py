@@ -261,9 +261,11 @@ async def test_my_task_brings_what_the_agent_is_told_before_it_starts(
     assert found.feature_spec == "The queue's rules."
     assert found.spec == "Do the thing."
     assert found.rules == "Test first. Never push ungreen."
-    assert [(note.note_kind, note.text, note.author) for note in found.notes] == [
-        ("decision", "It is a table, not a list.", "human:claude")
-    ]
+    assert [
+        (note.note_kind, note.text, note.author)
+        for note in found.notes
+        if note.note_kind == NoteKind.DECISION
+    ] == [("decision", "It is a table, not a list.", "human:claude")]
 
 
 # ---------------------------------------------------------------------------------------------
