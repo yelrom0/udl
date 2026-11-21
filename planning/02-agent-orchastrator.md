@@ -598,6 +598,19 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
       carried to the reader and becomes `TurnEnded(error)`.
     - **The stream is read with `stream()` here** (unlike the `command` runner): the CLI's result line
       says how the turn ended, so the exit code is not needed.
+- **Fixed (deepseek-a, 2026-11-22, PR to follow; from `ernie-d`):** every turn was cut off at 30 s on
+  `main`. `LocalShell._output()` gives a stream `within or DEFAULT_TIMEOUT` (30 s), and this turn called
+  `shell.stream(...)` with no `within`, so a real turn ended at 30 s and the `TimeoutError` came out of
+  `send()` uncaught (found reviewing #64). `RunnerOptions.turn_within` (default: one hour) is now how long
+  one turn may run; a turn that runs past it ends as `TurnEnded(ERROR, "The turn ran past its <n>
+  minutes.")` — never an exception out of `send()`. The `command` runner had the same bug through
+  `shell.run()` (its `TimeoutError` was not caught either), so it gets the same field, the same time and
+  the same answer, and the words are one helper (`base.turn_too_long`: minutes from a minute up, else
+  seconds, so a test's small time reads as the time it is). `SshShell.stream` already honoured `within` as
+  `LocalShell.stream` does; a test now says so. Tests first: a recording shell sees the turn's `within`
+  (the stream's and the run's), a real `LocalShell` with a CLI that outlasts a tiny `turn_within` ends the
+  turn with that error through both, and `both` shells stop a stream that runs too long
+  (`tests/integration/test_host_shell.py`).
 
 **25.9 `opencode`** · needs 25.7
 - Build: `udl/plugins/runners/opencode.py`.
