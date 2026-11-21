@@ -40,6 +40,7 @@ from udl.plugins.apps.orch.models import (
     IN_PROGRESS,
     QUEUED,
     AQuestion,
+    Message,
     NoteKind,
     OwnerKind,
     Principal,
@@ -691,6 +692,7 @@ async def test_the_asker_replies_in_its_own_thread(service: UDLService, as_agent
     finally:
         current_principal.reset(token)
 
+    assert isinstance(said, Message)
     assert said.text == "It is `api`."
 
 

@@ -537,7 +537,12 @@ class Dispatcher:
         prompt: str
         kind = "changed"
         if resume:
-            prompt = "udl restarted; continue where you were."
+            said, session = await self._answers(task, session)
+            prompt = (
+                f"udl restarted; continue where you were.\n\n{said}"
+                if said
+                else ("udl restarted; continue where you were.")
+            )
         elif session.turns == 0:
             said, session = await self._answers(task, session)
             prompt = first_prompt(task, answers=said)

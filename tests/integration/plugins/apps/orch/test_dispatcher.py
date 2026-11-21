@@ -957,6 +957,11 @@ async def test_an_answer_reaches_the_agent_s_next_session(service: UDLService) -
     """(28.1: the answer is delivered into the agent's session — a session that picks the task up
     again is told what was answered while it waited.)"""
     await TaskRecords(AppRecords(service.db)).delete_task("udl", "F-1.2")
+    agents = AgentRecords(AppRecords(service.db))
+    working = await agents.agent(AGENT)
+    assert working is not None
+    # (A tick runs a session's turns back to back, so the count has to be far above one tick's.)
+    await agents.save_agent(working.model_copy(update={"max_nudges": 1000}))
     await ran(service, clock=FakeClock(), turns=5)
     asked_of = await questions_of(service)
     assert len(asked_of) == 1
@@ -1671,7 +1676,7 @@ async def test_a_blocking_question_that_cannot_be_written_is_not_dropped(
     service: UDLService,
 ) -> None:
     """(Dropping it would leave the task running and the loop nudging it for good: a blocking ask
-    that fails is raised, and the tick tries again.)"""
+    that fails is raised, so the session is not ended and the tick tries again.)"""
 
     class _CannotWriteQuestions(AppRecords):
         """A store that cannot write a question."""
@@ -1686,13 +1691,24 @@ async def test_a_blocking_question_that_cannot_be_written_is_not_dropped(
                 raise DatabaseError("the question could not be written")
             return await super().save_all(records)
 
-    found, _ = await dispatcher(
-        service, clock=FakeClock(), records=_CannotWriteQuestions(service.db)
-    )
-    task = (await tasks_of(service))["F-1.1"]
+    await TaskRecords(AppRecords(service.db)).delete_task("udl", "F-1.2")
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock, records=_CannotWriteQuestions(service.db))
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(20):
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
 
-    with pytest.raises(DatabaseError, match="could not be written"):
-        await found._ask(AGENT, task, title="Why?", text="Why?", blocking=True)
+    task = (await tasks_of(service))["F-1.1"]
+    assert task.state == IN_PROGRESS, "it is not blocked, because the question was not written"
+    session = await session_of(service)
+    assert session is not None
+    assert session.state is not SessionState.ENDED, "the session is kept, and the tick retries"
+    assert not await questions_of(service)
 
 
 async def test_a_bot_wait_that_cannot_be_written_is_dropped(service: UDLService) -> None:
@@ -1707,22 +1723,47 @@ async def test_a_bot_wait_that_cannot_be_written_is_dropped(service: UDLService)
                 raise DatabaseError("the question could not be written")
             return await super().save_all(records)
 
-    found, _ = await dispatcher(
-        service, clock=FakeClock(), records=_CannotWriteQuestions(service.db)
+    github = await service.apps.get("github")
+    assert isinstance(github, FakeGitHub)
+    github.pull = FakePull(
+        checks=[{"name": "check", "status": "in_progress", "conclusion": None}], comments=[]
     )
-    task = (await tasks_of(service))["F-1.1"]
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock, records=_CannotWriteQuestions(service.db))
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(20):
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
 
-    assert await found._ask(AGENT, task, title="Why?", text="Why?", blocking=False) is None
+    assert not await questions_of(service), "the question was not written, and nothing failed"
+    session = await session_of(service)
+    assert session is not None
+    assert session.state is not SessionState.ENDED
+
+
+async def one_tick(service: UDLService) -> None:
+    """Run the dispatcher for one tick, so the prompts are the ones the first turn sent."""
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        await clock.advance(timedelta(seconds=31))
+        for _ in range(20):
+            await asyncio.sleep(0)
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
 
 
 async def test_an_answer_is_told_once(service: UDLService) -> None:
     """(An answer is delivered into the session that waited for it, and not again into the one
-    after it: the session remembers what it was told.)"""
+    after it: the question remembers it was delivered.)"""
     await TaskRecords(AppRecords(service.db)).delete_task("udl", "F-1.2")
-    agents = AgentRecords(AppRecords(service.db))
-    found = await agents.agent(AGENT)
-    assert found is not None
-    await agents.save_agent(found.model_copy(update={"max_nudges": 20}))
     await ran(service, clock=FakeClock(), turns=5)
     asked_of = await questions_of(service)
     assert len(asked_of) == 1
@@ -1736,24 +1777,12 @@ async def test_an_answer_is_told_once(service: UDLService) -> None:
         current_principal.reset(token)
 
     PROMPTS.clear()
-    STORE.turns = 0
-    await ran(service, clock=FakeClock(), turns=1)
-    assert "these were answered" in PROMPTS[0]
+    await one_tick(service)
 
-    found, _ = await dispatcher(service, clock=FakeClock())
-    task = (await tasks_of(service))["F-1.1"]
-    session = await SessionRecords(AppRecords(service.db)).save_session(
-        AgentSession(
-            agent=AGENT,
-            project="udl",
-            task=task.key,
-            ref=SessionRef(runner="fake", id="ses_after", cwd="/work/F-1.1", host="local"),
-        )
-    )
-
-    again, _ = await found._answers(task, session)
-
-    assert again == "", "it was told, and is not told twice"
+    assert sum("these were answered" in one for one in PROMPTS) == 1, "told once, and once only"
+    delivered = await QuestionRecords(AppRecords(service.db)).question("udl", asked_of[0].key)
+    assert delivered is not None
+    assert delivered.delivered, "the question remembers, so the session after this is not told"
 
 
 async def test_an_answer_to_another_s_question_is_not_told(service: UDLService) -> None:
@@ -1800,7 +1829,7 @@ async def test_a_non_blocking_answer_reaches_a_session_still_running(
         )
     finally:
         current_principal.reset(token)
-    session = await SessionRecords(records).save_session(
+    await SessionRecords(records).save_session(
         AgentSession(
             agent=AGENT,
             project="udl",
@@ -1811,13 +1840,21 @@ async def test_a_non_blocking_answer_reaches_a_session_still_running(
         )
     )
 
-    found, _ = await dispatcher(service, clock=FakeClock())
-    what, _told, kind = await found._next_prompt(task, session)
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        await clock.advance(timedelta(seconds=31))
+        for _ in range(20):
+            await asyncio.sleep(0)
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
 
-    assert what is not None
-    assert kind == "changed"
-    assert "these were answered" in what
-    assert "The `api` one." in what
+    assert PROMPTS
+    assert "these were answered" in PROMPTS[0]
+    assert "The `api` one." in PROMPTS[0]
     delivered = await QuestionRecords(records).question("udl", mine.key)
     assert delivered is not None
     assert delivered.delivered
