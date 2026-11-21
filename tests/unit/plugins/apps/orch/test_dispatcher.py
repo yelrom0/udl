@@ -805,3 +805,56 @@ async def test_only_so_many_agents_are_mid_turn_at_once(tmp_path: Path) -> None:
                 await running_task
 
     assert turning == 1, "the second agent waits for the first turn's place"
+
+
+async def test_an_agent_whose_host_does_not_answer_is_offline(service: UDLService) -> None:
+    """(The card's 6: an agent whose host fails `check_host` is `offline`, and nothing is sent.)"""
+    await AgentRecords(AppRecords(service.db)).save_agent(
+        Agent(name="far", title="Far", runner="fake", host="nowhere", projects=["udl"])
+    )
+    task = Task(project="udl", feature="F-1", key="F-1.9", title="Far away", assignee="far")
+    tasks = TaskRecords(AppRecords(service.db))
+    await tasks.save_task(task)
+    await tasks.move(task, QUEUED, by=Principal(kind="system", role="assign"))
+
+    found, _ = await dispatcher(service, clock=FakeClock())
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(20):
+            await asyncio.sleep(0)
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    far = await AgentRecords(AppRecords(service.db)).agent("far")
+    assert far is not None
+    assert far.offline
+    assert all(spec.cwd != "/work/F-1.9" for spec in STORE.specs.values())
+
+
+async def test_a_session_whose_pull_is_only_waiting_holds_no_turn(service: UDLService) -> None:
+    """(The card's 5: while waiting on the checks or the bot, the agent holds no turn.)"""
+    github = await service.apps.get("github")
+    assert isinstance(github, FakeGitHub)
+    github.pull = FakePull(
+        checks=[{"name": "check", "status": "in_progress", "conclusion": None}],
+        comments=[],
+    )
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(20):
+            await clock.advance(timedelta(seconds=31))
+        prompts = len(PROMPTS)
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert prompts == 1, "the first turn, and then no turn while the checks run"
+    session = await session_of(service)
+    assert session is not None
+    assert session.waited_since is not None

@@ -38,6 +38,7 @@ from pydantic import JsonValue, SecretStr
 
 from udl.db.models import JsonObject
 from udl.errors import DoesNotExist, PluginError, UDLError
+from udl.hosts.models import HostRequest
 from udl.plugins.apps.base import AppContext
 from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch import records as stored
@@ -184,8 +185,9 @@ class Dispatcher:
             self._wakes[agent.name] = asyncio.Event()
         loops = [asyncio.create_task(self._loop(agent)) for agent in agents]
         waking = asyncio.create_task(self._woken_by_events())
+        checking = [asyncio.create_task(self._reaching(agent)) for agent in agents]
         stopping = asyncio.create_task(self._stop.wait())
-        everything = [*loops, waking, stopping]
+        everything = [*loops, *checking, waking, stopping]
         try:
             done, _ = await asyncio.wait({*loops, stopping}, return_when=asyncio.FIRST_COMPLETED)
             if stopping not in done:
@@ -246,6 +248,8 @@ class Dispatcher:
         agent's next task and work it to the point where it moves on."""
         if agent.paused or not agent.enabled:
             return
+        if agent.offline:
+            return  # (until its host answers again: see `_reaching`)
         sessions = stored.SessionRecords(self._records)
         current = await sessions.current(agent.name)
         if current is not None:
@@ -268,6 +272,32 @@ class Dispatcher:
         if session is None or session.state in (SessionState.FAILED, SessionState.LIMITED):
             return
         await self._work(agent, task, session, resume=False)
+
+    async def _reaching(self, agent: stored.Agent) -> None:
+        """Check `agent`'s host, then wait: an agent whose host does not answer is `offline`, so no
+        session is started there until udl is restarted and finds it up again (the card's 6)."""
+        await self._reachable(agent)
+        await self._stop.wait()
+
+    async def _reachable(self, agent: stored.Agent) -> bool:
+        """Whether `agent`'s host answers: an agent whose host does not is `offline` (and no
+        session is started there) until it does again (the card's 6)."""
+        agents = stored.AgentRecords(self._records)
+        try:
+            checked = await self._service.check_host(HostRequest(host=agent.host))
+        except (PluginError, UDLError) as error:
+            log.warning("checking %s's host %s: %s", agent.name, agent.host, error)
+            if not agent.offline:
+                await agents.save_agent(agent.model_copy(update={"offline": True}))
+            return False
+        if checked.ok:
+            if agent.offline:
+                await agents.save_agent(agent.model_copy(update={"offline": False}))
+            return True
+        if not agent.offline:
+            log.warning("%s's host %s does not answer: it is offline", agent.name, agent.host)
+            await agents.save_agent(agent.model_copy(update={"offline": True}))
+        return False
 
     async def _ready_again(self, session: stored.AgentSession) -> stored.AgentSession | None:
         """`session` if it may be dispatched to again, or None: a `limited` one whose quota is
@@ -413,12 +443,15 @@ class Dispatcher:
         first turn says which task it is (or that udl restarted), and each one after it what
         changed — or, with nothing new, a nudge."""
         sessions = stored.SessionRecords(self._records)
+        prompt: str | None
         if resume:
             prompt = "udl restarted; continue where you were."
         elif session.turns == 0:
             prompt = first_prompt(task)
         else:
             prompt, session = await self._next_prompt(task, session)
+            if prompt is None:
+                return  # (its pull is only waiting on time: the event wakes it)
         while True:
             if not await self._turn(agent, session, prompt):
                 return
@@ -436,14 +469,22 @@ class Dispatcher:
                 await self._stalled(agent, now, session)
                 return
             prompt, session = await self._next_prompt(now, session)
+            if prompt is None:
+                return  # (only time stands in the way: no turn until the pull changes)
 
     async def _next_prompt(
         self, task: stored.Task, session: stored.AgentSession
-    ) -> tuple[str, stored.AgentSession]:
+    ) -> tuple[str | None, stored.AgentSession]:
         """What a session still on its task is told — what changed since the last turn (its pull's
         checks, the review bot's open items), or with nothing new a nudge (the card's 3) — and the
-        session, remembering what it was told so that the same news is not told twice."""
-        what = await self._what_changed(task)
+        session, remembering what it was told so that the same news is not told twice.
+
+        None means the session holds no turn: its pull is only waiting on time (the checks
+        running, the bot not done with this head), and a `github.pr.*` event wakes it (the card's
+        5)."""
+        what, session, waiting = await self._what_changed(task, session)
+        if waiting:
+            return None, session
         if what is None or what == session.last_text:
             return nudge(task), session
         session = await stored.SessionRecords(self._records).save_session(
@@ -451,29 +492,42 @@ class Dispatcher:
         )
         return changed(task, what), session
 
-    async def _what_changed(self, task: stored.Task) -> str | None:
-        """What is new about `task`'s pull, as a line a session can act on: its checks and the
-        bot's open items, or that it may be merged. None when there is nothing to read."""
+    async def _what_changed(
+        self, task: stored.Task, session: stored.AgentSession
+    ) -> tuple[str | None, stored.AgentSession, bool]:
+        """What is new about `task`'s pull, as a line a session can act on (its checks and the
+        bot's open items, or that it may be merged), the session, and whether it is only time that
+        stands in the way."""
         links = await stored.LinkRecords(self._records).for_owner(
             task.project, OwnerKind.TASK, task.key
         )
         if not any(one.link_kind == "pull" for one in links):
-            return "it has no pull yet"
+            return "it has no pull yet", session, False
         try:
             found = await self._service.call("orch_readiness", {"key": task.key})
         except (PluginError, UDLError) as error:
-            return f"its pull could not be read: {error}"
+            return f"its pull could not be read: {error}", session, False
         if not isinstance(found, Readiness):
-            return None
+            return None, session, False
         if found.ready:
-            return "its pull is ready to merge: say so with `orch_ready`"
+            return "its pull is ready to merge: say so with `orch_ready`", session, False
+        if found.pending and set(found.pending) == set(found.blockers):
+            if session.waited_since is None:
+                session = await stored.SessionRecords(self._records).save_session(
+                    session.model_copy(update={"waited_since": self._clock.now()})
+                )
+            return None, session, True
         parts = [f"its pull is not ready ({'; '.join(found.blockers)})"]
         if found.open_items:
             items = "\n".join(
                 f"{one.text} ({one.status})" if one.status else one.text for one in found.open_items
             )
             parts.append(f"the review bot still lists:\n\n{fenced('review-bot', items)}")
-        return ". ".join(parts)
+        if session.waited_since is not None:
+            session = await stored.SessionRecords(self._records).save_session(
+                session.model_copy(update={"waited_since": None})
+            )
+        return ". ".join(parts), session, False
 
     async def _stalled(
         self, agent: stored.Agent, task: stored.Task, session: stored.AgentSession

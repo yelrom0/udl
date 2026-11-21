@@ -422,6 +422,9 @@ class Agent(Record):
     max_nudges: PositiveInt = 3
     enabled: bool = True
     paused: bool = False
+    offline: bool = False
+    """Whether its host could not be reached: what a failed `check_host` sets, so no session is
+    started there until it answers again (27.7)."""
 
     @classmethod
     def example(cls) -> Self:
@@ -465,6 +468,12 @@ class AgentSession(Record):
     tokens_out: NonNegativeInt = 0
     cost: Decimal | None = None
     last_text: str = ""
+    """What the last turn was told, so the same news is not told twice (27.7)."""
+    waited_since: AwareDatetime | None = None
+    """When the session was first told its pull is only waiting on time (the checks, the review
+    bot): what `bot_wait` counts from (27.7)."""
+    rerun_for: str = ""
+    """The head a rerun was asked for (`github_rerun_checks`), so it is asked for once (27.7)."""
 
     @classmethod
     def example(cls) -> Self:
