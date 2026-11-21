@@ -104,7 +104,10 @@ async def ask(
         # first would then be answered into nothing (the review's fifth).)
         raise InUse(
             f"{task!r} already waits on {asked_in.blocked_on or 'a question'}",
-            hint="Answer or close the question it waits on, and ask again if it still stands.",
+            hint=(
+                "Answer the question it waits on, and ask again if it still stands. Closing it "
+                "does not unblock the task: a person moves it on, or it is answered."
+            ),
         )
     named = await _named(questions, project=project, tasks=tasks, features=features)
     to = await route(questions, asked_by=asked_by)
