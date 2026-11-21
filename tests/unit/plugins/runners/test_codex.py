@@ -27,7 +27,7 @@ from pydantic import SecretStr
 
 # Local Imports
 from support.clock import FakeClock
-from udl.errors import ToolUnavailable
+from udl.errors import PluginFailed, ToolUnavailable
 from udl.hosts.shell import Host, Interaction, LocalShell
 from udl.plugins.requirements import Requirement
 from udl.plugins.runners.base import (
@@ -124,10 +124,20 @@ class FakeShell:
         skip = 2 if argv and Path(argv[0]).name.startswith("python") else 1
         command = " ".join(argv[skip:])
         if self.status is not None and argv[skip:] == ["login", "status"]:
-            return self.status
-        if command in self.fails:
+            result = self.status
+        elif command in self.fails:
             raise ToolUnavailable("codex is not on this host")
-        return self.answers.get(command, ProcessResult(returncode=0, stdout="", stderr=""))
+        else:
+            answer = self.answers.get(command, ProcessResult(returncode=0, stdout="", stderr=""))
+            result = ProcessResult(returncode=0, stdout=answer.stdout, stderr="")
+        if check and result.returncode != 0:
+            # (What a real shell does: a non-zero exit is a failure the caller must handle, so a
+            # test can tell whether the runner asked for it or not.)
+            raise PluginFailed(
+                f"{Path(argv[0]).name} failed with exit code {result.returncode}"
+                f": {result.stderr.strip() or result.stdout.strip()}"
+            )
+        return result
 
     def stream(
         self,
