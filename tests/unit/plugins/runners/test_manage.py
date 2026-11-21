@@ -634,8 +634,9 @@ def orch_operations() -> dict[str, Operation]:
 
 
 def test_orch_offers_the_harness_operations() -> None:
-    offered = list(orch_operations())
-    assert offered[-7:] == [
+    # (Not that they are the last ones: orch's catalogue (26.6) comes after them.)
+    offered = [name for name in orch_operations() if "runner" in name]
+    assert offered == [
         "orch_list_runners",
         "orch_runner_install",
         "orch_runner_setup",
@@ -643,7 +644,7 @@ def test_orch_offers_the_harness_operations() -> None:
         "orch_runner_login_reply",
         "orch_runner_login_status",
         "orch_runner_logout",
-    ]  # (the queue's and the token's come before them)
+    ]
 
 
 def test_a_harness_s_operations_are_udl_orch_runners_commands() -> None:
