@@ -2191,7 +2191,8 @@ async def test_an_idle_manager_gets_no_turn_and_its_own_work_does(
                 break
             await clock.advance(timedelta(seconds=31))
         else:
-            raise AssertionError(f"its own task never moved: {one}")
+            now = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
+            raise AssertionError(f"its own task never moved: {now}")
     finally:
         running.cancel()
         with contextlib.suppress(asyncio.CancelledError):
