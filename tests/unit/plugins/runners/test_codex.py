@@ -37,6 +37,8 @@ from udl.plugins.runners.base import (
     SessionRef,
     SessionSpec,
     TextDelta,
+    ToolFinished,
+    ToolStarted,
     TurnEnded,
     TurnReason,
     Usage,
@@ -136,9 +138,13 @@ def runner(shell: FakeShell, **options: object) -> tuple[Codex, CodexOptions]:
 
 
 CODEX = Path(__file__).resolve().parents[3] / "support" / "codex_harness.py"
+FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "codex" / "0.171.0"
+"""The installed CLI's own help texts, as 25.12's card asks them to be kept."""
 """The fake codex CLI: `--version`, `login status`, and `exec`/`exec resume` printing JSON lines."""
 _GUARDS = '-c test -f "$1" || exit 1 sh ~/.codex/rules/udl.rules'
 """What the runner runs to see whether udl's rules are on the host (as the fake shell keys it)."""
+_RULES_PATH = "~/.codex/rules/udl.rules"
+"""Where the rules are (a path through the shell, so it is the home directory's)."""
 """The fake codex CLI: `--version`, `login status`, and `exec`/`exec resume` printing JSON lines."""
 
 
@@ -186,6 +192,26 @@ def test_a_login_status_of_both_kinds_is_read() -> None:
 
     assert health.signed_in
     assert health.plan == "an api key"
+
+
+def test_a_signed_in_line_that_names_its_key_shows_neither() -> None:
+    """An API-key sign-in may print the key itself: the plan is how it signed in, not the key."""
+    shell = FakeShell()
+    shell.answers = {
+        "--version": ProcessResult(returncode=0, stdout="codex-cli 0.171.0\n", stderr=""),
+        "login status": ProcessResult(
+            returncode=0,
+            stdout="Logged in using an API key (sk-proj-abc123)\n",
+            stderr="",
+        ),
+    }
+
+    health = asyncio.run(_health_of(shell))
+
+    assert health.signed_in
+    assert health.plan == "an api key"
+    assert "sk-proj" not in (health.detail or "")
+    assert "sk-proj" not in (health.plan or "")
 
 
 def test_not_being_signed_in_is_said() -> None:
@@ -323,9 +349,9 @@ async def test_the_lines_become_agent_events() -> None:
             },
             {
                 "type": "item.started",
-                "item": {"id": "item_2", "type": "command_execution", "command": ["ls"]},
+                "item": {"id": "item_2", "type": "command_execution", "command": "ls"},
             },
-            item("command_execution", status="completed", command=["ls"]),
+            item("command_execution", status="completed", command="ls"),
             item("agent_message", text="Done."),
             turn_done(input_tokens=10, output_tokens=2, cached_input_tokens=1),
         )
@@ -442,6 +468,153 @@ async def test_a_session_udl_does_not_know_is_an_error() -> None:
 
 
 # ---------------------------------------------------------------------------------------------
+# The shapes the CLI really sends (recorded, not guessed)
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_command_item_is_a_string_and_a_shell_tool() -> None:
+    """`command_execution.command` is the command line as a string; the tool is a shell."""
+    shell = FakeShell(
+        output=said(
+            thread(),
+            {
+                "type": "item.started",
+                "item": {"id": "i1", "type": "command_execution", "command": "ls -la"},
+            },
+            item("command_execution", status="completed", command="ls -la"),
+            turn_done(),
+        )
+    )
+    given, _ = runner(shell)
+    started = await given.start(session())
+
+    events = await turn_of(given, started)
+
+    [begun] = [event for event in events if isinstance(event, ToolStarted)]
+    [ended] = [event for event in events if isinstance(event, ToolFinished)]
+    assert (begun.name, begun.summary) == ("shell", "ls -la")
+    assert (ended.name, ended.ok) == ("shell", True)
+
+
+async def test_an_mcp_tool_call_names_its_server_and_tool() -> None:
+    shell = FakeShell(
+        output=said(
+            thread(),
+            {
+                "type": "item.started",
+                "item": {
+                    "id": "i1",
+                    "type": "mcp_tool_call",
+                    "server": "udl",
+                    "tool": "count_sites",
+                },
+            },
+            item("mcp_tool_call", server="udl", tool="count_sites", status="failed"),
+            turn_done(),
+        )
+    )
+    given, _ = runner(shell)
+    started = await given.start(session())
+
+    events = await turn_of(given, started)
+
+    [ended] = [event for event in events if isinstance(event, ToolFinished)]
+    assert ended.name == "udl/count_sites"
+    assert not ended.ok
+
+
+async def test_a_failed_turn_carries_its_message_and_may_be_a_limit() -> None:
+    """`turn.failed` puts the message in `error.message`, and a limit said there is one."""
+    shell = FakeShell(
+        output=said(
+            thread(),
+            {
+                "type": "turn.failed",
+                "error": {"message": f"You've hit your usage limit. Try again after {RESET}."},
+            },
+        )
+    )
+    given, _ = runner(shell)
+    started = await given.start(session())
+
+    events = await turn_of(given, started)
+
+    [limited] = [event for event in events if isinstance(event, RunnerLimited)]
+    assert limited.until == datetime(2027, 1, 15, 8, 0, tzinfo=UTC)
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.LIMITED
+
+
+async def test_a_limit_without_a_time_is_still_a_limit() -> None:
+    shell = FakeShell(
+        output=said(thread(), {"type": "error", "message": "You've hit your usage limit."})
+    )
+    given, _ = runner(shell)
+    started = await given.start(session())
+
+    events = await turn_of(given, started)
+
+    [limited] = [event for event in events if isinstance(event, RunnerLimited)]
+    assert limited.until is None
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.LIMITED
+
+
+async def test_a_turn_that_is_not_a_limit_does_not_take_a_number_for_a_time() -> None:
+    """A plain failure that happens to hold a ten-digit number is not a limit."""
+    shell = FakeShell(
+        output=said(
+            thread(),
+            {"type": "error", "message": "the build failed on node 1234567890"},
+        )
+    )
+    given, _ = runner(shell)
+    started = await given.start(session())
+
+    events = await turn_of(given, started)
+
+    assert [event for event in events if isinstance(event, RunnerLimited)] == []
+
+
+async def test_a_resumed_turn_keeps_the_sandbox_and_the_policy() -> None:
+    """`exec resume` has no `--sandbox`, so every turn carries the same policy as `-c` keys."""
+    shell = FakeShell(output=said(thread("thread-9"), turn_done()))
+    given, _ = runner(shell, sandbox="read-only", network=False, approval_policy="never")
+    started = await given.start(session())
+    await turn_of(given, started)
+
+    await turn_of(given, started, "again")
+
+    argv = shell.streams[-1][0]
+    assert 'sandbox_mode="read-only"' in argv
+    assert 'approval_policy="never"' in argv
+    assert "sandbox_workspace_write.network_access=false" in argv
+
+
+# ---------------------------------------------------------------------------------------------
+# The flags it passes are the installed CLI's
+# ---------------------------------------------------------------------------------------------
+
+
+def help_text(name: str) -> str:
+    """The help text the fixtures hold for `name`."""
+    return (FIXTURES / f"{name}-help.txt").read_text()
+
+
+def test_the_flags_the_runner_passes_are_in_the_installed_help() -> None:
+    """A flag the runner passes must be one this CLI has (the card's own test)."""
+    said_exec = help_text("exec")
+    said_resume = help_text("exec-resume")
+    said_login = help_text("login")
+    for flag in ("--json", "--model", "--cd", "--sandbox", "-c", "-"):
+        assert flag in said_exec
+    for flag in ("--json", "-c", "-"):
+        assert flag in said_resume
+    assert "--device-auth" in said_login
+    assert "--with-api-key" in said_login
+
+
+# ---------------------------------------------------------------------------------------------
 # The rules, and never its credentials
 # ---------------------------------------------------------------------------------------------
 
@@ -480,11 +653,11 @@ def test_the_rules_file_refuses_a_push_and_a_merge(scripted: FakeShell) -> None:
     assert written == ["~/.codex/rules/udl.rules"]
     [[argv, stdin]] = scripted.runs
     assert argv[0] == "sh"
-    assert "udl.rules" in " ".join(argv)
+    assert _RULES_PATH in " ".join(argv)
     said_rules = (stdin or b"").decode()
-    assert '"git", "push"' in said_rules
-    assert '"gh", "pr", "merge"' in said_rules
-    assert 'decision = "forbidden"' in said_rules
+    assert 'pattern=["git", "push"]' in said_rules
+    assert 'pattern=["gh", "pr", "merge"]' in said_rules
+    assert 'decision="forbidden"' in said_rules
 
 
 async def test_udl_never_opens_codexs_own_credentials(scripted: FakeShell) -> None:

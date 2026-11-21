@@ -77,7 +77,7 @@ _VERSION: Final = re.compile(r"codex-cli\s+(\S+)")
 _SIGNED_IN: Final = re.compile(r"logged in using (\w[\w ]*)", re.IGNORECASE)
 """What `codex login status` prints when it is signed in, and how."""
 _LIMIT: Final = re.compile(
-    r"(?:usage limit|rate limit|out of credit|quota)[^\n]*?\b(?:after|at|on)\s+"
+    r"(?:usage limit|rate limit|out of credit|quota)[^\n]*?\b(?:after|at|on|resets?)\s+"
     r"(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)",
     re.IGNORECASE,
 )
@@ -87,8 +87,8 @@ _EPOCH: Final = re.compile(r"(\d{10})")
 _METADATA: Final = "model metadata"
 """The warning a real turn's stream opens with (an `error` item that is only a warning)."""
 
-_RULES: Final = "~/.codex/rules/udl.rules"
-"""Where 25.11's setup writes the deny list (a rules file Codex reads itself)."""
+_RULES: Final = ".codex/rules/udl.rules"
+"""Where 25.11's setup writes the deny list, under the user's home (Codex reads it itself)."""
 _DEFAULT_DENY: Final = ("git push", "gh pr merge")
 """What udl's own rules refuse, when a session names nothing else."""
 _MCP_TOKEN: Final = "UDL_MCP_TOKEN"  # noqa: S105 - (a variable's name, not a key)
@@ -133,8 +133,9 @@ class _Item(BaseModel):
     type: str | None = None
     text: str | None = None
     message: str | None = None
-    name: str | None = None
-    command: list[str] | None = None
+    server: str | None = None
+    tool: str | None = None
+    command: str | None = None
     status: str | None = None
     aggregated_output: str | None = None
 
@@ -160,7 +161,16 @@ class _Line(BaseModel):
     thread_id: str | None = None
     item: _Item | None = None
     message: str | None = None
+    error: _Failure | None = None
     usage: _Usage | None = None
+
+
+class _Failure(BaseModel):
+    """A failed turn's error (`turn.failed` carries `{"message": …}`)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    message: str | None = None
 
 
 class Codex(AgentRunner[CodexOptions]):
@@ -205,7 +215,7 @@ class Codex(AgentRunner[CodexOptions]):
     async def _guards(self) -> bool:
         """Whether udl's rules file is on the host (what 25.11's setup writes)."""
         try:
-            await self.shell.run(["sh", "-c", 'test -f "$1" || exit 1', "sh", _RULES])
+            await self.shell.run(["sh", "-c", 'test -f "$1" || exit 1', "sh", f"~/{_RULES}"])
         except ToolUnavailable, PluginFailed, FileNotFoundError:
             return False
         return True
@@ -243,9 +253,9 @@ class Codex(AgentRunner[CodexOptions]):
         del roles, env  # (Codex's rules are the same for every role, and its key is its own)
         rules = "".join(_rule(pattern) for pattern in _DEFAULT_DENY)
         await self._write(
-            f"{_RULES}", f"# udl's rules: never a push or a merge from an agent.\n{rules}"
+            f"~/{_RULES}", f"# udl's rules: never a push or a merge from an agent.\n{rules}"
         )
-        return [_RULES]
+        return [f"~/{_RULES}"]
 
     # -- a session -----------------------------------------------------------------------------
 
@@ -356,6 +366,16 @@ class Codex(AgentRunner[CodexOptions]):
             ]
         else:
             argv = [*cli, "exec", "resume", self._thread(session.id), "--json"]
+            # (0.171's resume has no --sandbox/--cd, so the same policy is given as -c keys:
+            # every turn runs under it, not only the first.)
+            argv += [
+                "-c",
+                f"sandbox_mode={json.dumps(self.options.sandbox)}",
+                "-c",
+                f"approval_policy={json.dumps(self.options.approval_policy)}",
+                "-c",
+                f"sandbox_workspace_write.network_access={str(self.options.network).lower()}",
+            ]
         if self.options.provider is not None:
             argv += ["-c", f"model_provider={json.dumps(self.options.provider)}"]
         if not first and spec.model:
@@ -402,7 +422,8 @@ class Codex(AgentRunner[CodexOptions]):
         if said.type == "turn.completed":
             return _ended(said.usage, TurnReason.DONE)
         if said.type == "turn.failed":
-            return self._failed(said.message or "the turn failed")
+            said_error = said.error
+            return self._failed((said_error.message if said_error else said.message) or "failed")
         if said.type == "error":
             return self._failed(said.message or "codex failed")
         return []
@@ -449,9 +470,12 @@ _TOOLS: Final = frozenset({"command_execution", "mcp_tool_call", "file_change"})
 
 
 def _rule(pattern: str) -> str:
-    """One rule as Codex's rules file has it: a command's words, refused."""
-    words = json.dumps(list(pattern.split()))
-    return f'[[prefix_rule]]\npattern = {words}\ndecision = "forbidden"\n\n'
+    """One rule as Codex's rules file has it: a command's words, refused.
+
+    Codex reads Starlark here (an execpolicy rule), not TOML: `prefix_rule(pattern=[…],
+    decision="forbidden")`."""
+    words = ", ".join(json.dumps(word) for word in pattern.split())
+    return f'prefix_rule(pattern=[{words}], decision="forbidden")\n'
 
 
 def _started(item: _Item) -> list[AgentEvent]:
@@ -462,11 +486,11 @@ def _started(item: _Item) -> list[AgentEvent]:
 
 
 def _name(item: _Item) -> str:
-    """An item's tool's name: its own, else what it was."""
+    """An item's tool's name: a command is a shell, an MCP call names its server and tool."""
     if item.type == "command_execution":
         return "shell"
     if item.type == "mcp_tool_call":
-        return item.name or "mcp"
+        return f"{item.server or 'mcp'}/{item.tool}" if item.tool else (item.server or "mcp")
     return item.type or "tool"
 
 
@@ -476,9 +500,9 @@ def _ok(item: _Item) -> bool:
 
 
 def _summary(item: _Item) -> str:
-    """What a tool is doing, in a line (never a secret)."""
+    """What a tool is doing, in a line (never a secret): the command it runs, or its output."""
     if item.command:
-        return " ".join(item.command)[:200]
+        return item.command[:200]
     return (item.aggregated_output or item.message or "")[:200]
 
 
@@ -501,7 +525,12 @@ def _ended(usage: _Usage | None, reason: TurnReason) -> list[AgentEvent]:
 def _is_limited(message: str) -> bool:
     """Whether a failure says the account is out of quota."""
     lowered = message.lower()
-    return "usage limit" in lowered or "rate limit" in lowered or "out of credit" in lowered
+    return (
+        "usage limit" in lowered
+        or "rate limit" in lowered
+        or "out of credit" in lowered
+        or "quota" in lowered
+    )
 
 
 def _reset(message: str) -> datetime | None:
@@ -514,7 +543,7 @@ def _reset(message: str) -> datetime | None:
             reset = None
         if reset is not None:
             return reset if reset.tzinfo is not None else reset.replace(tzinfo=UTC)
-    if (epoch := _EPOCH.search(message)) is not None:
+    if _is_limited(message) and (epoch := _EPOCH.search(message)) is not None:
         return datetime.fromtimestamp(int(epoch.group(1)), tz=UTC)
     return None
 
@@ -529,12 +558,33 @@ def _health(version: str, status: str, *, guards: bool) -> RunnerHealth:
             guards=guards,
         )
     signed = _SIGNED_IN.search(status)
+    said = _shown(status.strip())
+    if signed is None:
+        said = ""  # (signed out: nothing to show, and a key must never be shown)
     return RunnerHealth(
         installed=True,
         version=found.group(1),
         signed_in=signed is not None,
-        plan=(signed.group(1).strip().lower() if signed else None),
+        plan=_plan(signed.group(1) if signed else ""),
         account=None,  # (the CLI says how it is signed in, not who: udl never opens auth.json)
-        detail=status.strip() or None,
+        detail=said or None,
         guards=guards,
     )
+
+
+def _shown(said: str) -> str:
+    """`said` with anything that could be a credential left out: a parenthesised tail (where the
+    CLI puts the key it uses) and a token-looking word."""
+    without = re.sub(r"\([^)]*\)", "", said)
+    return " ".join(word for word in without.split() if not _TOKEN.match(word))
+
+
+_TOKEN: Final = re.compile(r"^(?:sk-|ghp_|github_pat_|udl_agent_)\S*$", re.IGNORECASE)
+"""A word that is a credential, whatever the rest of the line says."""
+
+
+def _plan(said: str) -> str | None:
+    """How it is signed in, as a word or two: the CLI may name the key it uses, and a key is
+    never shown ("an API key (sk-…)" is "an api key")."""
+    head = re.split(r"[\s(]*[-(]", said.strip().lower(), maxsplit=1)[0].strip()
+    return head or None
