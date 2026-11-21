@@ -5797,6 +5797,13 @@
         "title": "LogoutRunnerRequest",
         "type": "object"
       },
+      "ManagerVerdict": {
+        "enum": [
+          "approve",
+          "changes"
+        ],
+        "type": "string"
+      },
       "MediaCandidate": {
         "additionalProperties": false,
         "description": "A piece of media a probe found.",
@@ -8473,6 +8480,58 @@
         "title": "ReviewItem",
         "type": "object"
       },
+      "ReviewRequest": {
+        "additionalProperties": false,
+        "description": "A manager's verdict on a report's pull (27.8).",
+        "properties": {
+          "head": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The commit it read (None: the pull's head as udl last read it).",
+            "title": "Head"
+          },
+          "key": {
+            "description": "The task whose pull it is.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          },
+          "reasons": {
+            "default": "",
+            "description": "Why, as markdown: what it checked, or the changes it wants.",
+            "title": "Reasons",
+            "type": "string"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/ManagerVerdict",
+            "description": "`approve`, or `changes`."
+          }
+        },
+        "required": [
+          "key",
+          "verdict"
+        ],
+        "title": "ReviewRequest",
+        "type": "object"
+      },
       "ReviewStatus": {
         "description": "Where one of the review bot's items is: open, fixed, partly fixed, not fixed, or a new\nissue it found this round.",
         "enum": [
@@ -8484,6 +8543,59 @@
         ],
         "title": "ReviewStatus",
         "type": "string"
+      },
+      "Reviewed": {
+        "additionalProperties": false,
+        "description": "A review, as `orch_review_task` answers with it.",
+        "properties": {
+          "at": {
+            "description": "When it said so.",
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "by": {
+            "default": "",
+            "description": "The manager's name.",
+            "title": "By",
+            "type": "string"
+          },
+          "head": {
+            "description": "The commit it is about.",
+            "title": "Head",
+            "type": "string"
+          },
+          "project": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The project it is in."
+          },
+          "reasons": {
+            "default": "",
+            "description": "Why.",
+            "title": "Reasons",
+            "type": "string"
+          },
+          "task": {
+            "description": "The task whose pull it is about.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Task",
+            "type": "string"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/ManagerVerdict",
+            "description": "What the manager says."
+          }
+        },
+        "required": [
+          "project",
+          "task",
+          "head",
+          "verdict",
+          "at"
+        ],
+        "title": "Reviewed",
+        "type": "object"
       },
       "RunActionRequestBody": {
         "additionalProperties": false,
@@ -21143,6 +21255,103 @@
           }
         ],
         "summary": "Add a follow-up to a question's thread, from either side.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/review_task": {
+      "post": {
+        "description": "A manager's verdict on a report's pull, for the head it read (27.8).\n\nIt is the `review` power's: the caller must have it, and the task must be one of its\nreports'. A review is per head, so a new push needs a new one; readiness asks for it when\nthe task's manager has the power. What it says is a `decision` note on the task with the\nmanager as author, in the same write.",
+        "operationId": "orch_review_task",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Reviewed"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "A manager's verdict on a report's pull, for the head it read (27.8).",
         "tags": [
           "orch"
         ]

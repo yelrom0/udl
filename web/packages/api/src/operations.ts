@@ -98,6 +98,7 @@ export const operations = {
 	orch_remove_link: { method: "post", path: "/plugins/orch/remove_link" },
 	orch_reorder_queue: { method: "post", path: "/plugins/orch/reorder_queue" },
 	orch_reply: { method: "post", path: "/plugins/orch/reply" },
+	orch_review_task: { method: "post", path: "/plugins/orch/review_task" },
 	orch_runner_install: { method: "post", path: "/plugins/orch/runner_install" },
 	orch_runner_login: { method: "post", path: "/plugins/orch/runner_login" },
 	orch_runner_login_reply: { method: "post", path: "/plugins/orch/runner_login_reply" },
