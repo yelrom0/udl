@@ -1784,6 +1784,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/review_task": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A manager's verdict on a report's pull, for the head it read (27.8).
+         * @description A manager's verdict on a report's pull, for the head it read (27.8).
+         *
+         *     It is the `review` power's: the caller must have it, and the task must be one of its
+         *     reports'. A review is per head, so a new push needs a new one; readiness asks for it when
+         *     the task's manager has the power. What it says is a `decision` note on the task with the
+         *     manager as author, in the same write.
+         */
+        post: operations["orch_review_task"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/orch/runner_install": {
         parameters: {
             query?: never;
@@ -5640,6 +5665,8 @@ export interface components {
              */
             runner: string;
         };
+        /** @enum {string} */
+        ManagerVerdict: "approve" | "changes";
         /**
          * MediaCandidate
          * @description A piece of media a probe found.
@@ -7207,12 +7234,76 @@ export interface components {
             text: string;
         };
         /**
+         * ReviewRequest
+         * @description A manager's verdict on a report's pull (27.8).
+         */
+        ReviewRequest: {
+            /**
+             * Head
+             * @description The commit it read (None: the pull's head as udl last read it).
+             */
+            head?: string | null;
+            /**
+             * Key
+             * @description The task whose pull it is.
+             */
+            key: string;
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /**
+             * Reasons
+             * @description Why, as markdown: what it checked, or the changes it wants.
+             * @default
+             */
+            reasons: string;
+            /** @description `approve`, or `changes`. */
+            verdict: components["schemas"]["ManagerVerdict"];
+        };
+        /**
          * ReviewStatus
          * @description Where one of the review bot's items is: open, fixed, partly fixed, not fixed, or a new
          *     issue it found this round.
          * @enum {string}
          */
         ReviewStatus: "open" | "fixed" | "partially_fixed" | "not_fixed" | "new_issue";
+        /**
+         * Reviewed
+         * @description A review, as `orch_review_task` answers with it.
+         */
+        Reviewed: {
+            /**
+             * At
+             * Format: date-time
+             * @description When it said so.
+             */
+            at: string;
+            /**
+             * By
+             * @description The manager's name.
+             * @default
+             */
+            by: string;
+            /**
+             * Head
+             * @description The commit it is about.
+             */
+            head: string;
+            /** @description The project it is in. */
+            project: components["schemas"]["Name"];
+            /**
+             * Reasons
+             * @description Why.
+             * @default
+             */
+            reasons: string;
+            /**
+             * Task
+             * @description The task whose pull it is about.
+             */
+            task: string;
+            /** @description What the manager says. */
+            verdict: components["schemas"]["ManagerVerdict"];
+        };
         /** RunActionRequestBody */
         RunActionRequestBody: {
             /**
@@ -15761,6 +15852,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Message"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_review_task: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Reviewed"];
                 };
             };
             /** @description Bad Request */

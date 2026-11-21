@@ -412,7 +412,7 @@ class UDLService:
         model, or plain data that is validated into one (raising ValidationError). An agent may
         only call what its role allows (27.2), and is refused before its request is read."""
         op = self.operations.get(name)  # (raises DoesNotExist)
-        _refuse_an_agent(principal(), name, admin=op.hints.admin)
+        await _refuse_an_agent(self, principal(), name, admin=op.hints.admin)
         if isinstance(request, Mapping):
             request = op.request.model_validate(request)
         elif not isinstance(request, op.request):
@@ -1938,11 +1938,13 @@ def principal() -> Principal | None:
     return current_principal.get()
 
 
-def _refuse_an_agent(who: Principal | None, name: str, *, admin: bool) -> None:
-    """Refuse an agent any operation its role does not allow. The table is orch's (27.2), read
-    here so that nothing else has to know a role."""
+async def _refuse_an_agent(
+    service: UDLService, who: Principal | None, name: str, *, admin: bool
+) -> None:
+    """Refuse an agent any operation its role and its powers do not allow. The table is orch's
+    (27.2, 27.8), read here so that nothing else has to know a role."""
     if who is None or not who.is_agent:
         return
-    from udl.plugins.apps.orch.tokens import refused  # (orch's role table)
+    from udl.plugins.apps.orch.tokens import refused_for  # (orch's role table)
 
-    refused(who, name, admin=admin)
+    await refused_for(service, who, name, admin=admin)
