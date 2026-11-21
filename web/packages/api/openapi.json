@@ -22166,7 +22166,7 @@
     },
     "/plugins/orch/runner_setup": {
       "post": {
-        "description": "Write a harness's deny policies and its agent files on a host (idempotent), and set\nthe provider keys it needs.",
+        "description": "Write a harness's deny policies and its agent files on a host (idempotent), and set\nthe provider keys it needs: the keys of the AI connections udl has (O-D5: an `op://`\nreference works, because what is set is what the store gave).",
         "operationId": "orch_runner_setup",
         "requestBody": {
           "content": {

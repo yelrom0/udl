@@ -22,18 +22,20 @@ from typing import TYPE_CHECKING, Any, Final, Protocol
 from uuid import UUID
 
 # Package Imports
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, SecretStr, ValidationError
 
 # Local Imports
 from udl.automations.events import EventType
 from udl.clock import Clock
 from udl.core.models import Deleted
 from udl.core.operations import CLISpec, Operation, OperationHints
+from udl.db.manager import DBManager
 from udl.db.models import JsonObject
-from udl.db.records import Record
+from udl.db.records import Record, RecordQuery
 from udl.errors import ConfigError, DoesNotExist, NotAllowed, PluginError, UDLError
 from udl.hosts import LOCAL
 from udl.interfaces import security
+from udl.plugins.ai.base import AIProviderConnection
 from udl.plugins.apps.base import (
     AppContext,
     AppEvent,
@@ -197,6 +199,7 @@ from udl.plugins.runners.manage import (
     SetupRunnerRequest,
     StartLoginRequest,
 )
+from udl.plugins.secrets.base import SecretField, SecretStore, load_secrets
 
 if TYPE_CHECKING:
     from udl.core.service import UDLService
@@ -317,6 +320,13 @@ class OrchContext(Protocol):
     def service(self) -> PullReader:
         """The service to call `github_get_pull` on."""
         ...
+
+
+class _Key(BaseModel):
+    """A connection's options as udl reads its key (the rest of them is the provider's)."""
+
+    api_key: SecretField | None = None
+    """The key, or where udl's secret store has it."""
 
 
 _RUNNERS: tuple[str, ...] = ("orch", "runners")
@@ -677,11 +687,16 @@ class Orch(AppPlugin[OrchSettings]):
         session is running there."""
         return await self.harnesses.install(request)
 
-    async def runner_setup(self, request: SetupRunnerRequest) -> RunnerSetup:
+    async def runner_setup(
+        self, request: SetupRunnerRequest, *, service: UDLService
+    ) -> RunnerSetup:
         """Write a harness's deny policies and its agent files on a host (idempotent), and set
-        the provider keys it needs."""
+        the provider keys it needs: the keys of the AI connections udl has (O-D5: an `op://`
+        reference works, because what is set is what the store gave)."""
         return await self.harnesses.setup(
-            request, roles=[role.value for role in AgentRole], env=self._provider_keys(request)
+            request,
+            roles=[role.value for role in AgentRole],
+            env=await self.provider_keys(service.db, service.secrets),
         )
 
     async def runner_login(self, request: StartLoginRequest) -> LoginAttempt:
@@ -701,11 +716,30 @@ class Orch(AppPlugin[OrchSettings]):
         """Sign a harness out (its `confirm` names `<host>/<runner>`, so it is never a typo)."""
         return await self.harnesses.logout(request)
 
-    def _provider_keys(self, request: SetupRunnerRequest) -> dict[str, str]:
-        """The provider keys the service's environment is given when it is set up: none yet
-        (the AI integration's secrets are 24.x's), so a setup writes only the policies and the
-        agent files."""
-        return {}
+    async def provider_keys(self, db: DBManager, secrets: SecretStore) -> dict[str, str]:
+        """The provider keys a harness's environment is given when it is set up: the ones of the
+        AI providers udl is set up with, by the variable their service takes them in.
+
+        A connection's options are read as the provider reads them (`load_secrets`), so a key
+        kept as a reference — `op://…`, or whatever the store holds — is read from the store or
+        resolved, and what is sent is never the reference. A connection that is off, or one of
+        another provider (one that takes no key), sends nothing; and a key udl has not been
+        given is not invented: a harness signed in with a plan needs none."""
+        wanted = {
+            "openrouter": "OPENROUTER_API_KEY",
+            "openai": "OPENAI_API_KEY",
+        }
+        keys: dict[str, str] = {}
+        connections = await db.list_records(AIProviderConnection, RecordQuery())
+        for connection in connections:
+            variable = wanted.get(connection.plugin)
+            if variable is None or not connection.enabled:
+                continue
+            options = await load_secrets(_Key.model_validate(connection.options), secrets)
+            key = options.api_key
+            if isinstance(key, SecretStr):
+                keys[variable] = key.get_secret_value()
+        return keys
 
     # -- the catalogue (26.6) ------------------------------------------------------------------
 
