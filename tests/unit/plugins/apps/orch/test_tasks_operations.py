@@ -373,7 +373,9 @@ async def test_a_task_splits_into_its_pieces(service: UDLService) -> None:
 
 async def test_a_split_of_a_task_that_is_not_there_is_refused(service: UDLService) -> None:
     with pytest.raises(DoesNotExist, match=r"26\.9"):
-        await service.call("orch_split_task", {"key": "26.9", "into": [{"title": "One"}]})
+        await service.call(
+            "orch_split_task", {"key": "26.9", "into": [{"title": "One"}, {"title": "Two"}]}
+        )
 
 
 async def test_splitting_a_task_that_has_started_is_refused(service: UDLService) -> None:
@@ -386,7 +388,9 @@ async def test_splitting_a_task_that_has_started_is_refused(service: UDLService)
     )
 
     with pytest.raises(NotAllowed, match="in_progress"):
-        await service.call("orch_split_task", {"key": "26.1", "into": [{"title": "One"}]})
+        await service.call(
+            "orch_split_task", {"key": "26.1", "into": [{"title": "One"}, {"title": "Two"}]}
+        )
 
 
 async def test_splitting_a_finished_task_is_refused(service: UDLService) -> None:
@@ -397,10 +401,24 @@ async def test_splitting_a_finished_task_is_refused(service: UDLService) -> None
     await TaskRecords(records).save_all([stored.model_copy(update={"state": "done"})])
 
     with pytest.raises(NotAllowed, match="done"):
-        await service.call("orch_split_task", {"key": "26.2", "into": [{"title": "One"}]})
+        await service.call(
+            "orch_split_task", {"key": "26.2", "into": [{"title": "One"}, {"title": "Two"}]}
+        )
 
 
-def test_a_split_needs_at_least_one_piece() -> None:
-    with pytest.raises(ValueError, match="into"):
-        SplitTaskRequest.model_validate({"key": "26.1", "into": []})
+def test_a_split_needs_two_pieces() -> None:
+    # (One piece is not a split: it would only retitle the task, throwing away what it said.)
+    for into in ([], [{"title": "One"}]):
+        with pytest.raises(ValueError, match="into"):
+            SplitTaskRequest.model_validate({"key": "26.1", "into": into})
     assert Split.model_fields["title"].is_required()
+
+
+async def test_a_split_into_one_piece_writes_nothing(service: UDLService) -> None:
+    with pytest.raises(ValueError, match="into"):
+        await service.call("orch_split_task", {"key": "26.1", "into": [{"title": "One"}]})
+
+    found = await service.call("orch_get_task", {"key": "26.1"})
+    assert isinstance(found, TaskInfo)
+    assert found.task.title == "Projects and repos"
+    assert found.notes == []

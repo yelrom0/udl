@@ -52,6 +52,7 @@ CATALOGUE: Final[dict[str, tuple[str, ...]]] = {
     "orch_remove_link": ("orch", "links", "rm"),
     "orch_find_links": ("orch", "links", "find"),
     "orch_add_note": ("orch", "note"),
+    "orch_import_plan": ("orch", "import"),
 }
 """The card's CLI command for each of the catalogue's operations (26.6)."""
 

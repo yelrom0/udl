@@ -89,6 +89,8 @@ __all__ = [
     "GitHubAccount",
     "GitHubSlug",
     "HostName",
+    "ImportPlanRequest",
+    "ImportReport",
     "Key",
     "Link",
     "LinkKind",
@@ -1610,8 +1612,8 @@ class SplitTaskRequest(_Model):
 
     key: Key
     """The task's key."""
-    into: list[Split] = Field(min_length=1)
-    """The tasks it becomes, in order."""
+    into: list[Split] = Field(min_length=2)
+    """The tasks it becomes, in order (two at least: one piece is a retitle, not a split)."""
     project: Name | None = None
     """The project (None: the only one, while udl has one)."""
 
@@ -1660,6 +1662,45 @@ class Links(_Model):
     """The canonical URL it was asked for."""
     links: list[Link] = Field(default_factory=list[Link])
     """What points at it, by owner."""
+
+
+class UnplacedLine(_Model):
+    """A line of a plan file the importer could not place (26.7)."""
+
+    source: Text
+    """The file it is in."""
+    line: PositiveInt
+    """Its line number, from 1."""
+    text: Text
+    """The line itself."""
+    why: Text
+    """What the importer could not read of it."""
+
+
+class ImportPlanRequest(_Model):
+    """Reading plan files into udl (26.7)."""
+
+    files: list[Text] = Field(min_length=1)
+    """The plan files, by path."""
+    dry_run: bool = False
+    """Whether to report what it would do, and write nothing."""
+    project: Name | None = None
+    """The project (None: the only one, while udl has one)."""
+
+
+class ImportReport(_Model):
+    """What an import did, or would do."""
+
+    created: list[Key] = Field(default_factory=list)
+    """The features and tasks it made, by key."""
+    updated: list[Key] = Field(default_factory=list)
+    """The ones it changed."""
+    unchanged: list[Key] = Field(default_factory=list)
+    """The ones the plan says what udl already has."""
+    kept: list[Text] = Field(default_factory=list)
+    """The tasks whose state udl has moved on from what the plan says, kept as udl has them."""
+    unplaced: list[UnplacedLine] = Field(default_factory=list[UnplacedLine])
+    """Every line it could not place, with its line number."""
 
 
 class AddNoteRequest(_Model):
