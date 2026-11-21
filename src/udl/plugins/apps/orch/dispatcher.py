@@ -732,10 +732,7 @@ class Dispatcher:
             if task.state == BLOCKED:
                 # (A person blocked it, or its question was closed: it waits already, so nothing
                 # is asked — but why it is waiting now is written where its history is.)
-                notes = stored.NoteRecords(self._records)
-                found = await stored.TaskRecords(self._records).task(task.project, task.key)
-                if found is not None:
-                    await notes.system(OwnerKind.TASK, found.id, title)
+                await stored.NoteRecords(self._records).system(OwnerKind.TASK, task.id, title)
                 return
         else:
             ever = await questions.questions(task.project, state=None, to=None, task=task.key)
