@@ -621,6 +621,8 @@
           },
           "owner": {
             "description": "What it hangs on, by key.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
             "title": "Owner",
             "type": "string"
           },
@@ -642,11 +644,14 @@
           "title": {
             "default": "",
             "description": "What it is called, when it is known.",
+            "maxLength": 2000,
             "title": "Title",
             "type": "string"
           },
           "url": {
             "description": "The URL (canonicalised as it is stored).",
+            "maxLength": 2000,
+            "minLength": 1,
             "title": "Url",
             "type": "string"
           }
@@ -671,6 +676,8 @@
           },
           "owner": {
             "description": "What it hangs on: a task's or a feature's key.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
             "title": "Owner",
             "type": "string"
           },
@@ -5833,6 +5840,7 @@
           "note": {
             "default": "",
             "description": "What it waits on, or why it was cancelled or moved.",
+            "maxLength": 2000,
             "title": "Note",
             "type": "string"
           },
@@ -7490,6 +7498,8 @@
         "properties": {
           "owner": {
             "description": "What it hangs on, by key.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
             "title": "Owner",
             "type": "string"
           },
@@ -7510,6 +7520,8 @@
           },
           "url": {
             "description": "The URL, as it was stored (canonicalised again).",
+            "maxLength": 2000,
+            "minLength": 1,
             "title": "Url",
             "type": "string"
           }
@@ -20862,7 +20874,7 @@
     },
     "/plugins/orch/split_task": {
       "post": {
-        "description": "Split a task into several: the first keeps its key (so its links and its notes stay\nwith it), and each of the others takes the feature's next key.",
+        "description": "Split a task into several: the first keeps its key (so its links and its notes stay\nwith it), and each of the others takes the feature's next key.\n\nOnly a task that has not started is split (`open`, `blocked`): the first piece takes\nthe task's own title and spec, which an in-progress or a finished task's are not to\nlose (NotAllowed otherwise).",
         "operationId": "orch_split_task",
         "requestBody": {
           "content": {

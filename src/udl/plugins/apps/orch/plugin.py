@@ -200,8 +200,11 @@ def _by(who: security.Principal | None) -> Principal:
     (the CLI, a test), the agent when one is calling, and a person for the server's owner.
 
     A person may move a task anywhere (the table is for the agents, orch.transitions); an agent
-    is held to its own tasks and to the roles its state allows."""
+    is held to its own tasks and to the roles its state allows. A reviewer is the one agent the
+    table lets review anyone's work, so its role is kept (`transitions` knows it by name)."""
     if who is not None and who.is_agent:
+        if who.role == "reviewer":
+            return _REVIEWER
         return Principal(kind="agent", name=who.name)
     return Principal(kind="human", name=f"human:{who.name if who is not None else 'owner'}")
 
@@ -218,6 +221,9 @@ _MERGED: Final = "github.pr.merged"
 
 _CLOSED: Final = "github.pr.closed"
 """The event it publishes for one closed without merging."""
+
+_UNSTARTED: Final = ("open", "blocked")
+"""The states a task is split in: its spec is not yet being written (nor written)."""
 
 _REVIEWER: Final = Principal(kind="agent", name="reviewer", role="review")
 """The reviewer: what a promotion's `done` is (only a reviewer or a person reviews)."""
@@ -817,10 +823,19 @@ class Orch(AppPlugin[OrchSettings]):
 
     async def split_task(self, request: SplitTaskRequest) -> Tasks:
         """Split a task into several: the first keeps its key (so its links and its notes stay
-        with it), and each of the others takes the feature's next key."""
+        with it), and each of the others takes the feature's next key.
+
+        Only a task that has not started is split (`open`, `blocked`): the first piece takes
+        the task's own title and spec, which an in-progress or a finished task's are not to
+        lose (NotAllowed otherwise)."""
         project = await self._project(request.project)
         tasks = stored.TaskRecords(self.records)
         found = await self._require_task(project, request.key)
+        if found.state not in _UNSTARTED:
+            raise NotAllowed(
+                f"{found.key!r} is {found.state}: only a task that has not started is split",
+                hint="A split rewrites the first piece, so it is done before the work begins.",
+            )
         first, *rest = request.into
         keys = [found.key]
         for _ in rest:

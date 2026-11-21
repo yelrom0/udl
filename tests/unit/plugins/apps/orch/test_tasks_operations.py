@@ -273,7 +273,8 @@ async def test_the_cli_s_user_may_move_a_task_to_done(service: UDLService) -> No
 
 async def test_an_agent_does_not_move_a_task_itself(service: UDLService) -> None:
     # (An implementer moves its work with `orch_start`, `orch_ready` and the rest: 27.2's table
-    # does not let it call `orch_move_task` at all, so `_by`'s agent branch is the note's.)
+    # does not let it or a manager call `orch_move_task` at all, so `_by`'s agent branch is the
+    # note's — and a reviewer, which the table does let call it, keeps its role: the test above.)
     caller = current_principal.set(
         Caller(kind=PrincipalKind.AGENT, name="deepseek-a", role="implementer")
     )
@@ -282,6 +283,37 @@ async def test_an_agent_does_not_move_a_task_itself(service: UDLService) -> None
             await service.call("orch_move_task", {"key": "26.1", "to": "cancelled"})
     finally:
         current_principal.reset(caller)
+
+
+async def test_a_reviewer_agent_moves_another_agent_s_task_to_done(
+    service: UDLService,
+) -> None:
+    # (A reviewer reviews anyone's work: `_by` keeps its role, or `transitions` would take it for
+    # an implementer and refuse both the other agent's task and `done`. The note says so.)
+    records = AppRecords(service.db)
+    stored = await TaskRecords(records).task("udl", "26.2")
+    assert stored is not None
+    await TaskRecords(records).save_all(
+        [stored.model_copy(update={"state": "merged", "assignee": "deepseek-b"})]
+    )
+    caller = current_principal.set(
+        Caller(kind=PrincipalKind.AGENT, name="claude-r", role="reviewer")
+    )
+    try:
+        moved = await service.call("orch_move_task", {"key": "26.2", "to": "done"})
+        found = await service.call("orch_get_task", {"key": "26.2"})
+    finally:
+        current_principal.reset(caller)
+
+    assert isinstance(moved, Task)
+    assert moved.state == "done"
+    assert isinstance(found, TaskInfo)
+    assert found.notes[-1].text == "merged → done, by reviewer."
+
+
+async def test_a_move_s_note_is_bounded() -> None:
+    with pytest.raises(ValueError, match="2000"):
+        MoveTaskRequest.model_validate({"key": "26.1", "to": "cancelled", "note": "x" * 2001})
 
 
 async def test_a_blocked_task_keeps_what_it_waits_on(service: UDLService) -> None:
@@ -342,6 +374,30 @@ async def test_a_task_splits_into_its_pieces(service: UDLService) -> None:
 async def test_a_split_of_a_task_that_is_not_there_is_refused(service: UDLService) -> None:
     with pytest.raises(DoesNotExist, match=r"26\.9"):
         await service.call("orch_split_task", {"key": "26.9", "into": [{"title": "One"}]})
+
+
+async def test_splitting_a_task_that_has_started_is_refused(service: UDLService) -> None:
+    # (Its spec is being written: the split would rewrite it under the agent doing it.)
+    records = AppRecords(service.db)
+    stored = await TaskRecords(records).task("udl", "26.1")
+    assert stored is not None
+    await TaskRecords(records).save_all(
+        [stored.model_copy(update={"state": "in_progress", "assignee": "deepseek-a"})]
+    )
+
+    with pytest.raises(NotAllowed, match="in_progress"):
+        await service.call("orch_split_task", {"key": "26.1", "into": [{"title": "One"}]})
+
+
+async def test_splitting_a_finished_task_is_refused(service: UDLService) -> None:
+    # (A finished task's title and spec are what was done: they are not rewritten.)
+    records = AppRecords(service.db)
+    stored = await TaskRecords(records).task("udl", "26.2")
+    assert stored is not None
+    await TaskRecords(records).save_all([stored.model_copy(update={"state": "done"})])
+
+    with pytest.raises(NotAllowed, match="done"):
+        await service.call("orch_split_task", {"key": "26.2", "into": [{"title": "One"}]})
 
 
 def test_a_split_needs_at_least_one_piece() -> None:

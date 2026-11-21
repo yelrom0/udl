@@ -151,3 +151,24 @@ async def test_finding_a_url_nothing_points_at_answers_nothing(service: UDLServi
 async def test_a_link_of_a_task_that_is_not_there_is_refused(service: UDLService) -> None:
     with pytest.raises(DoesNotExist, match=r"26\.9"):
         await a_link(service, owner="26.9", link_kind="pull", url="https://github.com/x/y/pull/1")
+
+
+def test_a_link_s_owner_is_a_key_and_its_url_is_bounded() -> None:
+    # (A key is a key and a URL has a length, at the edge, as in every other request.)
+    with pytest.raises(ValueError, match="40"):
+        AddLinkRequest.model_validate(
+            {
+                "owner_kind": "task",
+                "owner": "26." + "1" * 40,
+                "link_kind": "pull",
+                "url": "https://github.com/yelrom0/udl/pull/1",
+            }
+        )
+    with pytest.raises(ValueError, match="2000"):
+        RemoveLinkRequest.model_validate(
+            {
+                "owner_kind": "task",
+                "owner": "26.1",
+                "url": "https://github.com/x/y/pull/" + "1" * 2000,
+            }
+        )

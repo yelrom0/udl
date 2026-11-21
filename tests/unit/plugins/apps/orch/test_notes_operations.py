@@ -123,3 +123,10 @@ def test_a_note_s_author_is_not_the_caller_s_to_say() -> None:
         AddNoteRequest.model_validate(
             {"owner_kind": "task", "owner": "26.1", "text": "By me.", "author": "human:claude"}
         )
+
+
+def test_a_note_s_owner_is_a_key() -> None:
+    with pytest.raises(ValueError, match="40"):
+        AddNoteRequest.model_validate(
+            {"owner_kind": "task", "owner": "26." + "1" * 40, "text": "A note."}
+        )

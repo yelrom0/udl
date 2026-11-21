@@ -1852,6 +1852,10 @@ export interface paths {
          * Split a task into several: the first keeps its key (so its links and its notes stay
          * @description Split a task into several: the first keeps its key (so its links and its notes stay
          *     with it), and each of the others takes the feature's next key.
+         *
+         *     Only a task that has not started is split (`open`, `blocked`): the first piece takes
+         *     the task's own title and spec, which an in-progress or a finished task's are not to
+         *     lose (NotAllowed otherwise).
          */
         post: operations["orch_split_task"];
         delete?: never;

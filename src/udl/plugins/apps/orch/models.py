@@ -1395,7 +1395,7 @@ class MoveTaskRequest(_Model):
     """The task's key."""
     to: State
     """The state it is moving to."""
-    note: str = ""
+    note: Text = ""
     """What it waits on, or why it was cancelled or moved."""
     project: Name | None = None
     """The project (None: the only one, while udl has one)."""
@@ -1426,13 +1426,13 @@ class AddLinkRequest(_Model):
 
     owner_kind: OwnerKind
     """What it hangs on."""
-    owner: str
+    owner: Key
     """What it hangs on, by key."""
     link_kind: LinkKind
     """What it points at."""
-    url: str
+    url: URLText
     """The URL (canonicalised as it is stored)."""
-    title: str = ""
+    title: Text = ""
     """What it is called, when it is known."""
     project: Name | None = None
     """The project (None: the only one, while udl has one)."""
@@ -1443,9 +1443,9 @@ class RemoveLinkRequest(_Model):
 
     owner_kind: OwnerKind
     """What it hangs on."""
-    owner: str
+    owner: Key
     """What it hangs on, by key."""
-    url: str
+    url: URLText
     """The URL, as it was stored (canonicalised again)."""
     project: Name | None = None
     """The project (None: the only one, while udl has one)."""
@@ -1472,7 +1472,7 @@ class AddNoteRequest(_Model):
 
     owner_kind: OwnerKind
     """What it hangs on."""
-    owner: str
+    owner: Key
     """What it hangs on: a task's or a feature's key."""
     text: Spec
     """The note, as markdown."""
