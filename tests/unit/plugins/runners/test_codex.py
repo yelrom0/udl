@@ -1,0 +1,507 @@
+"""
+------------------
+- test_codex.py -
+------------------
+
+The `codex` runner (25.12): a turn is one `codex exec --json …` process (a first turn with the
+worktree, the sandbox and udl's MCP server; a later one `codex exec resume <thread> --json`),
+the instructions open the first prompt, and the JSON lines become AgentEvents — what it said, the
+tools it ran, what it used, and how it ended. `health` reads `--version` and `login status` and
+says whether udl's rules are on the host, and udl never opens Codex's own `auth.json`.
+"""
+
+# System Imports
+import asyncio
+import json
+import sys
+from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, nullcontext
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import ClassVar
+
+# Package Imports
+import pytest
+from pydantic import SecretStr
+
+# Local Imports
+from support.clock import FakeClock
+from udl.errors import ToolUnavailable
+from udl.hosts.shell import Host, Interaction
+from udl.plugins.requirements import Requirement
+from udl.plugins.runners.base import (
+    AgentEvent,
+    McpEndpoint,
+    RunnerHealth,
+    RunnerLimited,
+    SessionRef,
+    SessionSpec,
+    TextDelta,
+    TurnEnded,
+    TurnReason,
+    Usage,
+)
+from udl.plugins.runners.codex import Codex, CodexOptions
+from udl.process import CancelToken, ProcessResult
+
+RESET = "2027-01-15T08:00:00Z"
+"""When a limit's message says the quota is back."""
+
+
+class FakeShell:
+    """A host's shell, recording what it is asked to run and answering what a test scripts."""
+
+    requires: ClassVar[tuple[Requirement, ...]] = ()
+
+    def __init__(self, output: Sequence[bytes] = ()) -> None:
+        self.host = Host.local("/w")
+        self.output = list(output)
+        self.runs: list[tuple[list[str], bytes | None]] = []
+        self.streams: list[tuple[list[str], bytes | None, Mapping[str, str]]] = []
+        self.answers: dict[str, ProcessResult] = {}
+        self.fails: set[str] = set()
+        """The commands that fail as a program that is not there."""
+
+    async def run(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        secret_env: Mapping[str, str] | None = None,
+        stdin: bytes | None = None,
+        within: timedelta | None = None,
+        cancel: CancelToken | None = None,
+        check: bool = True,
+        tail: bool = False,
+    ) -> ProcessResult:
+        self.runs.append((list(argv), stdin))
+        # (A test points the runner at a Python script, so the program is `python <script>`: the
+        # command a test keys on is what follows it.)
+        skip = 2 if argv and Path(argv[0]).name.startswith("python") else 1
+        command = " ".join(argv[skip:])
+        if command in self.fails:
+            raise ToolUnavailable("codex is not on this host")
+        return self.answers.get(command, ProcessResult(returncode=0, stdout="", stderr=""))
+
+    def stream(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        secret_env: Mapping[str, str] | None = None,
+        stdin: bytes | None = None,
+        within: timedelta | None = None,
+    ) -> AsyncIterator[bytes]:
+        self.streams.append((list(argv), stdin, dict(secret_env or {})))
+
+        async def chunks() -> AsyncIterator[bytes]:
+            for chunk in self.output:
+                yield chunk
+
+        return chunks()
+
+    async def interact(self, *args: object, **kwargs: object) -> Interaction:
+        raise NotImplementedError
+
+    def forward(self, port: int) -> AbstractAsyncContextManager[str]:
+        return nullcontext(f"http://127.0.0.1:{port}")
+
+
+def said(*lines: object) -> list[bytes]:
+    """What codex prints: one JSON object a line, as bytes."""
+    return [(json.dumps(line) + "\n").encode() for line in lines]
+
+
+def thread(thread_id: str = "thread-1") -> dict[str, object]:
+    """The first line of a turn: which thread it is."""
+    return {"type": "thread.started", "thread_id": thread_id}
+
+
+def item(kind: str, **fields: object) -> dict[str, object]:
+    """An item of a turn, as codex sends it."""
+    return {"type": "item.completed", "item": {"id": "item_1", "type": kind, **fields}}
+
+
+def turn_done(**usage: int) -> dict[str, object]:
+    """The last line of a turn: what it used."""
+    return {"type": "turn.completed", "usage": usage}
+
+
+def runner(shell: FakeShell, **options: object) -> tuple[Codex, CodexOptions]:
+    """A codex runner on `shell`, with the fake CLI a test points it at."""
+    given = CodexOptions.model_validate({"cli": [sys.executable, str(CODEX)], **options})
+    return Codex(given, shell=shell, clock=FakeClock()), given
+
+
+CODEX = Path(__file__).resolve().parents[3] / "support" / "codex_harness.py"
+"""The fake codex CLI: `--version`, `login status`, and `exec`/`exec resume` printing JSON lines."""
+_GUARDS = '-c test -f "$1" || exit 1 sh ~/.codex/rules/udl.rules'
+"""What the runner runs to see whether udl's rules are on the host (as the fake shell keys it)."""
+"""The fake codex CLI: `--version`, `login status`, and `exec`/`exec resume` printing JSON lines."""
+
+
+async def turn_of(runner_: Codex, session: SessionRef, prompt: str = "hello") -> list[AgentEvent]:
+    """One turn's events."""
+    return [event async for event in runner_.send(session, prompt)]
+
+
+def session(spec: SessionSpec | None = None) -> SessionSpec:
+    """What a session is started with (a worktree, a model, and the brief)."""
+    return spec or SessionSpec(cwd="/w", model="fake-model", instructions="Be brief.")
+
+
+# ---------------------------------------------------------------------------------------------
+# What it is
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_its_health_says_it_is_there_and_signed_in() -> None:
+    shell = FakeShell()
+    shell.answers = {
+        "--version": ProcessResult(returncode=0, stdout="codex-cli 0.171.0\n", stderr=""),
+        "login status": ProcessResult(returncode=0, stdout="Logged in using ChatGPT\n", stderr=""),
+    }
+    given, _ = runner(shell)
+
+    health = await given.health()
+
+    assert health.installed
+    assert health.version == "0.171.0"
+    assert health.signed_in
+    assert health.plan == "chatgpt"
+
+
+def test_a_login_status_of_both_kinds_is_read() -> None:
+    shell = FakeShell()
+    shell.answers = {
+        "--version": ProcessResult(returncode=0, stdout="codex-cli 0.171.0\n", stderr=""),
+        "login status": ProcessResult(
+            returncode=0, stdout="Logged in using an API key\n", stderr=""
+        ),
+    }
+
+    health = asyncio.run(_health_of(shell))
+
+    assert health.signed_in
+    assert health.plan == "an api key"
+
+
+def test_not_being_signed_in_is_said() -> None:
+    shell = FakeShell()
+    shell.answers = {
+        "--version": ProcessResult(returncode=0, stdout="codex-cli 0.171.0\n", stderr=""),
+        "login status": ProcessResult(returncode=0, stdout="Not logged in\n", stderr=""),
+    }
+
+    health = asyncio.run(_health_of(shell))
+
+    assert not health.signed_in
+
+
+async def _health_of(shell: FakeShell) -> RunnerHealth:
+    """The health of a runner on `shell`."""
+    given, _ = runner(shell)
+    return await given.health()
+
+
+def test_a_program_that_is_not_there_is_not_installed() -> None:
+    shell = FakeShell()
+    shell.fails = {"--version"}
+
+    health = asyncio.run(_health_of(shell))
+
+    assert not health.installed
+
+
+def test_its_models_are_the_options() -> None:
+    shell = FakeShell()
+
+    given, _ = runner(shell, models=["gpt-5.1-codex", "other"])
+
+    assert [model.id for model in asyncio.run(given.models())] == [
+        "gpt-5.1-codex",
+        "other",
+    ]
+
+
+# ---------------------------------------------------------------------------------------------
+# A turn's process
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_first_turn_is_one_process_with_the_worktree_and_the_sandbox() -> None:
+    shell = FakeShell(output=said(thread(), item("agent_message", text="hi"), turn_done()))
+    given, _ = runner(shell)
+    started = await given.start(session())
+
+    await turn_of(given, started)
+
+    [argv, stdin, _] = shell.streams[-1]
+    assert argv[:4] == [sys.executable, str(CODEX), "exec", "--json"]
+    assert argv[argv.index("--model") + 1] == "fake-model"
+    assert argv[argv.index("--cd") + 1] == "/w"
+    assert argv[argv.index("--sandbox") + 1] == "workspace-write"
+    assert "-c" in argv
+    assert 'approval_policy="never"' in argv
+    assert "sandbox_workspace_write.network_access=true" in argv
+    assert argv[-1] == "-"
+    assert stdin is not None
+    assert stdin.decode().startswith("Be brief.")
+
+
+async def test_a_later_turn_resumes_the_thread_it_started() -> None:
+    shell = FakeShell(output=said(thread("thread-9"), turn_done()))
+    given, _ = runner(shell)
+    started = await given.start(session())
+    await turn_of(given, started)
+
+    await turn_of(given, started, "again")
+
+    argv = shell.streams[-1][0]
+    assert argv[argv.index("resume") + 1] == "thread-9"
+    assert "--cd" not in argv  # (a resume works in the session it resumes)
+    assert "-c" in argv
+    assert 'model="fake-model"' in argv
+
+
+async def test_the_instructions_open_the_first_prompt_only() -> None:
+    shell = FakeShell(output=said(thread(), turn_done()))
+    given, _ = runner(shell)
+    started = await given.start(session())
+    await turn_of(given, started)
+
+    first = shell.streams[-1][1]
+    assert first is not None
+    assert first.decode().startswith("Be brief.")
+
+    shell.output = said(thread(), turn_done())
+    await turn_of(given, started, "again")
+
+    assert shell.streams[-1][1] is not None
+    assert not shell.streams[-1][1].decode().startswith("Be brief.")
+
+
+async def test_the_mcp_server_is_given_by_key_and_its_token_is_not_in_the_argv() -> None:
+    shell = FakeShell(output=said(thread(), turn_done()))
+    given, _ = runner(shell)
+    started = await given.start(
+        session(
+            SessionSpec(
+                cwd="/w",
+                model="fake-model",
+                mcp=McpEndpoint(url="http://hub/mcp", token=SecretStr("s3cret-token")),
+            )
+        )
+    )
+
+    await turn_of(given, started)
+
+    argv = " ".join(shell.streams[-1][0])
+    assert "mcp_servers.udl.url=" in argv
+    assert "mcp_servers.udl.bearer_token_env_var=UDL_MCP_TOKEN" in argv
+    assert "s3cret-token" not in argv
+
+
+# ---------------------------------------------------------------------------------------------
+# What its lines are
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_the_lines_become_agent_events() -> None:
+    shell = FakeShell(
+        output=said(
+            thread(),
+            {
+                "type": "item.completed",
+                "item": {
+                    "id": "item_0",
+                    "type": "error",
+                    "message": "Model metadata for `fake-model` not found.",
+                },
+            },
+            {
+                "type": "item.started",
+                "item": {"id": "item_2", "type": "command_execution", "command": ["ls"]},
+            },
+            item("command_execution", status="completed", command=["ls"]),
+            item("agent_message", text="Done."),
+            turn_done(input_tokens=10, output_tokens=2, cached_input_tokens=1),
+        )
+    )
+    given, _ = runner(shell)
+    started = await given.start(session())
+
+    events = await turn_of(given, started)
+
+    assert [type(event).__name__ for event in events] == [
+        "ToolStarted",
+        "ToolFinished",
+        "TextDelta",
+        "Usage",
+        "TurnEnded",
+    ]
+    said_text = [event for event in events if isinstance(event, TextDelta)]
+    assert [event.text for event in said_text] == ["Done."]
+    [used] = [event for event in events if isinstance(event, Usage)]
+    assert (used.input_tokens, used.output_tokens) == (10, 2)
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.DONE
+
+
+async def test_a_line_udl_does_not_know_is_skipped() -> None:
+    shell = FakeShell(
+        output=said(
+            thread(),
+            {"type": "turn.something_new", "x": 1},
+            item("agent_message", text="hi"),
+            turn_done(),
+        )
+    )
+    given, _ = runner(shell)
+    started = await given.start(session())
+
+    events = await turn_of(given, started)
+
+    assert [type(event).__name__ for event in events] == ["TextDelta", "Usage", "TurnEnded"]
+
+
+async def test_a_line_that_is_not_json_is_skipped() -> None:
+    shell = FakeShell(output=[b"not json at all\n", *said(thread(), turn_done())])
+    given, _ = runner(shell)
+    started = await given.start(session())
+
+    events = await turn_of(given, started)
+
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.DONE
+
+
+async def test_a_usage_limit_is_a_runner_limited_that_says_when_it_lifts() -> None:
+    shell = FakeShell(
+        output=said(
+            thread(),
+            {"type": "error", "message": f"You've hit your usage limit. Try again after {RESET}."},
+        )
+    )
+    given, _ = runner(shell)
+    started = await given.start(session())
+
+    events = await turn_of(given, started)
+
+    [limited] = [event for event in events if isinstance(event, RunnerLimited)]
+    assert limited.until == datetime(2027, 1, 15, 8, 0, tzinfo=UTC)
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.LIMITED
+
+
+async def test_a_failure_is_a_runner_failed() -> None:
+    shell = FakeShell(output=said(thread(), {"type": "error", "message": "the model is not there"}))
+    given, _ = runner(shell)
+    started = await given.start(session())
+
+    events = await turn_of(given, started)
+
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.ERROR
+    assert "the model is not there" in events[-1].text
+
+
+async def test_a_turn_that_ends_without_saying_how_is_an_error() -> None:
+    shell = FakeShell(output=said(thread()))
+    given, _ = runner(shell)
+    started = await given.start(session())
+
+    events = await turn_of(given, started)
+
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.ERROR
+
+
+async def test_a_stopped_session_says_so() -> None:
+    shell = FakeShell(output=said(thread(), turn_done()))
+    given, _ = runner(shell)
+    started = await given.start(session())
+    await given.stop(started)
+
+    events = await turn_of(given, started)
+
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.STOPPED
+
+
+async def test_a_session_udl_does_not_know_is_an_error() -> None:
+    shell = FakeShell()
+    given, _ = runner(shell)
+
+    events = await turn_of(given, SessionRef(runner="codex", id="nobody", cwd="/w", host="local"))
+
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.ERROR
+
+
+# ---------------------------------------------------------------------------------------------
+# The rules, and never its credentials
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_the_guards_are_reported_from_the_rules_file() -> None:
+    shell = FakeShell()
+    shell.answers = {
+        "--version": ProcessResult(returncode=0, stdout="codex-cli 0.171.0\n", stderr=""),
+        "login status": ProcessResult(returncode=0, stdout="Not logged in\n", stderr=""),
+        'sh -c "test -f \\"$1\\" || exit 1" sh ~/.codex/rules/udl.rules': ProcessResult(
+            returncode=0, stdout="", stderr=""
+        ),
+    }
+    given, _ = runner(shell)
+
+    health = await given.health()
+
+    assert health.guards
+
+
+def test_the_guards_are_not_reported_without_the_rules_file() -> None:
+    shell = FakeShell()
+    shell.fails = {_GUARDS}
+
+    health = asyncio.run(_health_of(shell))
+
+    assert not health.guards
+
+
+def test_the_rules_file_refuses_a_push_and_a_merge(scripted: FakeShell) -> None:
+    """25.11's setup writes Codex's own rules, so a push and a merge are refused on the host."""
+    given, _ = runner(scripted)
+
+    written = asyncio.run(given.setup())
+
+    assert written == ["~/.codex/rules/udl.rules"]
+    [[argv, stdin]] = scripted.runs
+    assert argv[0] == "sh"
+    assert "udl.rules" in " ".join(argv)
+    said_rules = (stdin or b"").decode()
+    assert '"git", "push"' in said_rules
+    assert '"gh", "pr", "merge"' in said_rules
+    assert 'decision = "forbidden"' in said_rules
+
+
+async def test_udl_never_opens_codexs_own_credentials(scripted: FakeShell) -> None:
+    """O-C3's rule: the account is what the CLI says, never a file of its own."""
+    scripted.answers = {
+        "--version": ProcessResult(returncode=0, stdout="codex-cli 0.171.0\n", stderr=""),
+        "login status": ProcessResult(returncode=0, stdout="Not logged in\n", stderr=""),
+    }
+    given, _ = runner(scripted)
+
+    await given.health()
+
+    for argv, _ in scripted.runs:
+        assert not any("auth.json" in part for part in argv)
+
+
+@pytest.fixture
+def scripted() -> FakeShell:
+    """A shell for a test that is not async."""
+    return FakeShell()

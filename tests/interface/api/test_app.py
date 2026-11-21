@@ -44,6 +44,19 @@ async def test_with_an_api_key_a_request_without_it_is_unauthorized(tmp_path: Pa
     assert right.status_code == 200
 
 
+async def test_the_api_key_may_come_as_a_bearer_token(tmp_path: Path) -> None:
+    """An MCP client that can only send one header (Codex's `bearer_token_env_var`) is answered
+    as one that sends X-API-Key: the same key, the same rules."""
+    async with client_for(keyed(tmp_path)) as client:
+        bearer = await client.get("/sites", headers={"Authorization": "Bearer s3cret"})
+        wrong = await client.get("/sites", headers={"Authorization": "Bearer nope"})
+        other = await client.get("/sites", headers={"Authorization": "Basic s3cret"})
+
+    assert bearer.status_code == 200
+    for refused in (wrong, other):
+        assert refused.status_code == 401
+
+
 async def test_the_docs_need_no_api_key(tmp_path: Path) -> None:
     async with client_for(keyed(tmp_path)) as client:
         docs = await client.get("/docs")
