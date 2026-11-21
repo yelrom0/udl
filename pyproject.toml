@@ -73,6 +73,7 @@ memory = "udl.plugins.secrets.memory:MemorySecretStore"
 
 [project.entry-points."udl.runners"]
 claude-code = "udl.plugins.runners.claude_code:ClaudeCode"
+codex = "udl.plugins.runners.codex:Codex"
 command = "udl.plugins.runners.command:CommandRunner"
 opencode = "udl.plugins.runners.opencode:OpenCode"
 
