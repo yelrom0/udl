@@ -79,7 +79,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
 
 ### Next to build: Phases 23–30, the agent orchestrator (highest priority)
 
-The user's (13 and 17 Nov 2026): these phases come **before** Phases 13–22. They pull Phase 18 forward (as 24.1) and tasks 17.1 and 17.3 (as 25.2), and every plugin gets a generated web UI. The spec, the decisions and every task's card are in [planning/02-agent-orchastrator.md](planning/02-agent-orchastrator.md); **this tracker is the one to mark**. Two implementation agents build them (`deepseek-a` and `deepseek-b` since 19 Nov 2026 AEDT, after four ERNIE ones; queues in [planning/agent-queues/](planning/agent-queues/)); Claude reviews; the user is told what is ready in [planning/human-comms.md](planning/human-comms.md).
+The user's (13 and 17 Nov 2026): these phases come **before** Phases 13–22. They pull Phase 18 forward (as 24.1) and tasks 17.1 and 17.3 (as 25.2), and every plugin gets a generated web UI. The spec, the decisions and every task's card are in [planning/02-agent-orchastrator.md](planning/02-agent-orchastrator.md); **this tracker is the one to mark**. Implementation agents build them (`deepseek-a` and `deepseek-b` since 19 Nov 2026 AEDT, after four ERNIE ones, and `ernie-c` and `ernie-d` again on the free tier from 19 Nov 11:00; queues in [planning/agent-queues/](planning/agent-queues/)); Claude reviews; the user is told what is ready in [planning/human-comms.md](planning/human-comms.md).
 
 Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing open, waiting for Claude's review and the merge (**set by the agent in its own queue file**, `planning/agent-queues/<agent>.md`, which is local and not in git; this tracker never shows `[r]`) · `- [~]` built by the implementation agent, PR merged into `main` (the agent writes what it did, the PR and anything it hit under the task's card in the plan file) · `- [!]` blocked on something only the user or Claude can do (the reason follows `BLOCKED:`) · `- [x]` **only Claude**, after reviewing the work against the plan. Tasks marked **(Claude)** or **(user)** are not for implementation agents.
 
@@ -112,7 +112,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 25.9 `opencode` runner: OpenCode 2's server API on any host (OpenRouter and any other provider it has)
   - [x] 25.10 `command` runner (any other AI's CLI)
   - [x] 25.11 Managing harnesses on every host: status (version, signed in, plan, limits), install and update, sign-in started from the hub
-  - [ ] 25.12 `codex` runner: OpenAI's Codex CLI on any host, on that host's ChatGPT sign-in (the twin of `claude-code`)
+  - [ ] 25.12 `codex` runner: OpenAI's Codex CLI on any host, on that host's ChatGPT sign-in (the twin of `claude-code`) (optional: Q-9)
   - [ ] 25.13 OpenAI by API key: the `openai` AI provider, OpenCode's `openai/…` models, Codex signed in with a key
 - [ ] **Phase 26: Work tracking: projects, features, tasks, links**
   - [x] 26.1 `udl.apps` plugin kind: `AppPlugin` + contract suite + `FakeApp`; app services in the runtime
