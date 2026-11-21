@@ -46,6 +46,7 @@ from udl.plugins.apps.orch.records import (
     Note,
     Task,
     TaskRecords,
+    move_note,
 )
 
 __all__ = ["HUMAN", "assign", "next_task", "queue_of", "reorder", "unassign"]
@@ -165,12 +166,18 @@ async def _assign(
     # (A reassign is one move, twice: to `moved` for the agent that had it, then to `queued` for
     # the new one, both with the role `move` the table gives that pair.)
     role: Role = "move" if stopped is not None else "assign"
-    # (The moves are planned on copies first, so a refusal cannot leave a task half-moved.)
+    # (The moves are planned on copies first, so a refusal cannot leave a task half-moved, and
+    # each one is noted as it happens: a reassign is queued → moved → queued, not one step.)
     planned = task
+    moved_notes: list[Note] = []
     if stopped is not None:
-        planned = transitions.move(planned, MOVED, by=_by(by, "move"))
+        moved = transitions.move(planned, MOVED, by=_by(by, "move"))
+        moved_notes.append(move_note(planned, moved, _by(by, "move")))
+        planned = moved
     if planned.state != QUEUED:
-        planned = transitions.move(planned, QUEUED, by=_by(by, role))
+        moved = transitions.move(planned, QUEUED, by=_by(by, role))
+        moved_notes.append(move_note(planned, moved, _by(by, role)))
+        planned = moved
     placed = planned.model_copy(update={"assignee": agent, "position": at})
     order = [*others[:at], placed, *others[at:]]
     writes = _renumbered(order, was=others)
@@ -191,6 +198,7 @@ async def _assign(
             actions.ActionRecords(tasks.records), placed, assignee=agent
         )
         also.append(action)
+    also.extend(moved_notes)
     saved = await tasks.save_all(writes, also=also)
     return next((one for one in saved if one.id == placed.id), placed)
 
@@ -325,6 +333,7 @@ async def _unassign(
         stored = actions.ActionRecords(tasks.records)
         for found in await stored.actions(project, state=OPEN, task=freed.key):
             also.append(found.model_copy(update={"assignee": None}))
+    also.append(move_note(task, freed, _by(by, "assign")))
     saved = await tasks.save_all([freed, *_renumbered(left, was=left)], also=also)
     return saved[0]
 

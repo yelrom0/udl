@@ -41,6 +41,7 @@ from udl.plugins.apps.orch.models import (
     LATER,
     NOW,
     OPEN,
+    OwnerKind,
     Principal,
 )
 from udl.plugins.apps.orch.queue import assign, queue_of
@@ -217,7 +218,7 @@ async def test_finishing_writes_its_result_as_a_note_on_the_task(
         by=Principal(kind="human", name="human:claude"),
     )
 
-    [note] = await NoteRecords(actions.records).notes("task", task.id)
+    [note] = await NoteRecords(actions.records).for_owner(OwnerKind.TASK, task.id)
     assert note.text == "Checked: it is fine."
     assert (note.note_kind, note.author) == ("progress", "human:claude")
 
@@ -376,14 +377,14 @@ async def test_a_second_action_about_a_finished_person_s_task_changes_nothing(
     await finish(actions, project="udl", key=mine.key, result="Done.")
     task = await tasks.task("udl", "F-1.1")
     assert task is not None
-    notes = len(await NoteRecords(actions.records).notes("task", task.id))
+    notes = len(await NoteRecords(actions.records).for_owner(OwnerKind.TASK, task.id))
     second = await set_action(actions, project="udl", title="Again", task="F-1.1")
 
     with pytest.raises(NotAllowed, match="already merged"):
         await finish(actions, project="udl", key=second.key, result="Done again.")
 
     # (The refusal came before anything was written: no second note, no half-finished action.)
-    assert len(await NoteRecords(actions.records).notes("task", task.id)) == notes
+    assert len(await NoteRecords(actions.records).for_owner(OwnerKind.TASK, task.id)) == notes
     after = await actions.action("udl", second.key)
     assert after is not None
     assert after.state == OPEN

@@ -27,7 +27,7 @@ from udl.config import Settings
 from udl.db.records import Record
 from udl.errors import DatabaseError, NotAllowed
 from udl.plugins.apps.base import AppRecords
-from udl.plugins.apps.orch.models import Principal
+from udl.plugins.apps.orch.models import NoteKind, OwnerKind, Principal
 from udl.plugins.apps.orch.queue import assign, next_task, queue_of, reorder, unassign
 from udl.plugins.apps.orch.records import (
     Agent,
@@ -90,7 +90,7 @@ async def notes_on(tasks: TaskRecords, key: str) -> list[Note]:
     """The notes on the task called `key`."""
     task = await tasks.task("udl", key)
     assert task is not None
-    return await NoteRecords(tasks.records).notes("task", task.id)
+    return await NoteRecords(tasks.records).for_owner(OwnerKind.TASK, task.id)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -169,9 +169,32 @@ async def test_a_task_another_agent_holds_leaves_its_queue_and_says_who_stops(
     assert await keys_of(tasks, "deepseek-b") == ["F-1.1"]
     # (A system note says who must stop, so the old agent's session is told to let it go.)
     written = await notes_on(tasks, "F-1.1")
-    assert [(note.note_kind, note.author) for note in written] == [("system", "udl")]
-    assert "ernie-c" in written[0].text
-    assert "stop" in written[0].text
+    # (The notes that say who must stop and what moved — both udl's, both system.)
+    texts = [note.text for note in written]
+    assert [(note.note_kind, note.author) for note in written] == [
+        (NoteKind.SYSTEM, "udl"),
+    ] * 4
+    assert any("ernie-c" in text and "stop" in text for text in texts)
+    # (A reassign is two moves, and its notes read in their order: off the old queue, then onto
+    # the new one.)
+    moved = [text for text in texts if " → " in text]
+    assert moved == [
+        "open → queued, by human:claude.",
+        "queued → moved, by human:claude.",
+        "moved → queued, by human:claude.",
+    ]
+
+
+async def test_a_re_place_in_the_same_queue_writes_no_move_note(tasks: TaskRecords) -> None:
+    """Putting a task back where it is moves it nowhere, so nothing says it moved."""
+    await a_task(tasks, "F-1.1")
+    await assign(tasks, "F-1.1", "ernie-c", project="udl", by=ME)
+    before = await notes_on(tasks, "F-1.1")
+
+    await assign(tasks, "F-1.1", "ernie-c", project="udl", by=ME)
+
+    after = await notes_on(tasks, "F-1.1")
+    assert [one.id for one in after] == [one.id for one in before]
 
 
 async def test_a_task_an_agent_is_on_is_taken_off_it_and_queued_again(
@@ -189,7 +212,8 @@ async def test_a_task_an_agent_is_on_is_taken_off_it_and_queued_again(
 
     assert (moved.state, moved.assignee) == ("queued", "deepseek-b")
     assert await keys_of(tasks, "ernie-c") == []
-    assert "ernie-c must stop" in (await notes_on(tasks, "F-1.1"))[0].text
+    texts = [note.text for note in await notes_on(tasks, "F-1.1")]
+    assert any("ernie-c must stop" in text for text in texts)
 
 
 async def test_a_task_is_moved_through_the_table_not_around_it(tasks: TaskRecords) -> None:
@@ -292,7 +316,12 @@ async def test_a_refused_reassign_leaves_the_task_where_it_was(tasks: TaskRecord
     found = await tasks.task("udl", "F-1.1")
     assert found is not None
     assert (found.state, found.assignee) == ("ready", "ernie-c")
-    assert await notes_on(tasks, "F-1.1") == []
+    # (Only the two moves the setup made — the refused reassign wrote nothing of its own.)
+    assert [note.text for note in await notes_on(tasks, "F-1.1")] == [
+        "open → queued, by human:claude.",
+        "queued → in_progress, by ernie-c.",
+        "in_progress → ready, by ernie-c.",
+    ]
 
 
 async def test_a_reassign_without_a_caller_moves_the_task_itself(tasks: TaskRecords) -> None:
@@ -481,8 +510,9 @@ async def test_a_reassign_writes_only_the_tasks_whose_place_changed(
         # (F-1.3 leaves ernie-c's queue: F-1.1 and F-1.2 keep their places there.)
         await assign(tasks, "F-1.3", "deepseek-b", project="udl", by=ME)
 
-    # (The moved task, and the system note that says ernie-c must stop: nothing else.)
-    assert writes == [["F-1.3", "?"]]
+    # (The moved task, the note that says ernie-c must stop, the action it had, and the note
+    # that says what moved: nothing else.)
+    assert writes == [["F-1.3", "?", "?", "?"]]
     assert len(writes) == 1
 
 
@@ -562,7 +592,8 @@ async def test_an_unassign_writes_only_the_tasks_whose_place_changed(
         patch.setattr(tasks.records, "save_all", counted)
         await unassign(tasks, project="udl", key="F-1.3", by=ME)
 
-    assert writes == [["F-1.3"]]  # (the one that left, and no other: 0 and 1 are still 0 and 1)
+    # (The task that left, and its note — no other task: 0 and 1 keep 0 and 1.)
+    assert writes == [["F-1.3", "?"]]
 
 
 async def test_a_queue_change_that_fails_leaves_the_queue_as_it_was(

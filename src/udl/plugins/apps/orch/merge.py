@@ -35,8 +35,15 @@ from udl.plugins.apps.orch.records import Note, NoteRecords, Task, TaskRecords
 
 __all__ = ["after_close", "after_merge", "order", "stacked"]
 
-_UDL: Final = Principal(kind="system", role="merge")
-"""udl itself moving a task: the watcher saw the merge, or its pull closed."""
+
+def _actor(name: str) -> Principal:
+    """Who a merge is, for the note: udl's own hand on it, named as it was given.
+
+    A merge is udl's to make (O-C7: an agent never merges), so the principal is udl's — what it
+    is called in the note is who asked for or saw it: the watcher that saw GitHub merge it, the
+    caller of `orch_merge`, or udl itself."""
+    return Principal(kind="system", name=name or "udl")
+
 
 _REVIEWER: Final = Principal(kind="agent", name="reviewer", role="review")
 """The reviewer's merge is its review: it is what reaches `done`."""
@@ -110,7 +117,7 @@ async def after_merge(
         # so the notes and the rebase prompts are written once.)
         return [found]
     notes = NoteRecords(records)
-    moved = await tasks.move(found, MERGED, by=_UDL)
+    moved = await tasks.move(found, MERGED, by=_actor(by))
     done = reviewed and not promoted
     if done:
         moved = await tasks.move(moved, DONE, by=_REVIEWER)

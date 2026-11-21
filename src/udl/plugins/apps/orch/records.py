@@ -36,7 +36,7 @@ from typing import Final, Self
 from uuid import UUID
 
 # Package Imports
-from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt, ValidationError
+from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt
 
 # Local Imports
 from udl.db.models import JsonObject, utcnow
@@ -558,13 +558,14 @@ async def _scan(
     """Store the links a text makes (a GitHub URL, a task key in backticks), as links of
     `project`/`owner_kind`/`owner`, and drop the ones the text no longer has.
 
-    A scan is a save's helper: it never breaks the save (a text udl cannot scan is saved, and the
-    scan is reported in the log), so a task's spec is never refused for a link's sake."""
+    A scan is a save's helper: it never breaks the save (a text with a URL udl cannot parse is
+    saved, and the scan says so in the log), so a task's spec is never refused for a link's
+    sake."""
     from udl.plugins.apps.orch.links import links_in
 
     try:
         wanted = {link.url: link for link in links_in(text, project=project)}
-    except ValidationError as error:  # (a scan never breaks the save)
+    except ValueError as error:  # (a URL that is not one: udl's own parser refusing it)
         log.warning("orch could not scan %s %s: %s", owner_kind, owner, error)
         return
     links = LinkRecords(records)
@@ -572,9 +573,7 @@ async def _scan(
         if link.added_by == SCANNED and link.url not in wanted:
             await links.delete(link)
     for url, link in wanted.items():
-        if await links.by_url(url) and any(
-            found.url == url for found in await links.for_owner(project, owner_kind, owner)
-        ):
+        if any(found.url == url for found in await links.for_owner(project, owner_kind, owner)):
             continue
         await links.add(
             project=project,
@@ -942,11 +941,27 @@ class TaskRecords:
         return changed
 
     async def move(self, task: Task, to: str, *, by: Principal, note: str = "") -> Task:
-        """`task` moved to `to` by `by` and stored: the one path that sets a task's state (the
-        table is orch.transitions', so what may move it is one rule in one place)."""
+        """`task` moved to `to` by `by`, stored, and noted: the one path that sets a task's
+        state (the table is orch.transitions', so what may move it is one rule in one place), and
+        the one that says so in the task's history — a `system` note, `<from> → <to>, by <who>`
+        (26.5), so a task's history reads as its card's notes do.
+
+        The task and its note are one batch: a state change never lands without its history
+        entry (the paths that plan their own moves — a queue's, a merge's — build the same note
+        with `move_note` and write it in their batch)."""
         from udl.plugins.apps.orch.transitions import move
 
-        return await self._store(move(task, to, by=by, note=note))
+        moved = move(task, to, by=by, note=note)
+        saved = await self.save_moved(task, moved, by=by)
+        return next((one for one in saved if one.id == moved.id), moved)
+
+    async def save_moved(self, task: Task, moved: Task, *, by: Principal) -> list[Task]:
+        """`moved` (what `transitions.move()` made of `task`) stored with the note that says so,
+        in one batch: a state change never lands without its history entry.
+
+        This is `move()`'s own write. A path that plans several moves (a queue's reassign is two)
+        builds the same note with `move_note()` and writes it in its own batch."""
+        return await self.save_all([moved], also=[move_note(task, moved, by)])
 
     async def _store(self, task: Task) -> Task:
         """Store `task` as it is (a save's and a move's own path) and keep its feature's status
@@ -1224,9 +1239,28 @@ class AgentRecords:
             )
 
 
+def move_note(task: Task, moved: Task, by: Principal) -> Note:
+    """The `system` note a state change writes (26.5): `<from> → <to>, by <who>`.
+
+    `who` is the caller's own name — the GitHub watcher's, a person's, an agent's — never
+    guessed from the state it moved to, so a merge udl made itself is not the watcher's."""
+    return Note(
+        owner_kind=OwnerKind.TASK,
+        owner=moved.id,
+        note_kind=NoteKind.SYSTEM,
+        text=f"{task.state} → {moved.state}, by {by.who}.",
+        author="udl",
+    )
+
+
 class NoteRecords:
     """Where orch keeps its notes: appended, and read by the record they are about, oldest
-    first (so a task's history reads top to bottom, 26.5)."""
+    first (so a task's history reads top to bottom, 26.5).
+
+    There is no update: a note is never replaced, and a correction is another note. A note's
+    `owner` is the record it is about (a task's or a feature's id), so it is found by it
+    whatever that record's key becomes, and `author` is who wrote it — an agent, `human:<name>`,
+    or `udl` for what udl itself says."""
 
     def __init__(self, records: AppRecords) -> None:
         self._records = records
@@ -1237,15 +1271,33 @@ class NoteRecords:
         return self._records
 
     async def add(self, note: Note) -> Note:
-        """Store `note`: notes are appended, never replaced (a correction is another note)."""
+        """Store `note` (appended: a note is never replaced)."""
         return await self._records.save(note)
 
-    async def notes(self, owner_kind: str, owner: UUID) -> list[Note]:
-        """Every note on the record `owner` of `owner_kind`, oldest first."""
+    async def get(self, note_id: UUID) -> Note | None:
+        """The note with that id, or None when there is none."""
+        return await self._records.get(Note, note_id)
+
+    async def for_owner(self, owner_kind: OwnerKind, owner: UUID) -> list[Note]:
+        """Every note on the record `owner` of `owner_kind`, oldest first (then by when it was
+        stored, so notes written in one tick keep their order)."""
         found = await self._records.list(
-            Note, RecordQuery(where={"owner_kind": owner_kind, "owner": owner})
+            Note, RecordQuery(where={"owner_kind": owner_kind.value, "owner": owner})
         )
         return sorted(found, key=lambda note: (note.at, note.created_at))
+
+    async def system(self, owner_kind: OwnerKind, owner: UUID, text: str) -> Note:
+        """Write what udl itself says about `owner_kind`/`owner` (a state change, a move), as a
+        `system` note by `udl`."""
+        return await self.add(
+            Note(
+                owner_kind=owner_kind,
+                owner=owner,
+                note_kind=NoteKind.SYSTEM,
+                text=text,
+                author="udl",
+            )
+        )
 
 
 class AgentTokenRecords:

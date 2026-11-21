@@ -739,7 +739,9 @@ class Orch(AppPlugin[OrchSettings]):
             text=request.note or f"Ready to merge: {pull.head_sha[:7]}.",
             author="udl",
         )
-        await stored.TaskRecords(self.records).save_all([moved], also=[note])
+        await stored.TaskRecords(self.records).save_all(
+            [moved], also=[note, stored.move_note(task, moved, _UDL)]
+        )
         events = AppEvents(service.bus, self.name, self.event_types())
         await events.emit(
             TASK_READY.name,
@@ -996,6 +998,10 @@ class Orch(AppPlugin[OrchSettings]):
             )
             for one in moved
         ]
+        notes += [
+            stored.move_note(one, moved_one, _REVIEWER)
+            for one, moved_one in zip(checked, moved, strict=True)
+        ]
         await tasks.save_all(moved, also=notes)
         return Promoted(tasks=[one.key for one in moved])
 
@@ -1109,7 +1115,7 @@ class Orch(AppPlugin[OrchSettings]):
             return MyTaskResponse()
         feature = await stored.FeatureRecords(self.records).feature(project, found.feature)
         project_record = await stored.ProjectRecords(self.records).project(project)
-        notes = await stored.NoteRecords(self.records).notes("task", found.id)
+        notes = await stored.NoteRecords(self.records).for_owner(OwnerKind.TASK, found.id)
         return MyTaskResponse(
             task=_entry(found),
             feature_spec="" if feature is None else feature.spec,

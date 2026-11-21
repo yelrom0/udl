@@ -204,9 +204,9 @@ async def test_a_closed_pull_sends_the_task_back_with_its_comment(service: UDLSe
     found = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
     assert found is not None
     assert found.state == IN_PROGRESS
-    notes = await NoteRecords(AppRecords(service.db)).notes("task", found.id)
-    assert "Not this way: split it." in notes[-1].text
-    assert notes[-1].note_kind == NoteKind.SYSTEM
+    notes = await NoteRecords(AppRecords(service.db)).for_owner(OwnerKind.TASK, found.id)
+    assert any("Not this way: split it." in one.text for one in notes)
+    assert any(one.note_kind == NoteKind.SYSTEM for one in notes)
 
 
 async def test_a_merge_of_a_task_already_merged_changes_nothing(service: UDLService) -> None:
