@@ -17,7 +17,7 @@ the operations and what they write.
 # System Imports
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 # Package Imports
 import pytest
@@ -26,11 +26,12 @@ from pydantic import BaseModel, SecretStr
 # Local Imports
 from support.engine import registry, settings
 from udl.config import APISettings
+from udl.core.operations import Operation, OperationHints
 from udl.core.service import UDLService
 from udl.errors import NotAllowed
 from udl.interfaces.security import Principal as Caller
 from udl.interfaces.security import PrincipalKind, current_principal
-from udl.plugins.apps.base import AppPlugin, AppRecords, AppSettings, Operation, OperationHints
+from udl.plugins.apps.base import AppPlugin, AppRecords, AppSettings
 from udl.plugins.apps.orch import transitions
 from udl.plugins.apps.orch.agents import AgentRole, ManagerPowers
 from udl.plugins.apps.orch.models import (
@@ -41,6 +42,12 @@ from udl.plugins.apps.orch.models import (
     OwnerKind,
     Principal,
     PullState,
+    Questions,
+    Readiness,
+    Suggestions,
+)
+from udl.plugins.apps.orch.models import (
+    Question as Asked,
 )
 from udl.plugins.apps.orch.plugin import Orch
 from udl.plugins.apps.orch.readiness import Pull
@@ -98,8 +105,10 @@ class FakeGitHub(AppPlugin[AppSettings]):
     name = "github"
     title = "GitHub (fake)"
 
-    pull: ClassVar[dict[str, Any]] = {}
-    """The pull it answers with (set by the fixture)."""
+    def __init__(self, settings_: AppSettings | None = None, **kwargs: object) -> None:
+        super().__init__(settings_ or AppSettings(), **kwargs)  # pyright: ignore[reportArgumentType]
+        self.pull: dict[str, Any] = a_pull()
+        """The pull it answers with (set by a test)."""
 
     @classmethod
     def operations(cls) -> list[Operation]:
@@ -270,7 +279,7 @@ async def started(service: UDLService, key: str) -> Task:
     found = await tasks.task("udl", key)
     assert found is not None
     who = Principal(kind="system", role="start")
-    return await tasks.save_moved(found, transitions.move(found, IN_PROGRESS, by=who), by=who)
+    return (await tasks.save_moved(found, transitions.move(found, IN_PROGRESS, by=who), by=who))[0]
 
 
 async def task_of(service: UDLService, key: str) -> Task:
@@ -430,6 +439,7 @@ async def test_readiness_waits_for_the_manager_s_ok(service: UDLService) -> None
     finally:
         current_principal.reset(token)
 
+    assert isinstance(found, Readiness)
     assert found.ready
     assert (await task_of(service, "F-1.1")).state == READY
 
@@ -529,8 +539,10 @@ async def test_an_escalated_question_reaches_the_humans(service: UDLService) -> 
     finally:
         current_principal.reset(token)
 
+    assert isinstance(up, Asked)
     assert up.to == HUMANS
     humans = await service.call("orch_list_questions", {"project": "udl", "to": HUMANS})
+    assert isinstance(humans, Questions)
     assert [one.key for one in humans.questions] == [found.key]
 
 
@@ -644,4 +656,5 @@ async def test_a_manager_s_suggest_is_its_reports_work(service: UDLService) -> N
     finally:
         current_principal.reset(token)
 
+    assert isinstance(found, Suggestions)
     assert [one.task for one in found.suggestions] == ["F-1.5"]
