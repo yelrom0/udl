@@ -250,6 +250,20 @@ def test_a_signed_out_login_status_is_read_from_stderr() -> None:
     assert not health.signed_in
 
 
+def test_a_signed_in_status_read_on_stderr_is_signed_in() -> None:
+    """The signed-in line is read wherever it is printed: stdout or stderr."""
+    shell = FakeShell()
+    shell.answers = {
+        "--version": ProcessResult(returncode=0, stdout="codex-cli 0.171.0\n", stderr=""),
+    }
+    shell.status = ProcessResult(returncode=0, stdout="", stderr="Logged in using ChatGPT\n")
+
+    health = asyncio.run(_health_of(shell))
+
+    assert health.signed_in
+    assert health.plan == "chatgpt"
+
+
 def test_a_signed_in_line_that_names_its_key_shows_neither() -> None:
     """An API-key sign-in may print the key itself: the plan is how it signed in, not the key."""
     shell = FakeShell()

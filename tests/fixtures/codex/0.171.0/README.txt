@@ -9,3 +9,8 @@ an MCP tool (`mcp_tool_call`, which names `server` and `tool`), with the reasoni
 skips. The recorded turns are events.jsonl and events-resume.jsonl (Claude, 21 Nov 2026, which
 have no tool items); a real turn with tools is recorded at 27.7's e2e, where a hub and a
 dispatcher are started anyway.
+
+login-status.txt: `codex login status` signed out, on this machine — it prints `Not logged in` on
+**stderr** and exits **1**; signed in it prints `Logged in using ChatGPT` (or `… using an API key`,
+which may name the key) on **stdout** and exits 0. The runner reads both streams and does not take
+the exit code for a harness that is not there (`check=False`).
