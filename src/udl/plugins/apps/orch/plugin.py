@@ -19,6 +19,7 @@ import logging
 from collections.abc import Awaitable, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Final, Protocol
+from uuid import UUID
 
 # Package Imports
 from pydantic import BaseModel, ValidationError
@@ -26,11 +27,13 @@ from pydantic import BaseModel, ValidationError
 # Local Imports
 from udl.automations.events import EventType
 from udl.clock import Clock
+from udl.core.models import Deleted
 from udl.core.operations import CLISpec, Operation, OperationHints
 from udl.db.models import JsonObject
 from udl.db.records import Record
 from udl.errors import ConfigError, DoesNotExist, NotAllowed, PluginError, UDLError
 from udl.hosts import LOCAL
+from udl.interfaces import security
 from udl.plugins.apps.base import (
     AppContext,
     AppEvent,
@@ -51,6 +54,7 @@ from udl.plugins.apps.orch.links import (
     LINK_CHANGED,
     LinkChanged,
     LinkRecords,
+    canonical,
     event_url,
     pull_ref,
 )
@@ -65,22 +69,43 @@ from udl.plugins.apps.orch.models import (
     Action,
     Actions,
     ActionState,
+    AddLinkRequest,
+    AddNoteRequest,
     AssignTaskRequest,
+    DeleteProjectRequest,
+    DeleteRepoRequest,
     DropActionRequest,
+    Feature,
+    FeatureInfo,
+    Features,
+    FindLinksRequest,
     FinishActionRequest,
+    GetFeatureRequest,
+    GetProjectRequest,
+    GetTaskRequest,
+    Link,
+    Links,
     ListActionsRequest,
+    ListFeaturesRequest,
+    ListProjectsRequest,
+    ListTasksRequest,
     Merged,
     MergeList,
     MergeListRequest,
     MergePolicy,
     MergeRequest,
     MergeRow,
+    MoveTaskRequest,
     MyTaskNote,
     MyTaskRequest,
     MyTaskResponse,
+    NoteInfo,
     NoteKind,
     OwnerKind,
     Principal,
+    Project,
+    ProjectInfo,
+    Projects,
     Promoted,
     PromoteRequest,
     PromotionList,
@@ -94,12 +119,23 @@ from udl.plugins.apps.orch.models import (
     Readiness,
     ReadinessRequest,
     ReadyRequest,
+    RemoveLinkRequest,
     ReorderQueueRequest,
+    Repo,
     SetActionRequest,
+    SetFeatureRequest,
+    SetProjectRequest,
+    SetRepoRequest,
+    SetTaskRequest,
+    SplitTaskRequest,
     Suggestions,
     SuggestRequest,
+    Task,
+    TaskInfo,
     TaskQueue,
+    Tasks,
     UnassignTaskRequest,
+    as_shape,
 )
 from udl.plugins.apps.orch.readiness import TASK_READY, Pull, TaskReady
 from udl.plugins.apps.orch.readiness import readiness as assess
@@ -142,16 +178,52 @@ __all__ = ["EventEmission", "Orch", "OrchContext", "Stopping", "Subscription"]
 
 log = logging.getLogger(__name__)
 
+_PROJECTS: Final = ("orch", "projects")
+"""The CLI group the projects' commands are under (`udl orch projects`)."""
+_REPOS: Final = ("orch", "repos")
+"""The CLI group the repos' commands are under (`udl orch repos`)."""
+_FEATURES: Final = ("orch", "features")
+"""The CLI group the features' commands are under (`udl orch features`)."""
+_TASKS: Final = ("orch", "tasks")
+"""The CLI group the tasks' commands are under (`udl orch tasks`)."""
+_LINKS: Final = ("orch", "links")
+"""The CLI group the links' commands are under (`udl orch links`)."""
+
 _UDL: Final = Principal(kind="system", role="ready")
 """(Who udl is when it moves a task itself: the system, in the role `ready` — not a person, who may
 move a task anywhere, so an `open` or `blocked` task would be marked ready with its reason
 cleared. The table allows `ready` from `in_progress` only.)"""
+
+
+def _by(who: security.Principal | None) -> Principal:
+    """Who a move or a note is by: the person at the keyboard when no interface set a caller
+    (the CLI, a test), the agent when one is calling, and a person for the server's owner.
+
+    A person may move a task anywhere (the table is for the agents, orch.transitions); an agent
+    is held to its own tasks and to the roles its state allows. A reviewer is the one agent the
+    table lets review anyone's work, so its role is kept (`transitions` knows it by name)."""
+    if who is not None and who.is_agent:
+        if who.role == "reviewer":
+            return _REVIEWER
+        return Principal(kind="agent", name=who.name)
+    return Principal(kind="human", name=f"human:{who.name if who is not None else 'owner'}")
+
+
+def _listed(keys: Sequence[str]) -> str:
+    """The keys as a person reads a list: one, `a and b`, or `a, b and c`."""
+    if len(keys) == 1:
+        return keys[0]
+    return f"{', '.join(keys[:-1])} and {keys[-1]}"
+
 
 _MERGED: Final = "github.pr.merged"
 """The event the GitHub watcher publishes for a pull that merged (25.5)."""
 
 _CLOSED: Final = "github.pr.closed"
 """The event it publishes for one closed without merging."""
+
+_UNSTARTED: Final = ("open", "blocked")
+"""The states a task is split in: its spec is not yet being written (nor written)."""
 
 _REVIEWER: Final = Principal(kind="agent", name="reviewer", role="review")
 """The reviewer: what a promotion's `done` is (only a reviewer or a person reviews)."""
@@ -432,6 +504,109 @@ class Orch(AppPlugin[OrchSettings]):
                 hints=OperationHints(admin=True, destructive=True),
                 cli=CLISpec(path=(*_RUNNERS, "logout"), arguments=("host", "runner", "confirm")),
             ),
+            cls.operation(
+                "list_projects",
+                title="List the projects",
+                hints=OperationHints(read_only=True),
+                cli=CLISpec(path=_PROJECTS),
+            ),
+            cls.operation(
+                "get_project",
+                title="A project and its repos",
+                hints=OperationHints(read_only=True),
+                cli=CLISpec(path=(*_PROJECTS, "show"), arguments=("name",)),
+            ),
+            cls.operation(
+                "set_project",
+                title="Create or edit a project",
+                hints=OperationHints(admin=True),
+                cli=CLISpec(path=(*_PROJECTS, "set")),
+            ),
+            cls.operation(
+                "delete_project",
+                title="Delete a project",
+                hints=OperationHints(destructive=True, idempotent=True, admin=True),
+                cli=CLISpec(path=(*_PROJECTS, "rm"), arguments=("name",)),
+            ),
+            cls.operation(
+                "set_repo",
+                title="Create or edit a repo",
+                hints=OperationHints(admin=True),
+                cli=CLISpec(path=(*_REPOS, "set")),
+            ),
+            cls.operation(
+                "delete_repo",
+                title="Delete a repo",
+                hints=OperationHints(destructive=True, idempotent=True, admin=True),
+                cli=CLISpec(path=(*_REPOS, "rm"), arguments=("name",)),
+            ),
+            cls.operation(
+                "list_features",
+                title="List a project's features",
+                hints=OperationHints(read_only=True),
+                cli=CLISpec(path=_FEATURES),
+            ),
+            cls.operation(
+                "get_feature",
+                title="A feature, its tasks, links and notes",
+                hints=OperationHints(read_only=True),
+                cli=CLISpec(path=(*_FEATURES, "show"), arguments=("key",)),
+            ),
+            cls.operation(
+                "set_feature",
+                title="Create or edit a feature",
+                hints=OperationHints(idempotent=True),
+                cli=CLISpec(path=(*_FEATURES, "set")),
+            ),
+            cls.operation(
+                "list_tasks",
+                title="List a project's tasks",
+                hints=OperationHints(read_only=True),
+                cli=CLISpec(path=_TASKS),
+            ),
+            cls.operation(
+                "get_task",
+                title="A task, its links, notes and questions",
+                hints=OperationHints(read_only=True),
+                cli=CLISpec(path=(*_TASKS, "show"), arguments=("key",)),
+            ),
+            cls.operation(
+                "set_task",
+                title="Create or edit a task",
+                hints=OperationHints(idempotent=True),
+                cli=CLISpec(path=(*_TASKS, "set")),
+            ),
+            cls.operation(
+                "move_task",
+                title="Move a task",
+                cli=CLISpec(path=(*_TASKS, "move"), arguments=("key", "to")),
+            ),
+            cls.operation(
+                "split_task",
+                title="Split a task into several",
+                cli=CLISpec(path=(*_TASKS, "split"), arguments=("key",)),
+            ),
+            cls.operation(
+                "add_link",
+                title="Link something to a task or a feature",
+                cli=CLISpec(path=(*_LINKS, "add")),
+            ),
+            cls.operation(
+                "remove_link",
+                title="Unlink something",
+                cli=CLISpec(path=(*_LINKS, "rm")),
+            ),
+            cls.operation(
+                "find_links",
+                title="What hangs on a URL",
+                hints=OperationHints(read_only=True),
+                cli=CLISpec(path=(*_LINKS, "find")),
+            ),
+            cls.operation(
+                "add_note",
+                title="Write a note on a task or a feature",
+                cli=CLISpec(path=("orch", "note"), arguments=("owner", "text")),
+            ),
         ]
 
     # -- the harnesses (25.11) -----------------------------------------------------------------
@@ -475,6 +650,346 @@ class Orch(AppPlugin[OrchSettings]):
         (the AI integration's secrets are 24.x's), so a setup writes only the policies and the
         agent files."""
         return {}
+
+    # -- the catalogue (26.6) ------------------------------------------------------------------
+
+    async def list_projects(self, request: ListProjectsRequest) -> Projects:
+        """Every project udl knows, by name."""
+        found = await stored.ProjectRecords(self.records).projects()
+        return Projects(projects=[as_shape(Project, one) for one in found])
+
+    async def get_project(self, request: GetProjectRequest) -> ProjectInfo:
+        """A project, with its repos."""
+        projects = stored.ProjectRecords(self.records)
+        found = await projects.require(request.name)
+        repos = await stored.RepoRecords(self.records, projects).repos(found.name)
+        return ProjectInfo(
+            project=as_shape(Project, found), repos=[as_shape(Repo, one) for one in repos]
+        )
+
+    async def set_project(self, request: SetProjectRequest) -> Project:
+        """Create or edit a project, by its name: what is not given is kept (and a new one needs
+        a title)."""
+        projects = stored.ProjectRecords(self.records)
+        found = await projects.project(request.name)
+        given = request.model_dump(exclude={"name"}, exclude_none=True)
+        if found is None:
+            if request.title is None:
+                raise NotAllowed(
+                    f"{request.name!r} is a new project, so it needs a title",
+                    hint="Set one: it is how the project is shown.",
+                )
+            found = stored.Project(name=request.name, **given)
+        else:
+            found = found.model_copy(update=given)
+        return as_shape(Project, await projects.save_project(found))
+
+    async def delete_project(self, request: DeleteProjectRequest) -> Deleted:
+        """Delete a project, with its repos, its features, its tasks and their notes and links."""
+        deleted = await stored.ProjectRecords(self.records).delete_project(request.name)
+        return Deleted(deleted=deleted)
+
+    async def set_repo(self, request: SetRepoRequest) -> Repo:
+        """Create or edit a repo of a project, by its name: what is not given is kept (and a new
+        one needs its GitHub repository and the account udl reaches it through)."""
+        project = await self._project(request.project)
+        repos = stored.RepoRecords(self.records, stored.ProjectRecords(self.records))
+        found = await repos.repo(project, request.name)
+        given = request.model_dump(exclude={"project", "name"}, exclude_none=True)
+        if found is None:
+            missing = [name for name in ("github", "account") if name not in given]
+            if missing:
+                raise NotAllowed(
+                    f"{request.name!r} is a new repo, so it needs {' and '.join(missing)}",
+                    hint="A repo is its GitHub repository (owner/repo) and the github account "
+                    "udl reaches it through (github:<name>).",
+                )
+            found = stored.Repo(project=project, name=request.name, **given)
+        else:
+            found = found.model_copy(update=given)
+        return as_shape(Repo, await repos.save_repo(found))
+
+    async def delete_repo(self, request: DeleteRepoRequest) -> Deleted:
+        """Delete a repo of a project (its tasks stay: a task names its repo, it does not hang
+        on it)."""
+        project = await self._project(request.project)
+        repos = stored.RepoRecords(self.records, stored.ProjectRecords(self.records))
+        return Deleted(deleted=await repos.delete_repo(project, request.name))
+
+    async def list_features(self, request: ListFeaturesRequest) -> Features:
+        """A project's features, in their order."""
+        project = await self._project(request.project)
+        found = await stored.FeatureRecords(self.records).features(project)
+        return Features(project=project, features=[as_shape(Feature, one) for one in found])
+
+    async def get_feature(self, request: GetFeatureRequest) -> FeatureInfo:
+        """A feature, with its tasks, its links and its notes."""
+        project = await self._project(request.project)
+        found = await self._require_feature(project, request.key)
+        tasks = await stored.TaskRecords(self.records).tasks(project, feature=found.key)
+        links = await LinkRecords(self.records).for_owner(project, OwnerKind.FEATURE, found.key)
+        notes = await stored.NoteRecords(self.records).for_owner(OwnerKind.FEATURE, found.id)
+        return FeatureInfo(
+            feature=as_shape(Feature, found),
+            tasks=[as_shape(Task, one) for one in tasks],
+            links=[as_shape(Link, one) for one in links],
+            notes=[as_shape(NoteInfo, one) for one in notes],
+        )
+
+    async def set_feature(self, request: SetFeatureRequest) -> Feature:
+        """Create or edit a feature, by its key: what is not given is kept (and a new one needs
+        a title). Its spec is scanned for links as it is saved (26.4)."""
+        project = await self._project(request.project)
+        features = stored.FeatureRecords(self.records)
+        found = await features.feature(project, request.key)
+        given = request.model_dump(exclude={"project", "key"}, exclude_none=True)
+        if found is None:
+            if request.title is None:
+                raise NotAllowed(
+                    f"{request.key!r} is a new feature, so it needs a title",
+                    hint="Set one: it is how the feature is shown.",
+                )
+            found = stored.Feature(project=project, key=request.key, **given)
+        else:
+            found = found.model_copy(update=given)
+        return as_shape(Feature, await features.save_feature(found))
+
+    async def list_tasks(self, request: ListTasksRequest) -> Tasks:
+        """A project's tasks, by key, narrowed by feature, state, assignee and text."""
+        project = await self._project(request.project)
+        found = await stored.TaskRecords(self.records).tasks(
+            project, feature=request.feature, state=request.state, assignee=request.assignee
+        )
+        if request.text:
+            needle = request.text.casefold()
+            found = [
+                task
+                for task in found
+                if needle in task.title.casefold() or needle in task.spec.casefold()
+            ]
+        return Tasks(project=project, tasks=[as_shape(Task, one) for one in found])
+
+    async def get_task(self, request: GetTaskRequest) -> TaskInfo:
+        """A task, with its feature, its links, its notes and its open questions."""
+        project = await self._project(request.project)
+        found = await self._require_task(project, request.key)
+        feature = await stored.FeatureRecords(self.records).feature(project, found.feature)
+        links = await LinkRecords(self.records).for_owner(project, OwnerKind.TASK, found.key)
+        notes = await stored.NoteRecords(self.records).for_owner(OwnerKind.TASK, found.id)
+        return TaskInfo(
+            task=as_shape(Task, found),
+            feature=as_shape(Feature, feature) if feature is not None else None,
+            links=[as_shape(Link, one) for one in links],
+            notes=[as_shape(NoteInfo, one) for one in notes],
+            questions=[],  # (28.1's record: a task has none until questions are stored)
+        )
+
+    async def set_task(self, request: SetTaskRequest) -> Task:
+        """Create or edit a task, by its key: what is not given is kept, and its state is never
+        set here (it moves, `orch_move_task`). A new task needs its feature and a title; without
+        a key it takes the feature's next one."""
+        project = await self._project(request.project)
+        tasks = stored.TaskRecords(self.records)
+        found = await tasks.task(project, request.key) if request.key is not None else None
+        given = request.model_dump(exclude={"project", "key", "feature"}, exclude_none=True)
+        if found is None:
+            feature = await self._feature_of(project, request)
+            if request.title is None:
+                raise NotAllowed(
+                    f"{request.key or 'A new task'} is a new task, so it needs a title",
+                    hint="Set one: it is how the task is shown, in its queue and its PR.",
+                )
+            key = request.key or await self._next_key(tasks, project, feature)
+            found = stored.Task(project=project, feature=feature, key=key, **given)
+        else:
+            if request.feature is not None and request.feature != found.feature:
+                raise NotAllowed(
+                    f"{found.key!r} is a task of {found.feature!r}, not of {request.feature!r}",
+                    hint="A task does not move between features: set the one it is of.",
+                )
+            found = found.model_copy(update=given)
+        return as_shape(Task, await tasks.save_task(found))
+
+    async def move_task(self, request: MoveTaskRequest) -> Task:
+        """Move a task to another state, through the table (orch.transitions): what it waits on
+        is its note while it is blocked, and the move writes the system note that says so."""
+        project = await self._project(request.project)
+        tasks = stored.TaskRecords(self.records)
+        found = await self._require_task(project, request.key)
+        from udl.core.service import principal  # (the caller's, as each interface set it)
+
+        moved = await tasks.move(found, request.to, by=_by(principal()), note=request.note)
+        return as_shape(Task, moved)
+
+    async def split_task(self, request: SplitTaskRequest) -> Tasks:
+        """Split a task into several: the first keeps its key (so its links and its notes stay
+        with it), and each of the others takes the feature's next key.
+
+        Only a task that has not started is split (`open`, `blocked`): the first piece takes
+        the task's own title and spec, which an in-progress or a finished task's are not to
+        lose (NotAllowed otherwise)."""
+        project = await self._project(request.project)
+        tasks = stored.TaskRecords(self.records)
+        found = await self._require_task(project, request.key)
+        if found.state not in _UNSTARTED:
+            raise NotAllowed(
+                f"{found.key!r} is {found.state}: only a task that has not started is split",
+                hint="A split rewrites the first piece, so it is done before the work begins.",
+            )
+        first, *rest = request.into
+        keys = [found.key]
+        for _ in rest:
+            keys.append(await self._next_key(tasks, project, found.feature))
+        pieces = [
+            found.model_copy(update={"title": first.title, "spec": first.spec}),
+            *(
+                stored.Task(
+                    project=project,
+                    feature=found.feature,
+                    key=key,
+                    title=piece.title,
+                    spec=piece.spec,
+                    task_kind=found.task_kind,
+                    repo=found.repo,
+                    needs=list(found.needs),
+                )
+                for key, piece in zip(keys[1:], rest, strict=True)
+            ),
+        ]
+        note = stored.Note(
+            owner_kind=OwnerKind.TASK,
+            owner=found.id,
+            note_kind=NoteKind.SYSTEM,
+            text=f"Split into {_listed(keys)}.",
+            author="udl",
+        )
+        saved = await tasks.save_all(pieces, also=[note])
+        return Tasks(project=project, tasks=[as_shape(Task, one) for one in saved])
+
+    async def add_link(self, request: AddLinkRequest) -> Link:
+        """Link something to a feature or a task (one URL is one link: adding it
+        again gives the one that is there)."""
+        project = await self._project(request.project)
+        await self._owner_ids(project, request.owner_kind, request.owner)
+        try:
+            found = await LinkRecords(self.records).add(
+                project=project,
+                owner_kind=request.owner_kind,
+                owner=request.owner,
+                kind=request.link_kind,
+                url=request.url,
+                title=request.title,
+            )
+        except ValueError as error:
+            raise ConfigError(
+                str(error), hint="A pull, issue, commit or branch link is a GitHub URL."
+            ) from None
+        return as_shape(Link, found)
+
+    async def remove_link(self, request: RemoveLinkRequest) -> Deleted:
+        """Unlink something from what it hangs on (canonicalised again, so any form of the URL
+        finds the one stored)."""
+        project = await self._project(request.project)
+        links = LinkRecords(self.records)
+        url = canonical(request.url)
+        for found in await links.for_owner(project, request.owner_kind, request.owner):
+            if found.url == url:
+                return Deleted(deleted=await links.delete(found))
+        return Deleted(deleted=False)
+
+    async def find_links(self, request: FindLinksRequest) -> Links:
+        """What hangs on a URL (the other way round from a task's own links): the tasks a PR
+        belongs to, however the URL is written."""
+        found = await LinkRecords(self.records).by_url(request.url)
+        return Links(url=canonical(request.url), links=[as_shape(Link, one) for one in found])
+
+    async def add_note(self, request: AddNoteRequest) -> NoteInfo:
+        """Write a note on a feature or a task (appended: a correction is another note), as
+        whoever is calling: an agent's note is the agent's, and a system note is udl's own."""
+        if request.note_kind is NoteKind.SYSTEM:
+            raise NotAllowed(
+                "A system note is udl's own: the moves and the splits write them",
+                hint="Write a note of another kind: a progress, a decision, a finding or a review.",
+            )
+        project = await self._project(request.project)
+        owners = await self._owner_ids(project, request.owner_kind, request.owner)
+        from udl.core.service import principal  # (the caller's, as each interface set it)
+
+        note = await stored.NoteRecords(self.records).add(
+            stored.Note(
+                owner_kind=request.owner_kind,
+                owner=owners[0],
+                note_kind=request.note_kind,
+                text=request.text,
+                author=_by(principal()).who,
+            )
+        )
+        return as_shape(NoteInfo, note)
+
+    async def _require_feature(self, project: str, key: str) -> stored.Feature:
+        """The feature `key` of `project`, or DoesNotExist."""
+        found = await stored.FeatureRecords(self.records).feature(project, key)
+        if found is None:
+            raise DoesNotExist(
+                f"There is no feature {key!r} in {project!r}",
+                hint="List the project's features to see its keys.",
+            )
+        return found
+
+    async def _require_task(self, project: str, key: str) -> stored.Task:
+        """The task `key` of `project`, or DoesNotExist."""
+        found = await stored.TaskRecords(self.records).task(project, key)
+        if found is None:
+            raise DoesNotExist(
+                f"There is no task {key!r} in {project!r}",
+                hint="List the project's tasks to see its keys.",
+            )
+        return found
+
+    async def _feature_of(self, project: str, request: SetTaskRequest) -> str:
+        """The feature a new task is of: the one it names, or the one its key is numbered from
+        (`26.3` is 26's), which must be there."""
+        feature = request.feature
+        if feature is None and request.key is not None and "." in request.key:
+            feature = request.key.split(".", 1)[0]
+        if feature is None:
+            raise NotAllowed(
+                f"{request.key or 'A new task'} is a new task, so it needs the feature it is of",
+                hint="Name the feature (26), or give the key it is to have (26.3).",
+            )
+        await self._require_feature(project, feature)
+        if request.key is not None and "." in request.key:
+            numbered = request.key.split(".", 1)[0]
+            if numbered != feature:
+                raise NotAllowed(
+                    f"{request.key!r} is numbered from {numbered!r}, not from {feature!r}",
+                    hint="A task's key is `<feature key>.<n>`: give the one its feature numbers.",
+                )
+        return feature
+
+    async def _next_key(self, tasks: stored.TaskRecords, project: str, feature: str) -> str:
+        """The next key a task of `feature` may take: the counter's, past any a project has (a
+        project imported with keys already, 22.x, keeps counting past them)."""
+        counters = stored.Counters(self.records)
+        for _ in range(100):
+            key = f"{feature}.{await counters.claim(project, f'{feature}.')}"
+            if await tasks.task(project, key) is None:
+                return key
+        raise NotAllowed(
+            f"No key is free for a task of {feature!r} in {project!r}",
+            hint="Its counter has run past a hundred taken keys: give the task its key.",
+        )
+
+    async def _owner_ids(self, project: str, owner_kind: OwnerKind, owner: str) -> list[UUID]:
+        """The ids of the record `owner` names (`owner_kind`/`owner`), or DoesNotExist."""
+        if owner_kind is OwnerKind.TASK:
+            return [(await self._require_task(project, owner)).id]
+        if owner_kind is OwnerKind.FEATURE:
+            return [(await self._require_feature(project, owner)).id]
+        raise NotAllowed(
+            f"udl does not keep {owner_kind.value}s yet",
+            hint="A note hangs on a task or a feature; questions and actions come with 28.x.",
+        )
 
     async def serve(self, ctx: AppContext) -> None:
         """Orch's service: it keeps its pull links current (26.4) and dispatches to its agents

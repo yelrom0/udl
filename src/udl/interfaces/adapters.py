@@ -323,12 +323,12 @@ def _kind(annotation: Any) -> tuple[FieldKind, Any]:
     if found is SecretStr:
         return "secret", bool
     if _is_plain(found):
-        return "plain", found | None
+        return "plain", _unannotated(found) | None
     if typing.get_origin(found) in (list, set, tuple, frozenset):
         args = [arg for arg in typing.get_args(found) if arg is not Ellipsis]
         item = args[0] if len(args) == 1 else None
         if item is not None and _is_plain(item):
-            return "list", types.GenericAlias(list, (item,)) | None
+            return "list", types.GenericAlias(list, (_unannotated(item),)) | None
         return "json_list", list[str] | None
     return "json", str | None
 
@@ -343,9 +343,21 @@ def _optional(annotation: Any) -> Any:
 
 
 def _is_plain(annotation: Any) -> bool:
-    return inspect.isclass(annotation) and (
-        annotation in _PLAIN or issubclass(annotation, enum.Enum)
-    )
+    found = _unannotated(annotation)
+    return inspect.isclass(found) and (found in _PLAIN or issubclass(found, enum.Enum))
+
+
+def _unannotated(annotation: Any) -> Any:
+    """`annotation` without its `Annotated[...]` metadata or its alias (`type Name = ...`): a
+    plugin's `Key` and `Name` are still strs, and read as JSON a key like `26.1` would be a float
+    the request refuses."""
+    while True:
+        if hasattr(annotation, "__metadata__"):
+            annotation = typing.get_args(annotation)[0]
+        elif hasattr(annotation, "__value__"):  # (a PEP 695 alias's own type)
+            annotation = annotation.__value__
+        else:
+            return annotation
 
 
 def _default(info: FieldInfo) -> str | None:

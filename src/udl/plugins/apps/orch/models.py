@@ -30,6 +30,7 @@ from pydantic import (
 )
 
 # Local Imports
+from udl.db.models import JsonObject
 from udl.db.records import Name
 
 __all__ = [
@@ -57,53 +58,81 @@ __all__ = [
     "ActionState",
     "ActionWhen",
     "Actions",
+    "AddLinkRequest",
+    "AddNoteRequest",
     "AssignTaskRequest",
     "BranchName",
     "BranchPattern",
+    "DeleteProjectRequest",
+    "DeleteRepoRequest",
     "DropActionRequest",
     "Feature",
+    "FeatureInfo",
     "FeatureStatus",
+    "Features",
+    "FindLinksRequest",
     "FinishActionRequest",
     "Gate",
     "GateArg",
     "GateRun",
+    "GetFeatureRequest",
+    "GetProjectRequest",
+    "GetTaskRequest",
     "GitHubAccount",
     "GitHubSlug",
     "HostName",
     "Key",
     "Link",
     "LinkKind",
+    "Links",
     "ListActionsRequest",
+    "ListFeaturesRequest",
+    "ListProjectsRequest",
+    "ListTasksRequest",
     "MergePolicy",
+    "MoveTaskRequest",
     "MyTaskNote",
     "MyTaskRequest",
     "MyTaskResponse",
+    "NoteInfo",
     "NoteKind",
     "OwnerKind",
     "PrStatusRequest",
     "Principal",
     "Project",
+    "ProjectInfo",
+    "Projects",
     "Promotion",
     "PullState",
     "PushRequest",
     "PushResult",
     "QueueEntry",
     "QueueRequest",
+    "RemoveLinkRequest",
     "ReorderQueueRequest",
     "Repo",
     "Role",
     "SetActionRequest",
+    "SetFeatureRequest",
+    "SetProjectRequest",
+    "SetRepoRequest",
+    "SetTaskRequest",
     "Spec",
+    "Split",
+    "SplitTaskRequest",
     "State",
     "SuggestRequest",
     "Suggestion",
     "Suggestions",
     "Task",
+    "TaskInfo",
     "TaskKind",
     "TaskQueue",
+    "Tasks",
     "Title",
     "URLText",
     "UnassignTaskRequest",
+    "as_shape",
     "branch_pattern_problem",
     "render_branch",
     "slugify",
@@ -164,7 +193,8 @@ Title = Annotated[str, StringConstraints(min_length=1), AfterValidator(_not_empt
 
 
 class OwnerKind(StrEnum):
-    """What a note (or a link) is about: a feature, a task, a question or an action (26.4-26.5)."""
+    """What a note (or a link) is about: a feature or a task (26.4-26.5); a question or an
+    action, with 28.x."""
 
     FEATURE = "feature"
     TASK = "task"
@@ -541,7 +571,8 @@ class PullState(_Model):
 
 
 class Link(_Model):
-    """A typed pointer from a feature, task, question or action to something else (26.4).
+    """A typed pointer from a feature or a task to something else (26.4); a question's and an
+    action's, with 28.x.
 
     `url` is the canonical form (a `udl:` URL for an internal kind, so a task's link is
     `udl:task/udl/26.2`), and `state` is what is known about it — for a pull its `state`,
@@ -1112,3 +1143,340 @@ class Promoted(_Model):
 
     tasks: list[Key] = Field(default_factory=list[Key])
     """The tasks that are done now."""
+
+
+# ---------------------------------------------------------------------------------------------
+# The catalogue's operations (26.6)
+# ---------------------------------------------------------------------------------------------
+
+
+def as_shape[S: _Model](shape: type[S], record: BaseModel) -> S:
+    """`record` (an orch.records one) as `shape`: the fields the shape has, from the record's.
+
+    The records carry the id and the times; a shape is what an operation answers, and it holds
+    only what it says."""
+    return shape.model_validate({name: getattr(record, name) for name in shape.model_fields})
+
+
+class NoteInfo(_Model):
+    """A note as an operation answers it (the record is orch.records.Note)."""
+
+    note_kind: NoteKind
+    """What kind of note it is."""
+    text: Spec
+    """What it says, as markdown."""
+    author: Text = "udl"
+    """Who wrote it: an agent, `human:<name>`, or `udl`."""
+    at: AwareDatetime
+    """When it was written."""
+
+
+class ListProjectsRequest(_Model):
+    """Asking for every project (there is nothing to say: the answer is all of them)."""
+
+
+class Projects(_Model):
+    """Every project udl knows."""
+
+    projects: list[Project] = Field(default_factory=list[Project])
+    """The projects, by name."""
+
+
+class GetProjectRequest(_Model):
+    """Asking for one project and its repos."""
+
+    name: Name
+    """The project's name."""
+
+
+class ProjectInfo(_Model):
+    """A project, with its repos."""
+
+    project: Project
+    """The project itself."""
+    repos: list[Repo] = Field(default_factory=list[Repo])
+    """Its repos, by name."""
+
+
+class SetProjectRequest(_Model):
+    """Creating or editing a project, by its name: what is not given is kept.
+
+    A new project needs a title; the rest it has by default."""
+
+    name: Name
+    """The project's name (what it is found, and set, by)."""
+    title: Title | None = None
+    """How it is shown (needed when it is a new project)."""
+    description: str | None = None
+    """What it is, in a line or two."""
+    merge: MergePolicy | None = None
+    """Who merges a ready PR (O-D3)."""
+    promotion: Promotion | None = None
+    """The branches after the repo's base, in order (e.g. ["rc", "main"])."""
+    review_bot: str | None = None
+    """The review bot's login, whose verdict a ready PR waits on (e.g. claude[bot])."""
+    rules: str | None = None
+    """The ground rules, as markdown, given to every agent on this project."""
+
+
+class DeleteProjectRequest(_Model):
+    """Deleting a project, its repos, its features and its tasks."""
+
+    name: Name
+    """The project's name."""
+
+
+class SetRepoRequest(_Model):
+    """Creating or editing a repo of a project, by its name: what is not given is kept.
+
+    A new repo needs a GitHub repository and the account udl reaches it through."""
+
+    project: Name | None = None
+    """Its project's name (None: the only one, while udl has one)."""
+    name: Name
+    """What the repo is called within the project."""
+    github: GitHubSlug | None = None
+    """Its GitHub repository: owner/repo (needed when it is a new repo)."""
+    account: GitHubAccount | None = None
+    """The github account udl reaches it through (needed when it is a new repo)."""
+    base_branch: BranchName | None = None
+    """The branch PRs go into."""
+    gate: Gate | None = None
+    """The argv that is its gate (e.g. ["make", "check"]), run before a push."""
+    checkouts: dict[HostName, str] | None = None
+    """Host name → the main checkout's path there."""
+    branch_pattern: CheckedBranchPattern | None = None
+    """How its task branches are named: {type}/{key}-{slug} (23.1)."""
+
+
+class DeleteRepoRequest(_Model):
+    """Deleting a repo of a project."""
+
+    project: Name | None = None
+    """Its project's name (None: the only one, while udl has one)."""
+    name: Name
+    """The repo's name."""
+
+
+class ListFeaturesRequest(_Model):
+    """Asking for a project's features (all of them, when none is named)."""
+
+    project: Name | None = None
+    """The project (None: the only one, while udl has one)."""
+
+
+class Features(_Model):
+    """A project's features, in their order."""
+
+    project: str
+    """The project they are of."""
+    features: list[Feature] = Field(default_factory=list[Feature])
+    """The features themselves."""
+
+
+class GetFeatureRequest(_Model):
+    """Asking for one feature: its tasks, its links and its notes."""
+
+    key: Key
+    """The feature's key."""
+    project: Name | None = None
+    """The project (None: the only one, while udl has one)."""
+
+
+class FeatureInfo(_Model):
+    """A feature, with what hangs on it."""
+
+    feature: Feature
+    """The feature itself."""
+    tasks: list[Task] = Field(default_factory=list[Task])
+    """Its tasks, by key."""
+    links: list[Link] = Field(default_factory=list[Link])
+    """What points at it."""
+    notes: list[NoteInfo] = Field(default_factory=list[NoteInfo])
+    """Its notes, oldest first."""
+
+
+class SetFeatureRequest(_Model):
+    """Creating or editing a feature, by its key: what is not given is kept.
+
+    A new feature needs a title."""
+
+    project: Name | None = None
+    """The project (None: the only one, while udl has one)."""
+    key: Key
+    """Its key within the project (`F-<n>`, or an imported key like `22`)."""
+    title: Title | None = None
+    """What it is, in a line (needed when it is a new feature)."""
+    spec: Spec | None = None
+    """Its spec, as markdown."""
+    status: FeatureStatus | None = None
+    """Where it is: its own setting, or what its tasks make it."""
+    order: int | None = None
+    """Where it sits among its project's features."""
+
+
+class ListTasksRequest(_Model):
+    """Asking for a project's tasks, with what to narrow them by."""
+
+    project: Name | None = None
+    """The project (None: the only one, while udl has one)."""
+    feature: Key | None = None
+    """Only the tasks of this feature."""
+    state: State | None = None
+    """Only the tasks in this state."""
+    assignee: str | None = None
+    """Only the tasks of this agent (or `human:<name>`)."""
+    text: str | None = None
+    """Only the tasks whose title or spec holds this text."""
+
+
+class Tasks(_Model):
+    """A project's tasks, by key."""
+
+    project: str
+    """The project they are of."""
+    tasks: list[Task] = Field(default_factory=list[Task])
+    """The tasks themselves."""
+
+
+class GetTaskRequest(_Model):
+    """Asking for one task: its feature, its links, its notes and its questions."""
+
+    key: Key
+    """The task's key."""
+    project: Name | None = None
+    """The project (None: the only one, while udl has one)."""
+
+
+class TaskInfo(_Model):
+    """A task, with what hangs on it."""
+
+    task: Task
+    """The task itself."""
+    feature: Feature | None = None
+    """The feature it is part of."""
+    links: list[Link] = Field(default_factory=list[Link])
+    """What points at it."""
+    notes: list[NoteInfo] = Field(default_factory=list[NoteInfo])
+    """Its notes, oldest first."""
+    questions: list[JsonObject] = Field(default_factory=list[JsonObject])
+    """Its open questions (28.1's record: none yet, so this is empty)."""
+
+
+class SetTaskRequest(_Model):
+    """Creating or editing a task, by its key: what is not given is kept.
+
+    A new task needs its feature and a title; without a key it is the feature's next one."""
+
+    project: Name | None = None
+    """The project (None: the only one, while udl has one)."""
+    key: Key | None = None
+    """Its key within the project (`<feature key>.<n>`), or none to take the next one."""
+    feature: Key | None = None
+    """The feature it is part of (needed when it is a new task)."""
+    title: Title | None = None
+    """What it is, in a line (needed when it is a new task)."""
+    spec: Spec | None = None
+    """Its spec, as markdown."""
+    needs: list[Key] | None = None
+    """The tasks that must be done first, by key."""
+    repo: str | None = None
+    """The repo it is done in (a repo of its project)."""
+    task_kind: TaskKind | None = None
+    """What kind of work it is: a build, a person's, or a review's."""
+    hold: str | None = None
+    """Why it is held (built now, merged later)."""
+
+
+class MoveTaskRequest(_Model):
+    """Moving a task to another state (the table is orch.transitions')."""
+
+    key: Key
+    """The task's key."""
+    to: State
+    """The state it is moving to."""
+    note: Text = ""
+    """What it waits on, or why it was cancelled or moved."""
+    project: Name | None = None
+    """The project (None: the only one, while udl has one)."""
+
+
+class Split(_Model):
+    """One of the tasks a split makes."""
+
+    title: Title
+    """What it is, in a line."""
+    spec: Spec = ""
+    """Its spec, as markdown."""
+
+
+class SplitTaskRequest(_Model):
+    """Splitting a task into several (the first keeps its key and its history)."""
+
+    key: Key
+    """The task's key."""
+    into: list[Split] = Field(min_length=1)
+    """The tasks it becomes, in order."""
+    project: Name | None = None
+    """The project (None: the only one, while udl has one)."""
+
+
+class AddLinkRequest(_Model):
+    """Linking something to a feature or a task (a question and an action come with 28.x)."""
+
+    owner_kind: OwnerKind
+    """What it hangs on."""
+    owner: Key
+    """What it hangs on, by key."""
+    link_kind: LinkKind
+    """What it points at."""
+    url: URLText
+    """The URL (canonicalised as it is stored)."""
+    title: Text = ""
+    """What it is called, when it is known."""
+    project: Name | None = None
+    """The project (None: the only one, while udl has one)."""
+
+
+class RemoveLinkRequest(_Model):
+    """Unlinking something from what it hangs on."""
+
+    owner_kind: OwnerKind
+    """What it hangs on."""
+    owner: Key
+    """What it hangs on, by key."""
+    url: URLText
+    """The URL, as it was stored (canonicalised again)."""
+    project: Name | None = None
+    """The project (None: the only one, while udl has one)."""
+
+
+class FindLinksRequest(_Model):
+    """Asking what hangs on a URL (the other way round: the tasks a PR belongs to)."""
+
+    url: str
+    """The URL, however it was written."""
+
+
+class Links(_Model):
+    """What hangs on a URL."""
+
+    url: str
+    """The canonical URL it was asked for."""
+    links: list[Link] = Field(default_factory=list[Link])
+    """What points at it, by owner."""
+
+
+class AddNoteRequest(_Model):
+    """Writing a note on a feature or a task (appended: a correction is another note)."""
+
+    owner_kind: OwnerKind
+    """What it hangs on."""
+    owner: Key
+    """What it hangs on: a task's or a feature's key."""
+    text: Spec
+    """The note, as markdown."""
+    note_kind: NoteKind = NoteKind.PROGRESS
+    """What kind of note it is (not `system`: that is udl's own)."""
+    project: Name | None = None
+    """The project (None: the only one, while udl has one)."""

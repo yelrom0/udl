@@ -955,6 +955,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/add_link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link something to a feature or a task (one URL is one link: adding it
+         * @description Link something to a feature or a task (one URL is one link: adding it
+         *     again gives the one that is there).
+         */
+        post: operations["orch_add_link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/add_note": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Write a note on a feature or a task (appended: a correction is another note), as
+         * @description Write a note on a feature or a task (appended: a correction is another note), as
+         *     whoever is calling: an agent's note is the agent's, and a system note is udl's own.
+         */
+        post: operations["orch_add_note"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/orch/assign": {
         parameters: {
             query?: never;
@@ -979,6 +1021,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/delete_project": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete a project, with its repos, its features, its tasks and their notes and links.
+         * @description Delete a project, with its repos, its features, its tasks and their notes and links.
+         */
+        post: operations["orch_delete_project"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/delete_repo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete a repo of a project (its tasks stay: a task names its repo, it does not hang
+         * @description Delete a repo of a project (its tasks stay: a task names its repo, it does not hang
+         *     on it).
+         */
+        post: operations["orch_delete_repo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/orch/drop_action": {
         parameters: {
             query?: never;
@@ -993,6 +1076,27 @@ export interface paths {
          * @description Drop something that is not going to be done, with the reason.
          */
         post: operations["orch_drop_action"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/find_links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What hangs on a URL (the other way round from a task's own links): the tasks a PR
+         * @description What hangs on a URL (the other way round from a task's own links): the tasks a PR
+         *     belongs to, however the URL is written.
+         */
+        post: operations["orch_find_links"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1020,6 +1124,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/get_feature": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A feature, with its tasks, its links and its notes.
+         * @description A feature, with its tasks, its links and its notes.
+         */
+        post: operations["orch_get_feature"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/get_project": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A project, with its repos.
+         * @description A project, with its repos.
+         */
+        post: operations["orch_get_project"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/orch/get_queue": {
         parameters: {
             query?: never;
@@ -1036,6 +1180,26 @@ export interface paths {
          *     A person's own list is asked for the same way, by `human:<name>`.
          */
         post: operations["orch_get_queue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/get_task": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A task, with its feature, its links, its notes and its open questions.
+         * @description A task, with its feature, its links, its notes and its open questions.
+         */
+        post: operations["orch_get_task"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1087,6 +1251,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/list_features": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A project's features, in their order.
+         * @description A project's features, in their order.
+         */
+        post: operations["orch_list_features"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/list_projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Every project udl knows, by name.
+         * @description Every project udl knows, by name.
+         */
+        post: operations["orch_list_projects"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/orch/list_runners": {
         parameters: {
             query?: never;
@@ -1102,6 +1306,26 @@ export interface paths {
          *     what it can run there, and what its own doctor says is wrong.
          */
         post: operations["orch_list_runners"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/list_tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A project's tasks, by key, narrowed by feature, state, assignee and text.
+         * @description A project's tasks, by key, narrowed by feature, state, assignee and text.
+         */
+        post: operations["orch_list_tasks"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1152,6 +1376,27 @@ export interface paths {
          *     with what followed each. It reads: nothing changes.
          */
         post: operations["orch_merge_list"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/move_task": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move a task to another state, through the table (orch.transitions): what it waits on
+         * @description Move a task to another state, through the table (orch.transitions): what it waits on
+         *     is its note while it is blocked, and the move writes the system note that says so.
+         */
+        post: operations["orch_move_task"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1320,6 +1565,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/remove_link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unlink something from what it hangs on (canonicalised again, so any form of the URL
+         * @description Unlink something from what it hangs on (canonicalised again, so any form of the URL
+         *     finds the one stored).
+         */
+        post: operations["orch_remove_link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/orch/reorder_queue": {
         parameters: {
             query?: never;
@@ -1482,6 +1748,116 @@ export interface paths {
          *     An action `after` a task names it, and becomes `now` when that task merges (28.3).
          */
         post: operations["orch_set_action"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/set_feature": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create or edit a feature, by its key: what is not given is kept (and a new one needs
+         * @description Create or edit a feature, by its key: what is not given is kept (and a new one needs
+         *     a title). Its spec is scanned for links as it is saved (26.4).
+         */
+        post: operations["orch_set_feature"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/set_project": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create or edit a project, by its name: what is not given is kept (and a new one needs
+         * @description Create or edit a project, by its name: what is not given is kept (and a new one needs
+         *     a title).
+         */
+        post: operations["orch_set_project"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/set_repo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create or edit a repo of a project, by its name: what is not given is kept (and a new
+         * @description Create or edit a repo of a project, by its name: what is not given is kept (and a new
+         *     one needs its GitHub repository and the account udl reaches it through).
+         */
+        post: operations["orch_set_repo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/set_task": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create or edit a task, by its key: what is not given is kept, and its state is never
+         * @description Create or edit a task, by its key: what is not given is kept, and its state is never
+         *     set here (it moves, `orch_move_task`). A new task needs its feature and a title; without
+         *     a key it takes the feature's next one.
+         */
+        post: operations["orch_set_task"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/split_task": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Split a task into several: the first keeps its key (so its links and its notes stay
+         * @description Split a task into several: the first keeps its key (so its links and its notes stay
+         *     with it), and each of the others takes the feature's next key.
+         *
+         *     Only a task that has not started is split (`open`, `blocked`): the first piece takes
+         *     the task's own title and spec, which an in-progress or a finished task's are not to
+         *     lose (NotAllowed otherwise).
+         */
+        post: operations["orch_split_task"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2346,6 +2722,59 @@ export interface components {
             project: components["schemas"]["Name"];
         };
         /**
+         * AddLinkRequest
+         * @description Linking something to a feature or a task (a question and an action come with 28.x).
+         */
+        AddLinkRequest: {
+            /** @description What it points at. */
+            link_kind: components["schemas"]["LinkKind"];
+            /**
+             * Owner
+             * @description What it hangs on, by key.
+             */
+            owner: string;
+            /** @description What it hangs on. */
+            owner_kind: components["schemas"]["OwnerKind"];
+            /** @description The project (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /**
+             * Title
+             * @description What it is called, when it is known.
+             * @default
+             */
+            title: string;
+            /**
+             * Url
+             * @description The URL (canonicalised as it is stored).
+             */
+            url: string;
+        };
+        /**
+         * AddNoteRequest
+         * @description Writing a note on a feature or a task (appended: a correction is another note).
+         */
+        AddNoteRequest: {
+            /**
+             * @description What kind of note it is (not `system`: that is udl's own).
+             * @default progress
+             */
+            note_kind: components["schemas"]["NoteKind"];
+            /**
+             * Owner
+             * @description What it hangs on: a task's or a feature's key.
+             */
+            owner: string;
+            /** @description What it hangs on. */
+            owner_kind: components["schemas"]["OwnerKind"];
+            /** @description The project (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /**
+             * Text
+             * @description The note, as markdown.
+             */
+            text: string;
+        };
+        /**
          * AllOf
          * @description Every one of its filters matches.
          */
@@ -3033,6 +3462,24 @@ export interface components {
             /** Databases */
             databases: components["schemas"]["DatabaseInfo"][];
         };
+        /**
+         * DeleteProjectRequest
+         * @description Deleting a project, its repos, its features and its tasks.
+         */
+        DeleteProjectRequest: {
+            /** @description The project's name. */
+            name: components["schemas"]["Name"];
+        };
+        /**
+         * DeleteRepoRequest
+         * @description Deleting a repo of a project.
+         */
+        DeleteRepoRequest: {
+            /** @description The repo's name. */
+            name: components["schemas"]["Name"];
+            /** @description Its project's name (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+        };
         /** Deleted */
         Deleted: {
             /**
@@ -3452,6 +3899,82 @@ export interface components {
             next_pages?: {
                 [key: string]: string;
             };
+        };
+        /**
+         * Feature
+         * @description A goal with a spec: the top tier (udl's 26.3, or an imported 22).
+         */
+        Feature: {
+            /**
+             * Key
+             * @description Its key within the project (`F-<n>`, or an imported key like `22`).
+             */
+            key: string;
+            /**
+             * Order
+             * @description Where it sits among its project's features.
+             * @default 0
+             */
+            order: number;
+            /** @description The project it belongs to. */
+            project: components["schemas"]["Name"];
+            /**
+             * Spec
+             * @description Its spec, as markdown.
+             * @default
+             */
+            spec: string;
+            /**
+             * @description Where it is: its own setting, or what its tasks make it (orch.records).
+             * @default planned
+             */
+            status: components["schemas"]["FeatureStatus"];
+            /**
+             * Title
+             * @description What it is, in a line.
+             */
+            title: string;
+        };
+        /**
+         * FeatureInfo
+         * @description A feature, with what hangs on it.
+         */
+        FeatureInfo: {
+            /** @description The feature itself. */
+            feature: components["schemas"]["Feature"];
+            /**
+             * Links
+             * @description What points at it.
+             */
+            links?: components["schemas"]["Link"][];
+            /**
+             * Notes
+             * @description Its notes, oldest first.
+             */
+            notes?: components["schemas"]["NoteInfo"][];
+            /**
+             * Tasks
+             * @description Its tasks, by key.
+             */
+            tasks?: components["schemas"]["Task"][];
+        };
+        /** @enum {string} */
+        FeatureStatus: "planned" | "active" | "done" | "parked";
+        /**
+         * Features
+         * @description A project's features, in their order.
+         */
+        Features: {
+            /**
+             * Features
+             * @description The features themselves.
+             */
+            features?: components["schemas"]["Feature"][];
+            /**
+             * Project
+             * @description The project they are of.
+             */
+            project: string;
         };
         /**
          * FetchAttempt
@@ -3911,6 +4434,17 @@ export interface components {
         FilterField: string | components["schemas"]["Filter-Input"];
         FilterValue: components["schemas"]["Scalar"] | components["schemas"]["Scalar"][];
         /**
+         * FindLinksRequest
+         * @description Asking what hangs on a URL (the other way round: the tasks a PR belongs to).
+         */
+        FindLinksRequest: {
+            /**
+             * Url
+             * @description The URL, however it was written.
+             */
+            url: string;
+        };
+        /**
          * FinishActionRequest
          * @description Finishing something only a person could do, with what came of it.
          */
@@ -3960,6 +4494,40 @@ export interface components {
              * @description How long it took, in seconds.
              */
             seconds: number;
+        };
+        /**
+         * GetFeatureRequest
+         * @description Asking for one feature: its tasks, its links and its notes.
+         */
+        GetFeatureRequest: {
+            /**
+             * Key
+             * @description The feature's key.
+             */
+            key: string;
+            /** @description The project (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+        };
+        /**
+         * GetProjectRequest
+         * @description Asking for one project and its repos.
+         */
+        GetProjectRequest: {
+            /** @description The project's name. */
+            name: components["schemas"]["Name"];
+        };
+        /**
+         * GetTaskRequest
+         * @description Asking for one task: its feature, its links, its notes and its questions.
+         */
+        GetTaskRequest: {
+            /**
+             * Key
+             * @description The task's key.
+             */
+            key: string;
+            /** @description The project (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
         };
         /**
          * GithubCommentRequest
@@ -4497,6 +5065,63 @@ export interface components {
         JsonValue: unknown;
         Length: components["schemas"]["Duration-Input"];
         /**
+         * Link
+         * @description A typed pointer from a feature or a task to something else (26.4); a question's and an
+         *     action's, with 28.x.
+         *
+         *     `url` is the canonical form (a `udl:` URL for an internal kind, so a task's link is
+         *     `udl:task/udl/26.2`), and `state` is what is known about it — for a pull its `state`,
+         *     `head_sha`, `checks` and `review`.
+         */
+        Link: {
+            /**
+             * Added By
+             * @description Who added it (an agent, `human:<name>`, or `scan`).
+             * @default
+             */
+            added_by: string;
+            /** @description What it points at (not `kind`: a record's `kind` is the name of its kind). */
+            link_kind: components["schemas"]["LinkKind"];
+            /**
+             * Owner
+             * @description What it hangs on, by key (the task's key, `Q-7`).
+             */
+            owner: string;
+            /** @description What it hangs on. */
+            owner_kind: components["schemas"]["OwnerKind"];
+            /** @description What is known about it (for a pull: its state, head sha, checks and review). */
+            state?: components["schemas"]["PullState"];
+            /**
+             * Title
+             * @description What it is called, when it has been seen.
+             * @default
+             */
+            title: string;
+            /**
+             * Url
+             * @description The canonical form of the URL it points at.
+             */
+            url: string;
+        };
+        /** @enum {string} */
+        LinkKind: "pull" | "issue" | "commit" | "branch" | "ci_run" | "file" | "url" | "doc" | "stitch" | "task" | "feature" | "question";
+        /**
+         * Links
+         * @description What hangs on a URL.
+         */
+        Links: {
+            /**
+             * Links
+             * @description What points at it, by owner.
+             */
+            links?: components["schemas"]["Link"][];
+            /**
+             * Url
+             * @description The canonical URL it was asked for.
+             */
+            url: string;
+        };
+        /**
          * ListActionsRequest
          * @description Asking what is to be done, in the order it is due.
          */
@@ -4514,6 +5139,14 @@ export interface components {
             when?: components["schemas"]["ActionWhen"] | null;
         };
         /**
+         * ListFeaturesRequest
+         * @description Asking for a project's features (all of them, when none is named).
+         */
+        ListFeaturesRequest: {
+            /** @description The project (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+        };
+        /**
          * ListRunnersRequest
          * @description Which harnesses to show.
          */
@@ -4523,6 +5156,31 @@ export interface components {
              * @description Only this host's (None: every host).
              */
             host?: string | null;
+        };
+        /**
+         * ListTasksRequest
+         * @description Asking for a project's tasks, with what to narrow them by.
+         */
+        ListTasksRequest: {
+            /**
+             * Assignee
+             * @description Only the tasks of this agent (or `human:<name>`).
+             */
+            assignee?: string | null;
+            /**
+             * Feature
+             * @description Only the tasks of this feature.
+             */
+            feature?: string | null;
+            /** @description The project (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /** @description Only the tasks in this state. */
+            state?: components["schemas"]["State"] | null;
+            /**
+             * Text
+             * @description Only the tasks whose title or spec holds this text.
+             */
+            text?: string | null;
         };
         /**
          * LoginAttempt
@@ -4691,6 +5349,12 @@ export interface components {
         /** @enum {string} */
         MergeMethod: "merge" | "squash" | "rebase";
         /**
+         * MergePolicy
+         * @description Who merges a ready PR (O-D3): a human, or the task's own agent when it is green.
+         * @enum {string}
+         */
+        MergePolicy: "human" | "agent";
+        /**
          * MergeRequest
          * @description Merging a task's pull (28.3): the task, and what it must be confirmed as.
          */
@@ -4838,6 +5502,27 @@ export interface components {
          */
         Misfire: "skip" | "once";
         /**
+         * MoveTaskRequest
+         * @description Moving a task to another state (the table is orch.transitions').
+         */
+        MoveTaskRequest: {
+            /**
+             * Key
+             * @description The task's key.
+             */
+            key: string;
+            /**
+             * Note
+             * @description What it waits on, or why it was cancelled or moved.
+             * @default
+             */
+            note: string;
+            /** @description The project (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /** @description The state it is moving to. */
+            to: components["schemas"]["State"];
+        };
+        /**
          * MyTaskNote
          * @description A note on the task an agent is on, as `orch_my_task` answers with it (26.5).
          */
@@ -4938,6 +5623,31 @@ export interface components {
             not: components["schemas"]["Filter-Output"];
         };
         /**
+         * NoteInfo
+         * @description A note as an operation answers it (the record is orch.records.Note).
+         */
+        NoteInfo: {
+            /**
+             * At
+             * Format: date-time
+             * @description When it was written.
+             */
+            at: string;
+            /**
+             * Author
+             * @description Who wrote it: an agent, `human:<name>`, or `udl`.
+             * @default udl
+             */
+            author: string;
+            /** @description What kind of note it is. */
+            note_kind: components["schemas"]["NoteKind"];
+            /**
+             * Text
+             * @description What it says, as markdown.
+             */
+            text: string;
+        };
+        /**
          * NoteKind
          * @description What kind of note it is: what was done, a decision, a finding, a review, or what udl itself
          *     says (a state change, a task moved to another agent's queue).
@@ -4976,6 +5686,13 @@ export interface components {
             /** Allowed Commands */
             allowed_commands?: string[];
         };
+        /**
+         * OwnerKind
+         * @description What a note (or a link) is about: a feature or a task (26.4-26.5); a question or an
+         *     action, with 28.x.
+         * @enum {string}
+         */
+        OwnerKind: "feature" | "task" | "question" | "action";
         /**
          * PageFormat
          * @description What a page is given as.
@@ -5243,6 +5960,74 @@ export interface components {
             tool: string;
         };
         /**
+         * Project
+         * @description A body of work (udl, liively): its repos and its merge policy.
+         *
+         *     `promotion` names the branches after the repo's base, in order (e.g. ["rc", "main"]); a
+         *     project whose base is its last branch (udl's `main`) has none, and its reviewer's merge is
+         *     its review. `rules` is the markdown every agent on this project is given: the ground rules.
+         */
+        Project: {
+            /**
+             * Description
+             * @description What it is, in a line or two.
+             * @default
+             */
+            description: string;
+            /**
+             * @description Who merges a ready PR (O-D3).
+             * @default human
+             */
+            merge: components["schemas"]["MergePolicy"];
+            /** @description What the project is called (unique; e.g. udl). */
+            name: components["schemas"]["Name"];
+            /**
+             * Promotion
+             * @description The branches after the repo's base, in order (e.g. ["rc", "main"]); empty for udl.
+             */
+            promotion?: string[];
+            /**
+             * Review Bot
+             * @description The review bot's login, whose verdict a ready PR waits on (e.g. claude[bot]).
+             */
+            review_bot?: string | null;
+            /**
+             * Rules
+             * @description The ground rules, as markdown, given to every agent on this project.
+             * @default
+             */
+            rules: string;
+            /**
+             * Title
+             * @description How it is shown (e.g. udl).
+             */
+            title: string;
+        };
+        /**
+         * ProjectInfo
+         * @description A project, with its repos.
+         */
+        ProjectInfo: {
+            /** @description The project itself. */
+            project: components["schemas"]["Project"];
+            /**
+             * Repos
+             * @description Its repos, by name.
+             */
+            repos?: components["schemas"]["Repo"][];
+        };
+        /**
+         * Projects
+         * @description Every project udl knows.
+         */
+        Projects: {
+            /**
+             * Projects
+             * @description The projects, by name.
+             */
+            projects?: components["schemas"]["Project"][];
+        };
+        /**
          * PromoteRequest
          * @description Marking tasks done after a promotion's pull merged (28.3).
          */
@@ -5467,6 +6252,44 @@ export interface components {
              */
             updated_at?: string | null;
         };
+        /**
+         * PullState
+         * @description What a pull link keeps: where a pull is, its head, its checks and its review.
+         *
+         *     `state` is GitHub's own word (open, closed or merged — merged is never closed), `checks` and
+         *     `review` one word each for the pull, so a link says at a glance where its pull is. Each is a
+         *     `Literal`: a word outside them is refused when the link is stored, not kept as a string that
+         *     reads as nothing.
+         */
+        PullState: {
+            /**
+             * Checks
+             * @description How its checks are: pass, fail, pending or none.
+             * @default none
+             * @enum {string}
+             */
+            checks: "pass" | "fail" | "pending" | "none";
+            /**
+             * Head Sha
+             * @description The commit at its head.
+             * @default
+             */
+            head_sha: string;
+            /**
+             * Review
+             * @description How its review is: approved, changes, pending or none.
+             * @default none
+             * @enum {string}
+             */
+            review: "approved" | "changes" | "pending" | "none";
+            /**
+             * State
+             * @description Where the pull is: open, closed or merged.
+             * @default open
+             * @enum {string}
+             */
+            state: "open" | "closed" | "merged";
+        };
         /** @enum {string} */
         PullStateFilter: "open" | "closed" | "all";
         /**
@@ -5662,6 +6485,26 @@ export interface components {
             regex: string;
         };
         /**
+         * RemoveLinkRequest
+         * @description Unlinking something from what it hangs on.
+         */
+        RemoveLinkRequest: {
+            /**
+             * Owner
+             * @description What it hangs on, by key.
+             */
+            owner: string;
+            /** @description What it hangs on. */
+            owner_kind: components["schemas"]["OwnerKind"];
+            /** @description The project (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /**
+             * Url
+             * @description The URL, as it was stored (canonicalised again).
+             */
+            url: string;
+        };
+        /**
          * ReorderQueueRequest
          * @description Setting an agent's queue to exactly these keys, in this order.
          */
@@ -5683,6 +6526,51 @@ export interface components {
         ReplayEventRequestBody: {
             /** @description Only to this subscription (else to every one that matches it). */
             subscription?: components["schemas"]["Name"] | null;
+        };
+        /**
+         * Repo
+         * @description A GitHub repository of a project: where it is, what it is called, its base branch, its
+         *     gate, its main checkout on each host, and how its task branches are named.
+         */
+        Repo: {
+            /**
+             * Account
+             * @description The github account udl reaches it through (25.4).
+             */
+            account: string;
+            /**
+             * Base Branch
+             * @description The branch PRs go into.
+             * @default main
+             */
+            base_branch: string;
+            /**
+             * Branch Pattern
+             * @description How its task branches are named: {type}/{key}-{slug} (23.1).
+             * @default {type}/{key}-{slug}
+             */
+            branch_pattern: string;
+            /**
+             * Checkouts
+             * @description Host name → the main checkout's path there (empty: udl does not know where it is yet).
+             */
+            checkouts?: {
+                [key: string]: string;
+            };
+            /**
+             * Gate
+             * @description The argv that is its gate (e.g. ["make", "check"]), run before a push.
+             */
+            gate?: string[];
+            /**
+             * Github
+             * @description Its GitHub repository: owner/repo.
+             */
+            github: string;
+            /** @description What the repo is called within the project (unique with its project). */
+            name: components["schemas"]["Name"];
+            /** @description The project it belongs to. */
+            project: components["schemas"]["Name"];
         };
         RequestURL: string;
         /**
@@ -6636,6 +7524,38 @@ export interface components {
             timeout: components["schemas"]["Duration-Input"];
         };
         /**
+         * SetFeatureRequest
+         * @description Creating or editing a feature, by its key: what is not given is kept.
+         *
+         *     A new feature needs a title.
+         */
+        SetFeatureRequest: {
+            /**
+             * Key
+             * @description Its key within the project (`F-<n>`, or an imported key like `22`).
+             */
+            key: string;
+            /**
+             * Order
+             * @description Where it sits among its project's features.
+             */
+            order?: number | null;
+            /** @description The project (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /**
+             * Spec
+             * @description Its spec, as markdown.
+             */
+            spec?: string | null;
+            /** @description Where it is: its own setting, or what its tasks make it. */
+            status?: components["schemas"]["FeatureStatus"] | null;
+            /**
+             * Title
+             * @description What it is, in a line (needed when it is a new feature).
+             */
+            title?: string | null;
+        };
+        /**
          * SetHostRequest
          * @description Add or change a host.
          */
@@ -6647,6 +7567,87 @@ export interface components {
             host: components["schemas"]["Host"];
             /** @description What to change on the host that is there: work_dir, env, ssh or enabled. */
             update?: components["schemas"]["JsonObject"];
+        };
+        /**
+         * SetProjectRequest
+         * @description Creating or editing a project, by its name: what is not given is kept.
+         *
+         *     A new project needs a title; the rest it has by default.
+         */
+        SetProjectRequest: {
+            /**
+             * Description
+             * @description What it is, in a line or two.
+             */
+            description?: string | null;
+            /** @description Who merges a ready PR (O-D3). */
+            merge?: components["schemas"]["MergePolicy"] | null;
+            /** @description The project's name (what it is found, and set, by). */
+            name: components["schemas"]["Name"];
+            /**
+             * Promotion
+             * @description The branches after the repo's base, in order (e.g. ["rc", "main"]).
+             */
+            promotion?: string[] | null;
+            /**
+             * Review Bot
+             * @description The review bot's login, whose verdict a ready PR waits on (e.g. claude[bot]).
+             */
+            review_bot?: string | null;
+            /**
+             * Rules
+             * @description The ground rules, as markdown, given to every agent on this project.
+             */
+            rules?: string | null;
+            /**
+             * Title
+             * @description How it is shown (needed when it is a new project).
+             */
+            title?: string | null;
+        };
+        /**
+         * SetRepoRequest
+         * @description Creating or editing a repo of a project, by its name: what is not given is kept.
+         *
+         *     A new repo needs a GitHub repository and the account udl reaches it through.
+         */
+        SetRepoRequest: {
+            /**
+             * Account
+             * @description The github account udl reaches it through (needed when it is a new repo).
+             */
+            account?: string | null;
+            /**
+             * Base Branch
+             * @description The branch PRs go into.
+             */
+            base_branch?: string | null;
+            /**
+             * Branch Pattern
+             * @description How its task branches are named: {type}/{key}-{slug} (23.1).
+             */
+            branch_pattern?: string | null;
+            /**
+             * Checkouts
+             * @description Host name → the main checkout's path there.
+             */
+            checkouts?: {
+                [key: string]: string;
+            } | null;
+            /**
+             * Gate
+             * @description The argv that is its gate (e.g. ["make", "check"]), run before a push.
+             */
+            gate?: string[] | null;
+            /**
+             * Github
+             * @description Its GitHub repository: owner/repo (needed when it is a new repo).
+             */
+            github?: string | null;
+            /** @description What the repo is called within the project. */
+            name: components["schemas"]["Name"];
+            /** @description Its project's name (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
         };
         /** SetScheduleRequestBody */
         SetScheduleRequestBody: {
@@ -6748,6 +7749,53 @@ export interface components {
             source_filter?: components["schemas"]["JsonObject"] | null;
             /** @description At most how often its actions run (e.g. 10 per 1h); the rest are skipped. */
             throttle?: components["schemas"]["Throttle-Input"] | null;
+        };
+        /**
+         * SetTaskRequest
+         * @description Creating or editing a task, by its key: what is not given is kept.
+         *
+         *     A new task needs its feature and a title; without a key it is the feature's next one.
+         */
+        SetTaskRequest: {
+            /**
+             * Feature
+             * @description The feature it is part of (needed when it is a new task).
+             */
+            feature?: string | null;
+            /**
+             * Hold
+             * @description Why it is held (built now, merged later).
+             */
+            hold?: string | null;
+            /**
+             * Key
+             * @description Its key within the project (`<feature key>.<n>`), or none to take the next one.
+             */
+            key?: string | null;
+            /**
+             * Needs
+             * @description The tasks that must be done first, by key.
+             */
+            needs?: string[] | null;
+            /** @description The project (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /**
+             * Repo
+             * @description The repo it is done in (a repo of its project).
+             */
+            repo?: string | null;
+            /**
+             * Spec
+             * @description Its spec, as markdown.
+             */
+            spec?: string | null;
+            /** @description What kind of work it is: a build, a person's, or a review's. */
+            task_kind?: components["schemas"]["TaskKind"] | null;
+            /**
+             * Title
+             * @description What it is, in a line (needed when it is a new task).
+             */
+            title?: string | null;
         };
         /**
          * SetToken
@@ -6990,6 +8038,41 @@ export interface components {
              * @description The sites still waiting (the window closed, or the time was up).
              */
             waiting: string[];
+        };
+        /**
+         * Split
+         * @description One of the tasks a split makes.
+         */
+        Split: {
+            /**
+             * Spec
+             * @description Its spec, as markdown.
+             * @default
+             */
+            spec: string;
+            /**
+             * Title
+             * @description What it is, in a line.
+             */
+            title: string;
+        };
+        /**
+         * SplitTaskRequest
+         * @description Splitting a task into several (the first keeps its key and its history).
+         */
+        SplitTaskRequest: {
+            /**
+             * Into
+             * @description The tasks it becomes, in order.
+             */
+            into: components["schemas"]["Split"][];
+            /**
+             * Key
+             * @description The task's key.
+             */
+            key: string;
+            /** @description The project (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
         };
         /**
          * StartLoginRequest
@@ -7468,6 +8551,119 @@ export interface components {
             steps: components["schemas"]["Step"][];
         };
         /**
+         * Task
+         * @description One piece of a feature that one agent (or one human) does, usually one PR.
+         */
+        Task: {
+            /**
+             * Assignee
+             * @description An agent's name, or `human:<name>`; None while it is nobody's.
+             */
+            assignee?: string | null;
+            /**
+             * Blocked On
+             * @description The question's key or free text it waits on, while it is blocked.
+             */
+            blocked_on?: string | null;
+            /**
+             * Branch
+             * @description The branch it is done on (its repo's branch pattern), once it has one.
+             */
+            branch?: string | null;
+            /**
+             * Feature
+             * @description The feature it is part of (its key: a task always links back).
+             */
+            feature: string;
+            /**
+             * Hold
+             * @description Why it is held (built now, merged later), or None.
+             */
+            hold?: string | null;
+            /**
+             * Key
+             * @description Its key within the project (`<feature key>.<n>`, or the key it was given).
+             */
+            key: string;
+            /**
+             * Needs
+             * @description The tasks that must be done first, by key.
+             */
+            needs?: string[];
+            /**
+             * Position
+             * @description Its place in its assignee's queue.
+             */
+            position?: number | null;
+            /** @description The project it belongs to. */
+            project: components["schemas"]["Name"];
+            /**
+             * Repo
+             * @description The repo it is done in (a repo of its project), or None.
+             */
+            repo?: string | null;
+            /**
+             * Spec
+             * @description Its spec, as markdown (its card, when it was imported).
+             * @default
+             */
+            spec: string;
+            /**
+             * @description Where it is (the Concepts table); set only by move() (orch.transitions).
+             * @default open
+             */
+            state: components["schemas"]["State"];
+            /**
+             * @description What kind of work it is: a build, a person's, or a review's. (Not `kind`: a record's
+             *     `kind` is the name of its kind, and a field may not shadow it.)
+             * @default build
+             */
+            task_kind: components["schemas"]["TaskKind"];
+            /**
+             * Title
+             * @description What it is, in a line.
+             */
+            title: string;
+            /**
+             * Updated By
+             * @description Who last moved it (a role, or an agent's name).
+             * @default
+             */
+            updated_by: string;
+            /**
+             * Worktree
+             * @description The worktree it is done in, once the dispatcher has made one.
+             */
+            worktree?: string | null;
+        };
+        /**
+         * TaskInfo
+         * @description A task, with what hangs on it.
+         */
+        TaskInfo: {
+            /** @description The feature it is part of. */
+            feature?: components["schemas"]["Feature"] | null;
+            /**
+             * Links
+             * @description What points at it.
+             */
+            links?: components["schemas"]["Link"][];
+            /**
+             * Notes
+             * @description Its notes, oldest first.
+             */
+            notes?: components["schemas"]["NoteInfo"][];
+            /**
+             * Questions
+             * @description Its open questions (28.1's record: none yet, so this is empty).
+             */
+            questions?: components["schemas"]["JsonObject"][];
+            /** @description The task itself. */
+            task: components["schemas"]["Task"];
+        };
+        /** @enum {string} */
+        TaskKind: "build" | "human" | "review";
+        /**
          * TaskQueue
          * @description One agent's queue: the tasks it is on, in the order it works them.
          */
@@ -7484,6 +8680,22 @@ export interface components {
              * @description Its tasks, in the order they will be worked (empty: it has nothing to do).
              */
             tasks?: components["schemas"]["QueueEntry"][];
+        };
+        /**
+         * Tasks
+         * @description A project's tasks, by key.
+         */
+        Tasks: {
+            /**
+             * Project
+             * @description The project they are of.
+             */
+            project: string;
+            /**
+             * Tasks
+             * @description The tasks themselves.
+             */
+            tasks?: components["schemas"]["Task"][];
         };
         /**
          * Throttle
@@ -11162,6 +12374,162 @@ export interface operations {
             };
         };
     };
+    orch_add_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Link"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_add_note: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddNoteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteInfo"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
     orch_assign: {
         parameters: {
             query?: never;
@@ -11182,6 +12550,162 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskQueue"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_delete_project: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteProjectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deleted"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_delete_repo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteRepoRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deleted"];
                 };
             };
             /** @description Bad Request */
@@ -11318,6 +12842,84 @@ export interface operations {
             };
         };
     };
+    orch_find_links: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FindLinksRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Links"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
     orch_finish_action: {
         parameters: {
             query?: never;
@@ -11396,6 +12998,162 @@ export interface operations {
             };
         };
     };
+    orch_get_feature: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GetFeatureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeatureInfo"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_get_project: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GetProjectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectInfo"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
     orch_get_queue: {
         parameters: {
             query?: never;
@@ -11416,6 +13174,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskQueue"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_get_task: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GetTaskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskInfo"];
                 };
             };
             /** @description Bad Request */
@@ -11630,6 +13466,149 @@ export interface operations {
             };
         };
     };
+    orch_list_features: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ListFeaturesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Features"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_list_projects: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Projects"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
     orch_list_runners: {
         parameters: {
             query?: never;
@@ -11650,6 +13629,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunnerStatusList"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_list_tasks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ListTasksRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Tasks"];
                 };
             };
             /** @description Bad Request */
@@ -11806,6 +13863,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MergeList"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_move_task: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MoveTaskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
                 };
             };
             /** @description Bad Request */
@@ -12352,6 +14487,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Readiness"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_remove_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemoveLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deleted"];
                 };
             };
             /** @description Bad Request */
@@ -12976,6 +15189,396 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Action"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_set_feature: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetFeatureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Feature"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_set_project: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetProjectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_set_repo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetRepoRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Repo"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_set_task: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetTaskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_split_task: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SplitTaskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Tasks"];
                 };
             };
             /** @description Bad Request */
