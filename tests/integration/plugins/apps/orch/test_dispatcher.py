@@ -50,6 +50,7 @@ from udl.plugins.apps.base import (
     AppSubscription,
 )
 from udl.plugins.apps.orch import questions as asked
+from udl.plugins.apps.orch import transitions
 from udl.plugins.apps.orch import workspace as space
 from udl.plugins.apps.orch.agents import AgentRole, ManagerPowers, SessionState
 from udl.plugins.apps.orch.dispatcher import (
@@ -76,6 +77,7 @@ from udl.plugins.apps.orch.records import (
     Feature,
     FeatureRecords,
     LinkRecords,
+    NoteRecords,
     Project,
     ProjectRecords,
     Question,
@@ -1902,3 +1904,59 @@ async def test_the_bot_s_wait_is_asked_once_however_it_was_answered(
             await running
 
     assert len(await questions_of(service)) == 1, "it was asked, and not asked again"
+
+
+async def test_a_failed_session_on_a_task_a_person_blocked_ends(service: UDLService) -> None:
+    """(A task a person blocked has no open question to block on: the reason is written where its
+    history is, and the session is still ended — a second block would be refused.)"""
+    tasks = TaskRecords(AppRecords(service.db))
+    who = Principal(kind="system", role="block")
+
+    async def blocked_then_broken(runner: FakeRunner, _: SessionRef) -> AsyncIterator[AgentEvent]:
+        found = await tasks.task("udl", "F-1.1")
+        assert found is not None
+        await tasks.save_moved(found, transitions.move(found, BLOCKED, by=who), by=who)
+        yield RunnerFailed(message="the harness fell over")
+        yield TurnEnded(reason=TurnReason.ERROR, text="the harness fell over")
+
+    SCRIPT[first_prompt_of("F-1.1")] = blocked_then_broken
+
+    await ran(service, clock=FakeClock(), turns=3)
+
+    session = await session_of(service)
+    assert session is not None
+    assert session.state is SessionState.ENDED, "it is ended, not left holding the agent"
+    found = await tasks.task("udl", "F-1.1")
+    assert found is not None
+    notes = await NoteRecords(AppRecords(service.db)).for_owner(OwnerKind.TASK, found.id)
+    assert any("session failed" in one.text for one in notes), "the reason is written"
+
+
+async def test_a_failed_session_on_a_task_blocked_on_another_question_ends(
+    service: UDLService,
+) -> None:
+    """(Blocked on Q-2 with Q-1 still open: the failure is said on Q-1's thread and the session is
+    ended, rather than a second block being attempted.)"""
+    records = AppRecords(service.db)
+    open_one = await asked.ask(
+        QuestionRecords(records), project="udl", task="F-1.1", title="Which repo?", asked_by=AGENT
+    )
+    tasks = TaskRecords(records)
+    who = Principal(kind="system", role="block")
+
+    async def blocked_then_broken(runner: FakeRunner, _: SessionRef) -> AsyncIterator[AgentEvent]:
+        found = await tasks.task("udl", "F-1.1")
+        assert found is not None
+        await tasks.save_moved(found, transitions.move(found, BLOCKED, by=who, note="Q-2"), by=who)
+        yield RunnerFailed(message="the harness fell over")
+        yield TurnEnded(reason=TurnReason.ERROR, text="the harness fell over")
+
+    SCRIPT[first_prompt_of("F-1.1")] = blocked_then_broken
+
+    await ran(service, clock=FakeClock(), turns=3)
+
+    session = await session_of(service)
+    assert session is not None
+    assert session.state is SessionState.ENDED
+    thread = await QuestionRecords(records).thread(open_one)
+    assert any("session failed" in one.text for one in thread), "the reason is said on its thread"

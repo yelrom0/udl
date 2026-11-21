@@ -34,6 +34,7 @@ from udl.interfaces.security import Principal as Caller
 from udl.interfaces.security import PrincipalKind, current_principal
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch import questions as asked
+from udl.plugins.apps.orch import transitions
 from udl.plugins.apps.orch.agents import AgentRole, ManagerPowers
 from udl.plugins.apps.orch.models import (
     BLOCKED,
@@ -707,3 +708,34 @@ async def test_an_agent_may_not_ask_about_another_s_task(service: UDLService) ->
             await ask(service, title="Which repo?")
     finally:
         current_principal.reset(token)
+
+
+async def test_blocking_a_task_that_is_blocked_already_leaves_it_blocked(
+    service: UDLService,
+) -> None:
+    """(A `blocked → blocked` move is one the table refuses: a task already waiting is left as it
+    is, whatever it waits on, and the reason it waits now is said on the question's thread.)"""
+    records = AppRecords(service.db)
+    questions = QuestionRecords(records)
+    open_one = await asked.ask(
+        questions, project="udl", task="F-1.1", title="Which repo?", asked_by=AGENT
+    )
+    tasks = TaskRecords(records)
+    found = await tasks.task("udl", "F-1.1")
+    assert found is not None
+    who = Principal(kind="system", role="block")
+    await tasks.save_moved(found, transitions.move(found, BLOCKED, by=who, note="Q-2"), by=who)
+
+    kept = await asked.block_with(
+        questions,
+        project="udl",
+        task="F-1.1",
+        question=open_one,
+        asked_by=AGENT,
+        why="agent stalled: it took 3 nudges without progress",
+    )
+
+    assert kept.state == BLOCKED
+    assert kept.blocked_on == "Q-2", "it still waits on the question it waited on"
+    thread = await questions.thread(open_one)
+    assert any("agent stalled" in one.text for one in thread), "why it waits is on the thread"

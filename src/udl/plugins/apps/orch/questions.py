@@ -309,19 +309,35 @@ def _blocking(task: Task, question: Question, *, asked_by: str) -> list[Record]:
 
 
 async def block_with(
-    questions: QuestionRecords, *, project: str, task: str, question: Question, asked_by: str = ""
+    questions: QuestionRecords,
+    *,
+    project: str,
+    task: str,
+    question: Question,
+    asked_by: str = "",
+    why: str = "",
 ) -> Task:
     """Block `task` on `question` (an open one it already has): one write, and the note that says
-    what it waits on. A task already blocked on it is left as it is.
+    what it waits on.
+
+    A task already blocked is left blocked, whatever it waits on — it is waiting already, and a
+    `blocked → blocked` move is one the table refuses — and `why` (the reason it is waiting now:
+    a stall, a failed session) is said on the question's thread, so the manager reads it beside
+    the question it was asked.
 
     Raises DoesNotExist when there is no such task."""
     tasks = TaskRecords(questions.records)
     found = await tasks.task(project, task)
     if found is None:
         raise DoesNotExist(f"There is no task called {task!r} in {project!r}")
-    if found.state == BLOCKED and found.blocked_on == question.key:
+    said = [Message(question=question.id, text=why, author="udl")] if why else []
+    if found.state == BLOCKED:
+        if said:
+            await questions.records.save_all(said)
         return found
-    saved = await questions.records.save_all(_blocking(found, question, asked_by=asked_by))
+    saved = await questions.records.save_all(
+        [*_blocking(found, question, asked_by=asked_by), *said]
+    )
     return next(one for one in saved if isinstance(one, Task))
 
 

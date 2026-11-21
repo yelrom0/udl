@@ -47,6 +47,7 @@ from udl.plugins.apps.orch import records as stored
 from udl.plugins.apps.orch import workspace as space
 from udl.plugins.apps.orch.agents import AnAgentEvent, SessionState
 from udl.plugins.apps.orch.models import (
+    BLOCKED,
     CANCELLED,
     DONE,
     IN_PROGRESS,
@@ -537,15 +538,11 @@ class Dispatcher:
         prompt: str
         kind = "changed"
         if resume:
-            said, session = await self._answers(task, session)
-            prompt = (
-                f"udl restarted; continue where you were.\n\n{said}"
-                if said
-                else ("udl restarted; continue where you were.")
-            )
+            said = await self._answers(task, session)
+            base = "udl restarted; continue where you were."
+            prompt = f"{base}\n\n{said}" if said else base
         elif session.turns == 0:
-            said, session = await self._answers(task, session)
-            prompt = first_prompt(task, answers=said)
+            prompt = first_prompt(task, answers=await self._answers(task, session))
         else:
             next_prompt, session, kind = await self._next_prompt(task, session)
             if next_prompt is None:
@@ -577,22 +574,20 @@ class Dispatcher:
                 return  # (only time stands in the way: no turn until the pull changes)
             prompt = next_prompt
 
-    async def _answers(
-        self, task: stored.Task, session: stored.AgentSession
-    ) -> tuple[str, stored.AgentSession]:
-        """What `session` is told of the answers to its own questions, and the session with them
-        marked as told: an answer is delivered once, not on every prompt (28.1)."""
+    async def _answers(self, task: stored.Task, session: stored.AgentSession) -> str:
+        """What `session` is told of the answers to its own questions, marked as told as they are
+        delivered: an answer reaches a session once, not on every prompt (28.1)."""
         agent = session.agent or ""
         if not agent:
-            return "", session
+            return ""
         found = await stored.QuestionRecords(self._records).questions(
             task.project, state=QuestionState.ANSWERED, to=None, task=task.key
         )
         fresh = [one for one in found if one.answer and one.asked_by == agent and not one.delivered]
         if not fresh:
-            return "", session
+            return ""
         await self._records.save_all([one.model_copy(update={"delivered": True}) for one in fresh])
-        return answered(fresh), session
+        return answered(fresh)
 
     async def _next_prompt(
         self, task: stored.Task, session: stored.AgentSession
@@ -605,7 +600,7 @@ class Dispatcher:
         None means the session holds no turn: its pull is only waiting on time (the checks
         running, the bot not done with this head), and a `github.pr.*` event wakes it (the card's
         5)."""
-        said, session = await self._answers(task, session)
+        said = await self._answers(task, session)
         what, session, waiting = await self._what_changed(task, session)
         if said and what is not None:
             what = f"{said}\n\n{what}"
@@ -731,7 +726,16 @@ class Dispatcher:
                     task=task.key,
                     question=open_ones[0],
                     asked_by=name,
+                    why=title,
                 )
+                return
+            if task.state == BLOCKED:
+                # (A person blocked it, or its question was closed: it waits already, so nothing
+                # is asked — but why it is waiting now is written where its history is.)
+                notes = stored.NoteRecords(self._records)
+                found = await stored.TaskRecords(self._records).task(task.project, task.key)
+                if found is not None:
+                    await notes.system(OwnerKind.TASK, found.id, title)
                 return
         else:
             ever = await questions.questions(task.project, state=None, to=None, task=task.key)
