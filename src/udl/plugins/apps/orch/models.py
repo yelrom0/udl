@@ -1612,8 +1612,8 @@ class SplitTaskRequest(_Model):
 
     key: Key
     """The task's key."""
-    into: list[Split] = Field(min_length=1)
-    """The tasks it becomes, in order."""
+    into: list[Split] = Field(min_length=2)
+    """The tasks it becomes, in order (two at least: one piece is a retitle, not a split)."""
     project: Name | None = None
     """The project (None: the only one, while udl has one)."""
 

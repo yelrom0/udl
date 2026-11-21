@@ -11127,11 +11127,11 @@
         "description": "Splitting a task into several (the first keeps its key and its history).",
         "properties": {
           "into": {
-            "description": "The tasks it becomes, in order.",
+            "description": "The tasks it becomes, in order (two at least: one piece is a retitle, not a split).",
             "items": {
               "$ref": "#/components/schemas/Split"
             },
-            "minItems": 1,
+            "minItems": 2,
             "title": "Into",
             "type": "array"
           },

@@ -8632,7 +8632,7 @@ export interface components {
         SplitTaskRequest: {
             /**
              * Into
-             * @description The tasks it becomes, in order.
+             * @description The tasks it becomes, in order (two at least: one piece is a retitle, not a split).
              */
             into: components["schemas"]["Split"][];
             /**
