@@ -20,7 +20,7 @@ default), it answers only requests for localhost: a web page that points its own
 import importlib.metadata
 import ipaddress
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from typing import Annotated, Final
 from urllib.parse import urlsplit
@@ -106,7 +106,26 @@ async def require_api_key(request: Request, key: Annotated[str | None, Security(
     from udl.plugins.apps.orch.tokens import tokens_for
 
     # (Which sets current_principal as well: the operations the request runs are held to it.)
-    await authenticate(request.app.state.settings, request, given=key, tokens=tokens_for(service))
+    await authenticate(
+        request.app.state.settings,
+        request,
+        given=key if key is not None else api_key_of(request.headers),
+        tokens=tokens_for(service),
+    )
+
+
+def api_key_of(headers: Mapping[str, str]) -> str | None:
+    """The API key a request sends: `X-API-Key`, or `Authorization: Bearer …`.
+
+    The bearer form is what an MCP client that can only send one header uses (Codex's
+    `bearer_token_env_var`); it is the same key, so the same rules hold."""
+    given = headers.get(API_KEY_HEADER)
+    if given:
+        return given
+    scheme, _, token = headers.get("authorization", "").partition(" ")
+    if scheme.lower() == "bearer" and token.strip():
+        return token.strip()
+    return None
 
 
 def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService) -> FastAPI:
@@ -192,9 +211,7 @@ class KeyRequired:
             # (The key alone, or an agent's own token: no page speaks MCP with a cookie. A
             # write's origin is still checked, as everywhere.)
             check_write_origin(self.settings, scope["method"], headers)
-            principal = await authenticate_request(
-                self.settings, headers.get(API_KEY_HEADER), self.tokens
-            )
+            principal = await authenticate_request(self.settings, api_key_of(headers), self.tokens)
         except Unauthorized as e:
             refused = JSONResponse(
                 e.to_info().model_dump(mode="json"), 401, {"WWW-Authenticate": API_KEY_HEADER}
