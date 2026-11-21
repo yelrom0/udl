@@ -33,7 +33,7 @@ from typing import Final, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 # Local Imports
-from udl.errors import DoesNotExist
+from udl.errors import ConfigError, DoesNotExist
 from udl.plugins.apps.orch.models import (
     BLOCKED,
     DONE,
@@ -57,6 +57,9 @@ _STATES: Final[dict[str, State]] = {
     "m": MOVED,
 }
 """What a tracker's mark says a task is: the plan's marks, as states."""
+
+_MARKDOWN: Final = (".md", ".markdown")
+"""The files a plan is in: its sections become a record's spec, so it is not any file."""
 
 _TRACKER: Final = "## Progress tracker"
 """The heading a tracker is under."""
@@ -88,7 +91,7 @@ _PHASE_HEADING: Final = re.compile(
 """A phase's own heading: `## Phase 8: Groundwork`, `# UDL Phase 22: Proxmox plugin`."""
 
 _CARD: Final = re.compile(
-    r"^\*\*(?P<key>[0-9]+\.[0-9]+)\s+(?P<title>[^*]+?)\*\*\s*(?:·\s*(?P<rest>.*))?$"
+    r"^\*\*(?P<key>[0-9]+(?:\.[0-9]+[a-z]?)?)\s+(?P<title>[^*]+?)\*\*\s*(?:·\s*(?P<rest>.*))?$"
 )
 """A card's line: `**26.7 Markdown import** · needs 26.6`."""
 
@@ -302,10 +305,10 @@ def _read_tracker(
         found = _PHASE_LINE.match(raw)
         if found:
             state = _state(found["mark"], unplaced, index, raw, source)
-            if state is not None:
-                phase = found["key"]
-                if phase:
-                    feature(phase, _titled(found["title"]))
+            # (A phase it cannot read is not the last one it could: its children are nobody's.)
+            phase = found["key"] if state is not None else None
+            if phase is not None:
+                feature(phase, _titled(found["title"]))
             last = None
             continue
         found = _TASK_LINE.match(raw) or (_TOP_LINE.match(raw) if single else None)
@@ -332,6 +335,8 @@ def _read_tracker(
                 continue
             last = task(single or "", found["key"], _titled(found["title"]))
             last.state = state
+            if state == BLOCKED:
+                last.blocked_on = _after_blocked(stripped)
             continue
         if stripped.startswith("- ["):
             unplaced.append(_unplaced(source, index, raw, "not a task's line: no key"))
@@ -520,8 +525,15 @@ class _Tasked(Protocol):
 
 
 def read_plan_file(name: str) -> ParsedPlan:
-    """The plan file `name` (a `~` expanded), parsed. Raises DoesNotExist when it is not there."""
+    """The plan file `name` (a `~` expanded), parsed. Raises DoesNotExist when it is not there,
+    and ConfigError when it is not markdown: a file's sections become a record's spec, so the
+    file is a plan's own kind (`.md`, `.markdown`), not any file on the server."""
     path = Path(name).expanduser()
     if not path.is_file():
         raise DoesNotExist(f"There is no plan file at {name!r}", hint="Give a file that is there.")
+    if path.suffix.lower() not in _MARKDOWN:
+        raise ConfigError(
+            f"{name!r} is not a markdown file",
+            hint="A plan is a .md file (its sections are a feature's spec).",
+        )
     return parse_plan(path.read_text(), source=name)

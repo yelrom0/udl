@@ -20,7 +20,7 @@ import pytest
 
 # Local Imports
 from udl.core.service import UDLService
-from udl.errors import DoesNotExist
+from udl.errors import ConfigError, DoesNotExist
 from udl.plugins.apps.orch.importer import (
     PLAN_KEY,
     ParsedFeature,
@@ -28,6 +28,7 @@ from udl.plugins.apps.orch.importer import (
     ParsedTask,
     merge,
     parse_plan,
+    read_plan_file,
 )
 from udl.plugins.apps.orch.models import FeatureInfo, ImportReport, Suggestions, TaskInfo
 
@@ -440,3 +441,67 @@ async def test_the_two_plan_files_of_udl_import_with_nothing_unplaced(
     assert isinstance(report, ImportReport)
     assert report.unplaced == []
     assert "22" in report.created
+
+
+# ---------------------------------------------------------------------------------------------
+# The lines the review found misread
+# ---------------------------------------------------------------------------------------------
+
+
+def test_a_card_whose_key_ends_in_a_letter_is_read() -> None:
+    # (27.3a is a task of its own: its card is not 27.3's, and 27.3's bullets stop at it.)
+    plan = parse_plan(
+        "# A plan\n\n"
+        "**27.3 Queues** · needs 27.2\n"
+        "- Its own bullet.\n\n"
+        "**27.3a One write** · needs 27.3\n"
+        "- Its own too.\n",
+        source="a.md",
+    )
+
+    assert task_of(plan, "27.3").needs == ["27.2"]
+    assert task_of(plan, "27.3").spec == "Its own bullet."
+    assert task_of(plan, "27.3a").needs == ["27.3"]
+    assert task_of(plan, "27.3a").spec == "Its own too."
+
+
+def test_a_phase_with_an_unknown_mark_files_its_children_nowhere() -> None:
+    # (A mark the parser does not know leaves no phase: its children are not the last one's.)
+    plan = parse_plan(
+        a_plan(
+            "- [ ] **Phase 26: Work tracking**",
+            "  - [ ] 26.1 open",
+            "- [?] **Phase 27: Agents**",
+            "  - [ ] 27.1 tokens",
+        ),
+        source="a.md",
+    )
+
+    assert [task.key for task in feature_of(plan, "26").tasks] == ["26.1"]
+    assert "27.1" not in {task.key for feature in plan.features for task in feature.tasks}
+    assert [(line.line, line.why) for line in plan.unplaced] == [
+        (7, "not a mark I know: '?'"),
+        (8, "a task before any phase"),
+    ]
+
+
+def test_a_blocked_bold_line_keeps_its_reason() -> None:
+    plan = parse_plan(
+        "# UDL Phase 22: Proxmox plugin\n\n"
+        "## Progress tracker\n\n"
+        "- [!] **22.0** Workspace: BLOCKED: Q-3, the account\n",
+        source="a.md",
+    )
+
+    found = task_of(plan, "22.0")
+    assert found.state == "blocked"
+    assert found.blocked_on == "Q-3, the account"
+
+
+def test_a_plan_file_is_markdown(tmp_path: Path) -> None:
+    # (A record keeps a file's sections, so only a plan's own kind of file is read.)
+    given = tmp_path / "notes.txt"
+    given.write_text("# A plan\n\n## Progress tracker\n\n- [ ] **Phase 26: Work**\n")
+
+    with pytest.raises(ConfigError, match="markdown"):
+        read_plan_file(str(given))
