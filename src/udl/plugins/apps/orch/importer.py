@@ -28,7 +28,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final, Protocol, cast, get_args
+from typing import Final, Protocol
 
 # Package Imports
 from pydantic import BaseModel, ConfigDict, Field
@@ -41,6 +41,7 @@ from udl.plugins.apps.orch.models import (
     MERGED,
     MOVED,
     OPEN,
+    POINTS,
     READY,
     Size,
     State,
@@ -100,7 +101,7 @@ _CARD: Final = re.compile(
 _NEEDS: Final = re.compile(r"needs\s+(?P<needs>[^·]+)")
 """What a card's line says it needs: `needs 26.2\u201326.5`."""
 
-_SIZE: Final = re.compile(r"size\s+(?P<size>[A-Za-z]+)")
+_SIZE: Final = re.compile(r"\bsize\s+(?P<size>[A-Za-z]+)\b")
 """What a card's line says its size is: `size M` (26.8), in any order with `needs`."""
 
 _RANGE: Final = re.compile(
@@ -207,7 +208,9 @@ def parse_plan(text: str, *, source: str) -> ParsedPlan:
     return _as_plan(features, unplaced)
 
 
-def _unplaceable(lines: list[str], unplaced: list[UnplacedLine], source: str):
+def _unplaceable(
+    lines: list[str], unplaced: list[UnplacedLine], source: str
+) -> Callable[[int, str], None]:
     """What a card's reader reports a line it could not place with: the line's own number."""
 
     def report(index: int, why: str) -> None:
@@ -499,9 +502,10 @@ def _size(rest: str) -> tuple[Size | None, str | None]:
     if not found:
         return None, None
     said = found["size"].upper()
-    if said not in get_args(Size):
-        return None, f"not a size I know: {found['size']!r}"
-    return cast(Size, said), None
+    for size in POINTS:
+        if size == said:
+            return size, None
+    return None, f"not a size I know: {found['size']!r}"
 
 
 def _needs(rest: str) -> list[str]:

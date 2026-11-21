@@ -315,6 +315,19 @@ def test_a_section_below_the_cards_is_not_a_size() -> None:
     assert plan.unplaced == []
 
 
+def test_a_word_that_ends_in_size_is_not_a_size() -> None:
+    # (`resize later` says nothing about a size: `size` has to be a word of its own.)
+    plan = parse_plan(
+        "## Phase 26: Work tracking\n**26.8 Task sizes** · resize later\n- Build: the size.\n",
+        source="plan.md",
+    )
+
+    found = next(task for task in plan.features[0].tasks if task.key == "26.8")
+
+    assert found.size is None
+    assert plan.unplaced == []
+
+
 def test_the_plan_s_own_cards_are_sized() -> None:
     # (26.8's Done when: this task's card, imported from the plan as it is written.)
     plan = parse_plan(PLAN.read_text(), source=str(PLAN))

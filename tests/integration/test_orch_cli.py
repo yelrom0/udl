@@ -10,6 +10,8 @@ another (its own, over the same database file), as it does for a person.
 
 # System Imports
 import asyncio
+import json
+import re
 from pathlib import Path
 
 # Package Imports
@@ -100,17 +102,41 @@ async def test_the_cli_sizes_a_task_and_shows_the_totals(tmp_path: Path) -> None
     sized = await asyncio.to_thread(
         runner.invoke,
         app,
-        ["--config", str(config(tmp_path)), "orch", "tasks", "set", "26.2", "--size", "L"],
+        [
+            "--config",
+            str(config(tmp_path)),
+            "orch",
+            "tasks",
+            "set",
+            "26.2",
+            "--size",
+            "L",
+            "--json",
+        ],
     )
     shown = await asyncio.to_thread(
         runner.invoke,
         app,
         ["--config", str(config(tmp_path)), "orch", "features", "show", "26"],
     )
+    answered = await asyncio.to_thread(
+        runner.invoke,
+        app,
+        ["--config", str(config(tmp_path)), "orch", "features", "show", "26", "--json"],
+    )
 
     assert sized.exit_code == 0, sized.output
-    assert "L" in sized.stdout
+    assert json.loads(sized.stdout)["size"] == "L"
+    assert json.loads(sized.stdout)["points"] == 5
     assert shown.exit_code == 0, shown.output
     assert "Size" in shown.stdout
-    assert "L" in shown.stdout
     assert "points: 5" in shown.stdout
+    # (The task's own row: `26.2` and its size on one line of the table.)
+    assert re.search(r"^.*\b26\.2\b.*\bL\b.*$", shown.stdout, re.MULTILINE)
+    assert answered.exit_code == 0, answered.output
+    assert json.loads(answered.stdout)["totals"] == {
+        "points": 5,
+        "points_merged": 0,
+        "points_ready": 0,
+        "unsized": 0,
+    }
