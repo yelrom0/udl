@@ -110,6 +110,10 @@ class RecordingShell:
         """The host it acts on (the shell's own)."""
         self.calls: list[list[str]] = []
         """Every argv it was asked to run, in order."""
+        self.withins: list[timedelta | None] = []
+        """How long each stream it was asked for got (None: the shell's own default)."""
+        self.run_withins: list[timedelta | None] = []
+        """How long each run it was asked for got (None: the shell's own default)."""
         self.secret_envs: list[dict[str, str]] = []
         """Every secret environment it was given, in order (a test's own: they stay there)."""
 
@@ -127,6 +131,7 @@ class RecordingShell:
         tail: bool = False,
     ) -> ProcessResult:
         self.calls.append(list(argv))
+        self.run_withins.append(within)
         self.secret_envs.append(dict(secret_env or {}))
         return await self._shell.run(
             argv,
@@ -149,8 +154,8 @@ class RecordingShell:
         within: timedelta | None = None,
     ) -> AsyncIterator[bytes]:
         self.calls.append(list(argv))
+        self.withins.append(within)
         self.secret_envs.append(dict(secret_env or {}))
-        stdin = stdin  # (a stream's input is its argv's, and it is recorded above)
         return self._shell.stream(argv, cwd=cwd, env=env, secret_env=secret_env, within=within)
 
     async def interact(

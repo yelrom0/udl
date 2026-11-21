@@ -25,6 +25,7 @@ tests/contract/test_runner_contract.py is the behaviour every runner must have.
 import shlex
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Mapping, Sequence
+from datetime import timedelta
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, ClassVar, Literal
@@ -69,6 +70,18 @@ class _Model(BaseModel):
 class RunnerOptions(_Model):
     """A runner's options (each runner's model extends it): what `[runners.<name>]` sets in the
     config, then what set_plugin_settings set (25.11 puts a runner's settings there)."""
+
+    turn_within: timedelta = timedelta(hours=1)
+    """How long one turn may run: a turn's process is given this, never the shell's own
+    (30 s) default, which cut a real agent turn off."""
+
+
+def turn_too_long(within: timedelta) -> str:
+    """What a turn that ran past its time says: in minutes from a minute up, else in seconds (a
+    test's small `turn_within` reads as the time it is)."""
+    seconds = within.total_seconds()
+    count, unit = (seconds / 60, "minute") if seconds >= 60 else (seconds, "second")
+    return f"The turn ran past its {count:g} {unit}{'' if count == 1 else 's'}."
 
 
 class McpEndpoint(_Model):

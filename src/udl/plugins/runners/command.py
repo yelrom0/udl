@@ -51,6 +51,7 @@ from udl.plugins.runners.base import (
     TextDelta,
     TurnEnded,
     TurnReason,
+    turn_too_long,
 )
 from udl.process import CancelToken
 
@@ -205,10 +206,15 @@ class CommandRunner(AgentRunner[CommandRunnerOptions]):
                     name: value.get_secret_value() for name, value in spec.secret_env.items()
                 },
                 stdin=prompt.encode(),
+                within=self.options.turn_within,
                 cancel=cancel,
             )
         except Cancelled:
             yield TurnEnded(reason=TurnReason.STOPPED, text="The session was stopped.")
+            return
+        except TimeoutError:
+            # (The turn ran past its turn_within: say so, rather than raising out of send().)
+            yield TurnEnded(reason=TurnReason.ERROR, text=turn_too_long(self.options.turn_within))
             return
         except (PluginFailed, ToolUnavailable) as failure:
             # (A program that exits with an error, or is not there: what it said is the turn's

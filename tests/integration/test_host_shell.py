@@ -343,6 +343,19 @@ async def test_a_tool_in_the_users_profile_is_found_over_ssh(
     assert statuses["claude"].version == "claude-fake"
 
 
+async def test_both_shells_stop_a_stream_that_runs_too_long(
+    both: list[tuple[str, HostShell]],
+) -> None:
+    """`within` is how long the whole stream gets, here as well as for run(): a long turn is
+    ended by the shell, not left to hang."""
+    for _name, shell in both:
+        with pytest.raises(TimeoutError):
+            async for _ in shell.stream(
+                _python("import time; time.sleep(5)"), within=timedelta(seconds=0.5)
+            ):
+                pass
+
+
 async def test_both_shells_stream_a_programs_output(both: list[tuple[str, HostShell]]) -> None:
     for name, shell in both:
         chunks = [
