@@ -15,6 +15,7 @@ it is given are the project's own text.
 # System Imports
 import string
 from collections.abc import Mapping
+from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Final, Literal, Protocol, get_args
 
@@ -54,18 +55,24 @@ __all__ = [
     "ROLE",
     "STATE",
     "STATE_MARK",
+    "AQuestion",
     "Action",
     "ActionState",
     "ActionWhen",
     "Actions",
     "AddLinkRequest",
     "AddNoteRequest",
+    "AnswerRequest",
+    "AskRequest",
     "AssignTaskRequest",
+    "BlockRequest",
     "BranchName",
     "BranchPattern",
+    "CloseQuestionRequest",
     "DeleteProjectRequest",
     "DeleteRepoRequest",
     "DropActionRequest",
+    "EscalateRequest",
     "Feature",
     "FeatureInfo",
     "FeatureStatus",
@@ -77,6 +84,7 @@ __all__ = [
     "GateRun",
     "GetFeatureRequest",
     "GetProjectRequest",
+    "GetQuestionRequest",
     "GetTaskRequest",
     "GitHubAccount",
     "GitHubSlug",
@@ -88,8 +96,10 @@ __all__ = [
     "ListActionsRequest",
     "ListFeaturesRequest",
     "ListProjectsRequest",
+    "ListQuestionsRequest",
     "ListTasksRequest",
     "MergePolicy",
+    "Message",
     "MoveTaskRequest",
     "MyTaskNote",
     "MyTaskRequest",
@@ -106,10 +116,14 @@ __all__ = [
     "PullState",
     "PushRequest",
     "PushResult",
+    "Question",
+    "QuestionState",
+    "Questions",
     "QueueEntry",
     "QueueRequest",
     "RemoveLinkRequest",
     "ReorderQueueRequest",
+    "ReplyRequest",
     "Repo",
     "Role",
     "SetActionRequest",
@@ -727,6 +741,187 @@ class Actions(_Model):
     """The project they are of."""
     actions: list[Action] = Field(default_factory=list[Action])
     """The actions, now first, then after, then later (empty: nothing to do)."""
+
+
+# ---------------------------------------------------------------------------------------------
+# Questions (28.1)
+# ---------------------------------------------------------------------------------------------
+
+
+class QuestionState(StrEnum):
+    """Where a question is: waiting for an answer, answered, or closed without one."""
+
+    OPEN = "open"
+    ANSWERED = "answered"
+    CLOSED = "closed"
+
+
+class Question(_Model):
+    """Something an agent cannot answer itself (28.1): what it asked, of whom, and what came of
+    it.
+
+    `to` is an agent's name (its manager, when that manager may answer) or `humans`; `blocking`
+    says whether the task it was asked in waits for the answer. Its thread is its `Message`s."""
+
+    key: Key
+    """Its key within the project (`Q-<n>`)."""
+    project: Name
+    """The project it belongs to."""
+    asked_by: str = ""
+    """Who asked it: an agent's name, or `human:<name>`."""
+    to: str = "humans"
+    """Who it is asked of: an agent's name (its manager), or `humans`."""
+    title: Title
+    """What it is, in a line."""
+    text: Text = ""
+    """What it says, as markdown."""
+    options: list[str] = Field(default_factory=list[str])
+    """The answers it offers, when it offers any."""
+    blocking: bool = False
+    """Whether the task it was asked in waits for the answer."""
+    task: Key | None = None
+    """The task it was asked in (a blocking one moves it to `blocked`)."""
+    state: QuestionState = QuestionState.OPEN
+    """Where it is: open, answered or closed."""
+    answer: str | None = None
+    """The answer, once there is one."""
+    answered_by: str | None = None
+    """Who answered it: an agent's name, or `human:<name>`."""
+    outcome: str | None = None
+    """What was done about it, when it is closed without an answer."""
+    escalated: bool = False
+    """Whether it was passed up from the agent it was asked of."""
+
+
+class Message(_Model):
+    """One thing said on a question (28.1): the question's own text first, then follow-ups."""
+
+    text: str
+    """What it says, as markdown."""
+    author: str = ""
+    """Who said it: an agent's name, `human:<name>`, or `udl`."""
+    at: datetime
+    """When it was said."""
+
+
+class Questions(_Model):
+    """Questions, oldest first (28.1)."""
+
+    project: Name
+    """The project they are of."""
+    questions: list[Question] = Field(default_factory=list[Question])
+    """The questions (empty: none match)."""
+
+
+class AQuestion(_Model):
+    """One question with everything about it: its thread, and what it names (28.1)."""
+
+    question: Question
+    """The question itself."""
+    thread: list[Message] = Field(default_factory=list[Message])
+    """What was said on it, oldest first (its own text first)."""
+    tasks: list[Key] = Field(default_factory=list[Key])
+    """The tasks it names (each one the answer is written on)."""
+    features: list[Key] = Field(default_factory=list[Key])
+    """The features it names (each one the answer is written on)."""
+
+
+class AskRequest(_Model):
+    """Asking something only the manager or a person can answer (28.1)."""
+
+    task: Key
+    """The task it is asked in."""
+    title: Title
+    """What it is, in a line."""
+    text: Text = ""
+    """What it says, as markdown (what it needs to know, and why it cannot go on)."""
+    options: list[str] = Field(default_factory=list[str])
+    """The answers it offers, when it offers any."""
+    blocking: bool = False
+    """Whether the task waits for the answer."""
+    tasks: list[Key] = Field(default_factory=list[Key])
+    """The other tasks it is about (the answer is written on each)."""
+    features: list[Key] = Field(default_factory=list[Key])
+    """The features it is about (the answer is written on each)."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class BlockRequest(_Model):
+    """Saying that only a person can do this (28.1): `orch_ask`, blocking."""
+
+    task: Key
+    """The task that cannot go on."""
+    reason: str
+    """What is needed, and why the agent cannot do it itself."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class AnswerRequest(_Model):
+    """Answering a question (28.1): the answer is written on every task and feature it names."""
+
+    key: Key
+    """The question to answer (`Q-<n>`)."""
+    answer: str
+    """The answer."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class ReplyRequest(_Model):
+    """A follow-up on a question, from either side (28.1)."""
+
+    key: Key
+    """The question to reply on (`Q-<n>`)."""
+    text: str
+    """What it says, as markdown."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class EscalateRequest(_Model):
+    """Passing a question up, to the asker's manager's manager or to the humans (28.1)."""
+
+    key: Key
+    """The question to pass up (`Q-<n>`)."""
+    why: str = ""
+    """Why it is passed up (written into its thread)."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class CloseQuestionRequest(_Model):
+    """Closing a question nobody answered, with what was done about it (28.1)."""
+
+    key: Key
+    """The question to close (`Q-<n>`)."""
+    outcome: str
+    """What was done about it instead."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
+
+
+class ListQuestionsRequest(_Model):
+    """Asking which questions are waiting, and of whom (28.1)."""
+
+    state: QuestionState | None = QuestionState.OPEN
+    """Only the questions in this state (None: every state)."""
+    to: str | None = None
+    """Only the questions asked of this: an agent's name, or `humans`."""
+    task: Key | None = None
+    """Only the questions asked in this task."""
+    project: Name | None = None
+    """The project they are of (None: the only one, while udl has one)."""
+
+
+class GetQuestionRequest(_Model):
+    """Reading one question with its thread (28.1)."""
+
+    key: Key
+    """The question to read (`Q-<n>`)."""
+    project: Name | None = None
+    """The project it is in (None: the only one, while udl has one)."""
 
 
 # ---------------------------------------------------------------------------------------------

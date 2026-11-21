@@ -43,6 +43,7 @@ from udl.plugins.apps.base import (
 )
 from udl.plugins.apps.orch import actions as acted
 from udl.plugins.apps.orch import merge as merged
+from udl.plugins.apps.orch import questions as asked
 from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch import records as stored
 from udl.plugins.apps.orch import suggest as suggested
@@ -71,10 +72,16 @@ from udl.plugins.apps.orch.models import (
     ActionState,
     AddLinkRequest,
     AddNoteRequest,
+    AnswerRequest,
+    AQuestion,
+    AskRequest,
     AssignTaskRequest,
+    BlockRequest,
+    CloseQuestionRequest,
     DeleteProjectRequest,
     DeleteRepoRequest,
     DropActionRequest,
+    EscalateRequest,
     Feature,
     FeatureInfo,
     Features,
@@ -82,12 +89,14 @@ from udl.plugins.apps.orch.models import (
     FinishActionRequest,
     GetFeatureRequest,
     GetProjectRequest,
+    GetQuestionRequest,
     GetTaskRequest,
     Link,
     Links,
     ListActionsRequest,
     ListFeaturesRequest,
     ListProjectsRequest,
+    ListQuestionsRequest,
     ListTasksRequest,
     Merged,
     MergeList,
@@ -95,6 +104,7 @@ from udl.plugins.apps.orch.models import (
     MergePolicy,
     MergeRequest,
     MergeRow,
+    Message,
     MoveTaskRequest,
     MyTaskNote,
     MyTaskRequest,
@@ -114,6 +124,8 @@ from udl.plugins.apps.orch.models import (
     PullReader,
     PushRequest,
     PushResult,
+    Question,
+    Questions,
     QueueEntry,
     QueueRequest,
     Readiness,
@@ -121,6 +133,7 @@ from udl.plugins.apps.orch.models import (
     ReadyRequest,
     RemoveLinkRequest,
     ReorderQueueRequest,
+    ReplyRequest,
     Repo,
     SetActionRequest,
     SetFeatureRequest,
@@ -173,6 +186,7 @@ from udl.plugins.runners.manage import (
 
 if TYPE_CHECKING:
     from udl.core.service import UDLService
+    from udl.interfaces.security import Principal as Caller
 
 __all__ = ["EventEmission", "Orch", "OrchContext", "Stopping", "Subscription"]
 
@@ -313,7 +327,8 @@ class Orch(AppPlugin[OrchSettings]):
     def record_kinds(cls) -> Sequence[type[Record]]:
         """The kinds of record orch defines: a project, a repo, a feature, a task, a note and the
         counter their keys come from (26.2-26.5), a link (26.4), an agent, its session and the
-        events of it (27.1), and the tokens its agents call udl with (27.2)."""
+        events of it (27.1), the tokens its agents call udl with (27.2), something only a person
+        can do (28.2), and a question with its thread (28.1)."""
         return (
             stored.Project,
             stored.Repo,
@@ -327,6 +342,8 @@ class Orch(AppPlugin[OrchSettings]):
             stored.SessionEvent,
             stored.AgentToken,
             stored.HumanAction,
+            stored.Question,
+            stored.Message,
         )
 
     async def issue_token(
@@ -427,6 +444,22 @@ class Orch(AppPlugin[OrchSettings]):
                 "drop_action",
                 title="Drop a human action",
                 hints=OperationHints(idempotent=True),
+            ),
+            cls.operation("ask", title="Ask a question"),
+            cls.operation("block", title="Block a task on a person"),
+            cls.operation("answer", title="Answer a question"),
+            cls.operation("reply", title="Reply on a question"),
+            cls.operation("escalate", title="Pass a question up"),
+            cls.operation("close_question", title="Close a question unanswered"),
+            cls.operation(
+                "list_questions",
+                title="The questions waiting",
+                hints=OperationHints(read_only=True),
+            ),
+            cls.operation(
+                "get_question",
+                title="A question with its thread",
+                hints=OperationHints(read_only=True),
             ),
             cls.operation(
                 "readiness",
@@ -1205,6 +1238,175 @@ class Orch(AppPlugin[OrchSettings]):
         )
         return _action(found)
 
+    # -- questions (28.1) ----------------------------------------------------------------------
+
+    async def ask(self, request: AskRequest) -> Question:
+        """Ask something only the manager or a person can answer: it goes to the agent's manager
+        when that manager may answer, and to the humans when it may not.
+
+        A blocking question moves the task to `blocked`, so the agent's loop takes its next
+        queued one (27.7); a non-blocking one leaves it working."""
+        project = await self._project(request.project)
+        found = await asked.ask(
+            stored.QuestionRecords(self.records),
+            project=project,
+            task=request.task,
+            title=request.title,
+            text=request.text,
+            options=request.options,
+            blocking=request.blocking,
+            tasks=request.tasks,
+            features=request.features,
+            asked_by=await self._asker(request.task, project=project),
+        )
+        return _question(found)
+
+    async def block(self, request: BlockRequest) -> Question:
+        """Say that only a person can do this (28.1): `orch_ask`, blocking."""
+        project = await self._project(request.project)
+        found = await asked.block(
+            stored.QuestionRecords(self.records),
+            project=project,
+            task=request.task,
+            reason=request.reason,
+            asked_by=await self._asker(request.task, project=project),
+        )
+        return _question(found)
+
+    async def answer(self, request: AnswerRequest) -> Question:
+        """Answer a question: the answer is written as a `decision` note on every task and
+        feature it names, and a task it blocked is queued again at the front.
+
+        An agent answers only what was asked of it (a manager its reports' questions); a person
+        answers any."""
+        project = await self._project(request.project)
+        who = _caller()
+        if who is not None and who.is_agent:
+            mine = await stored.QuestionRecords(self.records).question(project, request.key)
+            if mine is None:
+                raise DoesNotExist(f"There is no question called {request.key!r} in {project!r}")
+            if mine.to != who.name:
+                raise NotAllowed(
+                    f"{request.key!r} is not yours to answer: it is asked of {mine.to!r}",
+                    hint="A manager answers what its own reports ask it.",
+                )
+        found = await asked.answer(
+            stored.QuestionRecords(self.records),
+            project=project,
+            key=request.key,
+            answer=request.answer,
+            by=_principal(),
+        )
+        return _question(found)
+
+    async def reply(self, request: ReplyRequest) -> Message:
+        """Add a follow-up to a question's thread, from either side.
+
+        An agent says its piece only on a question it asked or one asked of it."""
+        project = await self._project(request.project)
+        await self._may_touch(project, request.key, sides=True)
+        said = await asked.reply(
+            stored.QuestionRecords(self.records),
+            project=project,
+            key=request.key,
+            text=request.text,
+            by=_principal(),
+        )
+        return Message(text=said.text, author=said.author, at=said.at)
+
+    async def escalate(self, request: EscalateRequest) -> Question:
+        """Pass a question up: to the manager's manager when that one may answer, and to the
+        humans at the top."""
+        project = await self._project(request.project)
+        await self._may_touch(project, request.key)
+        found = await asked.escalate(
+            stored.QuestionRecords(self.records),
+            project=project,
+            key=request.key,
+            why=request.why,
+            by=_principal(),
+        )
+        return _question(found)
+
+    async def close_question(self, request: CloseQuestionRequest) -> Question:
+        """Close a question nobody answered, with what was done about it instead.
+
+        An agent closes only what was asked of it; a person closes any."""
+        project = await self._project(request.project)
+        await self._may_touch(project, request.key)
+        found = await asked.close(
+            stored.QuestionRecords(self.records),
+            project=project,
+            key=request.key,
+            outcome=request.outcome,
+        )
+        return _question(found)
+
+    async def _may_touch(self, project: str, key: str, *, sides: bool = False) -> None:
+        """Refuse an agent that may not touch question `key`: what is asked of it, and — with
+        `sides` — what it asked itself. A person (or udl itself) may touch any.
+
+        Raises DoesNotExist when there is no such question, and NotAllowed when it is another's."""
+        who = _caller()
+        if who is None or not who.is_agent:
+            return
+        found = await stored.QuestionRecords(self.records).question(project, key)
+        if found is None:
+            raise DoesNotExist(f"There is no question called {key!r} in {project!r}")
+        mine: set[str] = {found.to}
+        if sides and found.asked_by:
+            mine.add(found.asked_by)
+        if who.name not in mine:
+            raise NotAllowed(
+                f"{key!r} is not yours: it is asked of {found.to!r}"
+                + (f" and was asked by {found.asked_by!r}" if found.asked_by else ""),
+                hint="An agent touches the questions asked of it (and, in a thread, its own).",
+            )
+
+    async def list_questions(self, request: ListQuestionsRequest) -> Questions:
+        """The questions waiting, oldest first, narrowed by state, who they are asked of, and the
+        task they were asked in. It reads: nothing changes."""
+        project = await self._project(request.project)
+        found = await stored.QuestionRecords(self.records).questions(
+            project, state=request.state, to=request.to, task=request.task
+        )
+        return Questions(project=project, questions=[_question(one) for one in found])
+
+    async def get_question(self, request: GetQuestionRequest) -> AQuestion:
+        """One question with everything about it: its thread, and the tasks and features it
+        names. It reads: nothing changes."""
+        project = await self._project(request.project)
+        questions = stored.QuestionRecords(self.records)
+        found = await questions.question(project, request.key)
+        if found is None:
+            raise DoesNotExist(f"There is no question called {request.key!r} in {project!r}")
+        thread = await questions.thread(found)
+        named = await asked.named(questions, found)
+        return AQuestion(
+            question=_question(found),
+            thread=[Message(text=one.text, author=one.author, at=one.at) for one in thread],
+            tasks=[one.key for kind, one in named if kind is OwnerKind.TASK],
+            features=[one.key for kind, one in named if kind is OwnerKind.FEATURE],
+        )
+
+    async def _asker(self, key: str, *, project: str) -> str:
+        """Who is asking: the caller's name. An agent asks only in its own task, as it pushes
+        only its own work."""
+        who = _caller()
+        if who is None:
+            return ""
+        if not who.is_agent:
+            return f"human:{who.name}"
+        found = await stored.TaskRecords(self.records).task(project, key)
+        if found is None:
+            raise DoesNotExist(f"There is no task called {key!r} in {project!r}")
+        if found.assignee != who.name:
+            raise NotAllowed(
+                f"{key!r} is not yours to ask about: it is {found.assignee or 'nobody'}'s",
+                hint="An agent asks only in the task it is on.",
+            )
+        return who.name
+
     # -- readiness (27.6) ----------------------------------------------------------------------
 
     async def readiness(self, request: ReadinessRequest, *, service: UDLService) -> Readiness:
@@ -1777,6 +1979,44 @@ def _not_yet(found: Readiness) -> bool:
     """Whether everything still in the way is only a matter of time — the checks running, the
     bot not done with this head, GitHub not knowing yet — so a wait is worth it (27.5)."""
     return bool(found.blockers) and len(found.pending) == len(found.blockers)
+
+
+def _caller() -> Caller | None:
+    """Who the operation runs for as the interface set it (an owner, or an agent with its own
+    token), or None for udl's own Python."""
+    from udl.core.service import principal  # (the caller's, as each interface set it)
+
+    return principal()
+
+
+def _principal() -> Principal | None:
+    """`_caller()`, as orch's own `Principal`: a person, an agent, or None for udl itself."""
+    who = _caller()
+    if who is None:
+        return None
+    if who.is_agent:
+        return Principal(kind="agent", name=who.name)
+    return Principal(kind="human", name=f"human:{who.name}")
+
+
+def _question(found: stored.Question) -> Question:
+    """`found` as the operations answer with it."""
+    return Question(
+        key=found.key,
+        project=found.project,
+        asked_by=found.asked_by,
+        to=found.to,
+        title=found.title,
+        text=found.text,
+        options=found.options,
+        blocking=found.blocking,
+        task=found.task,
+        state=found.state,
+        answer=found.answer,
+        answered_by=found.answered_by,
+        outcome=found.outcome,
+        escalated=found.escalated,
+    )
 
 
 def _action(found: stored.HumanAction) -> Action:

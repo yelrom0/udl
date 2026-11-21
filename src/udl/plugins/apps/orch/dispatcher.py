@@ -27,7 +27,7 @@ import asyncio
 import contextlib
 import logging
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -41,6 +41,7 @@ from udl.db.models import JsonObject
 from udl.errors import DoesNotExist, PluginError, UDLError
 from udl.hosts.models import HostRequest
 from udl.plugins.apps.base import AppContext, AppEvent
+from udl.plugins.apps.orch import questions as asked
 from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch import records as stored
 from udl.plugins.apps.orch import workspace as space
@@ -54,6 +55,7 @@ from udl.plugins.apps.orch.models import (
     QUEUED,
     OwnerKind,
     Principal,
+    QuestionState,
     Readiness,
     Role,
 )
@@ -119,15 +121,27 @@ def instructions(project: stored.Project, agent: stored.Agent) -> str:
     return "\n\n".join(parts)
 
 
-def first_prompt(task: stored.Task) -> str:
-    """What a session is sent first: which task it is on, and where to read it (the card's 2)."""
-    return (
+def first_prompt(task: stored.Task, *, answers: str = "") -> str:
+    """What a session is sent first: which task it is on, where to read it (the card's 2), and
+    what was answered while it waited (28.1: the answer is delivered into the session)."""
+    said = (
         f"Your task is {task.key}: {task.title}.\n\n"
         "Call `orch_my_task` to read it — its spec, its feature's spec, the project's rules and "
         "its notes — then do it. Work test-first, push with `orch_push`, and say your work is "
         "done with `orch_ready` (or `orch_block`, with the reason, when it is not yours to "
         "settle)."
     )
+    return f"{said}\n\n{answers}" if answers else said
+
+
+def answered(questions: Sequence[stored.Question]) -> str:
+    """What a session is told of the answers to its questions: each one's key, what it asked and
+    what was answered, fenced as udl's own words (28.1)."""
+    told = "\n".join(
+        f"- {one.key}, which you asked: {fenced('udl', one.answer or '')}\n  {one.title}"
+        for one in questions
+    )
+    return f"While you waited, these were answered:\n\n{told}"
 
 
 def nudge(task: stored.Task) -> str:
@@ -524,9 +538,11 @@ class Dispatcher:
         prompt: str
         kind = "changed"
         if resume:
-            prompt = "udl restarted; continue where you were."
+            said = await self._answers(task, session)
+            base = "udl restarted; continue where you were."
+            prompt = f"{base}\n\n{said}" if said else base
         elif session.turns == 0:
-            prompt = first_prompt(task)
+            prompt = first_prompt(task, answers=await self._answers(task, session))
         else:
             next_prompt, session, kind = await self._next_prompt(task, session)
             if next_prompt is None:
@@ -558,6 +574,21 @@ class Dispatcher:
                 return  # (only time stands in the way: no turn until the pull changes)
             prompt = next_prompt
 
+    async def _answers(self, task: stored.Task, session: stored.AgentSession) -> str:
+        """What `session` is told of the answers to its own questions, marked as told as they are
+        delivered: an answer reaches a session once, not on every prompt (28.1)."""
+        agent = session.agent or ""
+        if not agent:
+            return ""
+        found = await stored.QuestionRecords(self._records).questions(
+            task.project, state=QuestionState.ANSWERED, to=None, task=task.key
+        )
+        fresh = [one for one in found if one.answer and one.asked_by == agent and not one.delivered]
+        if not fresh:
+            return ""
+        await self._records.save_all([one.model_copy(update={"delivered": True}) for one in fresh])
+        return answered(fresh)
+
     async def _next_prompt(
         self, task: stored.Task, session: stored.AgentSession
     ) -> tuple[str | None, stored.AgentSession, str]:
@@ -569,8 +600,13 @@ class Dispatcher:
         None means the session holds no turn: its pull is only waiting on time (the checks
         running, the bot not done with this head), and a `github.pr.*` event wakes it (the card's
         5)."""
+        said = await self._answers(task, session)
         what, session, waiting = await self._what_changed(task, session)
-        if waiting:
+        if said and what is not None:
+            what = f"{said}\n\n{what}"
+        elif said:
+            what = said
+        if waiting and not said:
             return None, session, "waiting"
         if what is None or what == session.last_text:
             return nudge(task), session, "nudge"
@@ -599,6 +635,21 @@ class Dispatcher:
         if found.ready:
             return "its pull is ready to merge: say so with `orch_ready`", session, False
         if found.pending and set(found.pending) == set(found.blockers):
+            # (Only time stands in the way, and the rerun that would hurry it needs an operation
+            # udl lacks: the session holds no turn, and 28.1's question asks how long to wait.)
+            agent = session.agent or ""
+            if agent:
+                await self._ask_once(
+                    agent,
+                    task,
+                    title="The bot has not answered: how long to wait?",
+                    text=(
+                        "Its pull's checks and review are still to come, and udl cannot rerun "
+                        "them while they are green. Say how long to wait, or whether to go on "
+                        "without them."
+                    ),
+                    blocking=False,
+                )
             return None, session, True
         parts = [f"its pull is not ready ({'; '.join(found.blockers)})"]
         if found.open_items:
@@ -611,12 +662,83 @@ class Dispatcher:
     async def _stalled(
         self, agent: stored.Agent, task: stored.Task, session: stored.AgentSession
     ) -> None:
-        """A task still going after its nudges: `blocked` ("agent stalled"), and the session
-        ended so the loop takes the next one."""
-        tasks = stored.TaskRecords(self._records)
+        """A task still going after its nudges: `blocked` on a question ("agent stalled"), and
+        the session ended so the loop takes the next one.
+
+        The question is 28.1's: the stall is what an agent cannot answer itself (was it told to
+        go on, or is the work bigger than the task said?), so it goes to its manager, or to the
+        humans (27.7 left this here, and 28.1 builds it)."""
         why = f"agent stalled: {agent.name} took {session.nudges} nudges without progress"
-        await tasks.move(task, BLOCKED, by=_system("block"), note=why)
+        await self._ask_once(agent.name, task, title=why, text=why, blocking=True)
         await self._end(agent, session)
+
+    async def _ask(
+        self,
+        name: str,
+        task: stored.Task,
+        *,
+        title: str,
+        text: str,
+        blocking: bool,
+    ) -> stored.Question | None:
+        """Ask a question in `task` on `name`'s behalf (28.1): to its manager when that manager
+        may answer, and to the humans otherwise. A blocking one blocks the task."""
+        try:
+            return await asked.ask(
+                stored.QuestionRecords(self._records),
+                project=task.project,
+                task=task.key,
+                title=title,
+                text=text,
+                blocking=blocking,
+                asked_by=name,
+            )
+        except UDLError:
+            # (A blocking question is the task's state: dropping it would leave the task running
+            # and the loop nudging it for good, so it is raised and the tick tries again. The
+            # bot's wait is best-effort: nothing is blocked by it.)
+            if blocking:
+                raise
+            log.warning("could not ask %r's question", task.key, exc_info=True)
+            return None
+
+    async def _ask_once(
+        self,
+        name: str,
+        task: stored.Task,
+        *,
+        title: str,
+        text: str,
+        blocking: bool,
+    ) -> None:
+        """`_ask()`, with the task's one question at a time kept:
+        - a blocking ask blocks the task on the open question it already has (a stall is a stall
+          however the question got there), and asks nothing new;
+        - the bot's wait is asked once per task, whatever became of the question after it (a wait
+          re-read every tick would otherwise ask again as soon as it was answered)."""
+        questions = stored.QuestionRecords(self._records)
+        if blocking:
+            open_ones = await questions.questions(task.project, to=None, task=task.key)
+            if open_ones:
+                await asked.block_with(
+                    questions,
+                    project=task.project,
+                    task=task.key,
+                    question=open_ones[0],
+                    asked_by=name,
+                    why=title,
+                )
+                return
+            if task.state == BLOCKED:
+                # (A person blocked it, or its question was closed: it waits already, so nothing
+                # is asked — but why it is waiting now is written where its history is.)
+                await stored.NoteRecords(self._records).system(OwnerKind.TASK, task.id, title)
+                return
+        else:
+            ever = await questions.questions(task.project, state=None, to=None, task=task.key)
+            if any(one.title == title for one in ever):
+                return
+        await self._ask(name, task, title=title, text=text, blocking=blocking)
 
     async def _turn(
         self, agent: stored.Agent, session: stored.AgentSession, prompt: str
@@ -764,12 +886,9 @@ class Dispatcher:
         )
         task = await self._task_of(session)
         if task is not None:
-            await stored.TaskRecords(self._records).move(
-                task,
-                BLOCKED,
-                by=_system("block"),
-                note=f"{agent.name}'s session failed: {why}",
-            )
+            # (A failed session is what only a person can look into: 28.1's question, blocking.)
+            said = f"{agent.name}'s session failed: {why}"
+            await self._ask_once(agent.name, task, title=said, text=said, blocking=True)
         await self._end(agent, session)
         return False
 

@@ -127,6 +127,10 @@ def home(tmp_path: Path) -> Path:
     git("commit", "-m", "the first commit", cwd=checkout)
     git("config", "user.name", "udl", cwd=checkout)
     git("config", "user.email", "udl@example.com", cwd=checkout)
+    # (The repo's own config, which its worktrees share: udl's rebase is a plain `git rebase`,
+    # and the machine's git signs with 1Password, which would fail the test for something udl
+    # did not do.)
+    git("config", "commit.gpgsign", "false", cwd=checkout)
     git("remote", "add", "origin", str(bare), cwd=checkout)
     git("push", "-u", "origin", "main", cwd=checkout)
     return tmp_path

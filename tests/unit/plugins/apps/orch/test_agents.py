@@ -59,10 +59,16 @@ from udl.plugins.apps.orch.records import (
     Link as LinkRecord,
 )
 from udl.plugins.apps.orch.records import (
+    Message as MessageRecord,
+)
+from udl.plugins.apps.orch.records import (
     Note as NoteRecord,
 )
 from udl.plugins.apps.orch.records import (
     Project as ProjectRecord,
+)
+from udl.plugins.apps.orch.records import (
+    Question as QuestionRecord,
 )
 from udl.plugins.apps.orch.records import (
     Repo as RepoRecord,
@@ -447,6 +453,8 @@ def test_orch_brings_its_kinds() -> None:
         AgentToken,
         SessionEvent,
         HumanAction,
+        QuestionRecord,
+        MessageRecord,
     }
 
 

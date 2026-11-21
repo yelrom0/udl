@@ -78,6 +78,7 @@ from udl.plugins.apps.orch.models import (
     Promotion,
     PullReader,
     PullState,
+    QuestionState,
     Spec,
     State,
     TaskKind,
@@ -373,6 +374,93 @@ class HumanAction(Record):
         )
 
 
+class Question(Record):
+    """Something an agent cannot answer itself (28.1), as it is stored: what orch.models.Question
+    is.
+
+    Its key is `Q-<n>` of its project's counter, and it is unique by it. `to` is who it is asked
+    of — an agent's name, or `humans` — and `task` is the task it was asked in, which a blocking
+    question moves to `blocked` (its `blocked_on` is the question's key) until it is answered or
+    closed. Its thread is its `Message`s."""
+
+    kind = "orch_question"
+    indexed = ("project", "key", "state", "to", "task")
+    unique = (("project", "key"),)
+
+    key: Key
+    """Its key within the project (`Q-<n>`)."""
+    project: Name
+    """The project it belongs to."""
+    asked_by: str = ""
+    """Who asked it: an agent's name, or `human:<name>`."""
+    to: str = "humans"
+    """Who it is asked of: an agent's name (its manager), or `humans`."""
+    title: Title
+    """What it is, in a line."""
+    text: Text = ""
+    """What it says, as markdown."""
+    options: list[str] = Field(default_factory=list[str])
+    """The answers it offers, when it offers any."""
+    blocking: bool = False
+    """Whether the task it was asked in waits for the answer."""
+    task: Key | None = None
+    """The task it was asked in (a blocking one moves it to `blocked`)."""
+    state: QuestionState = QuestionState.OPEN
+    """Where it is: open, answered or closed."""
+    answer: str | None = None
+    """The answer, once there is one."""
+    answered_by: str | None = None
+    """Who answered it: an agent's name, or `human:<name>`."""
+    outcome: str | None = None
+    """What was done about it, when it is closed without an answer."""
+    escalated: bool = False
+    """Whether it was passed up from the agent it was asked of."""
+    delivered: bool = False
+    """Whether its answer has been told to the agent that asked (28.1: an answer is delivered
+    into a session once, not on every prompt and not again into the next session)."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            project="udl",
+            key="Q-1",
+            asked_by="deepseek-b",
+            to="humans",
+            title="Which repo is 28.1 in?",
+            text="`udl` has two repos, and the card names neither.",
+            task="28.1",
+            blocking=True,
+        )
+
+
+class Message(Record):
+    """One thing said on a question (28.1): the question's own text first, then a follow-up from
+    either side.
+
+    It is history — appended, never replaced — and `question` is the question's id, so a thread
+    is found by it whatever its key becomes."""
+
+    kind = "orch_message"
+    indexed = ("question",)
+
+    question: UUID
+    """The id of the question it is said on."""
+    text: str
+    """What it says, as markdown."""
+    author: str = ""
+    """Who said it: an agent's name, `human:<name>`, or `udl`."""
+    at: AwareDatetime = Field(default_factory=utcnow)
+    """When it was said."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            question=UUID("6f1c2f0e-9d4a-4a37-8c1e-0d2b7a5c9e11"),
+            text="`udl` has two repos, and the card names neither.",
+            author="deepseek-b",
+        )
+
+
 class Counter(Record):
     """One number a counter handed out: the compare-and-set claim of a key (`F-`, `Q-`, `A-`).
 
@@ -638,6 +726,7 @@ class ProjectRecords:
         if project is None:
             return False
         await _delete_actions(self._records, name)
+        await _delete_questions(self._records, name)
         for kind in (Repo, Feature, Task, Counter):
             for record in await self._records.list(kind, RecordQuery(where={"project": name})):
                 if isinstance(record, Task):
@@ -1313,6 +1402,63 @@ class NoteRecords:
         )
 
 
+class QuestionRecords:
+    """Where orch keeps its questions and their threads (28.1): read by project, key, state, who
+    they are asked of and the task they were asked in.
+
+    A question's thread is its `Message`s, oldest first, and the question's own text is the
+    first of them — so what an agent asked, and every follow-up, reads top to bottom in one
+    place."""
+
+    def __init__(self, records: AppRecords) -> None:
+        self._records = records
+
+    @property
+    def records(self) -> AppRecords:
+        """The records the questions are kept in."""
+        return self._records
+
+    async def save_question(self, question: Question) -> Question:
+        """Store `question` (by its id, so storing one again replaces it)."""
+        return await self._records.save(question)
+
+    async def question(self, project: str, key: str) -> Question | None:
+        """The question called `key` of `project`, or None when there is none."""
+        found = await self._records.list(
+            Question, RecordQuery(where={"project": project, "key": key})
+        )
+        return found[0] if found else None
+
+    async def questions(
+        self,
+        project: str,
+        *,
+        state: QuestionState | str | None = OPEN,
+        to: str | None = None,
+        task: str | None = None,
+    ) -> list[Question]:
+        """The questions of `project` that match what is given, oldest first. `state` is None for
+        every state."""
+        where: dict[str, JsonValue] = {"project": project}
+        if to is not None:
+            where["to"] = to
+        if task is not None:
+            where["task"] = task
+        found = await self._records.list(Question, RecordQuery(where=where))
+        if state is not None:
+            found = [question for question in found if question.state == state]
+        return sorted(found, key=lambda question: question.created_at)
+
+    async def thread(self, question: Question) -> list[Message]:
+        """Everything said on `question`, oldest first (its own text included)."""
+        found = await self._records.list(Message, RecordQuery(where={"question": question.id}))
+        return sorted(found, key=lambda message: (message.at, message.created_at))
+
+    async def say(self, question: Question, text: str, *, author: str) -> Message:
+        """Append `text` to `question`'s thread, said by `author`."""
+        return await self._records.save(Message(question=question.id, text=text, author=author))
+
+
 class AgentTokenRecords:
     """Where orch keeps the tokens its agents call udl with: only their hashes (the token itself
     is in udl's secret store). One token per agent — issuing one replaces the one it had."""
@@ -1403,6 +1549,17 @@ async def _delete_actions(records: AppRecords, project: str, key: str | None = N
     for action in await records.list(HumanAction, RecordQuery(where={"project": project})):
         if key is None or key in (action.task, action.after):
             await records.delete(HumanAction, action.id)
+
+
+async def _delete_questions(records: AppRecords, project: str) -> None:
+    """Delete every question of `project`, with its thread and the notes and links on it (what
+    deleting a project takes with it, so its `Q-` numbers start over)."""
+    for question in await records.list(Question, RecordQuery(where={"project": project})):
+        for message in await records.list(Message, RecordQuery(where={"question": question.id})):
+            await records.delete(Message, message.id)
+        await _delete_notes(records, "question", question.id)
+        await _delete_links(records, project, "question", question.key)
+        await records.delete(Question, question.id)
 
 
 async def _delete_notes(records: AppRecords, owner_kind: str, owner: UUID) -> None:
