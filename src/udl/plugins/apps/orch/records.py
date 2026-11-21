@@ -422,6 +422,9 @@ class Agent(Record):
     max_nudges: PositiveInt = 3
     enabled: bool = True
     paused: bool = False
+    offline: bool = False
+    """Whether its host could not be reached: what a failed `check_host` sets, so no session is
+    started there until it answers again (27.7)."""
 
     @classmethod
     def example(cls) -> Self:
@@ -453,16 +456,26 @@ class AgentSession(Record):
     sync = SyncRule.NEVER
 
     agent: Name
+    project: str = ""
+    """The project its task is in (its key is only unique within one)."""
     task: str = ""
     ref: SessionRef
     state: SessionState = SessionState.STARTING
     turns: NonNegativeInt = 0
     nudges: NonNegativeInt = 0
+    failures: NonNegativeInt = 0
+    """How many turns in a row failed (the dispatcher retries three times, 27.7)."""
     limited_until: AwareDatetime | None = None
+    limits: NonNegativeInt = 0
+    """How many times its runner limited it (a limited turn is not a turn, so this is what tells
+    one limit from the next, 27.7)."""
     tokens_in: NonNegativeInt = 0
     tokens_out: NonNegativeInt = 0
     cost: Decimal | None = None
     last_text: str = ""
+    """What the last turn was told, so the same news is not told twice (27.7)."""
+    last_error: str = ""
+    """Why its last turn failed, as its runner said (what a retry reports, 27.7)."""
 
     @classmethod
     def example(cls) -> Self:
