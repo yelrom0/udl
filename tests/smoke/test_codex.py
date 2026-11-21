@@ -47,7 +47,7 @@ pytestmark = [
 
 
 def codex() -> Codex:
-    """The real runner, on the `local` profile (jeff-wiggle's router), with no sign-in to spend."""
+    """The real runner, on a local profile (a router on udl's own machine), with no sign-in."""
     return Codex(
         CodexOptions(cli=[str(CLI)], models=["qwen3.6-35b-a3b"], provider="local", network=True),
         shell=LocalShell(Host.local("/tmp")),  # noqa: S108 - (a turn is read, not written)
