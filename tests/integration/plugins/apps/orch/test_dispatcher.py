@@ -35,8 +35,8 @@ from udl.config import APISettings
 from udl.core.models import PluginSettingsRequest, SetPluginSettingsRequest
 from udl.core.operations import OperationHints
 from udl.core.service import UDLService
-from udl.errors import NotAllowed, PluginFailed
-from udl.hosts.shell import HostShell
+from udl.errors import DoesNotExist, NotAllowed, PluginError, PluginFailed
+from udl.hosts.shell import Host, HostShell
 from udl.plugins.apps.base import (
     AppContext,
     AppEvent,
@@ -46,6 +46,7 @@ from udl.plugins.apps.base import (
     AppSettings,
     AppSubscription,
 )
+from udl.plugins.apps.orch import workspace as space
 from udl.plugins.apps.orch.agents import SessionState
 from udl.plugins.apps.orch.dispatcher import (
     PRUNE_EVERY,
@@ -72,6 +73,8 @@ from udl.plugins.apps.orch.records import (
     LinkRecords,
     Project,
     ProjectRecords,
+    Repo,
+    RepoRecords,
     SessionEvent,
     SessionRecords,
     Task,
@@ -985,6 +988,107 @@ async def limits_of(service: UDLService) -> EventList:
     found = await service.call("list_events", {"type": "orch.agent.limited", "limit": 20})
     assert isinstance(found, EventList)
     return found
+
+
+async def test_a_task_that_names_its_repo_gets_that_one(service: UDLService) -> None:
+    """(The task's `repo`, when it has one: a project may have several.)"""
+    records = AppRecords(service.db)
+    repos = RepoRecords(records)
+    for name in ("api", "web"):
+        await repos.save_repo(
+            Repo(project="udl", name=name, github=f"yelrom0/{name}", account="github:yelrom0")
+        )
+    found, _ = await dispatcher(service)
+    task = (await tasks_of(service))["F-1.1"].model_copy(update={"repo": "web"})
+
+    got = await found._repo_of(task)  # pyright: ignore[reportPrivateUsage]  (the helper itself, tested here)
+    assert got.name == "web"
+
+
+async def test_a_task_whose_repo_is_not_there_says_so(service: UDLService) -> None:
+    """(A repo the project does not have is a refusal that names it, not a fallback to the only
+    one: the task's work would go somewhere else.)"""
+    await RepoRecords(AppRecords(service.db)).save_repo(
+        Repo(project="udl", name="api", github="yelrom0/api", account="github:yelrom0")
+    )
+    found, _ = await dispatcher(service)
+    task = (await tasks_of(service))["F-1.1"].model_copy(update={"repo": "web"})
+
+    with pytest.raises(DoesNotExist, match=r"no repo called 'web'"):
+        await found._repo_of(task)  # pyright: ignore[reportPrivateUsage]  (the helper itself, tested here)
+
+
+async def test_a_task_that_names_no_repo_needs_the_project_to_have_one(
+    service: UDLService,
+) -> None:
+    """(The project's only repo, when the task names none; several is a question for the task's
+    owner, and none is no repo at all.)"""
+    records = AppRecords(service.db)
+    repos = RepoRecords(records)
+    found, _ = await dispatcher(service)
+    task = (await tasks_of(service))["F-1.1"]
+
+    with pytest.raises(PluginError, match=r"Which repo\? 'udl' has 0"):
+        await found._repo_of(task)  # pyright: ignore[reportPrivateUsage]  (the helper itself, tested here)
+
+    await repos.save_repo(
+        Repo(project="udl", name="udl", github="yelrom0/udl", account="github:yelrom0")
+    )
+    got = await found._repo_of(task)  # pyright: ignore[reportPrivateUsage]  (the helper itself, tested here)
+    assert got.name == "udl"
+
+    await repos.save_repo(
+        Repo(project="udl", name="docs", github="yelrom0/docs", account="github:yelrom0")
+    )
+    with pytest.raises(PluginError, match=r"Which repo\? 'udl' has 2"):
+        await found._repo_of(task)  # pyright: ignore[reportPrivateUsage]  (the helper itself, tested here)
+
+
+async def test_a_task_that_has_a_worktree_is_not_prepared_again(
+    service: UDLService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(A session resumed on its task keeps the worktree it already has: `prepare()` is a git
+    clone and a branch, not something to do twice.)"""
+
+    async def never(**_: object) -> None:
+        raise AssertionError("a task that has a worktree was prepared again")
+
+    monkeypatch.setattr(space, "prepare", never)
+    found, _ = await dispatcher(service)
+    task = (await tasks_of(service))["F-1.1"]
+    agent = await AgentRecords(AppRecords(service.db)).agent(AGENT)
+    assert agent is not None
+    already = task.model_copy(update={"worktree": "/work/F-1.1", "branch": "feat/F-1.1"})
+
+    assert await found._prepared(already, agent) == already  # pyright: ignore[reportPrivateUsage]  (the helper itself, tested here)
+
+
+async def test_a_task_with_no_worktree_is_prepared_on_its_agent_s_host(
+    service: UDLService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(A task that has none gets one, from the project's only repo, on the agent's own host; the
+    branch and the path are the task's from then on.)"""
+    await RepoRecords(AppRecords(service.db)).save_repo(
+        Repo(project="udl", name="udl", github="yelrom0/udl", account="github:yelrom0")
+    )
+    asked: list[tuple[str, str, str]] = []
+
+    async def counted(task: Task, *, repo: Repo, host: Host, shell: HostShell) -> space.Worktree:
+        asked.append((task.key, repo.name, host.name))
+        return space.Worktree(
+            host=host.name, path=f"/work/{task.key}", branch=f"feat/{task.key}", base="main"
+        )
+
+    monkeypatch.setattr(space, "prepare", counted)
+    found, _ = await dispatcher(service)
+    task = (await tasks_of(service))["F-1.1"]
+    agent = await AgentRecords(AppRecords(service.db)).agent(AGENT)
+    assert agent is not None
+
+    made = await found._prepared(task, agent)  # pyright: ignore[reportPrivateUsage]  (the helper itself, tested here)
+    assert asked == [("F-1.1", "udl", "local")]
+    assert made.worktree == "/work/F-1.1"
+    assert made.branch == "feat/F-1.1"
 
 
 async def test_a_session_limited_twice_publishes_both_limits(service: UDLService) -> None:
