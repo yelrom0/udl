@@ -76,6 +76,49 @@
         "title": "APISettings",
         "type": "object"
       },
+      "AQuestion": {
+        "additionalProperties": false,
+        "description": "One question with everything about it: its thread, and what it names (28.1).",
+        "properties": {
+          "features": {
+            "description": "The features it names (each one the answer is written on).",
+            "items": {
+              "maxLength": 40,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+              "type": "string"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "question": {
+            "$ref": "#/components/schemas/Question",
+            "description": "The question itself."
+          },
+          "tasks": {
+            "description": "The tasks it names (each one the answer is written on).",
+            "items": {
+              "maxLength": 40,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+              "type": "string"
+            },
+            "title": "Tasks",
+            "type": "array"
+          },
+          "thread": {
+            "description": "What was said on it, oldest first (its own text first).",
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            },
+            "title": "Thread",
+            "type": "array"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "AQuestion",
+        "type": "object"
+      },
       "AccountFailure": {
         "additionalProperties": false,
         "description": "An account an operation failed in.",
@@ -751,6 +794,41 @@
         "title": "AllOf",
         "type": "object"
       },
+      "AnswerRequest": {
+        "additionalProperties": false,
+        "description": "Answering a question (28.1): the answer is written on every task and feature it names.",
+        "properties": {
+          "answer": {
+            "description": "The answer.",
+            "title": "Answer",
+            "type": "string"
+          },
+          "key": {
+            "description": "The question to answer (`Q-<n>`).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          }
+        },
+        "required": [
+          "key",
+          "answer"
+        ],
+        "title": "AnswerRequest",
+        "type": "object"
+      },
       "AnyOf-Input": {
         "additionalProperties": false,
         "description": "At least one of its filters matches.",
@@ -852,6 +930,83 @@
           "state"
         ],
         "title": "AppStatus",
+        "type": "object"
+      },
+      "AskRequest": {
+        "additionalProperties": false,
+        "description": "Asking something only the manager or a person can answer (28.1).",
+        "properties": {
+          "blocking": {
+            "default": false,
+            "description": "Whether the task waits for the answer.",
+            "title": "Blocking",
+            "type": "boolean"
+          },
+          "features": {
+            "description": "The features it is about (the answer is written on each).",
+            "items": {
+              "maxLength": 40,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+              "type": "string"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "options": {
+            "description": "The answers it offers, when it offers any.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          },
+          "task": {
+            "description": "The task it is asked in.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Task",
+            "type": "string"
+          },
+          "tasks": {
+            "description": "The other tasks it is about (the answer is written on each).",
+            "items": {
+              "maxLength": 40,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+              "type": "string"
+            },
+            "title": "Tasks",
+            "type": "array"
+          },
+          "text": {
+            "default": "",
+            "description": "What it says, as markdown (what it needs to know, and why it cannot go on).",
+            "maxLength": 2000,
+            "title": "Text",
+            "type": "string"
+          },
+          "title": {
+            "description": "What it is, in a line.",
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "title"
+        ],
+        "title": "AskRequest",
         "type": "object"
       },
       "AssignTaskRequest": {
@@ -1028,6 +1183,41 @@
         ],
         "title": "BatchStatus",
         "type": "string"
+      },
+      "BlockRequest": {
+        "additionalProperties": false,
+        "description": "Saying that only a person can do this (28.1): `orch_ask`, blocking.",
+        "properties": {
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          },
+          "reason": {
+            "description": "What is needed, and why the agent cannot do it itself.",
+            "title": "Reason",
+            "type": "string"
+          },
+          "task": {
+            "description": "The task that cannot go on.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Task",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "reason"
+        ],
+        "title": "BlockRequest",
+        "type": "object"
       },
       "BrowserSettings": {
         "additionalProperties": false,
@@ -1433,6 +1623,41 @@
           "click"
         ],
         "title": "ClickStep",
+        "type": "object"
+      },
+      "CloseQuestionRequest": {
+        "additionalProperties": false,
+        "description": "Closing a question nobody answered, with what was done about it (28.1).",
+        "properties": {
+          "key": {
+            "description": "The question to close (`Q-<n>`).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "outcome": {
+            "description": "What was done about it instead.",
+            "title": "Outcome",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          }
+        },
+        "required": [
+          "key",
+          "outcome"
+        ],
+        "title": "CloseQuestionRequest",
         "type": "object"
       },
       "CommentInfo": {
@@ -2392,6 +2617,41 @@
           "message"
         ],
         "title": "ErrorInfo",
+        "type": "object"
+      },
+      "EscalateRequest": {
+        "additionalProperties": false,
+        "description": "Passing a question up, to the asker's manager's manager or to the humans (28.1).",
+        "properties": {
+          "key": {
+            "description": "The question to pass up (`Q-<n>`).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          },
+          "why": {
+            "default": "",
+            "description": "Why it is passed up (written into its thread).",
+            "title": "Why",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "EscalateRequest",
         "type": "object"
       },
       "EventDetail": {
@@ -4025,6 +4285,35 @@
         "title": "GetProjectRequest",
         "type": "object"
       },
+      "GetQuestionRequest": {
+        "additionalProperties": false,
+        "description": "Reading one question with its thread (28.1).",
+        "properties": {
+          "key": {
+            "description": "The question to read (`Q-<n>`).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "GetQuestionRequest",
+        "type": "object"
+      },
       "GetTaskRequest": {
         "additionalProperties": false,
         "description": "Asking for one task: its feature, its links, its notes and its questions.",
@@ -5208,6 +5497,63 @@
         "title": "ListFeaturesRequest",
         "type": "object"
       },
+      "ListQuestionsRequest": {
+        "additionalProperties": false,
+        "description": "Asking which questions are waiting, and of whom (28.1).",
+        "properties": {
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project they are of (None: the only one, while udl has one)."
+          },
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuestionState"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "open",
+            "description": "Only the questions in this state (None: every state)."
+          },
+          "task": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only the questions asked in this task.",
+            "title": "Task"
+          },
+          "to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only the questions asked of this: an agent's name, or `humans`.",
+            "title": "To"
+          }
+        },
+        "title": "ListQuestionsRequest",
+        "type": "object"
+      },
       "ListRunnersRequest": {
         "additionalProperties": false,
         "description": "Which harnesses to show.",
@@ -5815,6 +6161,35 @@
           "state"
         ],
         "title": "Merged",
+        "type": "object"
+      },
+      "Message": {
+        "additionalProperties": false,
+        "description": "One thing said on a question (28.1): the question's own text first, then follow-ups.",
+        "properties": {
+          "at": {
+            "description": "When it was said.",
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "author": {
+            "default": "",
+            "description": "Who said it: an agent's name, `human:<name>`, or `udl`.",
+            "title": "Author",
+            "type": "string"
+          },
+          "text": {
+            "description": "What it says, as markdown.",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "at"
+        ],
+        "title": "Message",
         "type": "object"
       },
       "Misfire": {
@@ -7246,6 +7621,163 @@
         "title": "PushResult",
         "type": "object"
       },
+      "Question": {
+        "additionalProperties": false,
+        "description": "Something an agent cannot answer itself (28.1): what it asked, of whom, and what came of\nit.\n\n`to` is an agent's name (its manager, when that manager may answer) or `humans`; `blocking`\nsays whether the task it was asked in waits for the answer. Its thread is its `Message`s.",
+        "properties": {
+          "answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The answer, once there is one.",
+            "title": "Answer"
+          },
+          "answered_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who answered it: an agent's name, or `human:<name>`.",
+            "title": "Answered By"
+          },
+          "asked_by": {
+            "default": "",
+            "description": "Who asked it: an agent's name, or `human:<name>`.",
+            "title": "Asked By",
+            "type": "string"
+          },
+          "blocking": {
+            "default": false,
+            "description": "Whether the task it was asked in waits for the answer.",
+            "title": "Blocking",
+            "type": "boolean"
+          },
+          "escalated": {
+            "default": false,
+            "description": "Whether it was passed up from the agent it was asked of.",
+            "title": "Escalated",
+            "type": "boolean"
+          },
+          "key": {
+            "description": "Its key within the project (`Q-<n>`).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "options": {
+            "description": "The answers it offers, when it offers any.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What was done about it, when it is closed without an answer.",
+            "title": "Outcome"
+          },
+          "project": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The project it belongs to."
+          },
+          "state": {
+            "$ref": "#/components/schemas/QuestionState",
+            "default": "open",
+            "description": "Where it is: open, answered or closed."
+          },
+          "task": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The task it was asked in (a blocking one moves it to `blocked`).",
+            "title": "Task"
+          },
+          "text": {
+            "default": "",
+            "description": "What it says, as markdown.",
+            "maxLength": 2000,
+            "title": "Text",
+            "type": "string"
+          },
+          "title": {
+            "description": "What it is, in a line.",
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "to": {
+            "default": "humans",
+            "description": "Who it is asked of: an agent's name (its manager), or `humans`.",
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "project",
+          "title"
+        ],
+        "title": "Question",
+        "type": "object"
+      },
+      "QuestionState": {
+        "description": "Where a question is: waiting for an answer, answered, or closed without one.",
+        "enum": [
+          "open",
+          "answered",
+          "closed"
+        ],
+        "title": "QuestionState",
+        "type": "string"
+      },
+      "Questions": {
+        "additionalProperties": false,
+        "description": "Questions, oldest first (28.1).",
+        "properties": {
+          "project": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The project they are of."
+          },
+          "questions": {
+            "description": "The questions (empty: none match).",
+            "items": {
+              "$ref": "#/components/schemas/Question"
+            },
+            "title": "Questions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project"
+        ],
+        "title": "Questions",
+        "type": "object"
+      },
       "QueueEntry": {
         "additionalProperties": false,
         "description": "A task on a queue, as the operations answer with it: what a board shows, and nothing that\nis not needed to show it.",
@@ -7588,6 +8120,41 @@
           }
         },
         "title": "ReplayEventRequestBody",
+        "type": "object"
+      },
+      "ReplyRequest": {
+        "additionalProperties": false,
+        "description": "A follow-up on a question, from either side (28.1).",
+        "properties": {
+          "key": {
+            "description": "The question to reply on (`Q-<n>`).",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project it is in (None: the only one, while udl has one)."
+          },
+          "text": {
+            "description": "What it says, as markdown.",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "text"
+        ],
+        "title": "ReplyRequest",
         "type": "object"
       },
       "Repo": {
@@ -17109,6 +17676,200 @@
         ]
       }
     },
+    "/plugins/orch/answer": {
+      "post": {
+        "description": "Answer a question: the answer is written as a `decision` note on every task and\nfeature it names, and a task it blocked is queued again at the front.\n\nAn agent answers only what was asked of it (a manager its reports' questions); a person\nanswers any.",
+        "operationId": "orch_answer",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Question"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Answer a question: the answer is written as a `decision` note on every task and",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/ask": {
+      "post": {
+        "description": "Ask something only the manager or a person can answer: it goes to the agent's manager\nwhen that manager may answer, and to the humans when it may not.\n\nA blocking question moves the task to `blocked`, so the agent's loop takes its next\nqueued one (27.7); a non-blocking one leaves it working.",
+        "operationId": "orch_ask",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Question"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Ask something only the manager or a person can answer: it goes to the agent's manager",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
     "/plugins/orch/assign": {
       "post": {
         "description": "Assign a task to an agent: it joins that agent's queue (at its end, or at a position).\n\nA task another agent holds leaves that agent's queue, and a system note says who must\nstop. A person's task is assigned to `human:<name>` (28.2's To action), never to an\nagent. The answer is the agent's queue, in the order it will work it.",
@@ -17201,6 +17962,200 @@
           }
         ],
         "summary": "Assign a task to an agent: it joins that agent's queue (at its end, or at a position).",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/block": {
+      "post": {
+        "description": "Say that only a person can do this (28.1): `orch_ask`, blocking.",
+        "operationId": "orch_block",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlockRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Question"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Say that only a person can do this (28.1): `orch_ask`, blocking.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/close_question": {
+      "post": {
+        "description": "Close a question nobody answered, with what was done about it instead.",
+        "operationId": "orch_close_question",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloseQuestionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Question"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Close a question nobody answered, with what was done about it instead.",
         "tags": [
           "orch"
         ]
@@ -17492,6 +18447,103 @@
           }
         ],
         "summary": "Drop something that is not going to be done, with the reason.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/escalate": {
+      "post": {
+        "description": "Pass a question up: to the manager's manager when that one may answer, and to the\nhumans at the top.",
+        "operationId": "orch_escalate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EscalateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Question"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Pass a question up: to the manager's manager when that one may answer, and to the",
         "tags": [
           "orch"
         ]
@@ -17880,6 +18932,103 @@
           }
         ],
         "summary": "A project, with its repos.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/get_question": {
+      "post": {
+        "description": "One question with everything about it: its thread, and the tasks and features it\nnames. It reads: nothing changes.",
+        "operationId": "orch_get_question",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GetQuestionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AQuestion"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "One question with everything about it: its thread, and the tasks and features it",
         "tags": [
           "orch"
         ]
@@ -18442,6 +19591,103 @@
           }
         ],
         "summary": "Every project udl knows, by name.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/list_questions": {
+      "post": {
+        "description": "The questions waiting, oldest first, narrowed by state, who they are asked of, and the\ntask they were asked in. It reads: nothing changes.",
+        "operationId": "orch_list_questions",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListQuestionsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Questions"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "The questions waiting, oldest first, narrowed by state, who they are asked of, and the",
         "tags": [
           "orch"
         ]
@@ -19800,6 +21046,103 @@
           }
         ],
         "summary": "Set an agent's queue to exactly these keys, in this order.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/reply": {
+      "post": {
+        "description": "Add a follow-up to a question's thread, from either side.",
+        "operationId": "orch_reply",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Add a follow-up to a question's thread, from either side.",
         "tags": [
           "orch"
         ]

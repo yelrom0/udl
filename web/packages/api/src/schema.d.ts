@@ -997,6 +997,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer a question: the answer is written as a `decision` note on every task and
+         * @description Answer a question: the answer is written as a `decision` note on every task and
+         *     feature it names, and a task it blocked is queued again at the front.
+         *
+         *     An agent answers only what was asked of it (a manager its reports' questions); a person
+         *     answers any.
+         */
+        post: operations["orch_answer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask something only the manager or a person can answer: it goes to the agent's manager
+         * @description Ask something only the manager or a person can answer: it goes to the agent's manager
+         *     when that manager may answer, and to the humans when it may not.
+         *
+         *     A blocking question moves the task to `blocked`, so the agent's loop takes its next
+         *     queued one (27.7); a non-blocking one leaves it working.
+         */
+        post: operations["orch_ask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/orch/assign": {
         parameters: {
             query?: never;
@@ -1015,6 +1063,46 @@ export interface paths {
          *     agent. The answer is the agent's queue, in the order it will work it.
          */
         post: operations["orch_assign"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/block": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Say that only a person can do this (28.1): `orch_ask`, blocking.
+         * @description Say that only a person can do this (28.1): `orch_ask`, blocking.
+         */
+        post: operations["orch_block"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/close_question": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Close a question nobody answered, with what was done about it instead.
+         * @description Close a question nobody answered, with what was done about it instead.
+         */
+        post: operations["orch_close_question"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1076,6 +1164,27 @@ export interface paths {
          * @description Drop something that is not going to be done, with the reason.
          */
         post: operations["orch_drop_action"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/escalate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pass a question up: to the manager's manager when that one may answer, and to the
+         * @description Pass a question up: to the manager's manager when that one may answer, and to the
+         *     humans at the top.
+         */
+        post: operations["orch_escalate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1158,6 +1267,27 @@ export interface paths {
          * @description A project, with its repos.
          */
         post: operations["orch_get_project"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/get_question": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * One question with everything about it: its thread, and the tasks and features it
+         * @description One question with everything about it: its thread, and the tasks and features it
+         *     names. It reads: nothing changes.
+         */
+        post: operations["orch_get_question"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1285,6 +1415,27 @@ export interface paths {
          * @description Every project udl knows, by name.
          */
         post: operations["orch_list_projects"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/list_questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The questions waiting, oldest first, narrowed by state, who they are asked of, and the
+         * @description The questions waiting, oldest first, narrowed by state, who they are asked of, and the
+         *     task they were asked in. It reads: nothing changes.
+         */
+        post: operations["orch_list_questions"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1603,6 +1754,26 @@ export interface paths {
          *     move, and one left out would be lost. The answer is the queue as it now is.
          */
         post: operations["orch_reorder_queue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/reply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a follow-up to a question's thread, from either side.
+         * @description Add a follow-up to a question's thread, from either side.
+         */
+        post: operations["orch_reply"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2405,6 +2576,29 @@ export interface components {
             port: number;
         };
         /**
+         * AQuestion
+         * @description One question with everything about it: its thread, and what it names (28.1).
+         */
+        AQuestion: {
+            /**
+             * Features
+             * @description The features it names (each one the answer is written on).
+             */
+            features?: string[];
+            /** @description The question itself. */
+            question: components["schemas"]["Question"];
+            /**
+             * Tasks
+             * @description The tasks it names (each one the answer is written on).
+             */
+            tasks?: string[];
+            /**
+             * Thread
+             * @description What was said on it, oldest first (its own text first).
+             */
+            thread?: components["schemas"]["Message"][];
+        };
+        /**
          * AccountFailure
          * @description An account an operation failed in.
          */
@@ -2797,6 +2991,24 @@ export interface components {
             all: components["schemas"]["Filter-Output"][];
         };
         /**
+         * AnswerRequest
+         * @description Answering a question (28.1): the answer is written on every task and feature it names.
+         */
+        AnswerRequest: {
+            /**
+             * Answer
+             * @description The answer.
+             */
+            answer: string;
+            /**
+             * Key
+             * @description The question to answer (`Q-<n>`).
+             */
+            key: string;
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+        };
+        /**
          * AnyOf
          * @description At least one of its filters matches.
          */
@@ -2849,6 +3061,51 @@ export interface components {
             started_at?: string | null;
             /** @description Where its service is. */
             state: components["schemas"]["AppState"];
+        };
+        /**
+         * AskRequest
+         * @description Asking something only the manager or a person can answer (28.1).
+         */
+        AskRequest: {
+            /**
+             * Blocking
+             * @description Whether the task waits for the answer.
+             * @default false
+             */
+            blocking: boolean;
+            /**
+             * Features
+             * @description The features it is about (the answer is written on each).
+             */
+            features?: string[];
+            /**
+             * Options
+             * @description The answers it offers, when it offers any.
+             */
+            options?: string[];
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /**
+             * Task
+             * @description The task it is asked in.
+             */
+            task: string;
+            /**
+             * Tasks
+             * @description The other tasks it is about (the answer is written on each).
+             */
+            tasks?: string[];
+            /**
+             * Text
+             * @description What it says, as markdown (what it needs to know, and why it cannot go on).
+             * @default
+             */
+            text: string;
+            /**
+             * Title
+             * @description What it is, in a line.
+             */
+            title: string;
         };
         /**
          * AssignTaskRequest
@@ -2951,6 +3208,24 @@ export interface components {
          * @enum {string}
          */
         BatchStatus: "queued" | "running" | "waiting" | "finished" | "cancelled" | "interrupted";
+        /**
+         * BlockRequest
+         * @description Saying that only a person can do this (28.1): `orch_ask`, blocking.
+         */
+        BlockRequest: {
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /**
+             * Reason
+             * @description What is needed, and why the agent cannot do it itself.
+             */
+            reason: string;
+            /**
+             * Task
+             * @description The task that cannot go on.
+             */
+            task: string;
+        };
         /**
          * BrowserSettings
          * @description The [browser] table, used by the browser downloader.
@@ -3164,6 +3439,24 @@ export interface components {
          */
         ClickStep: {
             click: components["schemas"]["CssSelector"];
+        };
+        /**
+         * CloseQuestionRequest
+         * @description Closing a question nobody answered, with what was done about it (28.1).
+         */
+        CloseQuestionRequest: {
+            /**
+             * Key
+             * @description The question to close (`Q-<n>`).
+             */
+            key: string;
+            /**
+             * Outcome
+             * @description What was done about it instead.
+             */
+            outcome: string;
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
         };
         /**
          * CommentInfo
@@ -3655,6 +3948,25 @@ export interface components {
             retry_after?: number | null;
             /** Tool */
             tool?: string | null;
+        };
+        /**
+         * EscalateRequest
+         * @description Passing a question up, to the asker's manager's manager or to the humans (28.1).
+         */
+        EscalateRequest: {
+            /**
+             * Key
+             * @description The question to pass up (`Q-<n>`).
+             */
+            key: string;
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /**
+             * Why
+             * @description Why it is passed up (written into its thread).
+             * @default
+             */
+            why: string;
         };
         /** EventDetail */
         EventDetail: {
@@ -4517,6 +4829,19 @@ export interface components {
             name: components["schemas"]["Name"];
         };
         /**
+         * GetQuestionRequest
+         * @description Reading one question with its thread (28.1).
+         */
+        GetQuestionRequest: {
+            /**
+             * Key
+             * @description The question to read (`Q-<n>`).
+             */
+            key: string;
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+        };
+        /**
          * GetTaskRequest
          * @description Asking for one task: its feature, its links, its notes and its questions.
          */
@@ -5147,6 +5472,29 @@ export interface components {
             project?: components["schemas"]["Name"] | null;
         };
         /**
+         * ListQuestionsRequest
+         * @description Asking which questions are waiting, and of whom (28.1).
+         */
+        ListQuestionsRequest: {
+            /** @description The project they are of (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /**
+             * @description Only the questions in this state (None: every state).
+             * @default open
+             */
+            state: components["schemas"]["QuestionState"] | null;
+            /**
+             * Task
+             * @description Only the questions asked in this task.
+             */
+            task?: string | null;
+            /**
+             * To
+             * @description Only the questions asked of this: an agent's name, or `humans`.
+             */
+            to?: string | null;
+        };
+        /**
          * ListRunnersRequest
          * @description Which harnesses to show.
          */
@@ -5494,6 +5842,29 @@ export interface components {
              * @description Its pull's page.
              */
             url: string;
+        };
+        /**
+         * Message
+         * @description One thing said on a question (28.1): the question's own text first, then follow-ups.
+         */
+        Message: {
+            /**
+             * At
+             * Format: date-time
+             * @description When it was said.
+             */
+            at: string;
+            /**
+             * Author
+             * @description Who said it: an agent's name, `human:<name>`, or `udl`.
+             * @default
+             */
+            author: string;
+            /**
+             * Text
+             * @description What it says, as markdown.
+             */
+            text: string;
         };
         /**
          * Misfire
@@ -6342,6 +6713,107 @@ export interface components {
             pull: string;
         };
         /**
+         * Question
+         * @description Something an agent cannot answer itself (28.1): what it asked, of whom, and what came of
+         *     it.
+         *
+         *     `to` is an agent's name (its manager, when that manager may answer) or `humans`; `blocking`
+         *     says whether the task it was asked in waits for the answer. Its thread is its `Message`s.
+         */
+        Question: {
+            /**
+             * Answer
+             * @description The answer, once there is one.
+             */
+            answer?: string | null;
+            /**
+             * Answered By
+             * @description Who answered it: an agent's name, or `human:<name>`.
+             */
+            answered_by?: string | null;
+            /**
+             * Asked By
+             * @description Who asked it: an agent's name, or `human:<name>`.
+             * @default
+             */
+            asked_by: string;
+            /**
+             * Blocking
+             * @description Whether the task it was asked in waits for the answer.
+             * @default false
+             */
+            blocking: boolean;
+            /**
+             * Escalated
+             * @description Whether it was passed up from the agent it was asked of.
+             * @default false
+             */
+            escalated: boolean;
+            /**
+             * Key
+             * @description Its key within the project (`Q-<n>`).
+             */
+            key: string;
+            /**
+             * Options
+             * @description The answers it offers, when it offers any.
+             */
+            options?: string[];
+            /**
+             * Outcome
+             * @description What was done about it, when it is closed without an answer.
+             */
+            outcome?: string | null;
+            /** @description The project it belongs to. */
+            project: components["schemas"]["Name"];
+            /**
+             * @description Where it is: open, answered or closed.
+             * @default open
+             */
+            state: components["schemas"]["QuestionState"];
+            /**
+             * Task
+             * @description The task it was asked in (a blocking one moves it to `blocked`).
+             */
+            task?: string | null;
+            /**
+             * Text
+             * @description What it says, as markdown.
+             * @default
+             */
+            text: string;
+            /**
+             * Title
+             * @description What it is, in a line.
+             */
+            title: string;
+            /**
+             * To
+             * @description Who it is asked of: an agent's name (its manager), or `humans`.
+             * @default humans
+             */
+            to: string;
+        };
+        /**
+         * QuestionState
+         * @description Where a question is: waiting for an answer, answered, or closed without one.
+         * @enum {string}
+         */
+        QuestionState: "open" | "answered" | "closed";
+        /**
+         * Questions
+         * @description Questions, oldest first (28.1).
+         */
+        Questions: {
+            /** @description The project they are of. */
+            project: components["schemas"]["Name"];
+            /**
+             * Questions
+             * @description The questions (empty: none match).
+             */
+            questions?: components["schemas"]["Question"][];
+        };
+        /**
          * QueueEntry
          * @description A task on a queue, as the operations answer with it: what a board shows, and nothing that
          *     is not needed to show it.
@@ -6526,6 +6998,24 @@ export interface components {
         ReplayEventRequestBody: {
             /** @description Only to this subscription (else to every one that matches it). */
             subscription?: components["schemas"]["Name"] | null;
+        };
+        /**
+         * ReplyRequest
+         * @description A follow-up on a question, from either side (28.1).
+         */
+        ReplyRequest: {
+            /**
+             * Key
+             * @description The question to reply on (`Q-<n>`).
+             */
+            key: string;
+            /** @description The project it is in (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+            /**
+             * Text
+             * @description What it says, as markdown.
+             */
+            text: string;
         };
         /**
          * Repo
@@ -12530,6 +13020,162 @@ export interface operations {
             };
         };
     };
+    orch_answer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Question"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_ask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Question"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
     orch_assign: {
         parameters: {
             query?: never;
@@ -12550,6 +13196,162 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskQueue"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_block: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BlockRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Question"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_close_question: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloseQuestionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Question"];
                 };
             };
             /** @description Bad Request */
@@ -12784,6 +13586,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Action"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_escalate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EscalateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Question"];
                 };
             };
             /** @description Bad Request */
@@ -13096,6 +13976,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectInfo"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_get_question: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GetQuestionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AQuestion"];
                 };
             };
             /** @description Bad Request */
@@ -13596,6 +14554,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_list_questions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ListQuestionsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Questions"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
             /** @description Service Unavailable */
@@ -14643,6 +15679,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskQueue"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_reply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
                 };
             };
             /** @description Bad Request */

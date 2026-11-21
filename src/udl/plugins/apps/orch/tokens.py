@@ -76,6 +76,9 @@ _IMPLEMENTER: Final = frozenset(
         "orch_add_link",
         "orch_ask",
         "orch_block",
+        "orch_reply",
+        "orch_list_questions",
+        "orch_get_question",
         "orch_push",
         "orch_pr_status",
         "orch_ready",
@@ -88,11 +91,22 @@ _IMPLEMENTER: Final = frozenset(
 )
 """What an implementer may call: its own work, and nothing that changes udl's setup."""
 
+_MANAGER: Final = _IMPLEMENTER | frozenset(
+    {
+        # (A manager answers what its own reports ask it, and passes up what it cannot: 28.1.
+        # The subtree check is the operation's (the question's `to` must be the caller).)
+        "orch_answer",
+        "orch_escalate",
+        "orch_close_question",
+    }
+)
+"""What a manager may call: an implementer's work, and answering its reports' questions."""
+
 ROLE_OPERATIONS: Final[dict[AgentRole, frozenset[str]]] = {
     AgentRole.IMPLEMENTER: _IMPLEMENTER,
-    # (A manager may do an implementer's work; 27.8 adds the powers it switches on, each
-    # checked against its own subtree.)
-    AgentRole.MANAGER: _IMPLEMENTER,
+    # (A manager may do an implementer's work, and answer its reports' questions; 27.8 adds the
+    # powers it switches on, each checked against its own subtree.)
+    AgentRole.MANAGER: _MANAGER,
     # (A reviewer may call every orch_* operation that is not admin: see allowed().)
     AgentRole.REVIEWER: frozenset(),
 }

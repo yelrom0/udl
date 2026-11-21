@@ -37,6 +37,8 @@ from udl.core.operations import OperationHints
 from udl.core.service import UDLService
 from udl.errors import DoesNotExist, NotAllowed, PluginError, PluginFailed
 from udl.hosts.shell import Host, HostShell
+from udl.interfaces.security import Principal as Caller
+from udl.interfaces.security import PrincipalKind, current_principal
 from udl.plugins.apps.base import (
     AppContext,
     AppEvent,
@@ -47,7 +49,7 @@ from udl.plugins.apps.base import (
     AppSubscription,
 )
 from udl.plugins.apps.orch import workspace as space
-from udl.plugins.apps.orch.agents import SessionState
+from udl.plugins.apps.orch.agents import AgentRole, ManagerPowers, SessionState
 from udl.plugins.apps.orch.dispatcher import (
     PRUNE_EVERY,
     RULES,
@@ -62,6 +64,7 @@ from udl.plugins.apps.orch.models import (
     READY,
     OwnerKind,
     Principal,
+    QuestionState,
 )
 from udl.plugins.apps.orch.plugin import Orch
 from udl.plugins.apps.orch.records import (
@@ -73,6 +76,8 @@ from udl.plugins.apps.orch.records import (
     LinkRecords,
     Project,
     ProjectRecords,
+    Question,
+    QuestionRecords,
     Repo,
     RepoRecords,
     SessionEvent,
@@ -362,6 +367,11 @@ async def tasks_of(service: UDLService) -> dict[str, Task]:
     return {one.key: one for one in found}
 
 
+async def questions_of(service: UDLService) -> list[Question]:
+    """Every question of the project, oldest first."""
+    return await QuestionRecords(AppRecords(service.db)).questions("udl", state=None)
+
+
 async def session_of(service: UDLService, agent: str = AGENT) -> AgentSession | None:
     """The newest session `agent` was in, or None."""
     found = await SessionRecords(AppRecords(service.db)).sessions(agent)
@@ -533,8 +543,14 @@ async def test_a_task_still_going_is_nudged_and_then_blocked_as_stalled(
 
     every = await tasks_of(service)
     assert every["F-1.1"].state == BLOCKED
-    assert every["F-1.1"].blocked_on is not None
-    assert "stalled" in every["F-1.1"].blocked_on
+    # (28.1: a stall is a question, and each task waits on its own rather than on a line of text)
+    asked_of = await questions_of(service)
+    assert {one.task for one in asked_of} == {"F-1.1", "F-1.2"}
+    assert {one.title for one in asked_of} == {
+        "agent stalled: deepseek-b took 3 nudges without progress"
+    }
+    assert all(one.blocking and one.state is QuestionState.OPEN for one in asked_of)
+    assert every["F-1.1"].blocked_on in {one.key for one in asked_of}
     assert any("still on F-1.1" in prompt for prompt in PROMPTS)
     # (one turn that said what changed — progress — then `max_nudges` turns that said nothing
     # new, and the task is blocked rather than nudged again)
@@ -601,7 +617,10 @@ async def test_a_failed_turn_is_retried_and_then_the_session_fails(
     assert session.state is SessionState.ENDED
     every = await tasks_of(service)
     assert every["F-1.1"].state == BLOCKED
-    assert "harness fell over" in (every["F-1.1"].blocked_on or "")
+    # (28.1: a failed session is a question too, so a person is asked about it)
+    asked_of = await questions_of(service)
+    assert [one.title for one in asked_of] == ["deepseek-b's session failed: the harness fell over"]
+    assert every["F-1.1"].blocked_on == asked_of[0].key
 
 
 async def test_a_session_udl_restarted_is_resumed_with_continue(service: UDLService) -> None:
@@ -903,6 +922,59 @@ async def test_an_agent_whose_host_does_not_answer_is_offline(service: UDLServic
     assert all(spec.cwd != "/work/F-1.9" for spec in STORE.specs.values())
 
 
+async def test_a_stall_is_asked_of_the_agent_s_manager_when_it_may_answer(
+    service: UDLService,
+) -> None:
+    """(28.1's routing, from the dispatcher's side: what an agent cannot settle itself goes to
+    its manager when that manager may answer, not to the humans.)"""
+    agents = AgentRecords(AppRecords(service.db))
+    await agents.save_agent(
+        Agent(
+            name="ernie-c",
+            title="ernie-c",
+            runner="fake",
+            host="local",
+            role=AgentRole.MANAGER,
+            manages=ManagerPowers(answer=True),
+        )
+    )
+    found = await agents.agent(AGENT)
+    assert found is not None
+    await agents.save_agent(found.model_copy(update={"manager": "ernie-c"}))
+
+    await ran(service, clock=FakeClock(), turns=5)
+
+    asked_of = await questions_of(service)
+    assert asked_of
+    assert {one.to for one in asked_of} == {"ernie-c"}
+
+
+async def test_an_answer_reaches_the_agent_s_next_session(service: UDLService) -> None:
+    """(28.1: the answer is delivered into the agent's session — a session that picks the task up
+    again is told what was answered while it waited.)"""
+    await TaskRecords(AppRecords(service.db)).delete_task("udl", "F-1.2")
+    await ran(service, clock=FakeClock(), turns=5)
+    asked_of = await questions_of(service)
+    assert len(asked_of) == 1
+    token = current_principal.set(Caller(kind=PrincipalKind.OWNER, name="owner"))
+    try:
+        await service.call(
+            "orch_answer",
+            {"project": "udl", "key": asked_of[0].key, "answer": "Go on: it is one more file."},
+        )
+    finally:
+        current_principal.reset(token)
+    PROMPTS.clear()
+    STORE.turns = 0
+
+    await ran(service, clock=FakeClock(), turns=1)
+
+    assert PROMPTS
+    assert "these were answered" in PROMPTS[0]
+    assert asked_of[0].key in PROMPTS[0]
+    assert "Go on: it is one more file." in PROMPTS[0]
+
+
 async def test_a_session_whose_pull_is_only_waiting_holds_no_turn(service: UDLService) -> None:
     """(The card's 5: while waiting on the checks or the bot, the agent holds no turn.)"""
     github = await service.apps.get("github")
@@ -928,6 +1000,35 @@ async def test_a_session_whose_pull_is_only_waiting_holds_no_turn(service: UDLSe
     session = await session_of(service)
     assert session is not None
     assert session.state is SessionState.IDLE
+
+
+async def test_a_pull_only_waiting_on_the_bot_asks_once_how_long_to_wait(
+    service: UDLService,
+) -> None:
+    """(28.1: the rerun that would hurry the bot needs an operation udl lacks, so the wait is a
+    question — asked once, not on every tick — and the session holds no turn meanwhile.)"""
+    github = await service.apps.get("github")
+    assert isinstance(github, FakeGitHub)
+    github.pull = FakePull(
+        checks=[{"name": "check", "status": "in_progress", "conclusion": None}],
+        comments=[],
+    )
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(20):
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    asked_of = await questions_of(service)
+    assert [one.title for one in asked_of] == ["The bot has not answered: how long to wait?"]
+    assert not asked_of[0].blocking
+    assert asked_of[0].to == "humans"
 
 
 async def test_a_turn_s_live_events_publish(service: UDLService) -> None:
