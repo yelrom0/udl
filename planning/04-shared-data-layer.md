@@ -183,7 +183,13 @@ Today's udl is one person's: one set of databases, one secret store, one owner. 
 
 **31.8 The isolation proof** · needs 31.7
 - Build: `tests/interface/test_workspace_isolation.py`, the phase's first bullet, generated: for each record kind with an `example()`, store it in `a`; call every read-only operation in `b` (with each request model's minimal valid request) and assert the record's id and name appear in no response; then every `delete_*`, `set_*` and `get_*` naming it in `b` is `DoesNotExist`.
-- Done when: it passes over `sqlite`, `postgres` and `mongodb`.
+- Build, too: the tests where several udls or workers share one database run on PostgreSQL as well as SQLite. SQLite takes one writer at a time, so two writers never race there (7.1 found two races only a shared server showed). The lease and claim primitives are already proven on every database plugin (the record contract), but what is built on them has only run on SQLite:
+  - `tests/integration/test_runtime.py`: one runtime per database (the lease, both take-overs, an event a CLI publishes, dispatched and run);
+  - `tests/integration/test_schedules.py`: a cron job's runs, and the misfire policy after a stop;
+  - `tests/integration/plugins/apps/orch/test_dispatcher.py`: `max_agents_running` (`test_only_so_many_agents_are_mid_turn_at_once`) and queued tasks taken to ready in order.
+
+  Each file's settings take their connection from a fixture parametrised over `sqlite` and `postgres` (the `postgres_url` fixture, as `tests/contract/conftest.py` does), the SQLite case unchanged. A test that passes on SQLite and fails on PostgreSQL is a bug: fix it in this PR, with a test that reproduces it, never a skip.
+- Done when: it passes over `sqlite`, `postgres` and `mongodb`, and the three files above pass on both `sqlite` and `postgres`.
 
 **Phase 31 is done when:** after `udl hub init` and `udl workspaces create acme`, `udl -W acme schedules set …` makes a schedule that `udl -W default schedules list` doesn't show, and a restarted `udl serve` fires both workspaces' schedules.
 

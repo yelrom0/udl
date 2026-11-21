@@ -175,7 +175,7 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
   - [ ] 31.5 `udl hub init`: a standalone udl becomes a hub, its database workspace `default`
   - [ ] 31.6 Choosing a call's workspace: `X-UDL-Workspace`, `/w/<ws>/mcp`, `-W`
   - [ ] 31.7 Workspace operations: create, suspend, delete, export, import
-  - [ ] 31.8 The isolation proof, generated over the registry, on every database plugin
+  - [ ] 31.8 The isolation proof, generated over the registry, on every database plugin; the runtime, scheduler and dispatcher tests on PostgreSQL too
 - [ ] **Phase 32: People: users, sign-in, roles and tokens**
   - [ ] 32.1 `User`, `Membership` and `Invite` records
   - [ ] 32.2 Passwords (argon2id) and TOTP, recovery codes, lockout
