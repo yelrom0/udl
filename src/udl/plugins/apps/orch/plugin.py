@@ -1300,8 +1300,11 @@ class Orch(AppPlugin[OrchSettings]):
         return _question(found)
 
     async def reply(self, request: ReplyRequest) -> Message:
-        """Add a follow-up to a question's thread, from either side."""
+        """Add a follow-up to a question's thread, from either side.
+
+        An agent says its piece only on a question it asked or one asked of it."""
         project = await self._project(request.project)
+        await self._may_touch(project, request.key, sides=True)
         said = await asked.reply(
             stored.QuestionRecords(self.records),
             project=project,
@@ -1315,6 +1318,7 @@ class Orch(AppPlugin[OrchSettings]):
         """Pass a question up: to the manager's manager when that one may answer, and to the
         humans at the top."""
         project = await self._project(request.project)
+        await self._may_touch(project, request.key)
         found = await asked.escalate(
             stored.QuestionRecords(self.records),
             project=project,
@@ -1325,8 +1329,11 @@ class Orch(AppPlugin[OrchSettings]):
         return _question(found)
 
     async def close_question(self, request: CloseQuestionRequest) -> Question:
-        """Close a question nobody answered, with what was done about it instead."""
+        """Close a question nobody answered, with what was done about it instead.
+
+        An agent closes only what was asked of it; a person closes any."""
         project = await self._project(request.project)
+        await self._may_touch(project, request.key)
         found = await asked.close(
             stored.QuestionRecords(self.records),
             project=project,
@@ -1334,6 +1341,27 @@ class Orch(AppPlugin[OrchSettings]):
             outcome=request.outcome,
         )
         return _question(found)
+
+    async def _may_touch(self, project: str, key: str, *, sides: bool = False) -> None:
+        """Refuse an agent that may not touch question `key`: what is asked of it, and — with
+        `sides` — what it asked itself. A person (or udl itself) may touch any.
+
+        Raises DoesNotExist when there is no such question, and NotAllowed when it is another's."""
+        who = _caller()
+        if who is None or not who.is_agent:
+            return
+        found = await stored.QuestionRecords(self.records).question(project, key)
+        if found is None:
+            raise DoesNotExist(f"There is no question called {key!r} in {project!r}")
+        mine: set[str] = {found.to}
+        if sides and found.asked_by:
+            mine.add(found.asked_by)
+        if who.name not in mine:
+            raise NotAllowed(
+                f"{key!r} is not yours: it is asked of {found.to!r}"
+                + (f" and was asked by {found.asked_by!r}" if found.asked_by else ""),
+                hint="An agent touches the questions asked of it (and, in a thread, its own).",
+            )
 
     async def list_questions(self, request: ListQuestionsRequest) -> Questions:
         """The questions waiting, oldest first, narrowed by state, who they are asked of, and the

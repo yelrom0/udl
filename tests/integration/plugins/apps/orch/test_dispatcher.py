@@ -16,7 +16,7 @@ dispatcher does with it.
 # System Imports
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar
@@ -35,7 +35,8 @@ from udl.config import APISettings
 from udl.core.models import PluginSettingsRequest, SetPluginSettingsRequest
 from udl.core.operations import OperationHints
 from udl.core.service import UDLService
-from udl.errors import DoesNotExist, NotAllowed, PluginError, PluginFailed
+from udl.db.records import Record
+from udl.errors import DatabaseError, DoesNotExist, NotAllowed, PluginError, PluginFailed
 from udl.hosts.shell import Host, HostShell
 from udl.interfaces.security import Principal as Caller
 from udl.interfaces.security import PrincipalKind, current_principal
@@ -48,6 +49,7 @@ from udl.plugins.apps.base import (
     AppSettings,
     AppSubscription,
 )
+from udl.plugins.apps.orch import questions as asked
 from udl.plugins.apps.orch import workspace as space
 from udl.plugins.apps.orch.agents import AgentRole, ManagerPowers, SessionState
 from udl.plugins.apps.orch.dispatcher import (
@@ -248,12 +250,14 @@ async def dispatcher(
     clock: FakeClock | None = None,
     tick: timedelta | None = None,
     settings: OrchSettings | None = None,
+    records: AppRecords | None = None,
 ) -> tuple[Dispatcher, AppContext]:
-    """A dispatcher for `service`, with a test's own `prepare()` (a path, no git)."""
+    """A dispatcher for `service`, with a test's own `prepare()` (a path, no git), and a test's
+    own records when it needs a store that fails."""
     made = clock if clock is not None else FakeClock()
     app = await service.apps.get("orch")
     assert isinstance(app, Orch)
-    records = AppRecords(service.db)
+    records = records if records is not None else AppRecords(service.db)
     events = AppEvents(service.bus, "orch", Orch.event_types())
     ctx = AppContext(
         app=app,
@@ -1636,3 +1640,228 @@ async def test_a_token_stored_before_the_run_is_the_one_a_session_gets(
     assert spec.mcp is not None
     assert spec.mcp.token is not None
     assert spec.mcp.token.get_secret_value() == stored.get_secret_value()
+
+
+# ---------------------------------------------------------------------------------------------
+# The review's first round: a stall that blocks whatever question is open, and answers told once
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_stall_blocks_the_task_even_with_an_earlier_question_open(
+    service: UDLService,
+) -> None:
+    """(A task that already has an open question — the bot's wait, say — is still blocked when
+    its agent stalls: the session is ended, and the task waits rather than looping.)"""
+    await asked.ask(
+        QuestionRecords(AppRecords(service.db)),
+        project="udl",
+        task="F-1.1",
+        title="The bot has not answered: how long to wait?",
+        asked_by=AGENT,
+    )
+
+    await ran(service, clock=FakeClock(), turns=5)
+
+    waiting = (await tasks_of(service))["F-1.1"]
+    assert waiting.state == BLOCKED
+    assert waiting.blocked_on == "Q-1", "the stall waits on the question that was open"
+
+
+async def test_a_blocking_question_that_cannot_be_written_is_not_dropped(
+    service: UDLService,
+) -> None:
+    """(Dropping it would leave the task running and the loop nudging it for good: a blocking ask
+    that fails is raised, and the tick tries again.)"""
+
+    class _CannotWriteQuestions(AppRecords):
+        """A store that cannot write a question."""
+
+        async def save[R: Record](self, record: R) -> R:
+            if isinstance(record, Question):
+                raise DatabaseError("the question could not be written")
+            return await super().save(record)
+
+        async def save_all[R: Record](self, records: Sequence[R]) -> list[R]:
+            if any(isinstance(one, Question) for one in records):
+                raise DatabaseError("the question could not be written")
+            return await super().save_all(records)
+
+    found, _ = await dispatcher(
+        service, clock=FakeClock(), records=_CannotWriteQuestions(service.db)
+    )
+    task = (await tasks_of(service))["F-1.1"]
+
+    with pytest.raises(DatabaseError, match="could not be written"):
+        await found._ask(AGENT, task, title="Why?", text="Why?", blocking=True)
+
+
+async def test_a_bot_wait_that_cannot_be_written_is_dropped(service: UDLService) -> None:
+    """(The bot's wait blocks nothing: a store that cannot write it costs the question, not the
+    tick.)"""
+
+    class _CannotWriteQuestions(AppRecords):
+        """A store that cannot write a question."""
+
+        async def save_all[R: Record](self, records: Sequence[R]) -> list[R]:
+            if any(isinstance(one, Question) for one in records):
+                raise DatabaseError("the question could not be written")
+            return await super().save_all(records)
+
+    found, _ = await dispatcher(
+        service, clock=FakeClock(), records=_CannotWriteQuestions(service.db)
+    )
+    task = (await tasks_of(service))["F-1.1"]
+
+    assert await found._ask(AGENT, task, title="Why?", text="Why?", blocking=False) is None
+
+
+async def test_an_answer_is_told_once(service: UDLService) -> None:
+    """(An answer is delivered into the session that waited for it, and not again into the one
+    after it: the session remembers what it was told.)"""
+    await TaskRecords(AppRecords(service.db)).delete_task("udl", "F-1.2")
+    agents = AgentRecords(AppRecords(service.db))
+    found = await agents.agent(AGENT)
+    assert found is not None
+    await agents.save_agent(found.model_copy(update={"max_nudges": 20}))
+    await ran(service, clock=FakeClock(), turns=5)
+    asked_of = await questions_of(service)
+    assert len(asked_of) == 1
+    token = current_principal.set(Caller(kind=PrincipalKind.OWNER, name="owner"))
+    try:
+        await service.call(
+            "orch_answer",
+            {"project": "udl", "key": asked_of[0].key, "answer": "Go on: it is one more file."},
+        )
+    finally:
+        current_principal.reset(token)
+
+    PROMPTS.clear()
+    STORE.turns = 0
+    await ran(service, clock=FakeClock(), turns=1)
+    assert "these were answered" in PROMPTS[0]
+
+    found, _ = await dispatcher(service, clock=FakeClock())
+    task = (await tasks_of(service))["F-1.1"]
+    session = await SessionRecords(AppRecords(service.db)).save_session(
+        AgentSession(
+            agent=AGENT,
+            project="udl",
+            task=task.key,
+            ref=SessionRef(runner="fake", id="ses_after", cwd="/work/F-1.1", host="local"),
+        )
+    )
+
+    again, _ = await found._answers(task, session)
+
+    assert again == "", "it was told, and is not told twice"
+
+
+async def test_an_answer_to_another_s_question_is_not_told(service: UDLService) -> None:
+    """(The session is told the answers to its own questions, not to everyone's.)"""
+    await TaskRecords(AppRecords(service.db)).delete_task("udl", "F-1.2")
+    questions = QuestionRecords(AppRecords(service.db))
+    theirs = await asked.ask(
+        questions,
+        project="udl",
+        task="F-1.1",
+        title="Their question",
+        asked_by="ernie-d",
+    )
+    token = current_principal.set(Caller(kind=PrincipalKind.OWNER, name="owner"))
+    try:
+        await service.call(
+            "orch_answer", {"project": "udl", "key": theirs.key, "answer": "Theirs, answered."}
+        )
+    finally:
+        current_principal.reset(token)
+
+    PROMPTS.clear()
+    await ran(service, clock=FakeClock(), turns=1)
+
+    assert PROMPTS
+    assert "Theirs, answered." not in PROMPTS[0]
+
+
+async def test_a_non_blocking_answer_reaches_a_session_still_running(
+    service: UDLService,
+) -> None:
+    """(The answer is delivered while the session is on the task, not only when it picks it up
+    again: a session that went on is told at its next turn.)"""
+    records = AppRecords(service.db)
+    task = (await tasks_of(service))["F-1.1"]
+    questions = QuestionRecords(records)
+    mine = await asked.ask(
+        questions, project="udl", task=task.key, title="Which repo?", asked_by=AGENT
+    )
+    token = current_principal.set(Caller(kind=PrincipalKind.OWNER, name="owner"))
+    try:
+        await service.call(
+            "orch_answer", {"project": "udl", "key": mine.key, "answer": "The `api` one."}
+        )
+    finally:
+        current_principal.reset(token)
+    session = await SessionRecords(records).save_session(
+        AgentSession(
+            agent=AGENT,
+            project="udl",
+            task=task.key,
+            ref=SessionRef(runner="fake", id="ses_running", cwd="/work/F-1.1", host="local"),
+            state=SessionState.RUNNING,
+            turns=1,
+        )
+    )
+
+    found, _ = await dispatcher(service, clock=FakeClock())
+    what, _told, kind = await found._next_prompt(task, session)
+
+    assert what is not None
+    assert kind == "changed"
+    assert "these were answered" in what
+    assert "The `api` one." in what
+    delivered = await QuestionRecords(records).question("udl", mine.key)
+    assert delivered is not None
+    assert delivered.delivered
+
+
+async def test_the_bot_s_wait_is_asked_once_however_it_was_answered(
+    service: UDLService,
+) -> None:
+    """(The wait is asked once per task, not once per open question: an answer that says "wait"
+    does not make the next tick ask again.)"""
+    github = await service.apps.get("github")
+    assert isinstance(github, FakeGitHub)
+    github.pull = FakePull(
+        checks=[{"name": "check", "status": "in_progress", "conclusion": None}], comments=[]
+    )
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(20):
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    asked_of = await questions_of(service)
+    assert len(asked_of) == 1
+    token = current_principal.set(Caller(kind=PrincipalKind.OWNER, name="owner"))
+    try:
+        await service.call(
+            "orch_answer", {"project": "udl", "key": asked_of[0].key, "answer": "Wait an hour."}
+        )
+    finally:
+        current_principal.reset(token)
+
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(20):
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert len(await questions_of(service)) == 1, "it was asked, and not asked again"

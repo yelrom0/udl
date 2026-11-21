@@ -29,7 +29,7 @@ from support.engine import registry, settings
 from udl.config import APISettings
 from udl.core.service import UDLService
 from udl.db.records import Record
-from udl.errors import DatabaseError, DoesNotExist, NotAllowed
+from udl.errors import DatabaseError, DoesNotExist, InUse, NotAllowed
 from udl.interfaces.security import Principal as Caller
 from udl.interfaces.security import PrincipalKind, current_principal
 from udl.plugins.apps.base import AppRecords
@@ -123,6 +123,24 @@ def as_person() -> Any:
 
     Reset with `current_principal.reset(token)`."""
     return current_principal.set(Caller(kind=PrincipalKind.OWNER, name="owner"))
+
+
+def as_agent_named(name: str, *, role: str = "manager") -> Any:
+    """The caller is the agent called `name` for a while (a token's principal)."""
+    return current_principal.set(Caller(kind=PrincipalKind.AGENT, name=name, role=role))
+
+
+async def another_manager(service: UDLService) -> Agent:
+    """A second manager, so a test can show one touching another's question."""
+    found = Agent(
+        name="ernie-d",
+        title="ernie-d",
+        runner="fake",
+        host="local",
+        role=AgentRole.MANAGER,
+        manages=ManagerPowers(answer=True),
+    )
+    return await AgentRecords(AppRecords(service.db)).save_agent(found)
 
 
 def as_manager() -> Any:
@@ -570,3 +588,120 @@ async def test_a_question_is_a_record_of_its_project(service: UDLService) -> Non
     """(The kinds orch keeps, so the app contract and db sync see them.)"""
     kinds = {kind.kind for kind in Orch.record_kinds()}
     assert {"orch_question", "orch_message"} <= kinds
+
+
+# ---------------------------------------------------------------------------------------------
+# The review's first round: what a second question may not do, and who may touch one
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_second_blocking_question_is_refused_while_the_task_waits(
+    service: UDLService, as_agent: None
+) -> None:
+    """(A task waits on one question: a second one would overwrite what it waits on, and the
+    first would be answered into nothing.)"""
+    first = await ask(service, blocking=True)
+    assert (await task_of(service, "F-1.1")).blocked_on == first.key
+
+    with pytest.raises(InUse, match="already waits on"):
+        await ask(service, title="And which branch?", blocking=True)
+
+    assert (await task_of(service, "F-1.1")).blocked_on == first.key
+    assert [one.key for one in await questions_of(service)] == [first.key]
+
+
+async def test_a_question_has_nowhere_higher_to_go_than_the_humans(
+    service: UDLService, as_agent: None
+) -> None:
+    """(Escalating what the humans already hold has nowhere higher: it is refused rather than
+    routed back down.)"""
+    asked_about = await ask(service)
+    assert asked_about.to == HUMANS
+
+    token = as_person()
+    try:
+        with pytest.raises(NotAllowed, match="already the humans"):
+            await service.call("orch_escalate", {"project": "udl", "key": asked_about.key})
+    finally:
+        current_principal.reset(token)
+
+
+async def test_an_agent_may_not_answer_another_s_question(
+    service: UDLService,
+) -> None:
+    """(An answer is the holder's: a manager answering what was asked of another is refused.)"""
+    await ask(service)  # (asked of the humans, by AGENT)
+    other = await another_manager(service)
+    token = as_agent_named(other.name)
+    try:
+        with pytest.raises(NotAllowed, match="not yours to answer"):
+            await service.call(
+                "orch_answer", {"project": "udl", "key": "Q-1", "answer": "The `api` one."}
+            )
+    finally:
+        current_principal.reset(token)
+
+
+async def test_an_agent_may_not_close_or_pass_up_another_s_question(
+    service: UDLService, as_agent: None
+) -> None:
+    """(Closing or escalating another's question could leave their task blocked for good.)"""
+    asked_about = await ask(service, blocking=True)
+    other = await another_manager(service)
+
+    token = as_agent_named(other.name)
+    try:
+        with pytest.raises(NotAllowed, match="not yours"):
+            await service.call(
+                "orch_close_question",
+                {"project": "udl", "key": asked_about.key, "outcome": "Never mind."},
+            )
+        with pytest.raises(NotAllowed, match="not yours"):
+            await service.call("orch_escalate", {"project": "udl", "key": asked_about.key})
+    finally:
+        current_principal.reset(token)
+
+    assert (await task_of(service, "F-1.1")).state == BLOCKED
+
+
+async def test_a_thread_is_only_the_two_sides(service: UDLService, as_agent: None) -> None:
+    """(An agent replies on a question it asked or one asked of it, and not on a stranger's.)"""
+    asked_about = await ask(service)
+    stranger = Caller(kind=PrincipalKind.AGENT, name="ernie-d", role="implementer")
+    token = current_principal.set(stranger)
+    try:
+        with pytest.raises(NotAllowed, match="not yours"):
+            await service.call(
+                "orch_reply", {"project": "udl", "key": asked_about.key, "text": "A thought."}
+            )
+    finally:
+        current_principal.reset(token)
+
+
+async def test_the_asker_replies_in_its_own_thread(service: UDLService, as_agent: None) -> None:
+    """(The asker is one side of the thread: it may add to it after asking.)"""
+    asked_about = await ask(service)
+    await changed(service, AGENT, manager=None)  # (so the question is the humans', not ours)
+
+    token = current_principal.set(Caller(kind=PrincipalKind.AGENT, name=AGENT, role="implementer"))
+    try:
+        said = await service.call(
+            "orch_reply", {"project": "udl", "key": asked_about.key, "text": "It is `api`."}
+        )
+    finally:
+        current_principal.reset(token)
+
+    assert said.text == "It is `api`."
+
+
+async def test_an_agent_may_not_ask_about_another_s_task(service: UDLService) -> None:
+    """(An agent asks in the tasks it works: asking in another's is refused.)"""
+    await changed(service, AGENT, manager=None)
+    token = current_principal.set(
+        Caller(kind=PrincipalKind.AGENT, name=MANAGER, role=AgentRole.MANAGER)
+    )
+    try:
+        with pytest.raises(NotAllowed, match="not yours to ask about"):
+            await ask(service, title="Which repo?")
+    finally:
+        current_principal.reset(token)

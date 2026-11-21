@@ -24,7 +24,7 @@ from collections.abc import Sequence
 
 # Local Imports
 from udl.db.records import Record
-from udl.errors import DoesNotExist, NotAllowed
+from udl.errors import DoesNotExist, InUse, NotAllowed
 from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch import transitions
 from udl.plugins.apps.orch.models import (
@@ -99,6 +99,13 @@ async def ask(
     asked_in = await tasks_of.task(project, task)
     if asked_in is None:
         raise DoesNotExist(f"There is no task called {task!r} in {project!r}")
+    if blocking and asked_in.state == BLOCKED:
+        # (One question at a time: a second one would overwrite what the task waits on, and the
+        # first would then be answered into nothing (the review's fifth).)
+        raise InUse(
+            f"{task!r} already waits on {asked_in.blocked_on or 'a question'}",
+            hint="Answer or close the question it waits on, and ask again if it still stands.",
+        )
     named = await _named(questions, project=project, tasks=tasks, features=features)
     to = await route(questions, asked_by=asked_by)
     number = await Counters(questions.records).claim(project, QUESTIONS)
@@ -214,10 +221,16 @@ async def escalate(
             f"{key!r} is already {found.state.value}",
             hint="Only an open question is passed up.",
         )
+    if found.to == HUMANS:
+        raise NotAllowed(
+            f"{key!r} is already the humans'",
+            hint="There is nowhere above the humans: say why in a reply, or close it.",
+        )
     agents = AgentRecords(questions.records)
-    asked_of = await agents.agent(found.to) if found.to != HUMANS else None
-    asker = await agents.agent(found.asked_by) if found.asked_by else None
-    up = await _up_from(questions, asked_of if asked_of is not None else asker)
+    asked_of = await agents.agent(found.to)
+    if asked_of is None:
+        raise DoesNotExist(f"There is no agent called {found.to!r} to pass {key!r} up from")
+    up = await _up_from(questions, asked_of)
     said = why or f"Passed up to {up}."
     author = (by.who if by is not None else "") or "udl"
     saved = await questions.records.save_all(
@@ -286,9 +299,6 @@ async def _up_from(questions: QuestionRecords, agent: Agent | None) -> str:
 def _blocking(task: Task, question: Question, *, asked_by: str) -> list[Record]:
     """`task` moved to `blocked`, waiting on `question`, and the note that says so — planned here
     so the question and the block are one write."""
-    if task.state == BLOCKED:
-        # (Already blocked: the newer question is what it waits on now.)
-        return [task.model_copy(update={"blocked_on": question.key})]
     who = (
         Principal(kind="agent", name=asked_by, role="block")
         if asked_by and task.assignee == asked_by
@@ -296,6 +306,23 @@ def _blocking(task: Task, question: Question, *, asked_by: str) -> list[Record]:
     )
     moved = transitions.move(task, BLOCKED, by=who, note=question.key)
     return [moved, move_note(task, moved, who)]
+
+
+async def block_with(
+    questions: QuestionRecords, *, project: str, task: str, question: Question, asked_by: str = ""
+) -> Task:
+    """Block `task` on `question` (an open one it already has): one write, and the note that says
+    what it waits on. A task already blocked on it is left as it is.
+
+    Raises DoesNotExist when there is no such task."""
+    tasks = TaskRecords(questions.records)
+    found = await tasks.task(project, task)
+    if found is None:
+        raise DoesNotExist(f"There is no task called {task!r} in {project!r}")
+    if found.state == BLOCKED and found.blocked_on == question.key:
+        return found
+    saved = await questions.records.save_all(_blocking(found, question, asked_by=asked_by))
+    return next(one for one in saved if isinstance(one, Task))
 
 
 async def _unblocked(questions: QuestionRecords, question: Question) -> list[Record]:
@@ -339,7 +366,7 @@ def _link(question: Question, kind: OwnerKind, key: str, *, title: str) -> Link:
         project=question.project,
         owner_kind=OwnerKind.QUESTION,
         owner=question.key,
-        link_kind=kind.value,  # pyright: ignore[reportArgumentType]  (a task or a feature)
+        link_kind="task" if kind is OwnerKind.TASK else "feature",
         url=f"udl:{key}",
         title=title or key,
         added_by=question.asked_by,

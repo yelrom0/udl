@@ -415,6 +415,9 @@ class Question(Record):
     """What was done about it, when it is closed without an answer."""
     escalated: bool = False
     """Whether it was passed up from the agent it was asked of."""
+    delivered: bool = False
+    """Whether its answer has been told to the agent that asked (28.1: an answer is delivered
+    into a session once, not on every prompt and not again into the next session)."""
 
     @classmethod
     def example(cls) -> Self:
