@@ -1898,7 +1898,8 @@ export interface paths {
         /**
          * Write a harness's deny policies and its agent files on a host (idempotent), and set
          * @description Write a harness's deny policies and its agent files on a host (idempotent), and set
-         *     the provider keys it needs.
+         *     the provider keys it needs: the keys of the AI connections udl has (O-D5: an `op://`
+         *     reference works, because what is set is what the store gave).
          */
         post: operations["orch_runner_setup"];
         delete?: never;
