@@ -31,7 +31,7 @@ import re
 import socket
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -765,14 +765,15 @@ class Dispatcher:
             # (Only a turn that ended done carried the news: a limit or a failure said
             # something, but the manager did not hear what it was to, 27.8.)
             return outcome is Outcome.DONE
+        telling = Telling()
         if resume:
-            said = await self._answers(task, session)
+            said = await self._answers(task, session, telling)
             base = "udl restarted; continue where you were."
             prompt = f"{base}\n\n{said}" if said else base
         elif session.turns == 0:
-            prompt = first_prompt(task, answers=await self._answers(task, session))
+            prompt = first_prompt(task, answers=await self._answers(task, session, telling))
         else:
-            next_prompt, session, kind, waiting = await self._next_prompt(task, session)
+            next_prompt, session, kind, waiting = await self._next_prompt(task, session, telling)
             if next_prompt is None:
                 # (its pull is only waiting on time: the event wakes it, and how long it waited
                 # is a `Wait` — 27.10's, so a checks' hour is not the agent's work.)
@@ -783,10 +784,14 @@ class Dispatcher:
             prompt = next_prompt
         spoke = False
         while True:
+            began = self._clock.now()  # (the wait ended when the turn began, not when it ended)
             ran = await self._turn(agent, session, prompt)
             if ran is None:
-                return spoke  # (another holder had its turn: not this one's to fail or end)
-            await stored.WaitRecords(self._records).closing(task.id, at=self._clock.now())
+                return spoke  # (another holder had its turn: nothing told, not this one's to fail)
+            if ran.started:
+                await self._wrote(telling)
+                await stored.WaitRecords(self._records).closing(task.id, at=began)
+            telling = Telling()
             outcome, spoke = ran.outcome, ran.spoke
             session = await sessions.session(session.id) or session
             if outcome is Outcome.STOPPED:
@@ -809,7 +814,7 @@ class Dispatcher:
             if nudges >= agent.max_nudges:
                 await self._stalled(agent, now, session)
                 return spoke
-            next_prompt, session, kind, waiting = await self._next_prompt(now, session)
+            next_prompt, session, kind, waiting = await self._next_prompt(now, session, telling)
             if next_prompt is None:
                 # (only time stands in the way: no turn until the pull changes)
                 await stored.WaitRecords(self._records).opening(
@@ -818,9 +823,11 @@ class Dispatcher:
                 return spoke
             prompt = next_prompt
 
-    async def _answers(self, task: stored.Task, session: stored.AgentSession) -> str:
-        """What `session` is told of the answers to its own questions, marked as told as they are
-        delivered: an answer reaches a session once, not on every prompt (28.1)."""
+    async def _answers(
+        self, task: stored.Task, session: stored.AgentSession, telling: Telling
+    ) -> str:
+        """What `session` is told of the answers to its own questions, to be marked told when the
+        turn starts: an answer reaches a session once, not on every prompt (28.1)."""
         agent = session.agent or ""
         if not agent:
             return ""
@@ -830,11 +837,11 @@ class Dispatcher:
         fresh = [one for one in found if one.answer and one.asked_by == agent and not one.delivered]
         if not fresh:
             return ""
-        await self._records.save_all([one.model_copy(update={"delivered": True}) for one in fresh])
+        telling.questions.extend(fresh)
         return answered(fresh)
 
     async def _next_prompt(
-        self, task: stored.Task, session: stored.AgentSession
+        self, task: stored.Task, session: stored.AgentSession, telling: Telling
     ) -> tuple[str | None, stored.AgentSession, str, WaitKind | None]:
         """What a session still on its task is told — what changed since the last turn (its pull's
         checks, the review bot's open items), or with nothing new a nudge (the card's 3) — the
@@ -844,7 +851,7 @@ class Dispatcher:
         None means the session holds no turn: its pull is only waiting on time (the checks
         running, the bot not done with this head), and a `github.pr.*` event wakes it (the card's
         5)."""
-        said = await self._answers(task, session)
+        said = await self._answers(task, session, telling)
         what, session, waiting = await self._what_changed(task, session)
         if said and what is not None:
             what = f"{said}\n\n{what}"
@@ -854,10 +861,19 @@ class Dispatcher:
             return None, session, "waiting", waiting
         if what is None or what == session.last_text:
             return nudge(task), session, "nudge", None
-        session = await stored.SessionRecords(self._records).save_session(
-            session.model_copy(update={"last_text": what})
-        )
+        session = session.model_copy(update={"last_text": what})
+        telling.session = session  # (saved when the turn starts: not before)
         return changed(task, what), session, "changed", None
+
+    async def _wrote(self, telling: Telling) -> None:
+        """Write what a prompt told, now that its turn has started: the answers as delivered, and
+        the session's memory of what it was told."""
+        if telling.questions:
+            await self._records.save_all(
+                [one.model_copy(update={"delivered": True}) for one in telling.questions]
+            )
+        if telling.session is not None:
+            await stored.SessionRecords(self._records).save_session(telling.session)
 
     async def _what_changed(
         self, task: stored.Task, session: stored.AgentSession
@@ -1213,12 +1229,27 @@ class TurnLease:
 
 @dataclass(frozen=True, slots=True)
 class Ran:
-    """What a turn did: how it ended, whether it said anything at all, and the turn it ran as
-    (read under the lock, not from the caller's snapshot)."""
+    """What a turn did: how it ended, whether it said anything at all, the turn it ran as (read
+    under the lock, not from the caller's snapshot), and whether it started — a turn that never
+    started (the session was gone or ended, or another holder kept its lease) told nothing."""
 
     outcome: Outcome
     spoke: bool
     turn: int
+    started: bool = True
+
+
+@dataclass(slots=True)
+class Telling:
+    """What a prompt says it told, to be written when its turn starts rather than when the prompt
+    is built: a turn that never starts — another process had the session's turn — told nothing,
+    so an answer it carried is still to be delivered and its news is still new (27.9)."""
+
+    questions: list[stored.Question] = field(default_factory=list[stored.Question])
+    """The answers it carries, to be marked delivered."""
+
+    session: stored.AgentSession | None = None
+    """The session with its memory of what it was told (`last_text`), to be saved."""
 
 
 class Turns:
@@ -1297,9 +1328,9 @@ class Turns:
         sessions = stored.SessionRecords(self._records)
         current = await sessions.session(session.id)
         if current is None:
-            return Ran(Outcome.STOPPED, False, session.turns)  # (gone: nothing to say into)
+            return Ran(Outcome.STOPPED, False, session.turns, False)  # (gone: nothing to say)
         if current.state is SessionState.ENDED:
-            return Ran(Outcome.STOPPED, False, current.turns)
+            return Ran(Outcome.STOPPED, False, current.turns, False)
         # (The lock and the lease are what say a turn is already in it, in this process and in
         # another; the stored state says it too — `orch_send` refuses a RUNNING session. A record
         # that still says RUNNING after a restart is a turn that never ended, and this one takes

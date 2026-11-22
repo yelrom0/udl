@@ -320,6 +320,21 @@ async def fake_prepare(task: Task, agent: Agent) -> Task:
     )
 
 
+async def a_while(service: UDLService, *, steps: int = 6) -> None:
+    """Run a dispatcher of the test's own for a few ticks, then stop it (a test that asserts
+    nothing was done has nothing to wait for)."""
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(steps):
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+
 async def until_there(
     service: UDLService,
     what: Callable[[], Awaitable[bool]],
@@ -1068,6 +1083,130 @@ async def test_an_answer_reaches_the_agent_s_next_session(service: UDLService) -
     assert "these were answered" in PROMPTS[0]
     assert asked_of[0].key in PROMPTS[0]
     assert "Go on: it is one more file." in PROMPTS[0]
+
+
+async def test_a_session_another_process_is_turning_is_left_alone(service: UDLService) -> None:
+    """(27.9: the loop's turn for a session another process is turning is no turn at all — the
+    session is not counted, failed or ended, and the answer its prompt would have carried is
+    still to be delivered by the turn that does run.)"""
+    await TaskRecords(AppRecords(service.db)).delete_task("udl", "F-1.2")
+    agents = AgentRecords(AppRecords(service.db))
+    working = await agents.agent(AGENT)
+    assert working is not None
+    # (No stall, and so no blocking question: this test is about a session's turn, not a nudge.)
+    await agents.save_agent(working.model_copy(update={"max_nudges": 1000}))
+    await ran(service, clock=FakeClock(), turns=1)  # (a session of its own, with a turn behind it)
+    session = await session_of(service)
+    assert session is not None
+
+    token = current_principal.set(Caller(kind=PrincipalKind.AGENT, name=AGENT, role="implementer"))
+    try:
+        await service.call(
+            "orch_ask",
+            {
+                "project": "udl",
+                "task": "F-1.1",
+                "title": "Which file?",
+                "text": "There are two that fit.",
+                "blocking": False,
+            },
+        )
+    finally:
+        current_principal.reset(token)
+    mine = next(one for one in await questions_of(service) if one.title == "Which file?")
+    token = current_principal.set(Caller(kind=PrincipalKind.OWNER, name="owner"))
+    try:
+        await service.call(
+            "orch_answer",
+            {"project": "udl", "key": mine.key, "answer": "The one under src."},
+        )
+    finally:
+        current_principal.reset(token)
+
+    # (another process is in a turn of that session)
+    held = await service.db.claim_lease(
+        f"orch-turn:{session.id}", "another-host:4242:abcd", timedelta(hours=1)
+    )
+    assert held is not None
+    PROMPTS.clear()
+    STORE.turns = 0
+
+    await a_while(service)
+
+    assert STORE.turns == 0  # (no turn was sent)
+    left = await SessionRecords(AppRecords(service.db)).session(session.id)
+    assert left is not None
+    assert left.state is session.state
+    assert left.turns == session.turns
+    assert left.failures == 0
+    assert not [one for one in await questions_of(service) if one.delivered]
+    # (and the turn that does run carries it)
+    await service.db.release_lease(f"orch-turn:{session.id}", "another-host:4242:abcd")
+    await ran(service, clock=FakeClock(), turns=1)
+    assert PROMPTS
+    assert "these were answered" in PROMPTS[0]
+    assert "The one under src." in PROMPTS[0]
+
+
+async def test_a_manager_s_session_another_process_is_turning_is_left_alone(
+    service: UDLService,
+) -> None:
+    """(27.8 with 27.9: a manager whose session another process is turning is not failed or
+    ended, and its news is not counted as told — the turn that does run tells it.)"""
+    await a_manager_and_its_reports(service)
+    SCRIPT["manager"] = silent_turn
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    records = AppRecords(service.db)
+    # (the manager's standing task, and the session another process is in a turn of: the loop
+    # takes a RUNNING session over, which is what the lease must stop it doing)
+    standing = Task(
+        project="udl",
+        feature="managing",
+        key="managing.1",
+        title="ernie-c's reports",
+        task_kind="review",
+        assignee="ernie-c",
+    )
+    await FeatureRecords(records).save_feature(
+        Feature(project="udl", key="managing", title="Managing")
+    )
+    await TaskRecords(records).save_task(standing)
+    tasks = TaskRecords(records)
+    queued = await tasks.move(standing, QUEUED, by=Principal(kind="system", role="assign"))
+    await tasks.move(queued, IN_PROGRESS, by=Principal(kind="system", role="start"))
+    running = await SessionRecords(records).save_session(
+        AgentSession(
+            agent="ernie-c",
+            project="udl",
+            task=standing.key,
+            ref=SessionRef(runner="fake", id="fake-9", cwd="/work/managing.1", host="local"),
+            state=SessionState.RUNNING,
+            turns=3,
+        )
+    )
+    await service.db.claim_lease(
+        f"orch-turn:{running.id}", "another-host:4242:abcd", timedelta(hours=1)
+    )
+    MANAGER_PROMPT[0] = ""
+    loop = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(6):
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        loop.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await loop
+
+    assert MANAGER_PROMPT[0] == ""  # (the manager's turn was not taken from under it)
+    left = await SessionRecords(records).session(running.id)
+    assert left is not None
+    assert left.state is SessionState.RUNNING
+    assert left.turns == 3
+    assert left.failures == 0
+    told = await AgentRecords(records).agent("ernie-c")
+    assert told is not None
+    assert told.last_news == ""  # (nothing was told, so nothing is remembered as told)
 
 
 async def test_a_session_whose_pull_is_only_waiting_holds_no_turn(service: UDLService) -> None:
