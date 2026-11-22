@@ -752,9 +752,10 @@ class Dispatcher:
                 for one in await managers.reports(stored.AgentRecords(self._records), agent.name)
             ]
             items = await self._needs(agent, reports)
-            outcome = (
-                await self._turn(agent, session, manager_prompt(agent, reports, items))
-            ).outcome
+            ran = await self._turn(agent, session, manager_prompt(agent, reports, items))
+            if ran is None:
+                return False  # (another holder had its turn: nothing told, nothing failed)
+            outcome = ran.outcome
             session = await sessions.session(session.id) or session
             if outcome is Outcome.STOPPED:
                 return False  # (a person stopped it: its news was not told)
@@ -780,9 +781,12 @@ class Dispatcher:
                 )
                 return True
             prompt = next_prompt
+        spoke = False
         while True:
-            await stored.WaitRecords(self._records).closing(task.id, at=self._clock.now())
             ran = await self._turn(agent, session, prompt)
+            if ran is None:
+                return spoke  # (another holder had its turn: not this one's to fail or end)
+            await stored.WaitRecords(self._records).closing(task.id, at=self._clock.now())
             outcome, spoke = ran.outcome, ran.spoke
             session = await sessions.session(session.id) or session
             if outcome is Outcome.STOPPED:
@@ -988,13 +992,16 @@ class Dispatcher:
                 return
         await self._ask(name, task, title=title, text=text, blocking=blocking)
 
-    async def _turn(self, agent: stored.Agent, session: stored.AgentSession, prompt: str) -> Ran:
+    async def _turn(
+        self, agent: stored.Agent, session: stored.AgentSession, prompt: str
+    ) -> Ran | None:
         """Send one turn: `Turns.one`, the same turn `orch_send` makes (27.9), waiting for the
-        session's lease (the loop has a turn to make, so it waits rather than skip it)."""
-        ran = await self._turns_made.one(agent, session, prompt)
-        if ran is None:  # (another holder had the session's turn for longer than `TURN_WAIT`)
-            return Ran(Outcome.RETRY, False, session.turns)
-        return ran
+        session's lease (the loop has a turn to make, so it waits rather than skip it).
+
+        None when another holder had the session's turn for longer than `TURN_WAIT`: that turn is
+        not this one's, so nothing is said, nothing failed, and the loop comes back to it — a
+        session another process is turning is not a session this one may fail, end or count."""
+        return await self._turns_made.one(agent, session, prompt)
 
     async def _retried(self, agent: stored.Agent, session: stored.AgentSession, why: str) -> bool:
         """A turn that failed: retried after a backoff, and after `FAILURES` tries the session is

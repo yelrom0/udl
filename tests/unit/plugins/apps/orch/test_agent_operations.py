@@ -602,6 +602,39 @@ async def test_a_turn_waits_for_the_other_process_s_turn(
         assert WaitingRunner.sends == 2
 
 
+async def test_a_turn_that_never_gets_its_lease_is_no_turn(tmp_path: Path) -> None:
+    """A turn whose lease another holder keeps past `TURN_WAIT` is no turn at all: the session is
+    left exactly as it was — not counted, not failed, not ended (27.9)."""
+    plugins = registry()
+    plugins.register(APPS, Orch)
+    plugins.register(RUNNERS, WaitingRunner)
+    clock = FakeClock()
+    async with UDLService(settings(tmp_path), registry=plugins, clock=clock) as service:
+        await AgentRecords(AppRecords(service.db)).save_agent(
+            Agent(name="ernie-c", title="ernie-c", runner="fake")
+        )
+        found = await a_session(service, state=SessionState.IDLE)
+        agent = await AgentRecords(AppRecords(service.db)).agent("ernie-c")
+        assert agent is not None
+        await service.db.claim_lease(
+            f"orch-turn:{found.id}", "another-host:4242:abcd", timedelta(hours=1)
+        )
+        turns = await a_turns(service)
+        reset_waiting()
+
+        one = asyncio.create_task(turns.one(agent, found, "Go on"))
+        async with asyncio.timeout(10):
+            await clock.advance(dispatcher.TURN_WAIT + timedelta(seconds=1))
+            assert await one is None
+
+        assert WaitingRunner.sends == 0  # (the harness was never sent a turn)
+        left = await SessionRecords(AppRecords(service.db)).session(found.id)
+        assert left is not None
+        assert left.state is SessionState.IDLE
+        assert left.turns == found.turns
+        assert left.failures == 0
+
+
 async def test_a_long_turn_keeps_its_lease(tmp_path: Path) -> None:
     """A turn longer than the lease's ttl keeps it, renewed while it runs: a second holder cannot
     take a turn that is still going (27.9)."""
