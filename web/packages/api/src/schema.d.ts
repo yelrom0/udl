@@ -3394,7 +3394,10 @@ export interface components {
              * @description The agents that report to it.
              */
             reports?: components["schemas"]["Name"][];
-            /** @description Its current session, when it has one (its transcript's first page). */
+            /**
+             * @description Its current session, when it has one (the record: where it got to and what it cost, not
+             *     its transcript — `orch_get_session` reads that).
+             */
             session?: components["schemas"]["AgentSession"] | null;
             /** @description What it is doing now (derived: never stored). */
             status: components["schemas"]["AgentStatus"];

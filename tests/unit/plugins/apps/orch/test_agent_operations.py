@@ -514,17 +514,29 @@ async def test_a_message_numbers_the_turn_it_runs(service: UDLService) -> None:
     assert sent.turn == found.turns + 1
 
 
-async def test_the_turn_locks_do_not_outlive_their_turns(service: UDLService) -> None:
+async def test_the_turn_locks_do_not_outlive_their_turns(
+    service: UDLService, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """One lock per session, while a turn is in it: the table does not grow with every session
     the process has ever sent a turn to."""
-    found = await a_session(service)
-    before = weakref.ref(dispatcher.turn_lock(found.id))
+    await a_session(service)
+    made: list[asyncio.Lock] = []
+    real = dispatcher.turn_lock
+
+    def recording(session: UUID) -> asyncio.Lock:
+        lock = real(session)
+        made.append(lock)
+        return lock
+
+    monkeypatch.setattr(dispatcher, "turn_lock", recording)
 
     await service.call("orch_send", {"agent": "ernie-c", "text": "Go on"})
 
+    assert made  # (the turn took one)
+    gone = weakref.ref(made.pop())
     gc.collect()
-    # (The table holds it weakly: nothing held it once the turn was done, so it is gone.)
-    assert before() is None
+    # (The table holds it weakly, and nothing else holds the turn's own lock once it is done.)
+    assert gone() is None
 
 
 async def test_a_session_stopped_mid_turn_stays_ended(tmp_path: Path) -> None:

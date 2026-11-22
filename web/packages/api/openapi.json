@@ -885,7 +885,7 @@
                 "type": "null"
               }
             ],
-            "description": "Its current session, when it has one (its transcript's first page)."
+            "description": "Its current session, when it has one (the record: where it got to and what it cost, not\nits transcript \u2014 `orch_get_session` reads that)."
           },
           "status": {
             "$ref": "#/components/schemas/AgentStatus",

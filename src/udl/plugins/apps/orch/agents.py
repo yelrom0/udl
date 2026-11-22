@@ -281,7 +281,8 @@ class AgentInfo(_Model):
     status: AgentStatus
     """What it is doing now (derived: never stored)."""
     session: AgentSession | None = None
-    """Its current session, when it has one (its transcript's first page)."""
+    """Its current session, when it has one (the record: where it got to and what it cost, not
+    its transcript — `orch_get_session` reads that)."""
     queue: list[QueueEntry] = Field(default_factory=list[QueueEntry])
     """Its tasks, in the order it will work them."""
     reports: list[Name] = Field(default_factory=list[Name])
