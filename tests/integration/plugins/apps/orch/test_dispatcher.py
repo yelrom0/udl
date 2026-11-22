@@ -2308,3 +2308,64 @@ async def test_a_turn_that_never_started_does_not_count_as_told(service: UDLServ
     told = await AgentRecords(AppRecords(service.db)).agent("ernie-c")
     assert told is not None
     assert told.last_news  # (told, once one turn got through)
+
+
+async def test_a_limited_turn_does_not_count_the_news_as_told(service: UDLService) -> None:
+    """(A harness that answers with a limit said something, but the manager heard none of the
+    news: what it was to hear is not marked told, so it is said again once the limit lifts.)"""
+    records = AppRecords(service.db)
+    agents = AgentRecords(records)
+    await agents.save_agent(
+        Agent(
+            name="ernie-c",
+            title="ernie-c",
+            runner="fake",
+            host="local",
+            role=AgentRole.MANAGER,
+            manages=ManagerPowers(answer=True),
+            brief="Answer what you can.",
+        )
+    )
+    for one in await agents.agents():
+        if one.name == "ernie-c":
+            continue
+        await agents.save_agent(one.model_copy(update={"manager": "ernie-c", "paused": True}))
+    await QuestionRecords(records).save_question(
+        Question(
+            project="udl",
+            key="Q-1",
+            asked_by=AGENT,
+            to="ernie-c",
+            title="Which way?",
+            task="F-1.1",
+        )
+    )
+    until = FakeClock().now() + timedelta(minutes=30)
+
+    async def limited(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
+        yield RunnerLimited(until=until, message="out of quota")
+
+    SCRIPT["manager"] = limited
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(3):
+            await clock.advance(timedelta(seconds=31))
+        told = await AgentRecords(AppRecords(service.db)).agent("ernie-c")
+        assert told is not None
+        assert told.last_news == ""  # (a limit is not the news arriving)
+        SCRIPT["manager"] = silent_turn
+        await clock.advance(timedelta(minutes=31))  # (the limit has lifted)
+        for _ in range(4):
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert len([one for one in PROMPTS if "Here is what your reports need" in one]) >= 2
+    told = await AgentRecords(AppRecords(service.db)).agent("ernie-c")
+    assert told is not None
+    assert told.last_news
