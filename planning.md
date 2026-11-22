@@ -132,7 +132,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 27.5 Worktrees and the gate lane: `orch_push` runs the repo's gates, pushes, opens or updates the PR
   - [x] 27.6 PR readiness: CI, the review bot's verdict, mergeability, stacks, holds
   - [x] 27.7 The dispatcher: start, prompt, nudge, resume and stop agent sessions; limits and crashes
-  - [ ] 27.8 Managers: a manager agent's duties over its reports, each one switchable
+  - [~] 27.8 Managers: a manager agent's duties over its reports, each one switchable
   - [ ] 27.9 Operations (agents, queues, sessions, suggestions) via CLI, API and MCP
   - [ ] 27.10 Working time, hours per point learned per model, forecasts: `orch_progress`
   - [ ] 27.11 Chat sessions: Claude Code or Codex as the user, its permission prompts relayed to the web UI, a token per chat

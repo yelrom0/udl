@@ -74,6 +74,9 @@ from udl.plugins.apps.orch.records import (
     Repo as RepoRecord,
 )
 from udl.plugins.apps.orch.records import (
+    Review as ReviewRecord,
+)
+from udl.plugins.apps.orch.records import (
     Task as TaskRecord,
 )
 from udl.plugins.apps.orch.settings import OrchSettings
@@ -455,6 +458,7 @@ def test_orch_brings_its_kinds() -> None:
         HumanAction,
         QuestionRecord,
         MessageRecord,
+        ReviewRecord,
     }
 
 

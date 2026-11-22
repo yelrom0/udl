@@ -37,6 +37,7 @@ from udl.plugins.apps.orch.models import (
     DONE,
     MERGED,
     Assessment,
+    ManagerVerdict,
     Readiness,
     ReviewItem,
     ReviewStatus,
@@ -209,6 +210,8 @@ def readiness(
     bot: str | None,
     task: TaskLike,
     tasks: Mapping[str, str],
+    manager: str | None = None,
+    approval: ManagerVerdict | None = None,
 ) -> Readiness:
     """Whether `pull` may be merged for `task`, and why not.
 
@@ -216,7 +219,14 @@ def readiness(
     head concluded `success`, `neutral` or `skipped`; when `bot` is set, its latest comment is
     for this head and clean; every task in `task.needs` merged or done; and `task` not held.
     `tasks` is each task's state by key (a need that is not in it is not merged)."""
-    blockers, pending = _blockers(pull, bot=bot, needs=list(task.needs), tasks=tasks)
+    blockers, pending = _blockers(
+        pull,
+        bot=bot,
+        needs=list(task.needs),
+        tasks=tasks,
+        manager=manager,
+        approval=approval,
+    )
     held = task.hold is not None and not blockers
     if task.hold is not None:
         blockers = [*blockers, f"it is on hold: {task.hold}"]
@@ -230,7 +240,13 @@ def readiness(
 
 
 def _blockers(
-    pull: Pull, *, bot: str | None, needs: list[str], tasks: Mapping[str, str]
+    pull: Pull,
+    *,
+    bot: str | None,
+    needs: list[str],
+    tasks: Mapping[str, str],
+    manager: str | None = None,
+    approval: ManagerVerdict | None = None,
 ) -> tuple[list[str], list[str]]:
     """Why `pull` may not be merged, in the order a person would look at them (before the
     hold, which is udl's own decision and not GitHub's), and which of them are only a matter of
@@ -261,6 +277,13 @@ def _blockers(
         theirs, later = _bot_blockers(pull, bot=bot)
         found += theirs
         waiting += later
+    if manager is not None:
+        # (27.8: where the task's manager has the `review` power, its OK is needed for this head —
+        # and a review of the commit before it says nothing about this one.)
+        if approval is None:
+            found.append(f"its manager {manager} has not reviewed this head")
+        elif approval != "approve":
+            found.append(f"its manager {manager} asked for changes")
     for key in needs:
         state = tasks.get(key)
         if state not in (MERGED, DONE):

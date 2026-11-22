@@ -605,8 +605,10 @@ async def test_a_second_blocking_question_is_refused_while_the_task_waits(
     first = await ask(service, blocking=True)
     assert (await task_of(service, "F-1.1")).blocked_on == first.key
 
-    with pytest.raises(InUse, match="already waits on"):
+    with pytest.raises(InUse, match="already waits on") as refused:
         await ask(service, title="And which branch?", blocking=True)
+    # (Closing the question does not unblock the task, so the hint must not promise it does.)
+    assert "Closing it does not unblock" in (refused.value.hint or "")
 
     assert (await task_of(service, "F-1.1")).blocked_on == first.key
     assert [one.key for one in await questions_of(service)] == [first.key]

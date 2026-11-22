@@ -16,6 +16,7 @@ dispatcher does with it.
 # System Imports
 import asyncio
 import contextlib
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -67,7 +68,9 @@ from udl.plugins.apps.orch.models import (
     READY,
     OwnerKind,
     Principal,
+    PullState,
     QuestionState,
+    Suggestions,
 )
 from udl.plugins.apps.orch.plugin import Orch
 from udl.plugins.apps.orch.records import (
@@ -84,6 +87,7 @@ from udl.plugins.apps.orch.records import (
     QuestionRecords,
     Repo,
     RepoRecords,
+    ReviewRecords,
     SessionEvent,
     SessionRecords,
     Task,
@@ -219,11 +223,38 @@ class ScriptedRunner(FakeRunner):
         )
 
     def send(self, session: SessionRef, prompt: str) -> AsyncIterator[AgentEvent]:
-        """Record the prompt, then send it as the fake does (or raise, if it is scripted to)."""
+        """Record the prompt, then send it as the fake does (or raise, if it is scripted to).
+
+        A manager's prompt carries its reports' news, so it is scripted by `MANAGER_KEY` and the
+        turn it gets is the one scripted for `manager`."""
         PROMPTS.append(prompt)
         if prompt in RAISES:
             return _raising(RAISES[prompt])
+        if prompt.startswith(MANAGER_KEY) and "manager" in SCRIPT:
+            # (A turn's body runs when it is first iterated, after other sessions' prompts may
+            # have been recorded: keep this one aside for it.)
+            MANAGER_PROMPT[0] = prompt
+            return self._manager(session, SCRIPT["manager"])
+        named = _A_TASK.search(prompt)
+        if named is not None and f"task:{named.group(0)}" in SCRIPT:
+            # (A task's prompts change as its pull does; a test scripts the task, not each line.)
+            return self._manager(session, SCRIPT[f"task:{named.group(0)}"])
         return super().send(session, prompt)
+
+    async def _manager(self, session: SessionRef, turn: Turn) -> AsyncIterator[AgentEvent]:
+        """`turn`, as a manager's session runs it: the fake's bookkeeping, and its own ending."""
+        STORE.turns += 1
+        async for event in turn(self, session):
+            yield event
+        yield TurnEnded(reason=TurnReason.DONE, text="done")
+
+
+_A_TASK = re.compile(r"[A-Z][A-Z0-9_]*-[0-9]+(?:\.[0-9]+)*")
+"""A task key in a prompt (27.8's done-when scripts a task, whatever its session is told)."""
+MANAGER_PROMPT: list[str] = [""]
+"""The prompt the manager's running turn was given (a turn's body starts after `send`)."""
+MANAGER_KEY: str = "You are ernie-c"
+"""How a manager's prompt starts (its news follows, so it is scripted by this prefix)."""
 
 
 async def _raising(error: Exception) -> AsyncIterator[AgentEvent]:
@@ -1960,3 +1991,381 @@ async def test_a_failed_session_on_a_task_blocked_on_another_question_ends(
     assert session.state is SessionState.ENDED
     thread = await QuestionRecords(records).thread(open_one)
     assert any("session failed" in one.text for one in thread), "the reason is said on its thread"
+
+
+# ---------------------------------------------------------------------------------------------
+# 27.8's done-when: a manager keeps two reports busy across four tasks, with no human
+# ---------------------------------------------------------------------------------------------
+
+
+async def a_manager_and_its_reports(service: UDLService) -> None:
+    """`ernie-c` managing `deepseek-b` and `deepseek-a`, and four open tasks to give out."""
+    records = AppRecords(service.db)
+    agents = AgentRecords(records)
+    await agents.save_agent(
+        Agent(
+            name="ernie-c",
+            title="ernie-c",
+            runner="fake",
+            host="local",
+            role=AgentRole.MANAGER,
+            manages=ManagerPowers(assign=True, answer=True, review=True, plan=True),
+            brief="Keep your reports busy.",
+        )
+    )
+    await agents.save_agent(
+        Agent(name="deepseek-a", title="deepseek-a", runner="fake", host="local", manager="ernie-c")
+    )
+    for name in (AGENT, "deepseek-a"):
+        found = await agents.agent(name)
+        assert found is not None
+        await agents.save_agent(found.model_copy(update={"manager": "ernie-c"}))
+    tasks = TaskRecords(records)
+    for number in (3, 4):
+        key = f"F-1.{number}"
+        task = Task(project="udl", feature="F-1", key=key, title=f"It {number}")
+        await tasks.save_task(task)
+    links = LinkRecords(records)
+    for number in (1, 2, 3, 4):
+        await links.add(
+            project="udl",
+            owner_kind=OwnerKind.TASK,
+            owner=f"F-1.{number}",
+            kind="pull",
+            url=PULL,
+            state=PullState(head_sha=HEAD),
+        )
+    # (udl has read each pull at its head: a review is per head, and readiness compares them.)
+    for number in (1, 2, 3, 4):
+        for one in await links.for_owner("udl", OwnerKind.TASK, f"F-1.{number}"):
+            if one.link_kind == "pull":
+                await links.records.save(one.model_copy(update={"state": PullState(head_sha=HEAD)}))
+    # (No review is saved here: a report's ready waits on its manager's OK (27.8), and the
+    # manager's own turns are what give it.)
+
+
+async def silent_turn(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
+    """A turn that says nothing and does nothing."""
+    yield TextDelta(text="nothing to do")
+
+
+def a_report_s_turn(key: str) -> Turn:
+    """A report's turn on `key`: it says it is ready, and says what it waits on when it cannot
+    (its manager's review, 27.8)."""
+
+    async def turn(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
+        try:
+            await ask("orch_ready", {"key": key})
+        except NotAllowed as error:
+            yield TextDelta(text=f"{key} waits: {error.message}")
+            return
+        yield TextDelta(text=f"{key} is ready.")
+
+    return turn
+
+
+def the_manager_s_turn() -> Turn:
+    """The manager's turn: it reads what its reports need from its prompt, gives a report with
+    nothing to do the next suggested task, and reviews what its reports have pushed."""
+
+    async def turn(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
+        # (As its token's principal: in udl a session's calls reach the MCP server, which
+        # authenticates the agent's token — the fake harness does that here.)
+        token = current_principal.set(
+            Caller(kind=PrincipalKind.AGENT, name="ernie-c", role="manager")
+        )
+        try:
+            async for event in _managing_turn():
+                yield event
+        finally:
+            current_principal.reset(token)
+
+    return turn
+
+
+async def _managing_turn() -> AsyncIterator[AgentEvent]:
+    """What the manager does with its news, as its turn."""
+    said = MANAGER_PROMPT[0]
+    for line in said.splitlines():
+        if line.startswith("- assign: "):
+            name = line.split()[2]
+            suggested = await ask("orch_suggest", {"project": "udl", "agent": name})
+            assert isinstance(suggested, Suggestions)
+            if suggested.suggestions:
+                key = suggested.suggestions[0].task
+                await ask("orch_assign", {"project": "udl", "key": key, "agent": name})
+                # (Its pull is green already, so it reads it and says so while the report
+                # starts: a report's ready waits on its manager's OK, 27.8.)
+                await ask(
+                    "orch_review_task",
+                    {
+                        "project": "udl",
+                        "key": key,
+                        "verdict": "approve",
+                        "reasons": "It does what its card says.",
+                    },
+                )
+        elif line.startswith("- review: "):
+            key = line.split()[3]
+            await ask(
+                "orch_review_task",
+                {"project": "udl", "key": key, "verdict": "approve", "reasons": "It does it."},
+            )
+    yield TextDelta(text="done")
+
+
+async def test_a_manager_keeps_two_reports_busy_across_four_tasks(service: UDLService) -> None:
+    """(27.8's done-when: with all four powers on, a manager keeps two reports busy across four
+    tasks without a human — it gives each one with an empty queue the next task, and approves
+    what they push, so each task reaches `ready`.)"""
+    await a_manager_and_its_reports(service)
+    SCRIPT["manager"] = the_manager_s_turn()
+    for key in ("F-1.1", "F-1.2", "F-1.3", "F-1.4"):
+        SCRIPT[f"task:{key}"] = a_report_s_turn(key)
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(40):
+            every = await tasks_of(service)
+            if all(
+                one.state == READY
+                for key, one in every.items()
+                if key.startswith("F-1.") and not key.startswith("F-1.0")
+            ):
+                break
+            await clock.advance(timedelta(seconds=31))
+        else:
+            now = await tasks_of(service)
+            raise AssertionError(
+                f"never got there: {[(k, t.state, t.assignee) for k, t in now.items()]}"
+                f" sent: {PROMPTS[-6:]}"
+            )
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    every = {key: one for key, one in (await tasks_of(service)).items() if key != "managing.1"}
+    assert sorted(every) == ["F-1.1", "F-1.2", "F-1.3", "F-1.4"]
+    assert all(one.state == READY for one in every.values())
+    assert {one.assignee for one in every.values()} == {AGENT, "deepseek-a"}, "both were kept busy"
+    reviews = await ReviewRecords(AppRecords(service.db)).for_task("udl", "F-1.1")
+    assert [one.verdict for one in reviews] == ["approve"]
+
+
+async def test_an_idle_manager_gets_no_turn_and_its_own_work_does(
+    service: UDLService,
+) -> None:
+    """(A manager with nothing to hear is not woken every tick — and its own queued task is
+    worked like anyone's, rather than its standing task being picked and left in progress.)"""
+    records = AppRecords(service.db)
+    agents = AgentRecords(records)
+    await agents.save_agent(
+        Agent(
+            name="ernie-c",
+            title="ernie-c",
+            runner="fake",
+            host="local",
+            role=AgentRole.MANAGER,
+            manages=ManagerPowers(assign=True),
+            brief="Keep your reports busy.",
+        )
+    )
+    mine = await TaskRecords(records).task("udl", "F-1.1")
+    assert mine is not None
+    await TaskRecords(records).save_task(
+        mine.model_copy(update={"assignee": "ernie-c", "state": QUEUED, "position": 0})
+    )
+    SCRIPT["task:F-1.1"] = a_report_s_turn("F-1.1")
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(10):
+            one = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
+            assert one is not None
+            if one.state == READY:
+                break
+            await clock.advance(timedelta(seconds=31))
+        else:
+            now = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
+            raise AssertionError(f"its own task never moved: {now}")
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert not [one for one in PROMPTS if "Here is what your reports need" in one]
+
+
+async def test_the_same_news_is_not_told_to_a_manager_twice(service: UDLService) -> None:
+    """(An item the manager does not act on is not sent again on every tick: a manager is told
+    once, and again only when the news changes.)"""
+    records = AppRecords(service.db)
+    agents = AgentRecords(records)
+    await agents.save_agent(
+        Agent(
+            name="ernie-c",
+            title="ernie-c",
+            runner="fake",
+            host="local",
+            role=AgentRole.MANAGER,
+            manages=ManagerPowers(answer=True),
+            brief="Answer what you can.",
+        )
+    )
+    # (Its reports are paused, so they never work, stall or ask anything: the news is the
+    # question below, and it does not change.)
+    for one in await agents.agents():
+        if one.name == "ernie-c":
+            continue
+        await agents.save_agent(one.model_copy(update={"manager": "ernie-c", "paused": True}))
+    await QuestionRecords(records).save_question(
+        Question(
+            project="udl",
+            key="Q-1",
+            asked_by=AGENT,
+            to="ernie-c",
+            title="Which way?",
+            task="F-1.1",
+        )
+    )
+    SCRIPT["manager"] = silent_turn
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(6):
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert len([one for one in PROMPTS if "Here is what your reports need" in one]) == 1
+
+
+async def fails_to_start(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
+    """A turn whose harness never started: nothing was said, so nothing was told."""
+    raise PluginFailed("the harness did not start")
+    yield TextDelta(text="")  # pragma: no cover  (it is an async generator)
+
+
+async def test_a_turn_that_never_started_does_not_count_as_told(service: UDLService) -> None:
+    """(A runner that refuses to start has told the manager nothing: what it was to hear is not
+    marked told, so the next tick says it again rather than leaving it stuck.)"""
+    records = AppRecords(service.db)
+    agents = AgentRecords(records)
+    await agents.save_agent(
+        Agent(
+            name="ernie-c",
+            title="ernie-c",
+            runner="fake",
+            host="local",
+            role=AgentRole.MANAGER,
+            manages=ManagerPowers(answer=True),
+            brief="Answer what you can.",
+        )
+    )
+    for one in await agents.agents():
+        if one.name == "ernie-c":
+            continue
+        await agents.save_agent(one.model_copy(update={"manager": "ernie-c", "paused": True}))
+    await QuestionRecords(records).save_question(
+        Question(
+            project="udl",
+            key="Q-1",
+            asked_by=AGENT,
+            to="ernie-c",
+            title="Which way?",
+            task="F-1.1",
+        )
+    )
+    SCRIPT["manager"] = fails_to_start
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(3):
+            await clock.advance(timedelta(seconds=31))
+        told = await AgentRecords(AppRecords(service.db)).agent("ernie-c")
+        assert told is not None
+        assert told.last_news == ""  # (nothing reached it, so nothing was counted)
+        SCRIPT["manager"] = silent_turn
+        for _ in range(4):
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert len([one for one in PROMPTS if "Here is what your reports need" in one]) >= 2
+    told = await AgentRecords(AppRecords(service.db)).agent("ernie-c")
+    assert told is not None
+    assert told.last_news  # (told, once one turn got through)
+
+
+async def test_a_limited_turn_does_not_count_the_news_as_told(service: UDLService) -> None:
+    """(A harness that answers with a limit said something, but the manager heard none of the
+    news: what it was to hear is not marked told, so it is said again once the limit lifts.)"""
+    records = AppRecords(service.db)
+    agents = AgentRecords(records)
+    await agents.save_agent(
+        Agent(
+            name="ernie-c",
+            title="ernie-c",
+            runner="fake",
+            host="local",
+            role=AgentRole.MANAGER,
+            manages=ManagerPowers(answer=True),
+            brief="Answer what you can.",
+        )
+    )
+    for one in await agents.agents():
+        if one.name == "ernie-c":
+            continue
+        await agents.save_agent(one.model_copy(update={"manager": "ernie-c", "paused": True}))
+    await QuestionRecords(records).save_question(
+        Question(
+            project="udl",
+            key="Q-1",
+            asked_by=AGENT,
+            to="ernie-c",
+            title="Which way?",
+            task="F-1.1",
+        )
+    )
+    until = FakeClock().now() + timedelta(minutes=30)
+
+    async def limited(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
+        yield RunnerLimited(until=until, message="out of quota")
+
+    SCRIPT["manager"] = limited
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(3):
+            await clock.advance(timedelta(seconds=31))
+        told = await AgentRecords(AppRecords(service.db)).agent("ernie-c")
+        assert told is not None
+        assert told.last_news == ""  # (a limit is not the news arriving)
+        SCRIPT["manager"] = silent_turn
+        await clock.advance(timedelta(minutes=31))  # (the limit has lifted)
+        for _ in range(4):
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert len([one for one in PROMPTS if "Here is what your reports need" in one]) >= 2
+    told = await AgentRecords(AppRecords(service.db)).agent("ernie-c")
+    assert told is not None
+    assert told.last_news

@@ -23,7 +23,7 @@ from udl.config import APISettings
 from udl.errors import DoesNotExist, NotAllowed
 from udl.interfaces.security import AGENT_PREFIX, Principal, PrincipalKind
 from udl.plugins.apps.base import AppRecords
-from udl.plugins.apps.orch.agents import AgentRole
+from udl.plugins.apps.orch.agents import AgentRole, ManagerPowers
 from udl.plugins.apps.orch.records import (
     Agent as AgentRecord,
 )
@@ -249,6 +249,71 @@ def test_an_implementer_may_not_call_anything_else(name: str) -> None:
 def test_a_manager_may_do_an_implementers_work() -> None:
     for name in ROLE_OPERATIONS[AgentRole.MANAGER]:
         assert allowed(AgentRole.MANAGER, name, admin=False)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "orch_assign",
+        "orch_reorder_queue",
+        "orch_suggest",
+        "orch_answer",
+        "orch_review_task",
+        "orch_set_task",
+        "orch_split_task",
+    ],
+)
+def test_a_manager_with_no_powers_may_not_call_what_a_power_switches_on(name: str) -> None:
+    """(27.8: each power is off until it is given.)"""
+    assert not allowed(AgentRole.MANAGER, name, admin=False)
+    assert not allowed(AgentRole.MANAGER, name, admin=False, powers=ManagerPowers())
+
+
+@pytest.mark.parametrize(
+    ("power", "names"),
+    [
+        ("assign", ("orch_assign", "orch_reorder_queue", "orch_suggest")),
+        ("answer", ("orch_answer",)),
+        ("review", ("orch_review_task",)),
+        ("plan", ("orch_set_task", "orch_split_task")),
+    ],
+)
+def test_a_power_switches_on_its_operations_and_no_others(
+    power: str, names: tuple[str, ...]
+) -> None:
+    given = ManagerPowers(**{power: True})
+    for name in names:
+        assert allowed(AgentRole.MANAGER, name, admin=False, powers=given)
+    for other in {
+        "orch_assign",
+        "orch_reorder_queue",
+        "orch_suggest",
+        "orch_answer",
+        "orch_review_task",
+        "orch_set_task",
+        "orch_split_task",
+    } - set(names):
+        assert not allowed(AgentRole.MANAGER, other, admin=False, powers=given)
+
+
+def test_a_manager_keeps_an_implementers_work_whatever_its_powers() -> None:
+    for name in ROLE_OPERATIONS[AgentRole.IMPLEMENTER]:
+        assert allowed(AgentRole.MANAGER, name, admin=False, powers=ManagerPowers())
+
+
+def test_a_manager_refused_a_power_operation_is_told_about_its_powers() -> None:
+    who = Principal(kind=PrincipalKind.AGENT, name="fake-a", role="manager")
+
+    with pytest.raises(NotAllowed, match="not one of the operations") as refused_it:
+        refused(who, "orch_review_task", admin=False, powers=ManagerPowers())
+
+    assert "powers" in (refused_it.value.hint or "")
+    assert "27.8" in (refused_it.value.hint or "")
+
+
+def test_a_power_does_not_open_an_admin_operation() -> None:
+    every = ManagerPowers(assign=True, answer=True, review=True, plan=True)
+    assert not allowed(AgentRole.MANAGER, "orch_issue_token", admin=True, powers=every)
 
 
 @pytest.mark.parametrize("name", ["orch_list_tasks", "orch_get_task", "orch_move_task"])

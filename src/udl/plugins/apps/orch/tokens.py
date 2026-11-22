@@ -29,7 +29,8 @@ from udl.db.records import Name
 from udl.errors import DoesNotExist, NotAllowed
 from udl.interfaces.security import AGENT_PREFIX, Principal, PrincipalKind
 from udl.plugins.apps.base import AppRecords
-from udl.plugins.apps.orch.agents import AgentRole
+from udl.plugins.apps.orch.agents import AgentRole, ManagerPowers
+from udl.plugins.apps.orch.managers import switched_on
 from udl.plugins.apps.orch.records import (
     AgentRecords,
     AgentToken,
@@ -50,6 +51,7 @@ __all__ = [
     "allowed",
     "issue_token",
     "refused",
+    "refused_for",
     "tokens_for",
 ]
 
@@ -93,14 +95,14 @@ _IMPLEMENTER: Final = frozenset(
 
 _MANAGER: Final = _IMPLEMENTER | frozenset(
     {
-        # (A manager answers what its own reports ask it, and passes up what it cannot: 28.1.
-        # The subtree check is the operation's (the question's `to` must be the caller).)
-        "orch_answer",
+        # (A manager passes up what it cannot answer, and closes what nobody answered: 28.1.
+        # Answering is 27.8's `answer` power, and the subtree check is the operation's.)
         "orch_escalate",
         "orch_close_question",
     }
 )
-"""What a manager may call: an implementer's work, and answering its reports' questions."""
+"""What a manager may call: an implementer's work, and what it does for its reports (27.8 adds
+the powers it switches on)."""
 
 ROLE_OPERATIONS: Final[dict[AgentRole, frozenset[str]]] = {
     AgentRole.IMPLEMENTER: _IMPLEMENTER,
@@ -113,23 +115,48 @@ ROLE_OPERATIONS: Final[dict[AgentRole, frozenset[str]]] = {
 """What each role may call: the only place a role is compared."""
 
 
-def allowed(role: AgentRole, name: str, *, admin: bool) -> bool:
-    """Whether an agent with `role` may call the operation called `name` (its hints' admin)."""
+def allowed(
+    role: AgentRole, name: str, *, admin: bool, powers: ManagerPowers | None = None
+) -> bool:
+    """Whether an agent with `role` may call the operation called `name` (its hints' admin).
+
+    A manager's `powers` switch on more (27.8): `assign`, `answer`, `review` and `plan`, each over
+    its own subtree (which the operation itself checks)."""
     if name in ROLE_OPERATIONS.get(role, frozenset()):
+        return True
+    if role is AgentRole.MANAGER and name in switched_on(powers):
         return True
     return role is AgentRole.REVIEWER and name.startswith("orch_") and not admin
 
 
-def refused(principal: Principal, name: str, *, admin: bool) -> None:
+def refused(
+    principal: Principal, name: str, *, admin: bool, powers: ManagerPowers | None = None
+) -> None:
     """Raise NotAllowed when `principal` (an agent) may not call `name`."""
     role = AgentRole(principal.role) if principal.role in tuple(AgentRole) else None
-    if role is not None and allowed(role, name, admin=admin):
+    if role is not None and allowed(role, name, admin=admin, powers=powers):
         return
     named = principal.role or "agent"
-    raise NotAllowed(
-        f"{name} is not one of the operations a {named} agent may call",
-        hint="An agent's role decides which operations it may call (udl's role table, 27.2).",
-    )
+    hint = "An agent's role decides which operations it may call (udl's role table, 27.2)."
+    if role is AgentRole.MANAGER:
+        hint = (
+            "A manager's role and its powers decide which operations it may call (udl's role "
+            "table, 27.2, and 27.8's powers)."
+        )
+    raise NotAllowed(f"{name} is not one of the operations a {named} agent may call", hint=hint)
+
+
+async def refused_for(service: UDLService, principal: Principal, name: str, *, admin: bool) -> None:
+    """`refused()`, with the powers the agent's record gives it (27.8).
+
+    It reads the agent's record on every agent call, before the operation runs: one read per
+    request is the price of a power that changes without a restart. If agents ever get chatty
+    enough for it to show, cache the record per request (the service's principal is the key)."""
+    powers: ManagerPowers | None = None
+    if principal.name:
+        found = await AgentRecords(AppRecords(service.db)).agent(principal.name)
+        powers = found.manages if found is not None else None
+    refused(principal, name, admin=admin, powers=powers)
 
 
 # ---------------------------------------------------------------------------------------------
