@@ -195,8 +195,11 @@ GateArg = Annotated[str, StringConstraints(min_length=1)]
 Key = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$", max_length=40)]
 """A feature's or a task's key within its project (`F-<n>`, `22`, `22.4`)."""
 
-Spec = Annotated[str, StringConstraints(max_length=100_000)]
-"""A task's or a feature's spec, as markdown."""
+SPEC_MAX: Final = 100_000
+"""What a task's or a feature's spec may be (characters). Named for the refusal that says it."""
+
+Spec = Annotated[str, StringConstraints(max_length=SPEC_MAX)]
+"""A task's or a feature's spec, as markdown (`SPEC_MAX` is what an import refuses over)."""
 
 URLText = Annotated[str, StringConstraints(min_length=1, max_length=2000)]
 """A URL, as it is stored (a `udl:` one for an internal kind)."""

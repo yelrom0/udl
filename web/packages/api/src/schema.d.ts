@@ -1354,7 +1354,10 @@ export interface paths {
          *     A feature or a task the plan names and udl does not have is made; one udl has is changed
          *     where the plan changed it, and left alone where it did not. A task's state is udl's: a
          *     plan's mark never moves a task udl has moved on, and the report says where they differ.
-         *     A `dry_run` reports what it would do and writes nothing.
+         *     A `dry_run` reports what it would do and writes nothing. What the plan names is read
+         *     and every spec is checked (against `SPEC_MAX`) before anything is written, and the write
+         *     is one batch: an import is all of a plan, or none of it — a spec over the limit is a
+         *     NotAllowed that names the feature or task and its length.
          */
         post: operations["orch_import_plan"];
         delete?: never;

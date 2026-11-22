@@ -20,7 +20,8 @@ import pytest
 
 # Local Imports
 from udl.core.service import UDLService
-from udl.errors import ConfigError, DoesNotExist
+from udl.errors import ConfigError, DoesNotExist, NotAllowed
+from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.importer import (
     PLAN_KEY,
     ParsedFeature,
@@ -30,11 +31,21 @@ from udl.plugins.apps.orch.importer import (
     parse_plan,
     read_plan_file,
 )
-from udl.plugins.apps.orch.models import FeatureInfo, ImportReport, Suggestions, TaskInfo
+from udl.plugins.apps.orch.models import (
+    SPEC_MAX,
+    FeatureInfo,
+    Features,
+    ImportReport,
+    Suggestions,
+    TaskInfo,
+    Tasks,
+)
+from udl.plugins.apps.orch.records import FeatureRecords
 
 PLANS = Path(__file__).resolve().parents[4] / "fixtures" / "plans"
 """Where udl's own plan files are copied, for the parser to be tested on a file that does not
 change under the test."""
+
 
 _MARKS = """
 # A plan
@@ -424,6 +435,221 @@ async def test_what_an_import_leaves_suggests_the_plan_s_own_order(
     assert isinstance(answer, Suggestions)
     keys = [one.task for one in answer.suggestions if one.feature == "22"]
     assert keys.index("22.1") < keys.index("22.2")
+
+
+async def test_a_spec_over_the_limit_is_refused_by_a_dry_run_and_by_the_import(
+    service: UDLService, tmp_path: Path
+) -> None:
+    """A spec longer than a spec may be is an ordinary udl error that names the feature and its
+    length, in a dry run as much as in a real import — and nothing at all is written."""
+    long = "x" * 100_001
+    path = a_file(
+        tmp_path,
+        "# A plan\n\n## Progress tracker\n\n- [ ] **Phase 30: A good phase**\n"
+        "  - [ ] 30.1 A good task\n- [ ] **Phase 31: A bad phase**\n"
+        "\n## Phase 30: A good phase\n\nWhat it is for.\n\n"
+        "## Phase 31: A bad phase\n\n" + long + "\n",
+    )
+
+    for dry_run in (True, False):
+        with pytest.raises(NotAllowed) as refused:
+            await service.call("orch_import_plan", {"files": [str(path)], "dry_run": dry_run})
+
+        assert "feature 31" in str(refused.value)
+        assert str(SPEC_MAX) in str(refused.value)
+        assert "characters" in str(refused.value)
+
+    # (Nothing the import would have made: the good phase and its task are not there either —
+    # the write is all or nothing, and the old code would have written them before it failed.)
+    listed = await service.call("orch_list_features", {})
+    assert isinstance(listed, Features)
+    assert [one.key for one in listed.features] == ["26"]
+    tasks = await service.call("orch_list_tasks", {})
+    assert isinstance(tasks, Tasks)
+    assert [one.key for one in tasks.tasks] == ["26.1", "26.2"]
+
+
+async def test_a_task_s_spec_over_the_limit_is_refused_with_its_own_name(
+    service: UDLService, tmp_path: Path
+) -> None:
+    long = "y" * 100_001
+    path = a_file(
+        tmp_path,
+        "# A plan\n\n## Progress tracker\n\n- [ ] **Phase 30: A phase**\n"
+        "  - [ ] 30.1 A task\n  - " + long + "\n\n## Phase 30: A phase\n\nWhat it is for.\n",
+    )
+
+    for dry_run in (True, False):
+        with pytest.raises(NotAllowed, match=r"task 30\.1"):
+            await service.call("orch_import_plan", {"files": [str(path)], "dry_run": dry_run})
+
+    listed = await service.call("orch_list_features", {})
+    assert isinstance(listed, Features)
+    assert [one.key for one in listed.features] == ["26"]
+
+
+async def test_a_filename_that_is_not_a_key_still_imports(
+    service: UDLService, tmp_path: Path
+) -> None:
+    """A file's name becomes its plan feature's key: punctuation is folded to `-`, it is cut to
+    what a key may be, and a name with nothing usable keeps the bare `plan` — never a raw
+    ValidationError (the traceback this PR is meant to remove)."""
+    spaced = a_file(
+        tmp_path,
+        "# One\n\n## Progress tracker\n\n- [ ] **Phase 30: A phase**\n\n"
+        "## Decisions\n\nIts own words.\n",
+        name="my plan (old).md",
+    )
+    long = a_file(
+        tmp_path,
+        "# Two\n\n## Progress tracker\n\n- [ ] **Phase 31: Another**\n\n"
+        "## Decisions\n\nIts words.\n",
+        name=f"{'y' * 60}.md",
+    )
+    dots = a_file(
+        tmp_path,
+        "# Three\n\n## Progress tracker\n\n- [ ] **Phase 32: A third**\n\n"
+        "## Decisions\n\nIts words.\n",
+        name="notes (final).md",
+    )
+
+    first = await service.call("orch_import_plan", {"files": [str(spaced)]})
+    second = await service.call("orch_import_plan", {"files": [str(long)]})
+    third = await service.call("orch_import_plan", {"files": [str(dots)]})
+
+    assert isinstance(first, ImportReport)
+    assert isinstance(second, ImportReport)
+    assert isinstance(third, ImportReport)
+    assert "plan-my-plan-old" in first.created
+    assert f"plan-{'y' * 35}" in second.created
+    assert "plan-notes-final" in third.created
+
+
+async def test_a_file_with_no_name_to_make_a_key_of_is_not_called_stale(
+    service: UDLService, tmp_path: Path
+) -> None:
+    """A file named `___.md` has no key of its own, so its sections land on the bare `plan`:
+    importing it again is writing to that feature, not finding an older import's left behind."""
+    path = a_file(
+        tmp_path,
+        "# A plan\n\n## Progress tracker\n\n- [ ] **Phase 30: A phase**\n\n"
+        "## Decisions\n\nIts words.\n",
+        name="___.md",
+    )
+
+    first = await service.call("orch_import_plan", {"files": [str(path)]})
+    second = await service.call("orch_import_plan", {"files": [str(path)]})
+
+    assert isinstance(first, ImportReport)
+    assert isinstance(second, ImportReport)
+    assert first.kept == []
+    assert second.kept == []
+
+
+async def test_an_old_plan_feature_is_not_left_orphaned(
+    service: UDLService, tmp_path: Path
+) -> None:
+    """A project that imported before this change has a `plan` feature: a re-import says so in
+    its report rather than leaving it silently stale beside the new `plan-<stem>` ones."""
+    await FeatureRecords(AppRecords(service.db)).create_feature(
+        "udl", "The plan", key="plan", spec="Old words."
+    )
+    path = a_file(
+        tmp_path,
+        "# A plan\n\n## Progress tracker\n\n- [ ] **Phase 30: A phase**\n  - [ ] 30.1 A task\n"
+        "\n## Decisions\n\nNew words.\n",
+        name="planning.md",
+    )
+
+    report = await service.call("orch_import_plan", {"files": [str(path)]})
+
+    assert isinstance(report, ImportReport)
+    assert "plan-planning" in report.created
+    assert report.kept == ["plan: an older import's plan feature, left as it is"]
+    left = await service.call("orch_get_feature", {"key": "plan"})
+    assert isinstance(left, FeatureInfo)
+    assert left.feature.spec == "Old words."
+
+
+async def test_two_multi_phase_files_keep_their_own_plan_features(
+    service: UDLService, tmp_path: Path
+) -> None:
+    """Two files, each with sections that are no phase's own: they land on a feature each, so
+    neither's words are lost on the other's (and a re-import matches by key)."""
+    first = a_file(
+        tmp_path,
+        "# One\n\n## Progress tracker\n\n- [ ] **Phase 30: A phase**\n  - [ ] 30.1 A task\n"
+        "\n## Decisions\n\nThe first plan's own words.\n",
+        name="planning.md",
+    )
+    second = a_file(
+        tmp_path,
+        "# Two\n\n## Progress tracker\n\n- [ ] **Phase 31: Another**\n  - [ ] 31.1 A task\n"
+        "\n## Concepts\n\nThe second plan's own words.\n",
+        name="02-orchestrator.md",
+    )
+
+    report = await service.call("orch_import_plan", {"files": [str(first), str(second)]})
+
+    assert isinstance(report, ImportReport)
+    assert "plan-planning" in report.created
+    assert "plan-02-orchestrator" in report.created
+    one = await service.call("orch_get_feature", {"key": "plan-planning"})
+    two = await service.call("orch_get_feature", {"key": "plan-02-orchestrator"})
+    assert isinstance(one, FeatureInfo)
+    assert isinstance(two, FeatureInfo)
+    assert "The first plan's own words." in one.feature.spec
+    assert "The second plan's own words." in two.feature.spec
+    assert "The second plan's own words." not in one.feature.spec
+
+    again = await service.call("orch_import_plan", {"files": [str(first), str(second)]})
+    assert isinstance(again, ImportReport)
+    assert again.updated == []
+    assert "plan-planning" in again.unchanged
+    assert "plan-02-orchestrator" in again.unchanged
+
+
+async def test_udl_s_three_plan_files_import_with_nothing_unplaced(
+    service: UDLService, tmp_path: Path
+) -> None:
+    """26.7's own bug: udl's three plan files, imported for real, succeed — each file's own
+    sections on its own plan feature, so none of them is over a spec's limit."""
+    files = [
+        str(PLANS / "planning.md"),
+        str(PLANS / "02-agent-orchastrator.md"),
+        str(PLANS / "03-proxmox.md"),
+    ]
+
+    report = await service.call("orch_import_plan", {"files": files})
+
+    assert isinstance(report, ImportReport)
+    assert report.unplaced == []
+    assert "22" in report.created
+    listed = await service.call("orch_list_features", {})
+    assert isinstance(listed, Features)
+    assert any(one.key == "plan-planning" for one in listed.features)
+
+
+async def test_a_features_status_follows_the_tasks_an_import_writes(
+    service: UDLService, tmp_path: Path
+) -> None:
+    """A feature whose imported tasks are all `[x]` comes out `done`, and one with a task past
+    `open` comes out `active` — the import writes through TaskRecords, which follows."""
+    path = a_file(
+        tmp_path,
+        "# A plan\n\n## Progress tracker\n\n- [ ] **Phase 30: Finished**\n  - [x] 30.1 One\n"
+        "  - [x] 30.2 Two\n- [ ] **Phase 31: Started**\n  - [ ] 31.1 One\n  - [~] 31.2 Two\n",
+    )
+
+    report = await service.call("orch_import_plan", {"files": [str(path)]})
+
+    assert isinstance(report, ImportReport)
+    done = await service.call("orch_get_feature", {"key": "30"})
+    started = await service.call("orch_get_feature", {"key": "31"})
+    assert isinstance(done, FeatureInfo)
+    assert isinstance(started, FeatureInfo)
+    assert done.feature.status == "done"
+    assert started.feature.status == "active"
 
 
 async def test_the_two_plan_files_of_udl_import_with_nothing_unplaced(

@@ -659,7 +659,7 @@ log = logging.getLogger(__name__)
 """Where a scan that could not read a text says so (it never breaks the save)."""
 
 
-async def _scan(
+async def scan_links(
     records: AppRecords, project: str, owner_kind: OwnerKind, owner: str, text: str
 ) -> None:
     """Store the links a text makes (a GitHub URL, a task key in backticks), as links of
@@ -922,7 +922,9 @@ class FeatureRecords:
         becomes a link of its own (26.4)."""
         await self._projects.require(feature.project)
         saved = await self._records.save(feature)
-        await _scan(self._records, feature.project, OwnerKind.FEATURE, feature.key, feature.spec)
+        await scan_links(
+            self._records, feature.project, OwnerKind.FEATURE, feature.key, feature.spec
+        )
         return saved
 
     async def feature(self, project: str, key: str) -> Feature | None:
@@ -1015,7 +1017,7 @@ class TaskRecords:
                 hint="A task is saved open, and then moved.",
             )
         saved = await self._store(task)
-        await _scan(self._records, task.project, OwnerKind.TASK, task.key, task.spec)
+        await scan_links(self._records, task.project, OwnerKind.TASK, task.key, task.spec)
         return saved
 
     async def import_task(self, task: Task) -> Task:
@@ -1031,7 +1033,7 @@ class TaskRecords:
         ):
             raise DoesNotExist(f"There is no feature {task.feature!r} in {task.project!r}")
         saved = await self._store(task)
-        await _scan(self._records, task.project, OwnerKind.TASK, task.key, task.spec)
+        await scan_links(self._records, task.project, OwnerKind.TASK, task.key, task.spec)
         return saved
 
     async def save_all(self, tasks: Sequence[Task], *, also: Sequence[Record] = ()) -> list[Task]:
@@ -1059,19 +1061,52 @@ class TaskRecords:
         saved = await self._records.save_all(batch)
         return [one for one in saved[: len(tasks)] if isinstance(one, Task)]
 
-    async def _follow_all(self, tasks: Sequence[Task]) -> list[Feature]:
-        """The features whose status the batch changes, ready to be written with it."""
+    async def import_all(self, records: Sequence[Record]) -> list[Record]:
+        """Store an import's records — its features and its tasks — as one write, all or none.
+
+        A plan's own path: a new task may carry the state the plan says (as `import_task`), and
+        the features the batch's tasks belong to are written in the same batch with their status
+        following those tasks, exactly as a one-at-a-time import did. Returns what was stored."""
+        tasks = [one for one in records if isinstance(one, Task)]
+        features = [one for one in records if isinstance(one, Feature)]
+        rest = [one for one in records if not isinstance(one, (Task, Feature))]
+        followed = await self._follow_all(tasks, in_batch=features)
+        # (The followed features after the tasks: a feature the batch makes is written with the
+        # status its tasks give it, not only with the one it was made with.)
+        changed = {(one.project, one.key) for one in followed}
+        kept = [one for one in features if (one.project, one.key) not in changed]
+        saved = await self._records.save_all([*rest, *kept, *tasks, *followed])
+        # (The batch's own order is not the caller's: what the caller gets back is its records,
+        # with the followed features in place of the ones it planned.)
+        by_key = {(one.project, one.key): one for one in saved if isinstance(one, (Feature, Task))}
+        return [
+            by_key.get((one.project, one.key), one) if isinstance(one, (Feature, Task)) else one
+            for one in records
+        ]
+
+    async def _follow_all(
+        self, tasks: Sequence[Task], *, in_batch: Sequence[Record] = ()
+    ) -> list[Feature]:
+        """The features whose status the batch changes, ready to be written with it.
+
+        `in_batch` is what else the same write holds (an import's features): one the batch
+        itself makes is read from there, not from the database, which does not have it yet."""
+        planned = {(one.project, one.key): one for one in in_batch if isinstance(one, Feature)}
         changed: list[Feature] = []
         for project, key in sorted({(task.project, task.feature) for task in tasks}):
-            feature = await FeatureRecords(self._records, self._projects).feature(project, key)
+            feature = planned.get((project, key))
+            if feature is None:
+                feature = await FeatureRecords(self._records, self._projects).feature(project, key)
             if feature is None or feature.status == "parked":
                 continue
-            in_batch = {
-                task.id: task for task in tasks if (task.project, task.feature) == (project, key)
-            }
-            states = {
-                in_batch.get(one.id, one).state for one in await self.tasks(project, feature=key)
-            }
+            # (A task the batch writes is not stored yet, so it counts as itself — `save_all`'s
+            # rule, which trusts a batch's states; one it updates stands for the record the
+            # database already has of it, by id.)
+            mine = {one.id: one for one in tasks if (one.project, one.feature) == (project, key)}
+            stored = await self.tasks(project, feature=key)
+            known = {one.id for one in stored}
+            states = {mine.get(one.id, one).state for one in stored}
+            states |= {one.state for one in mine.values() if one.id not in known}
             status = _status_of(states)
             if status is not None and status != feature.status:
                 changed.append(feature.model_copy(update={"status": status}))
