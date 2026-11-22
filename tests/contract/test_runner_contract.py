@@ -19,6 +19,7 @@ import asyncio
 import sys
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Final
 
@@ -90,6 +91,10 @@ def _case(plugin: type[AnAgentRunner], options: RunnerOptions, build: Build) -> 
 HARNESS = Path(__file__).resolve().parents[1] / "support" / "fake_harness.py"
 """The fake harness, as a command a command runner runs (it answers as the harnesses do)."""
 
+ENDLESS = timedelta(hours=24)
+"""How long a contract test's turn may run: longer than any test, so a turn ends by `stop()` or
+by its own event, never by its time."""
+
 COMMAND = CommandRunnerOptions(
     argv=[sys.executable, str(HARNESS)],
     output=CommandOutput.JSONL,
@@ -119,7 +124,9 @@ def _fake(shell: RecordingShell, store: Sessions) -> AnAgentRunner:
 
 
 # (`HARNESS` is above: the same fake harness, as the CLI a claude-code runner runs.)
-CLAUDE = ClaudeCodeOptions(cli=[sys.executable, str(HARNESS)])
+CLAUDE = ClaudeCodeOptions(cli=[sys.executable, str(HARNESS)], turn_within=ENDLESS)
+"""The fake harness as the CLI, with a day for a turn (a contract test's stop comes from stop(),
+not from a timeout)."""
 
 
 def _claude(shell: RecordingShell, store: Sessions) -> AnAgentRunner:

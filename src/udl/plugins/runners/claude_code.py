@@ -63,6 +63,7 @@ from udl.plugins.runners.base import (
     TurnReason,
     Usage,
     lines,
+    turn_too_long,
 )
 
 log = logging.getLogger(__name__)
@@ -283,6 +284,12 @@ class ClaudeCode(AgentRunner[ClaudeCodeOptions]):
                             ended = event
                         else:
                             yield event
+        except TimeoutError:
+            # (The turn ran past its turn_within: say so, rather than raising out of send().)
+            ended = TurnEnded(
+                reason=TurnReason.ERROR,
+                text=turn_too_long(self.options.turn_within),
+            )
         except (ToolUnavailable, PluginFailed) as failure:
             ended = TurnEnded(reason=TurnReason.ERROR, text=str(failure))
         if session.id in self._stopped:
@@ -303,6 +310,7 @@ class ClaudeCode(AgentRunner[ClaudeCodeOptions]):
             env=spec.env,
             secret_env={name: value.get_secret_value() for name, value in spec.secret_env.items()},
             stdin=prompt.encode(),
+            within=self.options.turn_within,
         )
         queue: asyncio.Queue[bytes | Exception | None] = asyncio.Queue()
 

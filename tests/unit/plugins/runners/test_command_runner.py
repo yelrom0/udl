@@ -13,7 +13,7 @@ its turn as stopped.
 # System Imports
 import asyncio
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 # Package Imports
@@ -21,6 +21,7 @@ import pytest
 
 # Local Imports
 from support.clock import FakeClock
+from support.runners import RecordingShell
 from udl.errors import NotAllowed
 from udl.hosts.shell import Host, LocalShell
 from udl.plugins.runners.base import (
@@ -86,6 +87,36 @@ async def test_the_prompt_goes_on_stdin_and_its_lines_are_text_deltas(cwd: str) 
     assert events[0] == TextDelta(text="HELLO THERE")
     assert isinstance(events[-1], TurnEnded)
     assert events[-1].reason is TurnReason.DONE
+
+
+async def test_a_turn_gets_its_options_turn_within(cwd: str) -> None:
+    """A turn is one program, and it is given how long it may run: never the shell's 30 s
+    default, which cut a real turn off."""
+    shell = RecordingShell(LocalShell(Host.local(cwd)))
+    runner = CommandRunner(
+        CommandRunnerOptions(argv=[sys.executable, "-c", ECHO], turn_within=timedelta(minutes=20)),
+        shell=shell,
+        clock=FakeClock(),
+        allowed=(sys.executable,),
+    )
+    session = await runner.start(_session(cwd))
+
+    await _turn(runner, session, "hello")
+
+    assert shell.run_withins == [timedelta(minutes=20)]
+
+
+async def test_a_turn_that_runs_past_its_time_ends_as_an_error(cwd: str) -> None:
+    """A turn that runs past its `turn_within` is ended by the runner: the turn says so, and
+    nothing raises out of send()."""
+    runner = _runner(cwd, "import time; time.sleep(5)", turn_within=timedelta(seconds=0.3))
+    session = await runner.start(_session(cwd))
+
+    events = await _turn(runner, session, "hello")
+
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.ERROR
+    assert events[-1].text == "The turn ran past its 0.3 seconds."
 
 
 async def test_the_argv_is_a_template_of_the_model_the_session_and_the_folder(cwd: str) -> None:

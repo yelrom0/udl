@@ -25,15 +25,25 @@ tests/contract/test_runner_contract.py is the behaviour every runner must have.
 import shlex
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Mapping, Sequence
+from datetime import timedelta
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 # Package Imports
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, NonNegativeInt, SecretStr
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    NonNegativeInt,
+    SecretStr,
+)
 
 # Local Imports
 from udl.clock import Clock
+from udl.config import Duration
 from udl.errors import ErrorCode, PluginError, UDLError
 from udl.hosts.shell import HostShell, Interaction
 from udl.plugins.requirements import Requirement
@@ -66,9 +76,30 @@ class _Model(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
 
+def _some_time(within: timedelta) -> timedelta:
+    """A turn's time is more than none: a zero would bring back the shell's own 30 s cut-off
+    (it is falsy, so `within or DEFAULT_TIMEOUT` picks the default), and less than none would
+    time every turn out at once."""
+    if within <= timedelta(0):
+        raise ValueError("a turn's time is more than none, e.g. 30m")
+    return within
+
+
 class RunnerOptions(_Model):
     """A runner's options (each runner's model extends it): what `[runners.<name>]` sets in the
     config, then what set_plugin_settings set (25.11 puts a runner's settings there)."""
+
+    turn_within: Annotated[Duration, AfterValidator(_some_time)] = timedelta(hours=1)
+    """How long one turn may run (`30m`, `1h`): a turn's process is given this, never the shell's
+    own (30 s) default, which cut a real agent turn off."""
+
+
+def turn_too_long(within: timedelta) -> str:
+    """What a turn that ran past its time says: in minutes from a minute up, else in seconds (a
+    test's small `turn_within` reads as the time it is)."""
+    seconds = within.total_seconds()
+    count, unit = (seconds / 60, "minute") if seconds >= 60 else (seconds, "second")
+    return f"The turn ran past its {count:g} {unit}{'' if count == 1 else 's'}."
 
 
 class McpEndpoint(_Model):

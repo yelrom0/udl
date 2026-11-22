@@ -14,6 +14,7 @@ what a turn cost, and how it ended (done, an error, or a limit). `health` reads 
 # System Imports
 import asyncio
 import json
+import sys
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from datetime import UTC, datetime, timedelta
@@ -51,11 +52,15 @@ class FakeShell:
 
     requires: ClassVar[tuple[Requirement, ...]] = ()
 
-    def __init__(self, output: Sequence[bytes] = ()) -> None:
+    def __init__(self, output: Sequence[bytes] = (), *, timeout: bool = False) -> None:
         self.host = Host.local("/w")
+        self.timeout = timeout
+        """Whether a stream runs out of time (the shell's `within` passing)."""
         self.output = list(output)
         self.runs: list[tuple[list[str], bytes | None]] = []
         self.streams: list[tuple[list[str], bytes | None, Mapping[str, str]]] = []
+        self.stream_withins: list[timedelta | None] = []
+        """How long each stream it was asked for got (a turn's `within`, never the default)."""
         self.files: dict[str, str] = {}
         self.answers: dict[str, str] = {}
         self.timeouts: set[str] = set()
@@ -99,8 +104,11 @@ class FakeShell:
         within: timedelta | None = None,
     ) -> AsyncIterator[bytes]:
         self.streams.append((list(argv), stdin, dict(secret_env or {})))
+        self.stream_withins.append(within)
 
         async def chunks() -> AsyncIterator[bytes]:
+            if self.timeout:
+                raise TimeoutError("the stream ran out of time")
             for chunk in self.output:
                 yield chunk
 
@@ -176,6 +184,52 @@ def _runner(shell: FakeShell, **options: object) -> ClaudeCode:
 
 async def _turn(runner: ClaudeCode, session: SessionRef, prompt: str) -> list[AgentEvent]:
     return [event async for event in runner.send(session, prompt)]
+
+
+async def test_a_turn_gets_its_options_turn_within(spec: SessionSpec) -> None:
+    """A turn is one process, and it is given how long it may run: never the shell's 30 s
+    default, which cut a real turn off."""
+    shell = FakeShell(_stream(INIT, _said("hi"), _result()))
+    runner = _runner(shell, turn_within=timedelta(minutes=20))
+    session = await runner.start(spec)
+
+    await _turn(runner, session, "hello")
+
+    assert shell.stream_withins == [timedelta(minutes=20)]
+
+
+async def test_a_turn_that_runs_past_its_time_ends_as_an_error(spec: SessionSpec) -> None:
+    """A turn the shell stops for running too long is ended by the runner: the turn says so, and
+    nothing raises out of send()."""
+    shell = FakeShell(timeout=True)
+    runner = _runner(shell, turn_within=timedelta(minutes=20))
+    session = await runner.start(spec)
+
+    events = await _turn(runner, session, "hello")
+
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.ERROR
+    assert events[-1].text == "The turn ran past its 20 minutes."
+
+
+async def test_a_real_shell_stops_a_turn_that_runs_past_its_time(tmp_path: Path) -> None:
+    """Through a real LocalShell: a CLI that outlasts a tiny `turn_within` is stopped by the
+    shell, and the turn ends as an error rather than hanging (the bug a 30 s default made)."""
+    runner = ClaudeCode(
+        ClaudeCodeOptions(
+            cli=[sys.executable, "-c", "import time; time.sleep(5)"],
+            turn_within=timedelta(seconds=0.3),
+        ),
+        shell=LocalShell(Host.local(str(tmp_path))),
+        clock=FakeClock(),
+    )
+    session = await runner.start(SessionSpec(cwd=str(tmp_path)))
+
+    events = [event async for event in runner.send(session, "hello")]
+
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.ERROR
+    assert events[-1].text == "The turn ran past its 0.3 seconds."
 
 
 async def test_a_first_turn_is_one_claude_process_with_its_session_id(spec: SessionSpec) -> None:
