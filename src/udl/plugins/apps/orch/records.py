@@ -1573,6 +1573,36 @@ class ReviewRecords:
         return None
 
 
+class WaitRecords:
+    """Where a task's waits are kept (27.10): opened while its agent holds no turn, and closed
+    when it gets one again. One wait of a kind at a time — a tick that finds the wait already
+    open leaves it as it is, so a long wait is one record, not one a tick."""
+
+    def __init__(self, records: AppRecords) -> None:
+        self._records = records
+
+    async def open_for(self, task: UUID) -> list[Wait]:
+        """The waits of `task` that have not ended."""
+        found = await self._records.list(Wait, RecordQuery(where={"task": task}))
+        return [one for one in found if one.end is None]
+
+    async def opening(self, task: UUID, kind: WaitKind, *, at: datetime) -> Wait:
+        """The wait of `kind` `task` is in, opened at `at` when it has none: what the dispatcher
+        calls each tick while the agent holds no turn."""
+        for wait in await self.open_for(task):
+            if wait.wait_kind == kind:
+                return wait
+        return await self._records.save(Wait(task=task, wait_kind=kind, start=at))
+
+    async def closing(self, task: UUID, *, at: datetime) -> list[Wait]:
+        """Every wait of `task` that is still open, closed at `at`: what the dispatcher calls
+        when the agent has a turn again."""
+        open_ones = await self.open_for(task)
+        return list(
+            await self._records.save_all([one.model_copy(update={"end": at}) for one in open_ones])
+        )
+
+
 class NoteRecords:
     """Where orch keeps its notes: appended, and read by the record they are about, oldest
     first (so a task's history reads top to bottom, 26.5).

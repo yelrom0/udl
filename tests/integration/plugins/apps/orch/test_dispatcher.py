@@ -92,6 +92,7 @@ from udl.plugins.apps.orch.records import (
     SessionRecords,
     Task,
     TaskRecords,
+    WaitRecords,
 )
 from udl.plugins.apps.orch.settings import OrchSettings
 from udl.plugins.apps.orch.tokens import secret_ref
@@ -632,6 +633,11 @@ async def test_a_limited_harness_is_not_dispatched_again_until_its_quota_is_back
     assert session.limited_until == reset_at
     assert STORE.turns == 1
     assert (await tasks_of(service))["F-1.1"].state == IN_PROGRESS
+    # (27.10: the quota's wait is a `limit` one, so the hours it spent out of quota are not its
+    # work.)
+    task = (await tasks_of(service))["F-1.1"]
+    waits = await WaitRecords(AppRecords(service.db)).open_for(task.id)
+    assert [one.wait_kind for one in waits] == ["limit"]
 
 
 async def test_a_failed_turn_is_retried_and_then_the_session_fails(
@@ -1042,6 +1048,11 @@ async def test_a_session_whose_pull_is_only_waiting_holds_no_turn(service: UDLSe
     session = await session_of(service)
     assert session is not None
     assert session.state is SessionState.IDLE
+    # (27.10: how long it waited on the checks is a `Wait`, not the agent's work — one record,
+    # not one a tick, and it is still open.)
+    task = (await tasks_of(service))["F-1.1"]
+    waits = await WaitRecords(AppRecords(service.db)).open_for(task.id)
+    assert [one.wait_kind for one in waits] == ["ci"]
 
 
 async def test_a_pull_only_waiting_on_the_bot_asks_once_how_long_to_wait(
