@@ -385,9 +385,11 @@ class StopSessionRequest(_Model):
 class SendRequest(_Model):
     """A message typed into an agent's session (the owner's only).
 
-    `delivery: "turn"` sends it as its own turn (the session must not be running); `"steer"` is
-    for a session that is running: the message is kept as a live event of the session, and the
-    dispatcher gives it to the agent at its next turn, as what a person said mid-turn."""
+    `delivery: "turn"` (the only one there is for now) sends it as a turn of its own through the
+    agent's runner: the session must be between turns, and the message reaches the agent when it
+    is. `"steer"` is refused with a reason — none of udl's harnesses takes input mid-turn, and a
+    message kept for the next turn would not be what a person said mid-turn, only a queued one
+    (27.11's chats need the same answer for permission prompts)."""
 
     agent: Name
     """The agent whose session it is."""
@@ -398,9 +400,9 @@ class SendRequest(_Model):
 
 
 class Sent(_Model):
-    """What `orch_send` did: the session it went to, and the turn it was (None when steered)."""
+    """What `orch_send` did: the session it went to, and the turn it was."""
 
     session: UUID
     """The session it went to."""
-    turn: int | None = None
-    """The turn it was (None: it was steered into the session, to be given at its next turn)."""
+    turn: int
+    """The turn it was (the session's count of turns before it: 0 is its first)."""

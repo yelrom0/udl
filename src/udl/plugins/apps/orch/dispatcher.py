@@ -32,15 +32,17 @@ from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Final
+from uuid import UUID
 
 # Package Imports
-from pydantic import JsonValue, SecretStr, TypeAdapter
+from pydantic import JsonValue, SecretStr
 
 # Local Imports
+from udl.clock import Clock
 from udl.db.models import JsonObject
 from udl.errors import DoesNotExist, PluginError, UDLError
 from udl.hosts.models import HostRequest
-from udl.plugins.apps.base import AppContext, AppEvent
+from udl.plugins.apps.base import AppContext, AppEvent, AppEvents, AppRecords
 from udl.plugins.apps.orch import managers
 from udl.plugins.apps.orch import questions as asked
 from udl.plugins.apps.orch import queue as queues
@@ -66,7 +68,6 @@ from udl.plugins.apps.orch.models import (
 from udl.plugins.apps.orch.settings import OrchSettings
 from udl.plugins.apps.orch.tokens import issue_token, secret_ref
 from udl.plugins.runners.base import (
-    AgentEvent,
     McpEndpoint,
     RunnerFailed,
     RunnerLimited,
@@ -108,10 +109,7 @@ class Outcome(StrEnum):
     LIMITED = "limited"  # its harness is out of quota: nothing until the quota is back
     RETRY = "retry"  # it failed: retried with a backoff, until `FAILURES`
     FAILED = "failed"  # it failed `FAILURES` times: the session is failed, the task waits
-
-
-_AN_EVENT: Final = TypeAdapter(AnAgentEvent)
-"""What turns a runner's event into the transcript's (they are the same kinds)."""
+    STOPPED = "stopped"  # a person stopped the session mid-turn: it stays ended
 
 
 def instructions(project: stored.Project, agent: stored.Agent) -> str:
@@ -222,6 +220,14 @@ class Dispatcher:
         """The MCP token issued per agent, kept for as long as udl runs: issuing one rotates it,
         so a session started twice must not invalidate the other's."""
         self._harnesses = harnesses
+        self._turns_made = Turns(
+            records=ctx.records,
+            events=ctx.events,
+            harnesses=harnesses,
+            clock=ctx.clock,
+            settings=self._settings,
+            place=self._turns,
+        )
         self._prepare = prepare if prepare is not None else self._prepared
         self._tick = tick
         self._wakes: dict[str, asyncio.Event] = {}
@@ -741,6 +747,8 @@ class Dispatcher:
             items = await self._needs(agent, reports)
             outcome, _ = await self._turn(agent, session, manager_prompt(agent, reports, items))
             session = await sessions.session(session.id) or session
+            if outcome is Outcome.STOPPED:
+                return False  # (a person stopped it: its news was not told)
             if outcome is Outcome.RETRY:
                 await self._retried(agent, session, session.last_error)
             await self._end(agent, session)
@@ -767,6 +775,8 @@ class Dispatcher:
             await stored.WaitRecords(self._records).closing(task.id, at=self._clock.now())
             outcome, spoke = await self._turn(agent, session, prompt)
             session = await sessions.session(session.id) or session
+            if outcome is Outcome.STOPPED:
+                return spoke  # (a person stopped it: it stays ended)
             if outcome in (Outcome.LIMITED, Outcome.FAILED):
                 return spoke
             if outcome is Outcome.RETRY:
@@ -971,122 +981,8 @@ class Dispatcher:
     async def _turn(
         self, agent: stored.Agent, session: stored.AgentSession, prompt: str
     ) -> tuple[Outcome, bool]:
-        """Send one turn and stream it: its events into the transcript and the live events, and
-        what its end says into the session (the card's 3, 4 and 6) — and whether it said
-        anything at all (a turn that never started said nothing)."""
-        async with self._turns:  # (at most `max_agents_running` turns at once)
-            return await self._one_turn(agent, session, prompt)
-
-    async def _one_turn(
-        self, agent: stored.Agent, session: stored.AgentSession, prompt: str
-    ) -> tuple[Outcome, bool]:
-        """One turn, streamed (what `_turn` does once it has a turn's place)."""
-        sessions = stored.SessionRecords(self._records)
-        session = await sessions.save_session(
-            session.model_copy(update={"state": SessionState.RUNNING})
-        )
-        runner = await self._harnesses.runner(agent.host, agent.runner)
-        ended: TurnEnded | None = None
-        limited: RunnerLimited | None = None
-        failed: RunnerFailed | None = None
-        spoke = False
-        try:
-            async for said in runner.send(session.ref, prompt):
-                event = _an_event(said)
-                spoke = True
-                await self._said(agent, session, event)
-                if isinstance(event, TurnEnded):
-                    ended = event
-                    break
-                if isinstance(event, RunnerLimited):
-                    limited = event
-                elif isinstance(event, RunnerFailed):
-                    failed = event
-        except (PluginError, UDLError) as error:
-            failed = RunnerFailed(message=str(error))
-            ended = TurnEnded(reason=TurnReason.ERROR, text=str(error))
-        return await self._ended(agent, session, ended, limited=limited, failed=failed), spoke
-
-    async def _said(
-        self, agent: stored.Agent, session: stored.AgentSession, event: AnAgentEvent
-    ) -> None:
-        """One thing the runner said: its transcript record, its live event, and what it cost."""
-        sessions = stored.SessionRecords(self._records)
-        said = await sessions.save_event(
-            stored.SessionEvent(
-                agent=agent.name, session=session.id, turn=session.turns, event=event
-            )
-        )
-        # (Its own record's id: two things said in one turn are two events, even when they say
-        # the same, and the same thing said again after a restart is not the last run's repeat.)
-        await self._live(
-            "orch.session.event",
-            {
-                "agent": session.agent,
-                "session": str(session.id),
-                "task": session.task,
-                "turn": session.turns,
-                "kind": event.kind,
-            },
-            dedupe=str(said.id),
-        )
-        if isinstance(event, Usage):
-            await sessions.save_session(
-                session.model_copy(
-                    update={
-                        "tokens_in": session.tokens_in + event.input_tokens,
-                        "tokens_out": session.tokens_out + event.output_tokens,
-                        "cost": event.cost if event.cost is not None else session.cost,
-                    }
-                )
-            )
-
-    async def _ended(
-        self,
-        agent: stored.Agent,
-        session: stored.AgentSession,
-        ended: TurnEnded | None,
-        *,
-        limited: RunnerLimited | None,
-        failed: RunnerFailed | None,
-    ) -> Outcome:
-        """What a turn's end means for the session (the card's 3, 4 and 6): whether the loop
-        carries on with this session, or waits (a limit, a failure) and comes back."""
-        sessions = stored.SessionRecords(self._records)
-        if limited is not None or (ended is not None and ended.reason is TurnReason.LIMITED):
-            until = limited.until if limited is not None else None
-            self._harnesses.limited(agent.host, agent.runner, until)
-            session = await sessions.save_session(
-                session.model_copy(
-                    update={
-                        "state": SessionState.LIMITED,
-                        "limited_until": until,
-                        "limits": session.limits + 1,
-                    }
-                )
-            )
-            await self._live(
-                "orch.agent.limited",
-                {
-                    "agent": session.agent,
-                    "session": str(session.id),
-                    "until": until.isoformat() if until is not None else None,
-                },
-                dedupe=f"{session.id}:{session.limits}",
-            )
-            return Outcome.LIMITED
-        if failed is not None or (ended is not None and ended.reason is TurnReason.ERROR):
-            why = (
-                failed.message if failed is not None else (ended.text if ended is not None else "")
-            )
-            await sessions.save_session(session.model_copy(update={"last_error": why}))
-            return Outcome.RETRY
-        await sessions.save_session(
-            session.model_copy(
-                update={"state": SessionState.IDLE, "turns": session.turns + 1, "failures": 0}
-            )
-        )
-        return Outcome.DONE
+        """Send one turn: `Turns.one`, the same turn `orch_send` makes (27.9)."""
+        return await self._turns_made.one(agent, session, prompt)
 
     async def _retried(self, agent: stored.Agent, session: stored.AgentSession, why: str) -> bool:
         """A turn that failed: retried after a backoff, and after `FAILURES` tries the session is
@@ -1095,6 +991,10 @@ class Dispatcher:
         The wait is the loop's, not a turn's: a retry does not hold one of the `max_agents_running`
         places while it waits."""
         sessions = stored.SessionRecords(self._records)
+        current = await sessions.session(session.id)
+        if current is None or current.state is SessionState.ENDED:
+            return False  # (a person stopped it: it is not retried)
+        session = current
         failures = session.failures + 1
         if failures < FAILURES:
             await sessions.save_session(
@@ -1166,23 +1066,215 @@ class Dispatcher:
         self._harnesses.ended(agent.host, agent.runner, session.ref.id)
 
     async def _live(self, event_type: str, data: Mapping[str, object], *, dedupe: str) -> None:
-        """Publish one of the session's live events, as its own type has it (one that cannot be
-        published is logged, never fatal: the transcript is the record).
+        """Publish one of the session's live events (publish: one that cannot be is logged)."""
+        await publish(self._events, event_type, data, dedupe=dedupe)
 
-        Its dedupe key is something stored and unique (`dedupe`: a record's id, a session and its
-        turn), never what the event says and never a count: the bus drops a repeat, so a key from
-        what was said would drop two of the same thing in one turn, and a key that counted from 0
-        would make this run's first events the last run's repeats."""
+
+# ---------------------------------------------------------------------------------------------
+# One turn (the loop's, and a person's typed one)
+# ---------------------------------------------------------------------------------------------
+
+_LOCKS: Final[dict[tuple[int, UUID], asyncio.Lock]] = {}
+"""Each session's turn lock, per event loop (a lock belongs to the loop that first awaited it,
+and a process may run more than one): the dispatcher's loop and a person's typed turn
+(`orch_send`, 27.9) take the same one, so two turns are never in one session at once."""
+
+
+class Turns:
+    """A session's turns, as the dispatcher's loop runs them (27.7): the numbering, the
+    transcript and the live events, what a turn cost, and what its end means.
+
+    `orch_send` (27.9) runs a person's typed turn through this too, so it is the same turn the
+    loop makes — and a turn never overwrites a session a person ended while it ran."""
+
+    def __init__(
+        self,
+        *,
+        records: AppRecords,
+        events: AppEvents,
+        harnesses: Harnesses,
+        clock: Clock,
+        settings: OrchSettings,
+        place: asyncio.Semaphore | None = None,
+    ) -> None:
+        self._records = records
+        self._events = events
+        self._harnesses = harnesses
+        self._clock = clock
+        self._settings = settings
+        self._place = place
+        """The dispatcher's `max_agents_running` places; None for a turn nobody queued."""
+
+    async def one(
+        self, agent: stored.Agent, session: stored.AgentSession, prompt: str
+    ) -> tuple[Outcome, bool]:
+        """Send one turn and stream it: its events into the transcript and the live events, and
+        what its end says into the session — and whether it said anything at all (a turn that
+        never started said nothing)."""
+        lock = _LOCKS.setdefault((id(asyncio.get_running_loop()), session.id), asyncio.Lock())
+        async with lock:
+            if self._place is None:
+                return await self._one_turn(agent, session, prompt)
+            async with self._place:  # (at most `max_agents_running` turns at once)
+                return await self._one_turn(agent, session, prompt)
+
+    async def _one_turn(
+        self, agent: stored.Agent, session: stored.AgentSession, prompt: str
+    ) -> tuple[Outcome, bool]:
+        """One turn, streamed (what `one` does once it has the session and its place)."""
+        sessions = stored.SessionRecords(self._records)
+        current = await sessions.session(session.id)
+        if current is None:
+            return Outcome.STOPPED, False  # (it is gone: nothing to say into)
+        # (The lock is what says a turn is already in it, in this process; the stored state says
+        # it to anything else — `orch_send` refuses a RUNNING session. A record that still says
+        # RUNNING after a restart is a turn that never ended, and this one takes it over.)
+        session = await sessions.save_session(
+            current.model_copy(update={"state": SessionState.RUNNING})
+        )
+        runner = await self._harnesses.runner(agent.host, agent.runner)
+        ended: TurnEnded | None = None
+        limited: RunnerLimited | None = None
+        failed: RunnerFailed | None = None
+        spoke = False
         try:
-            payload: JsonObject = {name: _plain(value) for name, value in data.items()}
-            await self._events.emit(event_type, payload, dedupe_key=f"{event_type}:{dedupe}")
+            async for said in runner.send(session.ref, prompt):
+                event = an_event(said)
+                spoke = True
+                await self._said(agent, session, event)
+                if isinstance(event, TurnEnded):
+                    ended = event
+                    break
+                if isinstance(event, RunnerLimited):
+                    limited = event
+                elif isinstance(event, RunnerFailed):
+                    failed = event
         except (PluginError, UDLError) as error:
-            log.warning("publishing %s: %s", event_type, error)
+            failed = RunnerFailed(message=str(error))
+            ended = TurnEnded(reason=TurnReason.ERROR, text=str(error))
+        return await self._ended(agent, session, ended, limited=limited, failed=failed), spoke
+
+    async def _saved(
+        self, session: stored.AgentSession, **changes: object
+    ) -> stored.AgentSession | None:
+        """The session saved with `changes`, from what is stored now — or None when a person
+        ended it while the turn ran (a stop wins over what the turn was about to write)."""
+        sessions = stored.SessionRecords(self._records)
+        current = await sessions.session(session.id)
+        if current is None or current.state is SessionState.ENDED:
+            return None
+        return await sessions.save_session(current.model_copy(update=changes))
+
+    async def _said(
+        self, agent: stored.Agent, session: stored.AgentSession, event: AnAgentEvent
+    ) -> None:
+        """One thing the runner said: its transcript record, its live event, and what it cost."""
+        sessions = stored.SessionRecords(self._records)
+        said = await sessions.save_event(
+            stored.SessionEvent(
+                agent=agent.name, session=session.id, turn=session.turns, event=event
+            )
+        )
+        # (Its own record's id: two things said in one turn are two events, even when they say
+        # the same, and the same thing said again after a restart is not the last run's repeat.)
+        await self.live(
+            "orch.session.event",
+            {
+                "agent": session.agent,
+                "session": str(session.id),
+                "task": session.task,
+                "turn": session.turns,
+                "kind": event.kind,
+            },
+            dedupe=str(said.id),
+        )
+        if isinstance(event, Usage):
+            current = await sessions.session(session.id)
+            if current is None or current.state is SessionState.ENDED:
+                return
+            await self._saved(
+                current,
+                tokens_in=current.tokens_in + event.input_tokens,
+                tokens_out=current.tokens_out + event.output_tokens,
+                cost=event.cost if event.cost is not None else current.cost,
+            )
+
+    async def _ended(
+        self,
+        agent: stored.Agent,
+        session: stored.AgentSession,
+        ended: TurnEnded | None,
+        *,
+        limited: RunnerLimited | None,
+        failed: RunnerFailed | None,
+    ) -> Outcome:
+        """What a turn's end means for the session: whether the loop carries on with this
+        session, or waits (a limit, a failure) and comes back — or a person ended it meanwhile,
+        in which case it stays ended."""
+        if limited is not None or (ended is not None and ended.reason is TurnReason.LIMITED):
+            until = limited.until if limited is not None else None
+            self._harnesses.limited(agent.host, agent.runner, until)
+            current = await stored.SessionRecords(self._records).session(session.id)
+            if current is None or current.state is SessionState.ENDED:
+                return Outcome.STOPPED
+            session = (
+                await self._saved(
+                    current,
+                    state=SessionState.LIMITED,
+                    limited_until=until,
+                    limits=current.limits + 1,
+                )
+                or current
+            )
+            await self.live(
+                "orch.agent.limited",
+                {
+                    "agent": session.agent,
+                    "session": str(session.id),
+                    "until": until.isoformat() if until is not None else None,
+                },
+                dedupe=f"{session.id}:{session.limits}",
+            )
+            return Outcome.LIMITED
+        if failed is not None or (ended is not None and ended.reason is TurnReason.ERROR):
+            why = (
+                failed.message if failed is not None else (ended.text if ended is not None else "")
+            )
+            if await self._saved(session, last_error=why) is None:
+                return Outcome.STOPPED
+            return Outcome.RETRY
+        if (
+            await self._saved(
+                session,
+                state=SessionState.IDLE,
+                turns=session.turns + 1,
+                failures=0,
+            )
+            is None
+        ):
+            return Outcome.STOPPED
+        return Outcome.DONE
+
+    async def live(self, event_type: str, data: Mapping[str, object], *, dedupe: str) -> None:
+        """Publish one of the session's live events (publish: one that cannot be is logged)."""
+        await publish(self._events, event_type, data, dedupe=dedupe)
 
 
-def _an_event(event: AgentEvent) -> AnAgentEvent:
-    """`event` as the transcript holds it (agents.an_event: the kinds are the same)."""
-    return an_event(event)
+async def publish(
+    events: AppEvents, event_type: str, data: Mapping[str, object], *, dedupe: str
+) -> None:
+    """Publish one of a session's live events, as its own type has it (one that cannot be
+    published is logged, never fatal: the transcript is the record).
+
+    Its dedupe key is something stored and unique (`dedupe`: a record's id, a session and its
+    turn), never what the event says and never a count: the bus drops a repeat, so a key from
+    what was said would drop two of the same thing in one turn, and a key that counted from 0
+    would make this run's first events the last run's repeats."""
+    try:
+        payload: JsonObject = {name: _plain(value) for name, value in data.items()}
+        await events.emit(event_type, payload, dedupe_key=f"{event_type}:{dedupe}")
+    except (PluginError, UDLError) as error:
+        log.warning("publishing %s: %s", event_type, error)
 
 
 def _address(host: str) -> str:

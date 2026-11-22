@@ -71,12 +71,11 @@ from udl.plugins.apps.orch.agents import (
     SessionState,
     SetAgentRequest,
     StopSessionRequest,
-    an_event,
 )
 from udl.plugins.apps.orch.agents import (
     AgentSession as AgentSessionShape,
 )
-from udl.plugins.apps.orch.dispatcher import Dispatcher
+from udl.plugins.apps.orch.dispatcher import Dispatcher, Outcome, Turns
 from udl.plugins.apps.orch.importer import (
     PLAN_KEY,
     ParsedPlan,
@@ -371,9 +370,9 @@ class _Key(BaseModel):
     """The key, or where udl's secret store has it."""
 
 
-_RUNNERS: tuple[str, ...] = ("orch", "runners")
 _AGENTS: Final = ("orch", "agents")
 _QUEUE: Final = ("orch", "queue")
+_RUNNERS: tuple[str, ...] = ("orch", "runners")
 """The CLI words a harness's operations live under: `udl orch runners [install]`."""
 
 __all__ = ["Orch"]
@@ -772,25 +771,25 @@ class Orch(AppPlugin[OrchSettings]):
             cls.operation(
                 "pause_agent",
                 title="Pause an agent",
-                hints=OperationHints(idempotent=True),
+                hints=OperationHints(admin=True, idempotent=True),
                 cli=CLISpec(path=(*_AGENTS, "pause"), arguments=("name",)),
             ),
             cls.operation(
                 "resume_agent",
                 title="Resume an agent",
-                hints=OperationHints(idempotent=True),
+                hints=OperationHints(admin=True, idempotent=True),
                 cli=CLISpec(path=(*_AGENTS, "resume"), arguments=("name",)),
             ),
             cls.operation(
                 "get_session",
                 title="A session and its transcript",
-                hints=OperationHints(read_only=True),
+                hints=OperationHints(admin=True, read_only=True),
                 cli=CLISpec(path=(*_AGENTS, "session"), arguments=("session",)),
             ),
             cls.operation(
                 "stop_session",
                 title="Stop a session",
-                hints=OperationHints(destructive=True),
+                hints=OperationHints(admin=True, destructive=True),
                 cli=CLISpec(path=(*_AGENTS, "stop"), arguments=("session",)),
             ),
             cls.operation(
@@ -878,16 +877,17 @@ class Orch(AppPlugin[OrchSettings]):
             try:
                 runner = await self.harnesses.runner(found.ref.host, found.ref.runner)
                 await runner.stop(found.ref)
-            except UDLError:
+            except UDLError as error:
                 # (A harness that is gone, or a session it no longer has: what is left to do is
-                # end it here, which is what keeps the dispatcher off it.)
-                pass
+                # end it here, which is what keeps the dispatcher off it — and why it could not
+                # be told is written where the session's errors are.)
+                found = found.model_copy(update={"last_error": f"stopping it: {error}"})
             found = await sessions.save_session(
                 found.model_copy(update={"state": SessionState.ENDED})
             )
         return await self._session_info(found, limit=0)
 
-    async def send(self, request: SendRequest) -> Sent:
+    async def send(self, request: SendRequest, *, service: UDLService) -> Sent:
         """A message typed into an agent's session (the owner's only): given as a turn of its
         own, through the agent's runner, and kept in its transcript as it happens.
 
@@ -917,18 +917,20 @@ class Orch(AppPlugin[OrchSettings]):
                 f"{agent.name!r} is in a turn",
                 hint="Wait for it to answer, or stop the session and send again.",
             )
-        runner = await self.harnesses.runner(found.ref.host, found.ref.runner)
-        turn = found.turns + 1
-        async for event in runner.send(found.ref, request.text):
-            await sessions.save_event(
-                stored.SessionEvent(
-                    agent=found.agent, session=found.id, turn=turn, event=an_event(event)
-                )
-            )
-        await sessions.save_session(
-            found.model_copy(update={"state": SessionState.IDLE, "turns": turn})
+        turns = Turns(
+            records=self.records,
+            events=AppEvents(service.bus, "orch", self.event_types()),
+            harnesses=self.harnesses,
+            clock=self.clock,
+            settings=self.settings,
         )
-        return Sent(session=found.id, turn=turn)
+        outcome, _ = await turns.one(agent, found, request.text)
+        if outcome is Outcome.STOPPED:
+            raise NotAllowed(
+                f"{agent.name!r}'s session ended while the message was sent",
+                hint="Its next turn starts a new session; send it again after that.",
+            )
+        return Sent(session=found.id, turn=found.turns)
 
     async def _set_paused(self, name: str, *, paused: bool) -> Agent:
         """`name`'s agent, paused or resumed, as an operation answers with it."""
@@ -2844,6 +2846,7 @@ def _entry(task: stored.Task) -> QueueEntry:
     """`task` as the queue's operations answer with it."""
     return QueueEntry(
         key=task.key,
+        project=task.project,
         feature=task.feature,
         title=task.title,
         state=task.state,

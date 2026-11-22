@@ -1810,7 +1810,12 @@ class SessionRecords:
 
     async def transcript(self, session: UUID) -> list[SessionEvent]:
         """Everything that happened in `session`, in the order it happened (by its turn, then
-        by when it was stored)."""
+        by when it was stored).
+
+        One session's own events: it is bounded by that session's turns (one task's work), not
+        by the store, so the page and the count an operation answers with come from this one
+        read. A count query would have to be added to the database kind, and a manager-level
+        count cannot sum across databases without counting a mirrored record twice."""
         found = await self._records.list(SessionEvent, RecordQuery(where={"session": session}))
         return sorted(found, key=lambda one: (one.turn, one.created_at))
 

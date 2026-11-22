@@ -13,9 +13,10 @@ check of `orch_send` is what a person typing into it gets — a turn of its own,
 """
 
 # System Imports
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import ClassVar
 from uuid import uuid4
 
 # Package Imports
@@ -23,11 +24,12 @@ import pytest
 
 # Local Imports
 from support.engine import registry, settings
-from support.runners import FakeRunner
+from support.runners import SharedRunner
 from udl.core.models import Deleted
 from udl.core.operations import OperationHints
 from udl.core.service import UDLService
-from udl.errors import DoesNotExist, InUse, NotAllowed
+from udl.errors import DoesNotExist, InUse, NotAllowed, PluginFailed
+from udl.interfaces.security import Principal, PrincipalKind, current_principal
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.agents import (
     Agent as AgentShape,
@@ -40,6 +42,7 @@ from udl.plugins.apps.orch.agents import (
     Sent,
     SessionInfo,
     SessionState,
+    an_event,
 )
 from udl.plugins.apps.orch.models import AssignTaskRequest
 from udl.plugins.apps.orch.plugin import Orch
@@ -51,11 +54,21 @@ from udl.plugins.apps.orch.records import (
     FeatureRecords,
     Project,
     ProjectRecords,
+    SessionEvent,
     SessionRecords,
     TaskRecords,
 )
 from udl.plugins.apps.orch.records import Task as TaskRecord
 from udl.plugins.registry import APPS, RUNNERS, PluginRegistry
+from udl.plugins.runners.base import (
+    AgentEvent,
+    SessionRef,
+    SessionSpec,
+    TextDelta,
+    ToolStarted,
+    TurnEnded,
+    TurnReason,
+)
 
 
 def orch_registry() -> PluginRegistry:
@@ -63,8 +76,31 @@ def orch_registry() -> PluginRegistry:
     tests are of)."""
     plugins = registry()
     plugins.register(APPS, Orch)
-    plugins.register(RUNNERS, FakeRunner)
+    plugins.register(RUNNERS, SharedRunner)
     return plugins
+
+
+class WaitingRunner(SharedRunner):
+    """The fake, with a turn that waits until the test lets it go (a turn a person stops while
+    it runs)."""
+
+    started: ClassVar[asyncio.Event] = asyncio.Event()
+    """Set when a turn is in it (the test waits for that, not for a sleep)."""
+    go_on: ClassVar[asyncio.Event] = asyncio.Event()
+    """Set when the test lets the turn finish."""
+
+    async def send(self, session: SessionRef, prompt: str) -> AsyncIterator[AgentEvent]:
+        WaitingRunner.started.set()
+        yield ToolStarted(name="udl.wait", summary="Waiting for udl")
+        await WaitingRunner.go_on.wait()
+        yield TurnEnded(reason=TurnReason.DONE, text="Done.")
+
+
+class BrokenStopRunner(SharedRunner):
+    """The fake, whose harness cannot stop a session (it is gone, or never had it)."""
+
+    async def stop(self, session: SessionRef) -> None:
+        raise PluginFailed(f"No session {session.id!r} to stop.")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -93,14 +129,16 @@ def test_orch_offers_the_agents_operations() -> None:
     # idempotent: pausing a paused agent is not an error.)
     assert offered["list_agents"].hints == OperationHints(read_only=True)
     assert offered["get_agent"].hints == OperationHints(read_only=True)
-    assert offered["get_session"].hints == OperationHints(read_only=True)
+    assert offered["get_session"].hints == OperationHints(admin=True, read_only=True)
     assert offered["set_agent"].hints == OperationHints(admin=True, idempotent=True)
     assert offered["delete_agent"].hints == OperationHints(
         admin=True, destructive=True, idempotent=True
     )
-    assert offered["pause_agent"].hints == OperationHints(idempotent=True)
-    assert offered["resume_agent"].hints == OperationHints(idempotent=True)
-    assert offered["stop_session"].hints == OperationHints(destructive=True)
+    # (Pausing, resuming, stopping a session and reading its transcript are the owner's: an
+    # agent's role table admits every non-admin orch_* operation, and these are not its own.)
+    assert offered["pause_agent"].hints == OperationHints(admin=True, idempotent=True)
+    assert offered["resume_agent"].hints == OperationHints(admin=True, idempotent=True)
+    assert offered["stop_session"].hints == OperationHints(admin=True, destructive=True)
     # (A turn reaches a harness on a host: that is what the open world is.)
     assert offered["send"].hints == OperationHints(open_world=True)
 
@@ -287,11 +325,13 @@ async def test_a_message_is_a_turn_of_its_own(service: UDLService) -> None:
 
     assert isinstance(sent, Sent)
     assert sent.session == found.id
-    assert sent.turn == 1
+    # (The turn it runs as: the session's count of turns before it, as the dispatcher numbers
+    # them — a message is the session's next turn, not one past it.)
+    assert sent.turn == 3
     after = await service.call("orch_get_session", {"session": str(found.id)})
     assert isinstance(after, SessionInfo)
-    assert after.turns == 1
-    assert after.total == 4  # (the three it had, and what the turn said)
+    assert after.turns == 4
+    assert after.total == 5  # (the three it had, what it said, and how the turn ended)
 
 
 async def test_a_message_is_refused_into_a_session_in_a_turn(service: UDLService) -> None:
@@ -313,34 +353,176 @@ async def test_a_message_into_an_agent_with_no_session_is_refused(service: UDLSe
         await service.call("orch_send", {"agent": "ernie-c", "text": "Go on"})
 
 
+async def test_the_agents_of_one_project_are_the_only_ones_listed(service: UDLService) -> None:
+    records = AppRecords(service.db)
+    found = await AgentRecords(records).agent("ernie-c")
+    assert found is not None
+    await AgentRecords(records).save_agent(found.model_copy(update={"projects": ["other"]}))
+
+    listed = await service.call("orch_list_agents", {"project": "udl"})
+
+    assert isinstance(listed, Agents)
+    assert [one.agent.name for one in listed.items] == ["deepseek-b"]
+
+
+async def test_a_queue_of_two_projects_says_which(service: UDLService) -> None:
+    """A key is only unique within a project, so a queue that spans them says which task is
+    whose (two tasks `F-1.1`, one in each project)."""
+    records = AppRecords(service.db)
+    await ProjectRecords(records).save_project(Project(name="other", title="Other"))
+    await FeatureRecords(records).save_feature(Feature(project="other", key="F-1", title="Q"))
+    await TaskRecords(records).save_task(
+        TaskRecord(project="other", feature="F-1", key="F-1.1", title="Elsewhere")
+    )
+    await queue_task(service, "F-1.1", "ernie-c")
+    await queue_task(service, "F-1.1", "ernie-c", project="other")
+
+    found = await service.call("orch_get_agent", {"name": "ernie-c"})
+
+    assert isinstance(found, AgentInfo)
+    assert sorted((one.project, one.key) for one in found.queue) == [
+        ("other", "F-1.1"),
+        ("udl", "F-1.1"),
+    ]
+
+
+async def test_a_transcript_pages_from_an_offset(service: UDLService) -> None:
+    found = await a_session(service)
+
+    page = await service.call(
+        "orch_get_session", {"session": str(found.id), "offset": 1, "limit": 1}
+    )
+
+    assert isinstance(page, SessionInfo)
+    assert page.total == 3
+    assert [one.turn for one in page.events] == [1]
+
+
+async def test_a_message_from_an_agent_is_refused(service: UDLService) -> None:
+    await a_session(service, state=SessionState.IDLE)
+
+    token = current_principal.set(
+        Principal(kind=PrincipalKind.AGENT, name="ernie-c", role="reviewer")
+    )
+    try:
+        with pytest.raises(NotAllowed, match="owner's"):
+            await service.call("orch_send", {"agent": "ernie-c", "text": "Go on"})
+    finally:
+        current_principal.reset(token)
+
+
+@pytest.mark.parametrize(
+    ("name", "asked"),
+    [
+        ("orch_pause_agent", {"agent": "ernie-c"}),
+        ("orch_resume_agent", {"agent": "ernie-c"}),
+        ("orch_stop_session", {"session": "00000000-0000-0000-0000-000000000000"}),
+        ("orch_get_session", {"session": "00000000-0000-0000-0000-000000000000"}),
+    ],
+)
+async def test_the_owners_controls_are_not_an_agents(
+    service: UDLService, name: str, asked: dict[str, str]
+) -> None:
+    """Pausing, resuming, stopping and reading a session are the owner's: a reviewer's role table
+    admits every non-admin orch_* operation, so these four are refused as admin ones."""
+    token = current_principal.set(
+        Principal(kind=PrincipalKind.AGENT, name="ernie-c", role="reviewer")
+    )
+    try:
+        with pytest.raises(NotAllowed, match="may call"):
+            await service.call(name, asked)
+    finally:
+        current_principal.reset(token)
+
+
+async def test_a_harness_that_cannot_stop_it_still_ends_the_session(tmp_path: Path) -> None:
+    plugins = registry()
+    plugins.register(APPS, Orch)
+    plugins.register(RUNNERS, BrokenStopRunner)
+    async with UDLService(settings(tmp_path), registry=plugins) as service:
+        found = await a_session(service, state=SessionState.RUNNING)
+
+        stopped = await service.call("orch_stop_session", {"session": str(found.id)})
+
+        assert isinstance(stopped, SessionInfo)
+        assert stopped.state is SessionState.ENDED
+        stored = await SessionRecords(AppRecords(service.db)).session(found.id)
+        assert stored is not None
+        assert stored.state is SessionState.ENDED
+        assert stored.last_error.startswith("stopping it:")
+
+
+async def test_a_session_stopped_mid_turn_stays_ended(tmp_path: Path) -> None:
+    plugins = registry()
+    plugins.register(APPS, Orch)
+    plugins.register(RUNNERS, WaitingRunner)
+    async with UDLService(settings(tmp_path), registry=plugins) as service:
+        records = AppRecords(service.db)
+        await ProjectRecords(records).save_project(Project(name="udl", title="udl"))
+        await FeatureRecords(records).save_feature(Feature(project="udl", key="F-1", title="Q"))
+        await TaskRecords(records).save_task(
+            TaskRecord(project="udl", feature="F-1", key="F-1.1", title="One")
+        )
+        await AgentRecords(records).save_agent(
+            Agent(name="ernie-c", title="ernie-c", runner="fake")
+        )
+        found = await a_session(service, state=SessionState.IDLE)
+
+        sessions = SessionRecords(records)
+        WaitingRunner.started.clear()
+        WaitingRunner.go_on.clear()
+        sending = asyncio.create_task(
+            service.call("orch_send", {"agent": "ernie-c", "text": "Go on"})
+        )
+        try:
+            async with asyncio.timeout(10):
+                await WaitingRunner.started.wait()
+                # (A person stops it while the turn runs: the record is ended, as
+                # `orch_stop_session` writes it, and the turn is let go.)
+                await sessions.save_session(found.model_copy(update={"state": SessionState.ENDED}))
+                WaitingRunner.go_on.set()
+                with pytest.raises(NotAllowed, match="ended while the message"):
+                    await sending
+        finally:
+            WaitingRunner.go_on.set()  # (a failing test leaves no turn waiting)
+            if not sending.done():
+                sending.cancel()
+
+        stored = await SessionRecords(records).session(found.id)
+        assert stored is not None
+        assert stored.state is SessionState.ENDED
+        assert stored.turns == 3  # (the turn never finished, so it did not count)
+
+
 # ---------------------------------------------------------------------------------------------
 # Fixtures' own helpers
 # ---------------------------------------------------------------------------------------------
 
 
 async def a_session(
-    service: UDLService, *, state: SessionState = SessionState.RUNNING, **fields: Any
+    service: UDLService, *, state: SessionState = SessionState.IDLE, turns: int = 3
 ) -> AgentSession:
-    """A session of `ernie-c`, with three events in its transcript, as its dispatcher left it."""
-    from udl.plugins.runners.base import SessionRef, TextDelta
-
+    """A session of `ernie-c` that has taken three turns, as its dispatcher left it: a real one,
+    started on the harness, so a turn sent to it runs (three events, one per turn)."""
     records = AppRecords(service.db)
     sessions = SessionRecords(records)
+    app = await service.apps.get("orch")
+    assert isinstance(app, Orch)
+    runner = await app.harnesses.runner("local", "fake")
+    ref = await runner.start(SessionSpec(cwd="/work"))
     found = await sessions.save_session(
-        AgentSession(
-            agent="ernie-c",
-            task="F-1.1",
-            ref=SessionRef(runner="fake", id="ses_1", cwd="/work", host="local"),
-            state=state,
-            turns=0,
-            **fields,
-        )
+        AgentSession(agent="ernie-c", task="F-1.1", ref=ref, state=state, turns=turns)
     )
-    for turn in (0, 1, 2):
+    for turn in range(turns):
         await sessions.save_event(
             stored_event(found, turn=turn, event=TextDelta(text=f"turn {turn}"))
         )
     return found
+
+
+async def queue_task(service: UDLService, key: str, agent: str, *, project: str = "udl") -> None:
+    """Put the task `key` on `agent`'s queue."""
+    await service.call("orch_assign", {"key": key, "agent": agent, "project": project})
 
 
 async def reports_to(records: AppRecords, name: str, manager: str) -> None:
@@ -351,8 +533,6 @@ async def reports_to(records: AppRecords, name: str, manager: str) -> None:
     await agents.save_agent(found.model_copy(update={"manager": manager}))
 
 
-def stored_event(session: AgentSession, *, turn: int, event: Any) -> Any:
+def stored_event(session: AgentSession, *, turn: int, event: AgentEvent) -> SessionEvent:
     """One thing said in `session`, as its transcript keeps it."""
-    from udl.plugins.apps.orch.records import SessionEvent
-
-    return SessionEvent(agent=session.agent, session=session.id, turn=turn, event=event)
+    return SessionEvent(agent=session.agent, session=session.id, turn=turn, event=an_event(event))
