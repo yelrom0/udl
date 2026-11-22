@@ -1126,7 +1126,8 @@ class TaskRecords:
         A task whose state the batch changes is also its history (27.10): one `StateChange`, in
         the same write, from the state it was stored in to the one it is in now, by whoever
         `updated_by` names — so no move lands without it (a save that leaves the state alone
-        writes none, and an import is not a move: it goes through `import_task`)."""
+        writes none, and an import is not a move: it goes through `import_all`, or `import_task`
+        for one task)."""
         if not tasks and not also:
             return []
         features = FeatureRecords(self._records, self._projects)

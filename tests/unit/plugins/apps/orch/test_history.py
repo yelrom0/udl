@@ -154,6 +154,25 @@ async def test_an_import_records_no_move(records: AppRecords) -> None:
     assert await history(records, task) == []
 
 
+async def test_a_batch_import_records_no_move_either(records: AppRecords) -> None:
+    # (The path a plan really takes since #71: `import_all`, one write for the whole file.)
+    tasks = TaskRecords(records)
+    task = await a_task(records)
+
+    await tasks.import_all(
+        [
+            Feature(project="udl", key="F-2", title="Imported"),
+            Task(project="udl", feature="F-2", key="F-2.1", title="x", state=MERGED),
+        ]
+    )
+
+    imported = await tasks.task("udl", "F-2.1")
+    assert imported is not None
+    assert imported.state == MERGED
+    assert await history(records, imported) == []
+    assert await history(records, task) == []
+
+
 async def test_a_blocked_task_s_block_and_its_answer_are_history(records: AppRecords) -> None:
     # (27.10's review: a question's block and its answer moved the task without a move in its
     # history, so the blocked hours counted as the agent's work.)
