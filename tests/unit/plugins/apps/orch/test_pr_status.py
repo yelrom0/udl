@@ -25,9 +25,11 @@ from support.clock import FakeClock
 from support.engine import registry, settings
 from udl.core.operations import OperationHints
 from udl.core.service import UDLService
+from udl.db.records import RecordQuery
 from udl.plugins.apps.base import AppPlugin, AppRecords, AppSettings
 from udl.plugins.apps.orch.models import (
     IN_PROGRESS,
+    READY,
     OwnerKind,
     Principal,
     PrStatusRequest,
@@ -40,6 +42,7 @@ from udl.plugins.apps.orch.records import (
     LinkRecords,
     Project,
     ProjectRecords,
+    StateChange,
     Task,
     TaskRecords,
 )
@@ -243,3 +246,18 @@ async def test_wait_does_not_hold_for_a_pull_that_cannot_be_ready(
 def asyncio_status(service: UDLService, **request: Any) -> asyncio.Future[Readiness]:
     """`orch_pr_status` started, so a test can move the clock on before awaiting it."""
     return asyncio.ensure_future(service.call("orch_pr_status", request))  # pyright: ignore[reportReturnType]
+
+
+async def test_ready_s_move_is_on_the_app_s_clock(service: UDLService, clock: FakeClock) -> None:
+    # (27.10: this move ends a working stretch, so its time is the app's — a stretch started on
+    # a `FakeClock` and ended on the wall clock would be measured between two clocks.)
+    records = AppRecords(service.db)
+    task = await TaskRecords(records).task("udl", "F-1.1")
+    assert task is not None
+    await clock.advance(timedelta(hours=2))
+
+    await service.call("orch_ready", {"key": "F-1.1"})
+
+    moves = await records.list(StateChange, RecordQuery(where={"task": task.id}))
+    (ready,) = [one for one in moves if one.to_state == READY]
+    assert ready.at == clock.now()

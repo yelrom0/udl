@@ -1766,7 +1766,9 @@ class Orch(AppPlugin[OrchSettings]):
             text=request.note or f"Ready to merge: {pull.head_sha[:7]}.",
             author="udl",
         )
-        await stored.TaskRecords(self.records).save_all(
+        # (The app's clock: this move ends a working stretch, and a stretch's hours are what
+        # 27.10 learns a model's rate from.)
+        await stored.TaskRecords(self.records, clock=self.clock).save_all(
             [moved], also=[note, stored.move_note(task, moved, _UDL)]
         )
         events = AppEvents(service.bus, self.name, self.event_types())
