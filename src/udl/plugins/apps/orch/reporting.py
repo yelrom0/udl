@@ -112,7 +112,7 @@ class Reporting:
         rates = {model: hours_per_point(samples, model=model) for model in every}
         spreads = {model: spread(_mine(samples, model), rate=rate) for model, rate in rates.items()}
         hours_a_day = self._hours_a_day(history, rests, agents)
-        merged = {task.id: merged_at(task, history[task.id]) for task in tasks}
+        merged = {task.id: moved_at(task, history[task.id]) for task in tasks}
         remaining = {
             task.id: left_of(task, history[task.id], rests[task.id], rates, agents, self._now)
             for task in tasks
@@ -206,7 +206,7 @@ class Reporting:
         found: list[Sample] = []
         for task in tasks:
             points = points_of(task.size)
-            merged = merged_at(task, history.get(task.id, []))
+            merged = moved_at(task, history.get(task.id, []))
             if points is None or merged is None:
                 continue
             worked = by_agent(history.get(task.id, []), waits.get(task.id, []), now=self._now)
@@ -309,7 +309,7 @@ class Reporting:
     ) -> list[RecentTask]:
         """The last `RECENT` merged, sized tasks: what each was estimated at, and what it took."""
         merged = [
-            (task, merged_at(task, history.get(task.id, [])))
+            (task, moved_at(task, history.get(task.id, [])))
             for task in tasks
             if points_of(task.size) is not None
         ]
@@ -377,15 +377,13 @@ def _forecast_of(
         elif task.assignee is None:
             unassigned.append(task)
         else:
-            loads.setdefault(task.assignee, []).append(
-                remaining.get(task.id) or _left(task, rates, agents)
-            )
+            loads.setdefault(task.assignee, []).append(_hours_left(task, remaining, rates, agents))
     for index, task in enumerate(
         sorted(unassigned, key=lambda one: (one.position is None, one.position or 0, one.key))
     ):
         if enabled:
             loads[enabled[index % len(enabled)].name].append(
-                remaining.get(task.id) or _left(task, rates, agents)
+                _hours_left(task, remaining, rates, agents)
             )
     found = [
         Load(
@@ -402,6 +400,19 @@ def _forecast_of(
     return Forecast(
         likely=forecast.likely, early=forecast.early, late=forecast.late, unsized=unsized
     )
+
+
+def _hours_left(
+    task: Task,
+    remaining: Mapping[UUID, timedelta],
+    rates: Rates,
+    agents: Mapping[str, Agent],
+) -> timedelta:
+    """What is left of `task` as the forecast counts it: what has been worked off its estimate, or
+    its estimate when nobody has started it — never its whole estimate because nothing is left
+    (a zero is a zero, and `or` would read it as "not known")."""
+    left = remaining.get(task.id)
+    return left if left is not None else _left(task, rates, agents)
 
 
 def _left(task: Task, rates: Rates, agents: Mapping[str, Agent]) -> timedelta:
@@ -507,9 +518,17 @@ def _rate_model(
     )
 
 
+def moved_at(task: Task, changes: Sequence[StateChange]) -> datetime | None:
+    """When a task merged, by its history: the move's time, or None — a plan imported as merged
+    writes no move, so when it merged is not known (and its hours are not known either: it is in
+    no series' merge, no recent list and no rate)."""
+    return _when(changes, MERGED)
+
+
 def merged_at(task: Task, changes: Sequence[StateChange]) -> datetime | None:
-    """When a task merged: its move's time, or — for one a plan imported as merged or done — when
-    it was last written, since an import writes no move."""
+    """When a task merged for a feature's count: its move's time, or — for one imported as merged
+    or done — when it was last written, since a plan's `[x]` is what says so. Only a feature's
+    points read it this way: what a merge cost, and when, is what its history says."""
     if task.state in (MERGED, DONE):
         return _when(changes, MERGED) or task.updated_at
     return _when(changes, MERGED)

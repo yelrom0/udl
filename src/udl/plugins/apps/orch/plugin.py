@@ -979,7 +979,7 @@ class Orch(AppPlugin[OrchSettings]):
         """Move a task to another state, through the table (orch.transitions): what it waits on
         is its note while it is blocked, and the move writes the system note that says so."""
         project = await self._project(request.project)
-        tasks = stored.TaskRecords(self.records)
+        tasks = stored.TaskRecords(self.records, clock=self.clock)
         found = await self._require_task(project, request.key)
         from udl.core.service import principal  # (the caller's, as each interface set it)
 
@@ -1433,6 +1433,7 @@ class Orch(AppPlugin[OrchSettings]):
                     project=found.project,
                     key=task.key,
                     why=await self._closing_comment(service, url),
+                    clock=self.clock,
                 )
 
     async def _closing_comment(self, service: UDLService, url: str) -> str:
@@ -2041,7 +2042,13 @@ class Orch(AppPlugin[OrchSettings]):
         """What a merge sets off (28.3), however it happened: `merge.after_merge` (the task's
         state, the rebase notes, the actions waiting on it)."""
         changed = await after_merge(
-            self.records, project=project, key=key, by=by, reviewed=reviewed, promoted=promoted
+            self.records,
+            project=project,
+            key=key,
+            by=by,
+            reviewed=reviewed,
+            promoted=promoted,
+            clock=self.clock,
         )
         return changed[0]
 

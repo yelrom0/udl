@@ -819,16 +819,9 @@ class ProjectRecords:
 class RepoRecords:
     """Where orch keeps a project's repos: looked up by project and name, and by GitHub."""
 
-    def __init__(
-        self,
-        records: AppRecords,
-        projects: ProjectRecords | None = None,
-        *,
-        clock: Clock | None = None,
-    ) -> None:
+    def __init__(self, records: AppRecords, projects: ProjectRecords | None = None) -> None:
         self._records = records
         self._projects = projects if projects is not None else ProjectRecords(records)
-        self._clock = clock
 
     async def save_repo(self, repo: Repo) -> Repo:
         """Store `repo` (by its id, so storing one again replaces it). Raises DoesNotExist when

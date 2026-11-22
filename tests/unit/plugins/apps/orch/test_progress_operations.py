@@ -235,9 +235,34 @@ async def test_a_model_with_no_samples_uses_the_project_s_rate(service: UDLServi
     )
     tasks = TaskRecords(records)
     task = await tasks.save_task(
-        Task(project="udl", feature="26", key="26.21", title="By the new model", size="M")
+        Task(
+            project="udl",
+            feature="26",
+            key="26.21",
+            title="By the new model",
+            size="M",
+            assignee="fresh",
+        )
     )
-    await tasks.import_task(task.model_copy(update={"state": MERGED, "assignee": "fresh"}))
+    await records.save_all(
+        [
+            StateChange(
+                task=task.id,
+                from_state=OPEN,
+                to_state=IN_PROGRESS,
+                at=START,
+                by="fresh",
+            ),
+            StateChange(
+                task=task.id,
+                from_state=IN_PROGRESS,
+                to_state=MERGED,
+                at=START + timedelta(hours=3),
+                by="fresh",
+            ),
+        ]
+    )
+    await tasks.import_task(task.model_copy(update={"state": MERGED}))
 
     found = await service.call("orch_progress", {"project": "udl"})
 
@@ -282,3 +307,61 @@ async def test_an_imported_merged_task_counts_as_merged(service: UDLService) -> 
     feature = next(one for one in found.features if one.key == "27")
     assert (feature.points, feature.merged) == (3, 3)
     assert feature.forecast is None, "nothing is left of it"
+
+
+async def test_a_task_that_ran_past_its_estimate_has_nothing_left(service: UDLService) -> None:
+    # (27.10's review: `left_of` clamps at nothing, and nothing must not read as "not known" —
+    # an overrun task cannot push the forecast out by its whole estimate again.)
+    records = AppRecords(service.db)
+    await ProjectRecords(records).save_project(Project(name="solo", title="Solo"))
+    await FeatureRecords(records).save_feature(
+        Feature(project="solo", key="1", title="One", order=1)
+    )
+    tasks = TaskRecords(records)
+    overrun = await tasks.save_task(
+        Task(
+            project="solo",
+            feature="1",
+            key="1.1",
+            title="Overrun",
+            size="M",
+            assignee="deepseek-a",
+        )
+    )
+    await tasks.import_task(overrun.model_copy(update={"state": IN_PROGRESS}))
+    await records.save_all(
+        [
+            StateChange(
+                task=overrun.id,
+                from_state=OPEN,
+                to_state=IN_PROGRESS,
+                at=datetime.now(UTC) - timedelta(hours=10),
+                by="deepseek-a",
+            )
+        ]
+    )
+
+    found = await service.call("orch_progress", {"project": "solo"})
+
+    assert isinstance(found, Progress)
+    assert found.forecast.likely <= datetime.now(UTC) + timedelta(minutes=1)
+
+
+async def test_an_imported_merge_is_not_a_recent_task(service: UDLService) -> None:
+    # (Its history says nothing of hours, so it is no sample and no recent task: it would
+    # otherwise read as zero hours of work, and drag `estimate_ratio` to nothing.)
+    records = AppRecords(service.db)
+    await FeatureRecords(records).save_feature(
+        Feature(project="udl", key="27", title="Agents", order=27)
+    )
+    tasks = TaskRecords(records)
+    imported = await tasks.save_task(
+        Task(project="udl", feature="27", key="27.1", title="From the plan", size="M")
+    )
+    await tasks.import_task(imported.model_copy(update={"state": MERGED}))
+
+    found = await service.call("orch_progress", {"project": "udl"})
+
+    assert isinstance(found, Progress)
+    assert all(one.key != "27.1" for one in found.recent)
+    assert found.estimate_ratio == 1.0, "the five worked tasks, not an imported one at zero"
