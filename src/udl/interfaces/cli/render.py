@@ -1426,24 +1426,32 @@ async def watch_inbox(console: Console, source: InboxSource, request: InboxReque
 
     said: list[str] = []  # (what the last look could not read: an outage is one line, not thirty)
 
-    async def looked() -> UUID | None:
-        """What `newest` answers, or None when the events cannot be read."""
+    async def looked() -> tuple[UUID | None, str | None]:
+        """The newest event's id, and what could not be read (None when it was read)."""
         try:
-            return await newest()
+            return await newest(), None
         except UDLError as e:
-            if not said or said[0] != e.message:
-                said[:] = [e.message]
-                console.print(f"[bold red]Error:[/] {escape(e.message)}")
-            return None
+            return None, e.message
+
+    def say(problem: str | None) -> None:
+        """What the look could not read, once for an outage, and after the draw: a draw clears
+        the screen, so a line said before it would not be seen."""
+        if problem is None:
+            said.clear()
+        elif not said or said[0] != problem:
+            said[:] = [problem]
+            console.print(f"[bold red]Error:[/] {escape(problem)}")
 
     loop = asyncio.get_running_loop()
-    seen = await looked()
+    seen, problem = await looked()
     await draw()
+    say(problem)
     drawn_at = loop.time()
     while True:
         await asyncio.sleep(WATCH_POLL)
-        found = await looked()
+        found, problem = await looked()
         if found != seen or loop.time() - drawn_at >= WATCH_REFRESH:
             seen = found
             drawn_at = loop.time()
             await draw()
+        say(problem)
