@@ -1112,21 +1112,38 @@ class TaskRecords:
         What `save_task` checks of a new task is checked for every task: its project and its
         feature are there. Its state is not checked: a batch is a queue's own write, and the
         states in it are the ones `orch.transitions.move()` planned (the table), which
-        `save_task`'s guard cannot see. Returns the stored tasks, in order."""
+        `save_task`'s guard cannot see. Returns the stored tasks, in order.
+
+        A task whose state the batch changes is also its history (27.10): one `StateChange`, in
+        the same write, from the state it was stored in to the one it is in now, by whoever
+        `updated_by` names — so no move lands without it (a save that leaves the state alone
+        writes none, and an import is not a move: it goes through `import_task`)."""
         if not tasks and not also:
             return []
         features = FeatureRecords(self._records, self._projects)
+        changes: list[StateChange] = []
         for task in tasks:
             await self._projects.require(task.project)
             if await features.feature(task.project, task.feature) is None:
                 raise DoesNotExist(f"There is no feature {task.feature!r} in {task.project!r}")
-            if await self._records.get(Task, task.id) is None and task.state != OPEN:
+            stored = await self._records.get(Task, task.id)
+            if stored is None and task.state != OPEN:
                 raise NotAllowed(
                     f"a new task cannot start in {task.state!r}",
                     hint="A task is saved open, and then moved.",
                 )
+            if stored is not None and stored.state != task.state:
+                changes.append(
+                    StateChange(
+                        task=task.id,
+                        from_state=stored.state,
+                        to_state=task.state,
+                        at=utcnow(),
+                        by=task.updated_by or "udl",
+                    )
+                )
         followed = await self._follow_all(tasks)
-        batch: list[Record] = [*tasks, *followed, *also]
+        batch: list[Record] = [*tasks, *followed, *changes, *also]
         saved = await self._records.save_all(batch)
         return [one for one in saved[: len(tasks)] if isinstance(one, Task)]
 
