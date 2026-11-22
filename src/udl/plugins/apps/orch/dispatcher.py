@@ -1199,5 +1199,3 @@ def _starting(agent: stored.Agent) -> Principal:
     """The principal a dispatcher's start is: the agent's own (it is the one who starts working),
     with the role the table calls it."""
     return Principal(kind="agent", name=agent.name, role="start")
-
-
