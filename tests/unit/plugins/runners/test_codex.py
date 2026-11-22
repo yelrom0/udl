@@ -159,7 +159,7 @@ class FakeShell:
             # (As a real shell: `within` is how long the whole stream gets.)
             async with asyncio.timeout(within.total_seconds() if within else None):
                 if self.endless:
-                    await asyncio.sleep(3600)  # pragma: no cover - (the turn is timed)
+                    await asyncio.sleep(3600)  # (cancelled by the timeout: the turn is timed)
                 for chunk in self.output:
                     yield chunk
 
