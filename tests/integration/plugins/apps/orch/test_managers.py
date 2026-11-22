@@ -854,9 +854,7 @@ async def test_a_manager_sizes_only_its_own_reports_work(service: UDLService) ->
     is not its to size.)"""
     token = as_boss()
     try:
-        sized = await service.call(
-            "orch_set_task", {"project": "udl", "key": "F-1.1", "size": "M"}
-        )
+        sized = await service.call("orch_set_task", {"project": "udl", "key": "F-1.1", "size": "M"})
         assert sized.size == "M"
         with pytest.raises(NotAllowed, match="not in ernie-c's subtree"):
             await service.call("orch_set_task", {"project": "udl", "key": "F-1.4", "size": "M"})
