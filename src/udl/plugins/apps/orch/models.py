@@ -1031,6 +1031,9 @@ class QueueEntry(_Model):
 
     key: Key
     """Its key within the project (`27.3`)."""
+    project: str = ""
+    """The project it is in: a key is only unique within one, so a queue of every project's
+    tasks says which (empty: the queue of one project, which need not repeat it)."""
     feature: Key
     """The feature it is part of (its key)."""
     title: Title

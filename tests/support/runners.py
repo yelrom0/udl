@@ -278,6 +278,35 @@ class FakeRunner(AgentRunner[FakeRunnerOptions]):
         yield TurnEnded(reason=TurnReason.DONE, text=self.options.answer)
 
 
+class SharedRunner(FakeRunner):
+    """The fake whose instances share one store, per event loop.
+
+    The harness makes a runner per call (`Harnesses.runner`), and a session outlives the runner
+    object (`Sessions`): a session started for one call is the one the next call sends its turn
+    to. One store per event loop keeps two tests' sessions apart."""
+
+    stores: ClassVar[dict[int, Sessions]] = {}
+    """One store per event loop (a test's own)."""
+
+    def __init__(
+        self,
+        options: FakeRunnerOptions,
+        *,
+        shell: HostShell,
+        clock: Clock,
+        script: Mapping[str, Turn] | None = None,
+        service: AsksUDL | None = None,
+    ) -> None:
+        super().__init__(
+            options,
+            shell=shell,
+            clock=clock,
+            script=script,
+            service=service,
+            store=self.stores.setdefault(id(asyncio.get_running_loop()), Sessions()),
+        )
+
+
 async def count_sites(runner: FakeRunner, _: SessionRef) -> AsyncIterator[AgentEvent]:
     """A scripted turn that asks udl for its sites, as an agent's tool call would."""
     yield ToolStarted(name="udl.sites.list", summary="List the sites")

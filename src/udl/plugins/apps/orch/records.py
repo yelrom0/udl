@@ -1459,6 +1459,16 @@ class AgentRecords:
         if reports:
             named = ", ".join(found.name for found in reports)
             raise InUse(f"The agent {name} is the manager of {named}: it cannot be deleted")
+        held = [
+            one.key
+            for one in await self._records.list(Task, RecordQuery(where={"assignee": name}))
+            if one.state in (QUEUED, IN_PROGRESS)
+        ]
+        if held:
+            raise InUse(
+                f"The agent {name} has {', '.join(sorted(held))} unfinished: it cannot be deleted",
+                hint="Unassign them, or finish them, and delete it after.",
+            )
         sessions = await self._records.list(AgentSession, RecordQuery(where={"agent": name}))
         for session in sessions:
             for event in await self._records.list(
@@ -1800,7 +1810,12 @@ class SessionRecords:
 
     async def transcript(self, session: UUID) -> list[SessionEvent]:
         """Everything that happened in `session`, in the order it happened (by its turn, then
-        by when it was stored)."""
+        by when it was stored).
+
+        One session's own events: it is bounded by that session's turns (one task's work), not
+        by the store, so the page and the count an operation answers with come from this one
+        read. A count query would have to be added to the database kind, and a manager-level
+        count cannot sum across databases without counting a mirrored record twice."""
         found = await self._records.list(SessionEvent, RecordQuery(where={"session": session}))
         return sorted(found, key=lambda one: (one.turn, one.created_at))
 

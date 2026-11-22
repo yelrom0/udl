@@ -107,6 +107,7 @@ from udl.plugins.runners.base import (
     TextDelta,
     TurnEnded,
     TurnReason,
+    Usage,
 )
 
 PULL: str = "https://github.com/yelrom0/udl/pull/7"
@@ -253,6 +254,10 @@ class ScriptedRunner(FakeRunner):
 
 _A_TASK = re.compile(r"[A-Z][A-Z0-9_]*-[0-9]+(?:\.[0-9]+)*")
 """A task key in a prompt (27.8's done-when scripts a task, whatever its session is told)."""
+STARTED: asyncio.Event = asyncio.Event()
+"""Set when a waiting turn has begun."""
+GO_ON: asyncio.Event = asyncio.Event()
+"""Let a waiting turn finish."""
 MANAGER_PROMPT: list[str] = [""]
 """The prompt the manager's running turn was given (a turn's body starts after `send`)."""
 MANAGER_KEY: str = "You are ernie-c"
@@ -318,6 +323,46 @@ async def fake_prepare(task: Task, agent: Agent) -> Task:
     return task.model_copy(
         update={"worktree": f"/work/{task.key}", "branch": f"feat/{task.key}-{task.title}"}
     )
+
+
+async def a_while(service: UDLService, *, steps: int = 6) -> None:
+    """Run a dispatcher of the test's own for a few ticks, then stop it (a test that asserts
+    nothing was done has nothing to wait for)."""
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(steps):
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+
+async def until_there(
+    service: UDLService,
+    what: Callable[[], Awaitable[bool]],
+    *,
+    steps: int = 40,
+) -> None:
+    """Run a dispatcher of the test's own on a fake clock until `what` says so (or fail).
+
+    How many turns one tick runs is the dispatcher's to decide: a test that waits for what it
+    wants, rather than for a count of turns, is not racing the loop's own speed."""
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(steps):
+            if await what():
+                return
+            await clock.advance(timedelta(seconds=31))
+        raise AssertionError("the dispatcher never got there")
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
 
 
 async def until(what: Callable[[], Awaitable[bool]], *, steps: int = 50) -> None:
@@ -1017,9 +1062,13 @@ async def test_an_answer_reaches_the_agent_s_next_session(service: UDLService) -
     agents = AgentRecords(AppRecords(service.db))
     working = await agents.agent(AGENT)
     assert working is not None
-    # (A tick runs a session's turns back to back, so the count has to be far above one tick's.)
-    await agents.save_agent(working.model_copy(update={"max_nudges": 1000}))
-    await ran(service, clock=FakeClock(), turns=5)
+    # (The agent stalls after two turns with nothing to show, which is what asks the question.)
+    await agents.save_agent(working.model_copy(update={"max_nudges": 2}))
+
+    async def asked() -> bool:
+        return bool(await questions_of(service))
+
+    await until_there(service, asked)
     asked_of = await questions_of(service)
     assert len(asked_of) == 1
     token = current_principal.set(Caller(kind=PrincipalKind.OWNER, name="owner"))
@@ -1039,6 +1088,249 @@ async def test_an_answer_reaches_the_agent_s_next_session(service: UDLService) -
     assert "these were answered" in PROMPTS[0]
     assert asked_of[0].key in PROMPTS[0]
     assert "Go on: it is one more file." in PROMPTS[0]
+
+
+async def test_a_session_another_process_is_turning_is_left_alone(service: UDLService) -> None:
+    """(27.9: the loop's turn for a session another process is turning is no turn at all — the
+    session is not counted, failed or ended, and the answer its prompt would have carried is
+    still to be delivered by the turn that does run.)"""
+    await TaskRecords(AppRecords(service.db)).delete_task("udl", "F-1.2")
+    agents = AgentRecords(AppRecords(service.db))
+    working = await agents.agent(AGENT)
+    assert working is not None
+    # (No stall, and so no blocking question: this test is about a session's turn, not a nudge.)
+    await agents.save_agent(working.model_copy(update={"max_nudges": 1000}))
+    await ran(service, clock=FakeClock(), turns=1)  # (a session of its own, with a turn behind it)
+    session = await session_of(service)
+    assert session is not None
+
+    token = current_principal.set(Caller(kind=PrincipalKind.AGENT, name=AGENT, role="implementer"))
+    try:
+        await service.call(
+            "orch_ask",
+            {
+                "project": "udl",
+                "task": "F-1.1",
+                "title": "Which file?",
+                "text": "There are two that fit.",
+                "blocking": False,
+            },
+        )
+    finally:
+        current_principal.reset(token)
+    mine = next(one for one in await questions_of(service) if one.title == "Which file?")
+    token = current_principal.set(Caller(kind=PrincipalKind.OWNER, name="owner"))
+    try:
+        await service.call(
+            "orch_answer",
+            {"project": "udl", "key": mine.key, "answer": "The one under src."},
+        )
+    finally:
+        current_principal.reset(token)
+
+    # (another process is in a turn of that session)
+    held = await service.db.claim_lease(
+        f"orch-turn:{session.id}", "another-host:4242:abcd", timedelta(hours=1)
+    )
+    assert held is not None
+    PROMPTS.clear()
+    STORE.turns = 0
+
+    await a_while(service)
+
+    assert STORE.turns == 0  # (no turn was sent)
+    left = await SessionRecords(AppRecords(service.db)).session(session.id)
+    assert left is not None
+    assert left.state is session.state
+    assert left.turns == session.turns
+    assert left.failures == 0
+    assert not [one for one in await questions_of(service) if one.delivered]
+    # (and the turn that does run carries it)
+    await service.db.release_lease(f"orch-turn:{session.id}", "another-host:4242:abcd")
+    await ran(service, clock=FakeClock(), turns=1)
+    assert PROMPTS
+    assert "these were answered" in PROMPTS[0]
+    assert "The one under src." in PROMPTS[0]
+
+
+async def test_a_manager_s_session_another_process_is_turning_is_left_alone(
+    service: UDLService,
+) -> None:
+    """(27.8 with 27.9: a manager whose session another process is turning is not failed or
+    ended, and its news is not counted as told — the turn that does run tells it.)"""
+    await a_manager_and_its_reports(service)
+    SCRIPT["manager"] = silent_turn
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    records = AppRecords(service.db)
+    # (the manager's standing task, and the session another process is in a turn of: the loop
+    # takes a RUNNING session over, which is what the lease must stop it doing)
+    standing = Task(
+        project="udl",
+        feature="managing",
+        key="managing.1",
+        title="ernie-c's reports",
+        task_kind="review",
+        assignee="ernie-c",
+    )
+    await FeatureRecords(records).save_feature(
+        Feature(project="udl", key="managing", title="Managing")
+    )
+    await TaskRecords(records).save_task(standing)
+    tasks = TaskRecords(records)
+    queued = await tasks.move(standing, QUEUED, by=Principal(kind="system", role="assign"))
+    await tasks.move(queued, IN_PROGRESS, by=Principal(kind="system", role="start"))
+    running = await SessionRecords(records).save_session(
+        AgentSession(
+            agent="ernie-c",
+            project="udl",
+            task=standing.key,
+            ref=SessionRef(runner="fake", id="fake-9", cwd="/work/managing.1", host="local"),
+            state=SessionState.RUNNING,
+            turns=3,
+        )
+    )
+    await service.db.claim_lease(
+        f"orch-turn:{running.id}", "another-host:4242:abcd", timedelta(hours=1)
+    )
+    MANAGER_PROMPT[0] = ""
+    loop = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(6):
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        loop.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await loop
+
+    assert MANAGER_PROMPT[0] == ""  # (the manager's turn was not taken from under it)
+    left = await SessionRecords(records).session(running.id)
+    assert left is not None
+    assert left.state is SessionState.RUNNING
+    assert left.turns == 3
+    assert left.failures == 0
+    told = await AgentRecords(records).agent("ernie-c")
+    assert told is not None
+    assert told.last_news == ""  # (nothing was told, so nothing is remembered as told)
+
+
+async def test_a_turn_that_says_what_changed_keeps_the_turns_it_ran(service: UDLService) -> None:
+    """(27.9: what a prompt told is written onto the session as it is stored after the turn, not
+    the copy taken before it — so the turn's own number, its tokens and its cost stay.)"""
+    await TaskRecords(AppRecords(service.db)).delete_task("udl", "F-1.2")
+    agents = AgentRecords(AppRecords(service.db))
+    working = await agents.agent(AGENT)
+    assert working is not None
+    await agents.save_agent(working.model_copy(update={"max_nudges": 1000}))
+    await ran(service, clock=FakeClock(), turns=1)
+    before = await session_of(service)
+    assert before is not None
+    assert before.turns >= 1
+
+    # (news for a "changed" turn: a question answered)
+    token = current_principal.set(Caller(kind=PrincipalKind.AGENT, name=AGENT, role="implementer"))
+    try:
+        await service.call(
+            "orch_ask",
+            {
+                "project": "udl",
+                "task": "F-1.1",
+                "title": "Which file?",
+                "text": "There are two that fit.",
+                "blocking": False,
+            },
+        )
+    finally:
+        current_principal.reset(token)
+    mine = next(one for one in await questions_of(service) if one.title == "Which file?")
+    token = current_principal.set(Caller(kind=PrincipalKind.OWNER, name="owner"))
+    try:
+        await service.call(
+            "orch_answer",
+            {"project": "udl", "key": mine.key, "answer": "The one under src."},
+        )
+    finally:
+        current_principal.reset(token)
+
+    SCRIPT["task:F-1.1"] = a_turn_that_finishes_the_task
+    STORE.turns = 0
+    await ran(service, clock=FakeClock(), turns=1)
+
+    carried = next(one for one in await questions_of(service) if one.title == "Which file?")
+    assert carried.delivered  # (the turn that ran carried the answer)
+    after = await SessionRecords(AppRecords(service.db)).session(before.id)
+    assert after is not None
+    assert after.turns == before.turns + 1  # (the turn's own number is not overwritten)
+    assert after.tokens_in == before.tokens_in + 100  # (nor what it cost)
+    assert after.state is SessionState.ENDED  # (nor the end the loop gave it)
+    assert after.last_text
+
+
+async def test_a_session_a_person_stops_mid_turn_stays_ended(service: UDLService) -> None:
+    """(27.9: the `ENDED` a person gave a session mid-turn is not overwritten by the copy of the
+    session taken before the turn.)"""
+    await TaskRecords(AppRecords(service.db)).delete_task("udl", "F-1.2")
+    agents = AgentRecords(AppRecords(service.db))
+    working = await agents.agent(AGENT)
+    assert working is not None
+    await agents.save_agent(working.model_copy(update={"max_nudges": 1000}))
+    await ran(service, clock=FakeClock(), turns=1)
+    session = await session_of(service)
+    assert session is not None
+
+    # (news for a "changed" turn, so the prompt is written before the turn runs)
+    token = current_principal.set(Caller(kind=PrincipalKind.AGENT, name=AGENT, role="implementer"))
+    try:
+        await service.call(
+            "orch_ask",
+            {
+                "project": "udl",
+                "task": "F-1.1",
+                "title": "Which file?",
+                "text": "There are two that fit.",
+                "blocking": False,
+            },
+        )
+    finally:
+        current_principal.reset(token)
+    mine = next(one for one in await questions_of(service) if one.title == "Which file?")
+    token = current_principal.set(Caller(kind=PrincipalKind.OWNER, name="owner"))
+    try:
+        await service.call(
+            "orch_answer",
+            {"project": "udl", "key": mine.key, "answer": "The one under src."},
+        )
+    finally:
+        current_principal.reset(token)
+
+    STARTED.clear()
+    GO_ON.clear()
+    SCRIPT["task:F-1.1"] = a_waiting_turn
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    loop = asyncio.ensure_future(found.run())
+    try:
+        await clock.advance(timedelta(seconds=31))
+        async with asyncio.timeout(10):
+            await STARTED.wait()
+            # (a person stops it while the turn runs)
+            token = current_principal.set(Caller(kind=PrincipalKind.OWNER, name="owner"))
+            try:
+                await service.call("orch_stop_session", {"session": str(session.id)})
+            finally:
+                current_principal.reset(token)
+            GO_ON.set()
+        for _ in range(5):
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        GO_ON.set()  # (a failing test leaves no turn waiting)
+        loop.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await loop
+
+    left = await SessionRecords(AppRecords(service.db)).session(session.id)
+    assert left is not None
+    assert left.state is SessionState.ENDED
 
 
 async def test_a_session_whose_pull_is_only_waiting_holds_no_turn(service: UDLService) -> None:
@@ -2076,6 +2368,22 @@ async def a_manager_and_its_reports(service: UDLService) -> None:
 async def silent_turn(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
     """A turn that says nothing and does nothing."""
     yield TextDelta(text="nothing to do")
+
+
+async def a_turn_that_finishes_the_task(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
+    """A turn that says what it cost and says the task is ready (so the loop ends the session
+    after the one turn)."""
+    yield Usage(input_tokens=100, output_tokens=20)
+    await ask("orch_ready", {"key": "F-1.1"})
+    yield TurnEnded(reason=TurnReason.DONE, text="F-1.1 is ready.")
+
+
+async def a_waiting_turn(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
+    """A turn that starts, says it is working, and waits to be let go."""
+    STARTED.set()
+    yield TextDelta(text="working on it")
+    await GO_ON.wait()
+    yield TurnEnded(reason=TurnReason.DONE, text="done")
 
 
 def a_report_s_turn(key: str) -> Turn:

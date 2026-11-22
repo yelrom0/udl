@@ -28,10 +28,15 @@ from support.api import client_for as api_client_for
 from support.cli import CLI
 from support.interfaces import Harness
 from support.mcp import client_for as mcp_client_for
+from support.runners import SharedRunner
 from udl.interfaces.adapters import cli_groups
 from udl.interfaces.cli.common import operation_of
+from udl.plugins.apps.base import AppRecords
+from udl.plugins.apps.orch.agents import SessionState
 from udl.plugins.apps.orch.plugin import Orch
-from udl.plugins.registry import APPS
+from udl.plugins.apps.orch.records import AgentSession, SessionRecords
+from udl.plugins.registry import APPS, RUNNERS
+from udl.plugins.runners.base import SessionSpec
 
 CATALOGUE: Final[dict[str, tuple[str, ...]]] = {
     "orch_inbox": ("orch", "inbox"),
@@ -54,6 +59,21 @@ CATALOGUE: Final[dict[str, tuple[str, ...]]] = {
     "orch_find_links": ("orch", "links", "find"),
     "orch_add_note": ("orch", "note"),
     "orch_import_plan": ("orch", "import"),
+    "orch_list_agents": ("orch", "agents"),
+    "orch_get_agent": ("orch", "agents", "show"),
+    "orch_set_agent": ("orch", "agents", "set"),
+    "orch_delete_agent": ("orch", "agents", "rm"),
+    "orch_pause_agent": ("orch", "agents", "pause"),
+    "orch_resume_agent": ("orch", "agents", "resume"),
+    "orch_get_session": ("orch", "agents", "session"),
+    "orch_stop_session": ("orch", "agents", "stop"),
+    "orch_send": ("orch", "agents", "send"),
+    "orch_get_queue": ("orch", "queue", "show"),
+    "orch_my_task": ("orch", "queue", "mine"),
+    "orch_assign": ("orch", "queue", "add"),
+    "orch_reorder_queue": ("orch", "queue", "set"),
+    "orch_unassign": ("orch", "queue", "rm"),
+    "orch_suggest": ("orch", "suggest"),
 }
 """The card's CLI command for each of the catalogue's operations (26.6)."""
 
@@ -63,6 +83,7 @@ def harness(tmp_path: Path) -> Harness:
     """A udl on the fakes, with orch, and one project in it."""
     found = Harness(tmp_path)
     found.registry.register(APPS, Orch)
+    found.registry.register(RUNNERS, SharedRunner)  # (the runner a session is started on)
     return found
 
 
@@ -194,3 +215,140 @@ async def test_the_owner_reads_the_catalogue_over_mcp(with_a_project: Harness) -
     [found] = answer.content
     assert isinstance(found, TextContent)
     assert [project["name"] for project in json.loads(found.text)["projects"]] == ["udl"]
+
+
+def test_the_owner_sets_and_reads_an_agent_over_the_cli(with_a_project: Harness) -> None:
+    made = CLI(with_a_project)(
+        "orch",
+        "agents",
+        "set",
+        "--name",
+        "boss",
+        "--title",
+        "Boss",
+        "--runner",
+        "fake",
+        "--role",
+        "manager",
+        "--json",
+    )
+    assert made.exit_code == 0, made.output
+    assert json.loads(made.stdout)["role"] == "manager"
+
+    listed = CLI(with_a_project)("orch", "agents", "--json")
+
+    assert listed.exit_code == 0, listed.output
+    assert [one["agent"]["name"] for one in json.loads(listed.stdout)["items"]] == ["boss"]
+
+
+def test_the_owner_reads_a_queue_over_the_cli(with_a_project: Harness) -> None:
+    made = CLI(with_a_project)(
+        "orch", "agents", "set", "--name", "boss", "--title", "Boss", "--runner", "fake", "--json"
+    )
+    assert made.exit_code == 0, made.output
+    task = CLI(with_a_project)(
+        "orch", "tasks", "set", "--feature", "26", "--title", "One", "--json"
+    )
+    assert task.exit_code == 0, task.output
+    assigned = CLI(with_a_project)("orch", "queue", "add", "26.1", "--agent", "boss", "--json")
+    assert assigned.exit_code == 0, assigned.output
+
+    queue = CLI(with_a_project)("orch", "queue", "show", "boss", "--json")
+
+    assert queue.exit_code == 0, queue.output
+    assert [one["key"] for one in json.loads(queue.stdout)["tasks"]] == ["26.1"]
+
+
+AN_AGENT: Final = ("agents", "set", "--name", "boss", "--title", "Boss", "--runner", "fake")
+A_TASK: Final = ("tasks", "set", "--feature", "26", "--title", "One")
+TAKEN: Final = ("queue", "add", "26.1", "--agent", "boss")
+
+
+@pytest.mark.parametrize(
+    ("name", "before", "argv"),
+    [
+        ("orch_list_agents", (), ("agents",)),
+        ("orch_get_agent", (AN_AGENT,), ("agents", "show", "boss")),
+        ("orch_set_agent", (), AN_AGENT),
+        ("orch_delete_agent", (AN_AGENT,), ("agents", "rm", "boss")),
+        ("orch_pause_agent", (AN_AGENT,), ("agents", "pause", "boss")),
+        (
+            "orch_resume_agent",
+            (AN_AGENT, ("agents", "pause", "boss")),
+            ("agents", "resume", "boss"),
+        ),
+        ("orch_get_queue", (AN_AGENT, A_TASK, TAKEN), ("queue", "show", "boss")),
+        ("orch_my_task", (AN_AGENT, A_TASK, TAKEN), ("queue", "mine", "boss")),
+        ("orch_assign", (AN_AGENT, A_TASK), TAKEN),
+        (
+            "orch_reorder_queue",
+            (AN_AGENT, A_TASK, TAKEN),
+            ("queue", "set", "boss", "--keys", "26.1"),
+        ),
+        ("orch_unassign", (AN_AGENT, A_TASK, TAKEN), ("queue", "rm", "26.1")),
+        ("orch_suggest", (AN_AGENT, A_TASK), ("suggest",)),
+    ],
+)
+def test_the_owner_runs_each_operation_over_the_cli(
+    with_a_project: Harness, name: str, before: tuple[tuple[str, ...], ...], argv: tuple[str, ...]
+) -> None:
+    """Every one of the card's operations, run for real by the owner over the CLI (the card's
+    "an interface test per operation")."""
+    for command in before:
+        made = CLI(with_a_project)("orch", *command, "--json")
+        assert made.exit_code == 0, made.output
+
+    result = CLI(with_a_project)("orch", *argv, "--json")
+
+    assert result.exit_code == 0, result.output
+    assert isinstance(json.loads(result.stdout), dict), f"{name} answered no JSON"
+
+
+async def test_the_owner_runs_each_operation_over_the_api(harness: Harness) -> None:
+    """The same three the CLI cannot set up on its own: a session's read, its stop and a message
+    typed into it (the session is started here, on the harness, as the dispatcher starts one)."""
+    async with harness.service() as service:
+        await service.call("orch_set_project", {"name": "udl", "title": "udl"})
+        await service.call("orch_set_agent", {"name": "boss", "title": "Boss", "runner": "fake"})
+        records = AppRecords(service.db)
+        app = await service.apps.get("orch")
+        assert isinstance(app, Orch)
+        runner = await app.harnesses.runner("local", "fake")
+        ref = await runner.start(SessionSpec(cwd=str(harness.tmp_path)))
+        found = await SessionRecords(records).save_session(
+            AgentSession(agent="boss", ref=ref, state=SessionState.IDLE)
+        )
+    async with api_client_for(harness) as client:
+        read = await client.post("/plugins/orch/get_session", json={"session": str(found.id)})
+        sent = await client.post(
+            "/plugins/orch/send", json={"agent": "boss", "text": "Go on", "delivery": "turn"}
+        )
+        stopped = await client.post("/plugins/orch/stop_session", json={"session": str(found.id)})
+
+    assert read.status_code == 200, read.text
+    assert read.json()["id"] == str(found.id)
+    assert sent.status_code == 200, sent.text
+    assert sent.json()["turn"] == 0
+    assert stopped.status_code == 200, stopped.text
+    assert stopped.json()["state"] == "ended"
+
+
+async def test_the_owner_asks_what_to_do_next_over_mcp(with_a_project: Harness) -> None:
+    async with api_client_for(with_a_project) as client:
+        made = await client.post(
+            "/plugins/orch/set_task", json={"key": "26.1", "feature": "26", "title": "One"}
+        )
+        agent = await client.post(
+            "/plugins/orch/set_agent",
+            json={"name": "boss", "title": "Boss", "runner": "fake"},
+        )
+    assert made.status_code == 200, made.text
+    assert agent.status_code == 200, agent.text
+
+    async with mcp_client_for(with_a_project) as client:
+        answer = await client.call_tool("orch_suggest", {"project": "udl"})
+
+    assert not answer.is_error
+    [found] = answer.content
+    assert isinstance(found, TextContent)
+    assert [one["task"] for one in json.loads(found.text)["suggestions"]] == ["26.1"]

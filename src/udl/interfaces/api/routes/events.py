@@ -5,12 +5,16 @@
 
 /events/stream: what happens, as it happens (server-sent events), for the web UI and any client
 that wants to follow events and runs live
+
+/orch/sessions/{session}/stream: one agent session, as it happens (27.9): the same notices, kept
+to the session's own, so a client watching a turn does not sift every event udl has.
 """
 
 # System Imports
 from collections.abc import AsyncIterable
 from contextlib import aclosing
 from typing import Annotated
+from uuid import UUID
 
 # Package Imports
 from fastapi import APIRouter, Query
@@ -44,6 +48,26 @@ async def events_stream(
 ) -> AsyncIterable[ServerSentEvent]:
     async with aclosing(service.bus.notices(types=types, runs=runs)) as notices:
         async for notice in notices:
+            yield _sent(notice)
+
+
+@router.get(
+    "/orch/sessions/{session}/stream",
+    response_class=EventSourceResponse,
+    operation_id="orch_session_stream",
+    summary="One agent's session, as it happens.",
+    description="Server-sent events, from now on, of one session's own: `event` (an EventInfo) "
+    "for each `orch.session.*` event it published — that it started, each thing its runner said, "
+    "and that it failed or ended. A limit is `orch.agent.limited` (the agent's, not the "
+    "session's), so it is not on this stream: the session's state and `limited_until` are. Live "
+    "only: a client that reconnects reloads the transcript (`orch_get_session`) rather than "
+    "resuming.",
+)
+async def orch_session_stream(service: ServiceDep, session: UUID) -> AsyncIterable[ServerSentEvent]:
+    async with aclosing(service.bus.notices(types="orch.session.*", runs=False)) as notices:
+        async for notice in notices:
+            if notice.event is None or notice.event.data.get("session") != str(session):
+                continue
             yield _sent(notice)
 
 
