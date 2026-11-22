@@ -71,7 +71,7 @@ async def service(tmp_path: Path) -> AsyncIterator[UDLService]:
         tasks = TaskRecords(records)
         for number in range(5):
             task = await tasks.save_task(
-                Task(  # pyright: ignore[reportArgumentType]
+                Task(
                     project="udl",
                     feature="26",
                     key=f"26.{number + 1}",
@@ -100,7 +100,7 @@ async def service(tmp_path: Path) -> AsyncIterator[UDLService]:
                 ]
             )
         await tasks.save_task(
-            Task(  # pyright: ignore[reportArgumentType]
+            Task(
                 project="udl",
                 feature="26",
                 key="26.9",
@@ -211,7 +211,7 @@ async def test_a_merged_task_s_estimate_says_what_it_really_took(service: UDLSer
 async def test_an_unsized_task_is_not_estimated(service: UDLService) -> None:
     records = AppRecords(service.db)
     await TaskRecords(records).save_task(
-        Task(project="udl", feature="26", key="26.20", title="Unsized")  # pyright: ignore[reportArgumentType]
+        Task(project="udl", feature="26", key="26.20", title="Unsized")
     )
 
     found = await service.call("orch_estimate", {"project": "udl", "task": "26.20"})
