@@ -1387,6 +1387,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/inbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Everything that waits on a person (28.4): what is ready to merge, the open questions,
+         * @description Everything that waits on a person (28.4): what is ready to merge, the open questions,
+         *     what only a person can do, and what every agent is doing — in one read.
+         *
+         *     The three lists keep each one's own rules (28.3's merge order, blocking questions first
+         *     and newest first within them, actions now/after/later), so one call is what a person
+         *     reads today in human-comms.md. It reads: nothing changes.
+         */
+        post: operations["orch_inbox"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/orch/issue_token": {
         parameters: {
             query?: never;
@@ -3068,6 +3093,46 @@ export interface components {
              */
             text: string;
         };
+        /**
+         * AgentLine
+         * @description What an agent is doing, in a line (28.4's inbox strip): who it is, what it is, and what it
+         *     is on — derived from its session, never stored.
+         */
+        AgentLine: {
+            /** @description Its name. */
+            name: components["schemas"]["Name"];
+            /** @description What it does: implements, manages, or reviews. */
+            role: components["schemas"]["AgentRole"];
+            /**
+             * Since
+             * @description When its session last changed (when it started, or answered): None when it has none.
+             */
+            since?: string | null;
+            /** @description What it is doing now, from its session. */
+            state: components["schemas"]["AgentStatus"];
+            /**
+             * Task
+             * @description The task it is on, when it is on one (None: it has none, or its manager has no task).
+             */
+            task?: string | null;
+            /**
+             * Title
+             * @description How it is shown.
+             */
+            title: string;
+        };
+        /**
+         * AgentRole
+         * @description What an agent does: implements tasks, manages agents, or reviews their work.
+         * @enum {string}
+         */
+        AgentRole: "implementer" | "manager" | "reviewer";
+        /**
+         * AgentStatus
+         * @description What an agent is doing now (derived from its session: never stored).
+         * @enum {string}
+         */
+        AgentStatus: "idle" | "working" | "waiting" | "limited" | "offline" | "paused";
         /**
          * AllOf
          * @description Every one of its filters matches.
@@ -5503,6 +5568,47 @@ export interface components {
              * @description Whether a User-Agent was kept with them (plain requests send it with them).
              */
             user_agent: boolean;
+        };
+        /**
+         * Inbox
+         * @description The three lists a person reads today in human-comms.md, in one answer: what is ready to
+         *     merge, what is being asked, and what only a person can do — with what every agent is doing
+         *     beside them (28.4). It reads: nothing changes.
+         */
+        Inbox: {
+            /**
+             * Actions
+             * @description What only a person can do: now, then after, then later.
+             */
+            actions?: components["schemas"]["Action"][];
+            /**
+             * Agents
+             * @description What every agent is doing, by name.
+             */
+            agents?: components["schemas"]["AgentLine"][];
+            /** @description Ready to merge (28.3's own list: ready, coming, held, done). */
+            merge: components["schemas"]["MergeList"];
+            /** @description The project it is of. */
+            project: components["schemas"]["Name"];
+            /**
+             * Questions
+             * @description The open questions, the blocking ones first, each newest first.
+             */
+            questions?: components["schemas"]["Question"][];
+            /**
+             * Updated At
+             * Format: date-time
+             * @description When this was read (the dispatcher and the watcher's events change it, 28.5).
+             */
+            updated_at: string;
+        };
+        /**
+         * InboxRequest
+         * @description Asking for the inbox: everything that waits on a person (28.4).
+         */
+        InboxRequest: {
+            /** @description The project it is of (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
         };
         /**
          * InstallRunnerRequest
@@ -14920,6 +15026,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImportReport"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_inbox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InboxRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Inbox"];
                 };
             };
             /** @description Bad Request */

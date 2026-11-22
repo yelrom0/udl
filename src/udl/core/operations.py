@@ -321,6 +321,9 @@ class CLISpec:
     )
     pairs: tuple[str, ...] = ()  # dict fields given as KEY=VALUE, repeated (VALUE: JSON, else text)
     render: Callable[..., None] | None = None  # (console, response): how it is shown
+    # (console, service, request): what `--watch` does, when the command has it (a person follows
+    # it: it draws the answer again as things happen, until Ctrl-C). None: no --watch.
+    watch: Callable[..., Awaitable[None]] | None = None
 
 
 @dataclass(frozen=True)

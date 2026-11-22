@@ -13,7 +13,7 @@ import enum
 import json
 from datetime import datetime
 from types import TracebackType
-from typing import Any, Final, Self, cast
+from typing import TYPE_CHECKING, Any, Final, Self, cast
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -93,10 +93,21 @@ from udl.fetch.models import (
 from udl.hosts.models import HostCheck, HostInfo, HostList
 from udl.integrations.models import AccountInfo, AccountList, Disconnected
 from udl.integrations.watchers import WatcherState, WatcherStatus
+from udl.plugins.apps.orch.models import (
+    Action,
+    AgentLine,
+    Inbox,
+    InboxRequest,
+    MergeList,
+    Question,
+)
 from udl.plugins.downloaders.base import MediaCandidate, MediaKind
 from udl.plugins.integrations.base import AccountHealth, AccountStatus
 from udl.plugins.registry import ACTIONS, DATABASES, DOWNLOADERS, INTEGRATIONS, SECRETS, SITES
 from udl.plugins.secrets.models import SecretsStatus
+
+if TYPE_CHECKING:
+    from udl.core.service import UDLService
 
 _STATUS: Final[dict[JobStatus, tuple[str, str]]] = {
     JobStatus.QUEUED: ("…", "dim"),
@@ -1293,3 +1304,84 @@ def secrets_status(console: Console, found: SecretsStatus) -> None:
             escape("\n".join(resolver.problems)),
         )
     console.print(table)
+
+
+def inbox(console: Console, found: Inbox) -> None:
+    """What waits on a person (28.4), in the three sections they read today: what is ready to
+    merge, what is being asked, and what only they can do — with what every agent is doing."""
+    _merge_section(console, found.merge)
+    console.print()
+    _question_section(console, found.questions)
+    console.print()
+    _action_section(console, found.actions)
+    console.print()
+    _agent_section(console, found.agents)
+
+
+def _merge_section(console: Console, listed: MergeList) -> None:
+    console.rule("[bold]Ready to merge[/]", align="left")
+    for row in listed.ready:
+        said = f"[bold]{escape(row.task)}[/]  {escape(row.title)}  {escape(row.url)}"
+        if row.blockers:
+            said += f"  [yellow]({escape('; '.join(row.blockers))})[/]"
+        console.print(said)
+    for row in listed.held:
+        console.print(
+            f"[dim]held[/] [bold]{escape(row.task)}[/]  {escape(row.title)}  {escape(row.url)}"
+        )
+    if listed.coming:
+        console.print(f"[dim]Coming: {'  '.join(escape(row.task) for row in listed.coming)}[/]")
+    if not (listed.ready or listed.held or listed.coming):
+        console.print("[dim]Nothing waits for a merge.[/]")
+
+
+def _question_section(console: Console, questions: list[Question]) -> None:
+    console.rule("[bold]Questions[/]", align="left")
+    for one in questions:
+        asked = f"  [dim]({escape(one.task)})[/]" if one.task is not None else ""
+        blocking = "[red]blocking[/]  " if one.blocking else ""
+        console.print(
+            f"{blocking}[bold]{escape(one.key)}[/]  {escape(one.title)}{asked}"
+            f"  [dim]asked by {escape(one.asked_by or 'udl')}[/]"
+        )
+    if not questions:
+        console.print("[dim]Nothing is being asked.[/]")
+
+
+def _action_section(console: Console, actions: list[Action]) -> None:
+    console.rule("[bold]To action[/]", align="left")
+    for one in actions:
+        about = f"  [dim]({escape(one.task)})[/]" if one.task is not None else ""
+        console.print(
+            f"[bold]{escape(one.key)}[/]  [cyan]{one.when.value}[/]  {escape(one.title)}{about}"
+        )
+    if not actions:
+        console.print("[dim]Nothing is only yours to do.[/]")
+
+
+def _agent_section(console: Console, agents: list[AgentLine]) -> None:
+    console.rule("[bold]Agents[/]", align="left")
+    for one in agents:
+        console.print(escape(one.line))
+    if not agents:
+        console.print("[dim]No agents.[/]")
+
+
+async def watch_inbox(console: Console, service: UDLService, request: InboxRequest) -> None:
+    """`udl orch inbox --watch`: the inbox again as things happen (28.4), until Ctrl-C.
+
+    It draws once, then redraws on each `orch.*` event the bus tells of (the orchestrator's own:
+    a session's, a task's move, a question, an action), so a person watching sees the inbox as it
+    changes without asking for it again."""
+    given = request.model_dump(round_trip=True)
+
+    async def draw() -> None:
+        # (The service answers its own operation's model, which is this one's: validated, so a
+        # change to it is a test's failure and not a crash mid-draw.)
+        found = Inbox.model_validate(await service.call("orch_inbox", given))
+        console.clear()
+        inbox(console, found)
+
+    await draw()
+    async for _ in service.bus.notices("orch.*"):
+        await draw()

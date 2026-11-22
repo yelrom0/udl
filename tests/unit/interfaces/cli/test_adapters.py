@@ -10,17 +10,24 @@ group the caller already made.
 
 # System Imports
 import inspect
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 # Package Imports
 import typer
 import typer.core
 import typer.main
+from rich.console import Console
+from typer.testing import CliRunner
 
 # Local Imports
-from support.operations import every_thing, find
+from support.engine import settings
+from support.operations import Things, every_thing, find
+from udl.config import Settings
 from udl.core.operations import CLISpec, Operation
 from udl.interfaces.adapters import add_commands
-from udl.interfaces.cli.common import operation_of
+from udl.interfaces.cli.common import Runtime, operation_of
 
 
 def every() -> Operation:
@@ -82,3 +89,50 @@ def test_a_group_the_caller_made_gets_its_commands_and_no_callback() -> None:
     assert things.no_args_is_help is True
     assert callback_name(things) is None
     assert operation_of(inspect.unwrap(things.commands["find"].callback or print)) == "find"
+
+
+def watching() -> Operation:
+    """The operation whose command follows it: `udl gizmo follow --watch`."""
+    return Operation.of(
+        every_thing,
+        name="every_thing",
+        title="Every thing",
+        cli=CLISpec(path=("gizmo", "follow"), watch=watched),
+    )
+
+
+_watched: list[tuple[str, str]] = []
+
+
+async def watched(console: Console, service: object, request: Things) -> None:
+    """(What a command's watch does: the inbox redraws on events, so a test records the call.)"""
+    _watched.append(("watched", str(request.count)))
+
+
+@asynccontextmanager
+async def _no_service(settings: Settings) -> AsyncIterator[object]:
+    """A service that is nothing: the watcher is given it and the test's own one records."""
+    yield object()
+
+
+def test_a_command_that_follows_takes_watch_and_runs_its_watcher(tmp_path: Path) -> None:
+    # (The flag is the CLI's own: it is not a field of the request, and the API and MCP never see
+    # it — a command that follows is what a person reads, not what an agent calls.)
+    app = typer.Typer()
+    add_commands(app, [watching()], renderers={}, helps={})
+    runtime = Runtime(settings=settings(tmp_path), make_service=_no_service, verbosity=0)
+
+    result = CliRunner().invoke(app, ["gizmo", "follow", "--watch"], obj=runtime)
+
+    assert result.exit_code == 0, result.output
+    assert _watched == [("watched", "2")]  # (the request's own count)
+
+
+def test_a_command_that_does_not_follow_has_no_watch() -> None:
+    app = typer.Typer()
+    add_commands(app, [finding()], renderers={}, helps={})
+
+    result = CliRunner().invoke(app, ["gizmo", "things", "find", "--watch"])
+
+    assert result.exit_code == 2  # (a usage error: there is no such option)
+    assert "No such option" in result.output

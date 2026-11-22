@@ -11,7 +11,7 @@ is running (with its tries), progress bars on a terminal, and the rarer parts of
 import asyncio
 import io
 import uuid
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -56,6 +56,17 @@ from udl.errors import AuthRequired, ErrorCode, ErrorInfo, NoStrategyFound
 from udl.integrations.models import AccountInfo
 from udl.integrations.watchers import WatcherState, WatcherStatus
 from udl.interfaces.cli import render
+from udl.plugins.apps.orch.models import (
+    Action,
+    AgentLine,
+    AgentRole,
+    AgentStatus,
+    Inbox,
+    InboxRequest,
+    MergeList,
+    MergeRow,
+    Question,
+)
 from udl.plugins.downloaders.base import (
     DownloadProgress,
     Handoff,
@@ -739,3 +750,160 @@ def test_a_preview_of_a_time_gone_by_says_so() -> None:
     )
 
     assert "It fires no more." in text
+
+
+# ---------------------------------------------------------------------------------------------
+# 28.4: the inbox, in the three sections a person reads
+# ---------------------------------------------------------------------------------------------
+
+
+def _inbox(**fields: object) -> Inbox:
+    return Inbox.model_validate(
+        {
+            "project": "udl",
+            "merge": MergeList(
+                ready=[
+                    MergeRow(
+                        project="udl",
+                        task="27.10",
+                        feature="27",
+                        title="Progress",
+                        repo="yelrom0/udl",
+                        number=72,
+                        url="https://github.com/yelrom0/udl/pull/72",
+                        sha="0b06c41",
+                        state="ready",
+                    ),
+                    MergeRow(
+                        project="udl",
+                        task="26.4",
+                        feature="26",
+                        title="Features",
+                        repo="yelrom0/udl",
+                        number=70,
+                        url="https://github.com/yelrom0/udl/pull/70",
+                        sha="d5d5584",
+                        state="ready",
+                        blockers=["its checks failed"],
+                    ),
+                ],
+                held=[
+                    MergeRow(
+                        project="udl",
+                        task="26.9",
+                        feature="26",
+                        title="Held one",
+                        repo="yelrom0/udl",
+                        number=73,
+                        url="https://github.com/yelrom0/udl/pull/73",
+                        sha="aaaaaaa",
+                        state="ready",
+                        hold=True,
+                    )
+                ],
+                coming=[
+                    MergeRow(
+                        project="udl",
+                        task="26.8",
+                        feature="26",
+                        title="Sizes",
+                        repo="yelrom0/udl",
+                        number=69,
+                        url="https://github.com/yelrom0/udl/pull/69",
+                        sha="0c4f331",
+                        state="in_progress",
+                    )
+                ],
+                done=[],
+            ),
+            "questions": [
+                Question(
+                    key="Q-1",
+                    project="udl",
+                    asked_by="deepseek-a",
+                    title="Which theme?",
+                    blocking=True,
+                    task="26.4",
+                ),
+                Question(key="Q-2", project="udl", title="A later one"),
+            ],
+            "actions": [
+                Action(key="A-1", project="udl", title="Merge 27.10", task="27.10"),
+            ],
+            "agents": [
+                AgentLine(
+                    name="deepseek-a",
+                    title="deepseek-a",
+                    role=AgentRole.IMPLEMENTER,
+                    state=AgentStatus.WORKING,
+                    task="28.4",
+                ),
+                AgentLine(
+                    name="claude", title="Claude", role=AgentRole.MANAGER, state=AgentStatus.IDLE
+                ),
+            ],
+            "updated_at": NOW,
+            **fields,
+        }
+    )
+
+
+def test_the_inbox_s_three_sections_and_its_agents() -> None:
+    said = shown(render.inbox, _inbox())
+
+    assert "Ready to merge" in said
+    assert "27.10  Progress  https://github.com/yelrom0/udl/pull/72" in said
+    assert "26.4  Features  https://github.com/yelrom0/udl/pull/70  (its checks failed)" in said
+    assert "held 26.9  Held one" in said
+    assert "Coming: 26.8" in said
+    assert "blocking  Q-1  Which theme?  (26.4)  asked by deepseek-a" in said
+    assert "Q-2  A later one  asked by udl" in said
+    assert "A-1  now  Merge 27.10  (27.10)" in said
+    assert "deepseek-a — implementing 28.4" in said
+    assert "claude — idle" in said
+
+
+def test_an_empty_inbox_says_so_in_each_section() -> None:
+    said = shown(render.inbox, _inbox(questions=[], actions=[], agents=[]))
+
+    assert "Nothing waits for a merge." not in said  # (its ready rows are there)
+    assert "Nothing is being asked." in said
+    assert "Nothing is only yours to do." in said
+    assert "No agents." in said
+
+
+def test_an_inbox_with_nothing_in_it_says_so_everywhere() -> None:
+    said = shown(
+        render.inbox,
+        _inbox(merge=MergeList(), questions=[], actions=[], agents=[]),
+    )
+
+    assert "Nothing waits for a merge." in said
+    assert "Nothing is being asked." in said
+
+
+async def test_the_watch_draws_it_and_again_on_an_event() -> None:
+    """(28.4's `--watch`: one draw at once, then one for each `orch.*` event the bus tells of.)"""
+    output = io.StringIO()
+    drawn: list[str] = []
+
+    class _Bus:
+        async def notices(self, types: str) -> AsyncIterator[object]:
+            assert types == "orch.*"
+            yield object()  # (an event: the inbox is drawn again)
+            yield object()
+
+    class _Service:
+        bus = _Bus()
+
+        async def call(self, name: str, request: dict[str, object]) -> Inbox:
+            assert name == "orch_inbox"
+            drawn.append(str(request))
+            return _inbox()
+
+    console = Console(file=output, width=200, color_system=None)
+
+    await render.watch_inbox(console, _Service(), InboxRequest(project="udl"))  # type: ignore[arg-type]
+
+    assert drawn == ["{'project': 'udl'}"] * 3, "once, then once for each event"
+    assert output.getvalue().count("Ready to merge") == 3

@@ -49,6 +49,7 @@ from udl.interfaces.cli.common import (
     parse,
     run,
     show,
+    stdout,
     usage_error,
 )
 
@@ -210,6 +211,26 @@ def cli_command(
     ]
     show_it = shown or (spec.render if spec is not None and spec.render is not None else None)
     show_it = show_it or render.model
+    watch_it = spec.watch if spec is not None else None
+    if watch_it is not None:
+        # (The CLI's own flag: it is not a field of the request, so the API and MCP never see it —
+        # a command that follows is what a person reads, not what an agent calls.)
+        fields.append(
+            _Field(
+                name="watch",
+                kind="flag",
+                parameter=inspect.Parameter(
+                    "watch",
+                    inspect.Parameter.KEYWORD_ONLY,
+                    default=False,
+                    annotation=Annotated[
+                        bool,
+                        typer.Option("--watch", help="Follow it: draw it again as things happen."),
+                    ],
+                ),
+                option_names=("--watch",),
+            )
+        )
 
     def command(ctx: typer.Context, **options: Any) -> None:
         if only_alone and ctx.invoked_subcommand is not None:
@@ -229,7 +250,13 @@ def cli_command(
                 values[found.name] = {**values.get(found.name, {}), **key_values(given, option)}
             elif given is not None and given != [] and given != ():
                 values[found.name] = _value(found.kind, given)
+        # (The flag the CLI added, not a field of the request: read before it is parsed.)
+        watching = bool(values.pop("watch", False))
         request = parse(op.request, **values)
+        if watching and watch_it is not None:
+            follow = watch_it
+            run(ctx, lambda service: follow(stdout(), service, request))
+            return
         # (As data, which the service reads as its own operation's request: a local plugin's
         # file is imported again by each service, so its models are other classes there.)
         given = request.model_dump(round_trip=True)

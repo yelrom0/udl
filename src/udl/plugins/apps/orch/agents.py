@@ -39,7 +39,7 @@ from pydantic import (
 # Local Imports
 from udl.db.models import JsonObject, utcnow
 from udl.db.records import Name
-from udl.plugins.apps.orch.models import HostName, Title
+from udl.plugins.apps.orch.models import AgentRole, AgentStatus, HostName, Title
 from udl.plugins.runners.base import (
     RunnerFailed,
     RunnerLimited,
@@ -66,25 +66,6 @@ AnAgentEvent = Annotated[
     Field(discriminator="kind"),
 ]
 """One thing that happened in a session, as its runner said it (the `kind` says which)."""
-
-
-class AgentRole(StrEnum):
-    """What an agent does: implements tasks, manages agents, or reviews their work."""
-
-    IMPLEMENTER = "implementer"
-    MANAGER = "manager"
-    REVIEWER = "reviewer"
-
-
-class AgentStatus(StrEnum):
-    """What an agent is doing now (derived from its session: never stored)."""
-
-    IDLE = "idle"  # nothing running
-    WORKING = "working"  # its session is starting, or running
-    WAITING = "waiting"  # it answered, or its session failed and a person is being asked
-    LIMITED = "limited"  # its harness's quota is spent, until its session says when
-    OFFLINE = "offline"  # its host did not answer (27.7)
-    PAUSED = "paused"  # a person paused it: nothing is dispatched to it
 
 
 class SessionState(StrEnum):

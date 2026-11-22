@@ -65,6 +65,9 @@ __all__ = [
     "Actions",
     "AddLinkRequest",
     "AddNoteRequest",
+    "AgentLine",
+    "AgentRole",
+    "AgentStatus",
     "AnswerRequest",
     "AskRequest",
     "AssignTaskRequest",
@@ -98,6 +101,8 @@ __all__ = [
     "HostName",
     "ImportPlanRequest",
     "ImportReport",
+    "Inbox",
+    "InboxRequest",
     "Key",
     "Link",
     "LinkKind",
@@ -1388,6 +1393,25 @@ class MergeRow(_Model):
     """The tasks that needed it (what followed a merge: they rebase and push again)."""
 
 
+class AgentRole(StrEnum):
+    """What an agent does: implements tasks, manages agents, or reviews their work."""
+
+    IMPLEMENTER = "implementer"
+    MANAGER = "manager"
+    REVIEWER = "reviewer"
+
+
+class AgentStatus(StrEnum):
+    """What an agent is doing now (derived from its session: never stored)."""
+
+    IDLE = "idle"  # nothing running
+    WORKING = "working"  # its session is starting, or running
+    WAITING = "waiting"  # it answered, or its session failed and a person is being asked
+    LIMITED = "limited"  # its harness's quota is spent, until its session says when
+    OFFLINE = "offline"  # its host did not answer (27.7)
+    PAUSED = "paused"  # a person paused it: nothing is dispatched to it
+
+
 class MergeList(_Model):
     """What there is to merge (28.3), as a person reads it: the ready ones in merge order (grouped
     by repo), the ones still coming (with what they wait on), the held ones, and what merged
@@ -1401,6 +1425,62 @@ class MergeList(_Model):
     """Held (built now, merged later), each with its hold as its blocker."""
     done: list[MergeRow] = Field(default_factory=list[MergeRow])
     """Merged in the last 14 days, with what followed each."""
+
+
+class AgentLine(_Model):
+    """What an agent is doing, in a line (28.4's inbox strip): who it is, what it is, and what it
+    is on — derived from its session, never stored."""
+
+    name: Name
+    """Its name."""
+    title: Title
+    """How it is shown."""
+    role: AgentRole
+    """What it does: implements, manages, or reviews."""
+    state: AgentStatus
+    """What it is doing now, from its session."""
+    task: Key | None = None
+    """The task it is on, when it is on one (None: it has none, or its manager has no task)."""
+    since: AwareDatetime | None = None
+    """When its session last changed (when it started, or answered): None when it has none."""
+
+    @property
+    def line(self) -> str:
+        """It, in a line: `deepseek-a — implementing 27.10`, or `claude — idle`."""
+        what = {
+            AgentRole.IMPLEMENTER: "implementing",
+            AgentRole.REVIEWER: "reviewing",
+            AgentRole.MANAGER: "managing",
+        }
+        if self.task is not None and self.state is AgentStatus.WORKING:
+            return f"{self.name} — {what[self.role]} {self.task}"
+        return f"{self.name} — {self.state.value}"
+
+
+class InboxRequest(_Model):
+    """Asking for the inbox: everything that waits on a person (28.4)."""
+
+    project: Name | None = None
+    """The project it is of (None: the only one, while udl has one)."""
+
+
+class Inbox(_Model):
+    """The three lists a person reads today in human-comms.md, in one answer: what is ready to
+    merge, what is being asked, and what only a person can do — with what every agent is doing
+    beside them (28.4). It reads: nothing changes."""
+
+    project: Name
+    """The project it is of."""
+    merge: MergeList
+    """Ready to merge (28.3's own list: ready, coming, held, done)."""
+    questions: list[Question] = Field(default_factory=list[Question])
+    """The open questions, the blocking ones first, each newest first."""
+    actions: list[Action] = Field(default_factory=list[Action])
+    """What only a person can do: now, then after, then later."""
+    agents: list[AgentLine] = Field(default_factory=list[AgentLine])
+    """What every agent is doing, by name."""
+    updated_at: AwareDatetime
+    """When this was read (the dispatcher and the watcher's events change it, 28.5)."""
 
 
 class MergeListRequest(_Model):
@@ -1478,7 +1558,7 @@ class Promoted(_Model):
 # ---------------------------------------------------------------------------------------------
 
 
-def as_shape[S: _Model](shape: type[S], record: BaseModel) -> S:
+def as_shape[S: BaseModel](shape: type[S], record: BaseModel) -> S:
     """`record` (an orch.records one) as `shape`: the fields the shape has, from the record's.
 
     The records carry the id and the times; a shape is what an operation answers, and it holds

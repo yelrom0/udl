@@ -1,0 +1,52 @@
+{
+  "project": "udl",
+  "merge": {
+    "ready": [],
+    "coming": [],
+    "held": [],
+    "done": []
+  },
+  "questions": [
+    {
+      "key": "Q-1",
+      "project": "udl",
+      "asked_by": "",
+      "to": "humans",
+      "title": "Which theme?",
+      "text": "The shadcn example or the template's?",
+      "options": [],
+      "blocking": true,
+      "task": "26.4",
+      "state": "open",
+      "answer": null,
+      "answered_by": null,
+      "outcome": null,
+      "escalated": false
+    }
+  ],
+  "actions": [
+    {
+      "key": "A-1",
+      "project": "udl",
+      "title": "Merge 27.10",
+      "text": "",
+      "when": "now",
+      "after": null,
+      "task": "26.4",
+      "assignee": null,
+      "state": "open",
+      "result": null
+    }
+  ],
+  "agents": [
+    {
+      "name": "deepseek-a",
+      "title": "deepseek-a",
+      "role": "implementer",
+      "state": "idle",
+      "task": null,
+      "since": null
+    }
+  ],
+  "updated_at": "2026-01-02T03:04:05Z"
+}
