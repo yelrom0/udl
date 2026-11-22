@@ -718,7 +718,7 @@ class Dispatcher:
                 for one in await managers.reports(stored.AgentRecords(self._records), agent.name)
             ]
             items = await self._needs(agent, reports)
-            outcome, spoke = await self._turn(agent, session, manager_prompt(agent, reports, items))
+            outcome, _ = await self._turn(agent, session, manager_prompt(agent, reports, items))
             session = await sessions.session(session.id) or session
             if outcome is Outcome.RETRY:
                 await self._retried(agent, session, session.last_error)
