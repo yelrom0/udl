@@ -55,6 +55,8 @@ from udl.plugins.apps.orch import workspace as space
 from udl.plugins.apps.orch.agents import AgentRole
 from udl.plugins.apps.orch.dispatcher import Dispatcher
 from udl.plugins.apps.orch.importer import (
+    PLAN_KEY,
+    ParsedPlan,
     ParsedTask,
     merge,
     read_plan_file,
@@ -76,6 +78,7 @@ from udl.plugins.apps.orch.models import (
     MOVED,
     OPEN,
     READY,
+    SPEC_MAX,
     Action,
     Actions,
     ActionState,
@@ -168,6 +171,7 @@ from udl.plugins.apps.orch.models import (
 )
 from udl.plugins.apps.orch.readiness import TASK_READY, Pull, TaskReady
 from udl.plugins.apps.orch.readiness import readiness as assess
+from udl.plugins.apps.orch.records import scan_links
 from udl.plugins.apps.orch.sessions import (
     AGENT_LIMITED,
     SESSION_ENDED,
@@ -1048,27 +1052,62 @@ class Orch(AppPlugin[OrchSettings]):
         A feature or a task the plan names and udl does not have is made; one udl has is changed
         where the plan changed it, and left alone where it did not. A task's state is udl's: a
         plan's mark never moves a task udl has moved on, and the report says where they differ.
-        A `dry_run` reports what it would do and writes nothing."""
+        A `dry_run` reports what it would do and writes nothing. What the plan names is read
+        and every spec is checked (against `SPEC_MAX`) before anything is written, and the write
+        is one batch: an import is all of a plan, or none of it — a spec over the limit is a
+        NotAllowed that names the feature or task and its length."""
         project = await self._project(request.project)
         plan = merge(*(read_plan_file(name) for name in request.files))
         features = stored.FeatureRecords(self.records)
         tasks = stored.TaskRecords(self.records)
         report = ImportReport(unplaced=plan.unplaced)
+        # (A project that imported before 26.7's fix has a `plan` feature: say so, rather than
+        # leaving it silently stale beside the new `plan-<stem>` ones. An import whose own plan
+        # feature is `plan` — a file named `___.md` — is writing to it, not finding it stale.)
+        if PLAN_KEY not in {one.key for one in plan.features} and (
+            await features.feature(project, PLAN_KEY) is not None
+        ):
+            report.kept.append(f"{PLAN_KEY}: an older import's plan feature, left as it is")
+        made = await self._planned(features, tasks, project, plan, report)
+        if not request.dry_run:
+            await self._write_import(made)
+        return report
+
+    async def _planned(
+        self,
+        features: stored.FeatureRecords,
+        tasks: stored.TaskRecords,
+        project: str,
+        plan: ParsedPlan,
+        report: ImportReport,
+    ) -> list[Record]:
+        """What the import would write: every feature and task the plan names that udl does not
+        have, and every one it has that the plan changed, as records.
+
+        Nothing is written here, so a dry run and a real import agree; and every spec's length
+        is checked (against `SPEC_MAX`), so a too-long one refuses the whole import before
+        anything is written rather than half of it."""
+        made: list[Record] = []
         for parsed in plan.features:
+            if parsed.spec and len(parsed.spec) > SPEC_MAX:
+                raise NotAllowed(
+                    f"feature {parsed.key}'s spec is {len(parsed.spec)} characters, over the "
+                    f"{SPEC_MAX} a spec may be",
+                    hint="Split the file, or leave the section out of the plan.",
+                )
             found = await features.feature(project, parsed.key)
             title = parsed.title or parsed.key
             if found is None:
-                report.created.append(parsed.key)
-                if not request.dry_run:
-                    await features.save_feature(
-                        stored.Feature(
-                            project=project,
-                            key=parsed.key,
-                            title=title,
-                            spec=parsed.spec,
-                            order=int(parsed.key) if parsed.key.isdigit() else 0,
-                        )
+                made.append(
+                    stored.Feature(
+                        project=project,
+                        key=parsed.key,
+                        title=title,
+                        spec=parsed.spec,
+                        order=int(parsed.key) if parsed.key.isdigit() else 0,
                     )
+                )
+                report.created.append(parsed.key)
             else:
                 changed: dict[str, object] = {}
                 if found.title != title:
@@ -1076,62 +1115,79 @@ class Orch(AppPlugin[OrchSettings]):
                 if parsed.spec and found.spec != parsed.spec:
                     changed["spec"] = parsed.spec
                 if changed:
+                    made.append(found.model_copy(update=changed))
                     report.updated.append(parsed.key)
-                    if not request.dry_run:
-                        await features.save_feature(found.model_copy(update=changed))
                 else:
                     report.unchanged.append(parsed.key)
             for one in parsed.tasks:
-                await self._imported(tasks, project, parsed.key, one, request.dry_run, report)
-        return report
+                await self._planned_task(tasks, project, parsed.key, one, made, report)
+        return made
 
-    async def _imported(
+    async def _planned_task(
         self,
         tasks: stored.TaskRecords,
         project: str,
         feature: str,
         parsed: ParsedTask,
-        dry_run: bool,
+        made: list[Record],
         report: ImportReport,
     ) -> None:
-        """One task of a plan, made or changed in udl (`import_plan`'s own step)."""
-        found = await tasks.task(project, parsed.key)
+        """One task the plan names, as a record in the same batch as its feature (made, or
+        kept): one write is what keeps a task from being left without its feature, not the
+        order within it, so there is no per-task check here."""
+        if parsed.spec and len(parsed.spec) > SPEC_MAX:
+            raise NotAllowed(
+                f"task {parsed.key}'s spec is {len(parsed.spec)} characters, over the "
+                f"{SPEC_MAX} a spec may be",
+                hint="Split the card, or leave the section out of the plan.",
+            )
         title = parsed.title or parsed.key
-        if found is None:
-            report.created.append(parsed.key)
-            if not dry_run:
-                await tasks.import_task(
-                    stored.Task(
-                        project=project,
-                        feature=feature,
-                        key=parsed.key,
-                        title=title,
-                        spec=parsed.spec,
-                        needs=parsed.needs,
-                        state=parsed.state,
-                        size=parsed.size,
-                    )
+        held = await tasks.task(project, parsed.key)
+        if held is None:
+            made.append(
+                stored.Task(
+                    project=project,
+                    feature=feature,
+                    key=parsed.key,
+                    title=title,
+                    spec=parsed.spec,
+                    needs=parsed.needs,
+                    state=parsed.state,
+                    size=parsed.size,
                 )
+            )
+            report.created.append(parsed.key)
             return
         changed: dict[str, object] = {}
-        if found.title != title:
+        if held.title != title:
             changed["title"] = title
-        if parsed.spec and found.spec != parsed.spec:
+        if parsed.spec and held.spec != parsed.spec:
             changed["spec"] = parsed.spec
-        if parsed.needs and found.needs != parsed.needs:
+        if parsed.needs and held.needs != parsed.needs:
             changed["needs"] = parsed.needs
-        if parsed.size is not None and found.size != parsed.size:
+        if parsed.size is not None and held.size != parsed.size:
             changed["size"] = parsed.size
         if changed:
+            made.append(held.model_copy(update=changed))
             report.updated.append(parsed.key)
-            if not dry_run:
-                await tasks.import_task(found.model_copy(update=changed))
         else:
             report.unchanged.append(parsed.key)
-        if parsed.state != found.state:
+        if parsed.state != held.state:
             report.kept.append(
-                f"{parsed.key}: udl has it {found.state}, the plan says {parsed.state}"
+                f"{parsed.key}: udl has it {held.state}, the plan says {parsed.state}"
             )
+
+    async def _write_import(self, made: list[Record]) -> None:
+        """Everything the import planned, as one write — all of it, or none: its features and
+        its tasks, with each feature's status following the tasks the batch writes."""
+        if not made:
+            return
+        await stored.TaskRecords(self.records).import_all(made)
+        for one in made:
+            if isinstance(one, stored.Feature):
+                await scan_links(self.records, one.project, OwnerKind.FEATURE, one.key, one.spec)
+            elif isinstance(one, stored.Task):
+                await scan_links(self.records, one.project, OwnerKind.TASK, one.key, one.spec)
 
     async def add_note(self, request: AddNoteRequest) -> NoteInfo:
         """Write a note on a feature or a task (appended: a correction is another note), as

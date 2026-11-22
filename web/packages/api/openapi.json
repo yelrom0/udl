@@ -19567,7 +19567,7 @@
     },
     "/plugins/orch/import_plan": {
       "post": {
-        "description": "Read plan files into udl: their features and their tasks, by key (26.7).\n\nA feature or a task the plan names and udl does not have is made; one udl has is changed\nwhere the plan changed it, and left alone where it did not. A task's state is udl's: a\nplan's mark never moves a task udl has moved on, and the report says where they differ.\nA `dry_run` reports what it would do and writes nothing.",
+        "description": "Read plan files into udl: their features and their tasks, by key (26.7).\n\nA feature or a task the plan names and udl does not have is made; one udl has is changed\nwhere the plan changed it, and left alone where it did not. A task's state is udl's: a\nplan's mark never moves a task udl has moved on, and the report says where they differ.\nA `dry_run` reports what it would do and writes nothing. What the plan names is read\nand every spec is checked (against `SPEC_MAX`) before anything is written, and the write\nis one batch: an import is all of a plan, or none of it \u2014 a spec over the limit is a\nNotAllowed that names the feature or task and its length.",
         "operationId": "orch_import_plan",
         "requestBody": {
           "content": {

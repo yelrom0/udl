@@ -49,7 +49,14 @@ from udl.plugins.apps.orch.models import (
 )
 
 PLAN_KEY: Final = "plan"
-"""The feature a multi-phase file's own sections are: its Decisions, its Concepts, its Spec."""
+"""The feature a file's own words go on: `plan-<stem>`, or `plan` when it has no name."""
+
+
+def _plan_title(key: str) -> str:
+    """A plan feature's title: the file's own name, as its heading has it
+    (`plan-02-agent-orchastrator` is "02 agent orchastrator"); "The plan" for the bare key."""
+    return "The plan" if key == PLAN_KEY else key.removeprefix(f"{PLAN_KEY}-").replace("-", " ")
+
 
 _STATES: Final[dict[str, State]] = {
     " ": OPEN,
@@ -176,9 +183,14 @@ class ParsedPlan(BaseModel):
     unplaced: list[UnplacedLine] = Field(default_factory=list[UnplacedLine])
 
 
-def parse_plan(text: str, *, source: str) -> ParsedPlan:
+def parse_plan(text: str, *, source: str, stem: str | None = None) -> ParsedPlan:
     """`text` (a plan file's, named `source`) as features and tasks, and the lines of its tracker
-    it could not place."""
+    it could not place.
+
+    What a file says that is no phase's own goes on its plan feature: `plan-<stem>`, the file's
+    own name (`plan-planning`, `plan-02-agent-orchastrator`, `plan-03-proxmox`), so two
+    multi-phase files do not put their plans' words on one feature, and a re-import finds each
+    again by its key. A file with no name (`stem=None`) keeps `plan`."""
     lines = text.splitlines()
     features: dict[str, _Feature] = {}
     unplaced: list[UnplacedLine] = []
@@ -199,11 +211,12 @@ def parse_plan(text: str, *, source: str) -> ParsedPlan:
             found.tasks[key].title = title
         return found.tasks[key]
 
+    plan_key = PLAN_KEY if stem is None else f"{PLAN_KEY}-{stem}"
     single = _single_phase(lines)
     tracker = _tracker(lines)
     if tracker is not None:
-        _read_tracker(lines, tracker, single, feature, task, unplaced, source)
-    _read_sections(lines, single, feature)
+        _read_tracker(lines, tracker, single, plan_key, feature, task, unplaced, source)
+    _read_sections(lines, single, plan_key, feature)
     _read_cards(lines, feature, task, _unplaceable(lines, unplaced, source))
     return _as_plan(features, unplaced)
 
@@ -308,6 +321,7 @@ def _read_tracker(
     lines: list[str],
     tracker: tuple[int, int],
     single: str | None,
+    plan_key: str,
     feature: _Named,
     task: _Tasked,
     unplaced: list[UnplacedLine],
@@ -371,24 +385,24 @@ def _read_tracker(
         last = None
 
 
-def _read_sections(lines: list[str], single: str | None, feature: _Named) -> None:
+def _read_sections(lines: list[str], single: str | None, plan_key: str, feature: _Named) -> None:
     """The sections of the file: a phase's own (`## Phase N …`) are its spec, and what is not a
-    phase's is the plan's (or, in a single-phase file, the phase's own)."""
+    phase's is the plan feature's (or, in a single-phase file, the phase's own)."""
     heading: str | None = None
     body: list[str] = []
     for raw in [*lines, ""]:
         found = _HEADING.match(raw)
         if found:
-            _kept_heading(heading, body, single, feature)
+            _kept_heading(heading, body, single, plan_key, feature)
             heading, body = raw, []
             continue
         if heading is not None:
             body.append(raw)
-    _kept_heading(heading, body, single, feature)
+    _kept_heading(heading, body, single, plan_key, feature)
 
 
 def _kept_heading(
-    heading: str | None, body: list[str], single: str | None, feature: _Named
+    heading: str | None, body: list[str], single: str | None, plan_key: str, feature: _Named
 ) -> None:
     """What a section says goes where its heading says it goes."""
     if heading is None:
@@ -409,7 +423,7 @@ def _kept_heading(
             if single is not None:
                 feature(single).spec.append(said)
             else:
-                feature(PLAN_KEY, "The plan").spec.append(said)
+                feature(plan_key, _plan_title(plan_key)).spec.append(said)
         return
     text = "\n".join(body).strip()
     found = _PHASE_HEADING.match(heading)
@@ -422,7 +436,7 @@ def _kept_heading(
     if single is not None:
         feature(single).spec.append(text)
         return
-    feature(PLAN_KEY, "The plan").spec.append(text)
+    feature(plan_key, _plan_title(plan_key)).spec.append(text)
 
 
 def _read_cards(
@@ -581,4 +595,23 @@ def read_plan_file(name: str) -> ParsedPlan:
             f"{name!r} is not a markdown file",
             hint="A plan is a .md file (its sections are a feature's spec).",
         )
-    return parse_plan(path.read_text(), source=name)
+    stem = _plan_stem(path.stem)
+    return parse_plan(path.read_text(), source=name, stem=stem)
+
+
+_PLAN_STEM = re.compile(r"[^a-z0-9_.-]+")
+"""What a file's name may hold for its plan feature's key: anything else becomes a `-`."""
+
+_NOT_A_KEY = re.compile(r"[^a-z0-9]")
+"""Whether a name has any letter or digit at all: one with none (`___.md`) keeps the bare `plan`."""
+
+
+def _plan_stem(stem: str) -> str:
+    """A file's name as a plan feature's key (`my plan.md` is `plan-my-plan`).
+
+    A name with no letter or digit in it (`___.md`) has no key to make, so it keeps the bare
+    `plan` — better shared than refused for the sake of a file's punctuation."""
+    if not _NOT_A_KEY.sub("", stem.lower()):
+        return PLAN_KEY
+    made = _PLAN_STEM.sub("-", stem.lower().replace("_", "-")).strip("-")
+    return made[:35].rstrip("-")
