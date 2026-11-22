@@ -127,19 +127,25 @@ def test_a_half_built_web_tree_is_said_not_served(
     monkeypatch.setattr("support.e2e.SHELL_DIST", shell)
     monkeypatch.setattr("support.e2e.SHADCN_EXAMPLE", tmp_path / "example")
     monkeypatch.setattr("support.e2e.TEMPLATE", tmp_path / "template")
+    monkeypatch.setattr("support.e2e.ORCH_UI", tmp_path / "orch")
 
     assert half_built() == (
-        "the shell is built and 18.10's example and template are not: run `make web`"
+        "the shell is built and the shadcn example and the template and the orchestrator's UI are"
+        " not built: run `make web`"
     )
     with taken_port() as port:
         assert main(port=port, make_site=nothing) == 1
 
     # (One missing is said alone, with its name, not the folder's — both are called `dist`.)
     (tmp_path / "example" / "shadcn").mkdir(parents=True)
-    assert half_built() == "the shell is built and 18.10's template is not: run `make web`"
+    assert half_built() == (
+        "the shell is built and the template and the orchestrator's UI are not built:"
+        " run `make web`"
+    )
 
-    # (Both there: nothing wrong.)
+    # (All there: nothing wrong.)
     (tmp_path / "template" / "template").mkdir(parents=True)
+    (tmp_path / "orch").mkdir(parents=True)
     assert half_built() is None
 
     # (Nothing built is a fresh checkout, which the harness serves: the hand-written bundles.)

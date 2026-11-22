@@ -18,7 +18,8 @@ import contextlib
 import logging
 from collections.abc import Awaitable, Sequence
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Final, Protocol
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol
 from uuid import UUID
 
 # Package Imports
@@ -242,6 +243,7 @@ from udl.plugins.runners.manage import (
     StartLoginRequest,
 )
 from udl.plugins.secrets.base import SecretField, SecretStore, load_secrets
+from udl.plugins.ui.base import UIBundle
 
 if TYPE_CHECKING:
     from udl.core.service import UDLService
@@ -386,6 +388,20 @@ _RUNNERS: tuple[str, ...] = ("orch", "runners")
 __all__ = ["Orch"]
 
 
+UI_FOLDER: Final[Path] = Path(__file__).parent / "ui"
+"""Its own UI (29.2), where `make web` builds it: the folder is the bundle (`manifest.json` and
+its files), so a checkout that has not built the web tree has no bundle here."""
+
+
+def ui_bundle(folder: Path) -> UIBundle | None:
+    """The UI bundle in `folder`, when it has been built; None when it has not (the generated
+    page alone). A bundle that is there but broken is `UIBundle.of`'s `PluginError`: a bundle
+    that cannot load is said out loud, not dropped."""
+    if not (folder / "manifest.json").is_file():
+        return None
+    return UIBundle.of(folder)
+
+
 class Orch(AppPlugin[OrchSettings]):
     """udl's orchestrator: the projects and repos it tracks, and the agents that work them.
 
@@ -396,7 +412,9 @@ class Orch(AppPlugin[OrchSettings]):
     title = "Orchestrator"
     summary = "The work udl tracks: projects, repos, features, tasks, links and notes."
     settings_model = OrchSettings
-    # (Its UI is Phase 29's, a udl.ui plugin's manifest; until then the generated page.)
+    # (Its own UI (29.2), built beside this module by `make web`; until it is built, the
+    # generated page alone.)
+    ui: ClassVar[UIBundle | None] = ui_bundle(UI_FOLDER)
 
     @classmethod
     def record_kinds(cls) -> Sequence[type[Record]]:
