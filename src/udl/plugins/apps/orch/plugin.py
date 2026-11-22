@@ -870,8 +870,17 @@ class Orch(AppPlugin[OrchSettings]):
                     f"{found.key!r} is a task of {found.feature!r}, not of {request.feature!r}",
                     hint="A task does not move between features: set the one it is of.",
                 )
+            if (found.assignee or "").startswith(queues.HUMAN):
+                raise NotAllowed(
+                    f"{found.key!r} is a person's task",
+                    hint="A person's task is theirs to plan (28.2); an agent plans its reports'.",
+                )
             if found.assignee:
                 await self._in_subtree(found.assignee)
+            else:
+                # (A task nobody is on is not anyone's: what holds it is where it is — a manager
+                # plans in its reports' features, 27.8.)
+                await self._plans_in(project, found.feature)
             found = found.model_copy(update=given)
         if request.size is not None:
             await self._may_size(found, sized=request.size)
@@ -918,8 +927,15 @@ class Orch(AppPlugin[OrchSettings]):
         project = await self._project(request.project)
         tasks = stored.TaskRecords(self.records)
         found = await self._require_task(project, request.key)
+        if (found.assignee or "").startswith(queues.HUMAN):
+            raise NotAllowed(
+                f"{found.key!r} is a person's task",
+                hint="A person's task is theirs to plan (28.2); an agent plans its reports'.",
+            )
         if found.assignee:
             await self._in_subtree(found.assignee)
+        else:
+            await self._plans_in(project, found.feature)
         if found.state not in _UNSTARTED:
             raise NotAllowed(
                 f"{found.key!r} is {found.state}: only a task that has not started is split",
@@ -1969,17 +1985,20 @@ class Orch(AppPlugin[OrchSettings]):
         return None, None
 
     async def _plans_in(self, project: str, feature: str) -> None:
-        """Refuse a new task in a feature none of the caller's reports works on (27.8: `plan`
-        is its reports' work). A person, or an agent with no reports, plans anywhere."""
+        """Refuse a change to a feature's tasks when none of the caller's reports works on it
+        (27.8: `plan` is its reports' work, so it reaches their features and no other).
+
+        The whole subtree counts, as it does for every other power: a manager's reports' reports
+        work in features that are its own. A person, or an agent without the `plan` power, plans
+        anywhere; a feature whose only work is a person's (`human:<name>`) has no report of
+        anyone's in it, so no manager plans there."""
         who = _caller()
         if who is None or not who.is_agent:
             return
         found = await stored.AgentRecords(self.records).agent(who.name)
         if found is None or not found.manages.plan:
             return
-        below = {
-            one.name for one in await bosses.reports(stored.AgentRecords(self.records), who.name)
-        }
+        below = await bosses.subtree(stored.AgentRecords(self.records), who.name)
         tasks = await stored.TaskRecords(self.records).tasks(project)
         if any(one.feature == feature and one.assignee in below for one in tasks):
             return

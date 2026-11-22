@@ -383,11 +383,14 @@ class Dispatcher:
         task = await self._standing(agent)
         if task is None:
             return False
-        await self._told(agent, news)
         session = await self._session_for(agent, task)
         if session is None:
             return False
-        await self._work(agent, task, session, resume=session.state is SessionState.RUNNING)
+        spoke = await self._work(agent, task, session, resume=session.state is SessionState.RUNNING)
+        if spoke:
+            # (Only what the manager was actually told is remembered: a turn whose runner never
+            # started said nothing, and the next tick says it again, 27.8.)
+            await self._told(agent, news)
         return True
 
     async def _told(self, agent: stored.Agent, news: str) -> None:
@@ -696,10 +699,13 @@ class Dispatcher:
 
     async def _work(
         self, agent: stored.Agent, task: stored.Task, session: stored.AgentSession, *, resume: bool
-    ) -> None:
+    ) -> bool:
         """Work a task until it moves on, the session is limited or failed, or it stalls: the
         first turn says which task it is (or that udl restarted), and each one after it what
-        changed — or, with nothing new, a nudge."""
+        changed — or, with nothing new, a nudge.
+
+        True when the runner said anything at all: a turn that never started (the harness
+        refused, the host did not answer) is False, so its news is not counted as told."""
         sessions = stored.SessionRecords(self._records)
         prompt: str
         kind = "changed"
@@ -711,12 +717,12 @@ class Dispatcher:
                 for one in await managers.reports(stored.AgentRecords(self._records), agent.name)
             ]
             items = await self._needs(agent, reports)
-            outcome = await self._turn(agent, session, manager_prompt(agent, reports, items))
+            outcome, spoke = await self._turn(agent, session, manager_prompt(agent, reports, items))
             session = await sessions.session(session.id) or session
             if outcome is Outcome.RETRY:
                 await self._retried(agent, session, session.last_error)
             await self._end(agent, session)
-            return
+            return spoke
         if resume:
             said = await self._answers(task, session)
             base = "udl restarted; continue where you were."
@@ -726,32 +732,32 @@ class Dispatcher:
         else:
             next_prompt, session, kind = await self._next_prompt(task, session)
             if next_prompt is None:
-                return  # (its pull is only waiting on time: the event wakes it)
+                return True  # (its pull is only waiting on time: the event wakes it)
             prompt = next_prompt
         while True:
-            outcome = await self._turn(agent, session, prompt)
+            outcome, spoke = await self._turn(agent, session, prompt)
             session = await sessions.session(session.id) or session
             if outcome in (Outcome.LIMITED, Outcome.FAILED):
-                return
+                return spoke
             if outcome is Outcome.RETRY:
                 if not await self._retried(agent, session, session.last_error):
-                    return
+                    return spoke
                 session = await sessions.session(session.id) or session
                 continue
             now = await self._task_of(session)
             if now is None or now.state != IN_PROGRESS:
                 await self._end(agent, session)
-                return
+                return spoke
             # (`nudges` counts the turns that brought nothing new: a turn that told the session
             # what changed is progress, and starts the count again.)
             nudges = 0 if kind == "changed" else session.nudges + 1
             session = await sessions.save_session(session.model_copy(update={"nudges": nudges}))
             if nudges >= agent.max_nudges:
                 await self._stalled(agent, now, session)
-                return
+                return spoke
             next_prompt, session, kind = await self._next_prompt(now, session)
             if next_prompt is None:
-                return  # (only time stands in the way: no turn until the pull changes)
+                return spoke  # (only time stands in the way: no turn until the pull changes)
             prompt = next_prompt
 
     async def _answers(self, task: stored.Task, session: stored.AgentSession) -> str:
@@ -926,15 +932,16 @@ class Dispatcher:
 
     async def _turn(
         self, agent: stored.Agent, session: stored.AgentSession, prompt: str
-    ) -> Outcome:
+    ) -> tuple[Outcome, bool]:
         """Send one turn and stream it: its events into the transcript and the live events, and
-        what its end says into the session (the card's 3, 4 and 6)."""
+        what its end says into the session (the card's 3, 4 and 6) — and whether it said
+        anything at all (a turn that never started said nothing)."""
         async with self._turns:  # (at most `max_agents_running` turns at once)
             return await self._one_turn(agent, session, prompt)
 
     async def _one_turn(
         self, agent: stored.Agent, session: stored.AgentSession, prompt: str
-    ) -> Outcome:
+    ) -> tuple[Outcome, bool]:
         """One turn, streamed (what `_turn` does once it has a turn's place)."""
         sessions = stored.SessionRecords(self._records)
         session = await sessions.save_session(
@@ -944,9 +951,11 @@ class Dispatcher:
         ended: TurnEnded | None = None
         limited: RunnerLimited | None = None
         failed: RunnerFailed | None = None
+        spoke = False
         try:
             async for said in runner.send(session.ref, prompt):
                 event = _an_event(said)
+                spoke = True
                 await self._said(agent, session, event)
                 if isinstance(event, TurnEnded):
                     ended = event
@@ -958,7 +967,7 @@ class Dispatcher:
         except (PluginError, UDLError) as error:
             failed = RunnerFailed(message=str(error))
             ended = TurnEnded(reason=TurnReason.ERROR, text=str(error))
-        return await self._ended(agent, session, ended, limited=limited, failed=failed)
+        return await self._ended(agent, session, ended, limited=limited, failed=failed), spoke
 
     async def _said(
         self, agent: stored.Agent, session: stored.AgentSession, event: AnAgentEvent
