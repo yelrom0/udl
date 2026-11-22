@@ -114,10 +114,20 @@ class AppEvent(_Model):
 class AppRecords:
     """Where an app keeps its records (udl.db.records): the kinds it defined, stored in udl's
     database. Its own kinds register themselves when its module is imported, so a record an app
-    keeps is a record every database plugin stores the same way."""
+    keeps is a record every database plugin stores the same way.
 
-    def __init__(self, db: DBManager) -> None:
+    `events` is where the app publishes, when it is given one: a write that is also something
+    that happened (a task's move, a question's answer) can say so from the one place it writes,
+    so no path that writes it can forget the event and no path publishes it twice (28.5)."""
+
+    def __init__(self, db: DBManager, *, events: AppEvents | None = None) -> None:
         self._db = db
+        self._events = events
+
+    @property
+    def events(self) -> AppEvents | None:
+        """Where the app publishes (None when these records were made without it)."""
+        return self._events
 
     async def save[R: Record](self, record: R) -> R:
         """Store `record` (by its id, so storing one again replaces it) and give it back, stamped
@@ -185,7 +195,9 @@ class AppEvents:
         stored = await self._bus.publish(
             NewEvent(
                 type=named,
-                data=data if isinstance(data, dict) else data.model_dump(mode="json"),
+                data=data
+                if isinstance(data, dict)
+                else data.model_dump(mode="json", by_alias=True),
                 source=self._name,
                 dedupe_key=dedupe_key,
                 occurred_at=occurred_at,

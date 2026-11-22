@@ -20,8 +20,12 @@ to the humans at the top. `close()` is for a question nobody answers, with what 
 """
 
 # System Imports
+import logging
 from collections.abc import Sequence
 from datetime import datetime
+
+# Package Imports
+from pydantic import BaseModel
 
 # Local Imports
 from udl.clock import Clock
@@ -30,6 +34,12 @@ from udl.db.records import Record
 from udl.errors import DoesNotExist, InUse, NotAllowed
 from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch import transitions
+from udl.plugins.apps.orch.events import (
+    QUESTION_ANSWERED,
+    QUESTION_ASKED,
+    QuestionAnswered,
+    QuestionAsked,
+)
 from udl.plugins.apps.orch.models import (
     BLOCKED,
     QUEUED,
@@ -68,6 +78,8 @@ __all__ = [
     "reply",
     "route",
 ]
+
+log = logging.getLogger(__name__)
 
 QUESTIONS = "Q-"
 """What a question's key is counted from (`Q-1`, `Q-2` …)."""
@@ -138,7 +150,34 @@ async def ask(
     if blocking:
         batch.extend(_blocking(asked_in, asked, asked_by=asked_by, at=_now(clock)))
     saved = await questions.records.save_all(batch)
-    return next(one for one in saved if isinstance(one, Question))
+    asked = next(one for one in saved if isinstance(one, Question))
+    await _told(
+        questions,
+        QUESTION_ASKED.name,
+        QuestionAsked(
+            project=asked.project,
+            question=asked.key,
+            task=asked.task or "",
+            blocking=asked.blocking,
+            asked_by=asked.asked_by,
+            to=asked.to,
+        ),
+        key=f"question.asked:{asked.id}",
+    )
+    return asked
+
+
+async def _told(questions: QuestionRecords, event_type: str, data: BaseModel, *, key: str) -> None:
+    """Publish `data` as `event_type` once (28.5), when these records publish at all: a question
+    is how a person hears of what an agent needs, and an event that cannot be published is not
+    worth failing the question for."""
+    events = questions.records.events
+    if events is None:
+        return
+    try:
+        await events.emit(event_type, data, dedupe_key=key)
+    except Exception:
+        log.warning("The %s event could not be published", event_type, exc_info=True)
 
 
 async def block(
@@ -201,7 +240,20 @@ async def answer(
         *await _unblocked(questions, found, at=_now(clock)),
     ]
     saved = await questions.records.save_all(batch)
-    return next(one for one in saved if isinstance(one, Question))
+    answered = next(one for one in saved if isinstance(one, Question))
+    await _told(
+        questions,
+        QUESTION_ANSWERED.name,
+        QuestionAnswered(
+            project=answered.project,
+            question=answered.key,
+            task=answered.task or "",
+            by=answered.answered_by or "",
+            answer=answered.answer or "",
+        ),
+        key=f"question.answered:{answered.id}",
+    )
+    return answered
 
 
 async def reply(

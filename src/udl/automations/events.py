@@ -76,7 +76,7 @@ class EventType[D: BaseModel]:
 
     def validate(self, data: Mapping[str, JsonValue]) -> JsonObject:
         """`data` as this type's model has it, as plain JSON. Raises ValidationError."""
-        return self.data.model_validate(data).model_dump(mode="json")
+        return self.data.model_validate(data).model_dump(mode="json", by_alias=True)
 
     def subject_of(self, data: D) -> str:
         """An event's subject, from its data (its type's name, when that fails)."""

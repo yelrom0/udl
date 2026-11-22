@@ -341,6 +341,20 @@ udl runs list                                   # the run, and what the script p
 udl events list                                 # the event, and the run's udl.action.succeeded
 ```
 
+A subscription on what the orchestrator does tells you when you are needed: a blocking question
+an agent asks (`orch.question.asked`, with its `task`, `question` and `blocking`), a task that
+moved, was blocked or merged (`orch.task.changed`, `orch.task.blocked`, `orch.task.merged`),
+something only you can do (`orch.action.needed`) and an agent with nothing on its queue
+(`orch.agent.idle`).
+
+```sh
+udl actions set tell-me --kind notify \
+  -O 'title=udl: {{ event.data.project }} {{ event.data.task }}' \
+  -O 'body={{ event.subject }}'
+udl subs set a-blocking-question --on orch.question.asked \
+  --where 'blocking == true' --action tell-me
+```
+
 - **Filters** are conditions on the event's data: dotted paths compared with `==` `!=` `contains`
   `startswith` `endswith` `~` (a regex) `in` `<` `<=` `>` `>=` `exists`, joined by `and`, `or`,
   `not` and parentheses (`from.address endswith "@bank.com" and not sent_by_udl`).

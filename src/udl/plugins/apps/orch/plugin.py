@@ -77,6 +77,14 @@ from udl.plugins.apps.orch.agents import (
     AgentSession as AgentSessionShape,
 )
 from udl.plugins.apps.orch.dispatcher import Dispatcher, Outcome, Turns
+from udl.plugins.apps.orch.events import (
+    ACTION_NEEDED,
+    AGENT_IDLE,
+    QUESTION_ANSWERED,
+    QUESTION_ASKED,
+    TASK_BLOCKED,
+    TASK_CHANGED,
+)
 from udl.plugins.apps.orch.importer import (
     PLAN_KEY,
     ParsedPlan,
@@ -446,17 +454,25 @@ class Orch(AppPlugin[OrchSettings]):
 
     @classmethod
     def event_types(cls) -> Sequence[EventType[Any]]:
-        """The events orch publishes: its links' changes (26.4), and its tasks' from 26.6 on."""
+        """The events orch publishes (28.5): its links' changes (26.4), its tasks' — a move, a
+        ready pull, a block, a merge — its questions' (28.1), its people's actions (28.2), its
+        agents' limits and idle queues, and its sessions' (27.7)."""
         return (
             LINK_CHANGED,
             PROJECT_CHANGED,
+            TASK_CHANGED,
             TASK_READY,
+            TASK_BLOCKED,
             TASK_MERGED,
+            QUESTION_ASKED,
+            QUESTION_ANSWERED,
+            ACTION_NEEDED,
+            AGENT_LIMITED,
+            AGENT_IDLE,
             SESSION_STARTED,
             SESSION_EVENT,
             SESSION_ENDED,
             SESSION_FAILED,
-            AGENT_LIMITED,
         )
 
     def __init__(

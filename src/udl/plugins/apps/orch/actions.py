@@ -16,6 +16,9 @@ not when a PR merges.
 did is in the task's history like everything else.
 """
 
+# System Imports
+import logging
+
 # Package Imports
 from pydantic import JsonValue
 
@@ -24,6 +27,7 @@ from udl.db.records import RecordQuery
 from udl.errors import DoesNotExist, NotAllowed
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch import queue as queues
+from udl.plugins.apps.orch.events import ACTION_NEEDED, ActionNeeded
 from udl.plugins.apps.orch.models import (
     AFTER,
     OPEN,
@@ -53,6 +57,8 @@ __all__ = [
     "set_action",
 ]
 
+log = logging.getLogger(__name__)
+
 ACTIONS = "A-"
 """What an action's key is counted from (`A-1`, `A-2` …)."""
 
@@ -72,8 +78,34 @@ class ActionRecords:
         return self._records
 
     async def save_action(self, action: HumanAction) -> HumanAction:
-        """Store `action` (by its id, so storing one again replaces it)."""
-        return await self._records.save(action)
+        """Store `action` (by its id, so storing one again replaces it), and say it is needed when
+        it is open (28.5): once per action and `when`, so one that becomes due says so again."""
+        saved = await self._records.save(action)
+        if saved.state is ActionState.OPEN:
+            await self.say_needed(saved)
+        return saved
+
+    async def say_needed(self, action: HumanAction) -> None:
+        """Publish that `action` is a person's to do (28.5), keyed by the action and its `when`:
+        the queue says it for the action it writes in its own batch, so a person's task is never
+        queued without it."""
+        events = self._records.events
+        if events is None:
+            return
+        try:
+            await events.emit(
+                ACTION_NEEDED.name,
+                ActionNeeded(
+                    project=action.project,
+                    action=action.key,
+                    task=action.task or "",
+                    when=ActionWhen(action.when).value,
+                    assignee=action.assignee or "",
+                ),
+                dedupe_key=f"action.needed:{action.id}:{ActionWhen(action.when).value}",
+            )
+        except Exception:
+            log.warning("The %s event could not be published", ACTION_NEEDED.name, exc_info=True)
 
     async def action(self, project: str, key: str) -> HumanAction | None:
         """The action called `key` of `project`, or None when there is none."""

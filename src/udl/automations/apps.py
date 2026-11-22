@@ -136,11 +136,12 @@ class AppSupervisor:
         backoff, failures = FIRST_BACKOFF, 0
         while not stop.is_set():
             started = self._service.clock.now()
+            published = AppEvents(self._service.bus, app.name, type(app).event_types())
             ctx = AppContext(
                 app=app,
                 service=self._service,
-                records=AppRecords(self._service.db),
-                events=AppEvents(self._service.bus, app.name, type(app).event_types()),
+                records=AppRecords(self._service.db, events=published),
+                events=published,
                 secrets=self._service.secrets,
                 clock=self._service.clock,
                 settings=app.settings,
@@ -188,7 +189,14 @@ class AppSupervisor:
                 f"The {name} app's settings are {type(made).__qualname__}, not its "
                 f"settings_model's ({plugin.settings_model.__qualname__})"
             )
-        app: AnApp = plugin(made, clock=self._service.clock, records=AppRecords(self._service.db))
+        app: AnApp = plugin(
+            made,
+            clock=self._service.clock,
+            records=AppRecords(
+                self._service.db,
+                events=AppEvents(self._service.bus, name, plugin.event_types()),
+            ),
+        )
         app.service = self._service
         self._apps[name] = app
         return app
