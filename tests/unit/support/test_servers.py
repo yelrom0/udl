@@ -169,9 +169,10 @@ def test_a_blank_line_in_docker_ps_is_ignored(monkeypatch: pytest.MonkeyPatch) -
 def test_a_container_whose_time_docker_printed_oddly_is_left_alone(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A `CreatedAt` this code cannot read says nothing about age: a young container is left
-    alone even when its date is not one."""
-    docker = FakeDocker("odd\tnot a date at all\t\n")
+    """A `CreatedAt` this code cannot read says nothing about age: only its age could tell, and
+    that is unknown, so a young container is left alone. Its pid is dead but on another machine,
+    which is exactly the case the age rule alone decides."""
+    docker = FakeDocker(f"odd\tnot a date at all\t{dead_pid()}\tsome-other-host\n")
     monkeypatch.setattr(servers, "_docker", docker)
 
     servers.reap_containers()

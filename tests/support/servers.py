@@ -126,9 +126,11 @@ def reap_containers() -> None:
 
     A run that is killed — a `timeout` around pytest, a cancelled agent-push — never reaches the
     `finally` that stops its container, so the container stays (and each one holds memory). Which
-    run started a container is its `udl-tests.pid` label: a pid that is no longer running is a
-    container that outlived its run. A container with no such label is from before the label
-    existed, and is taken to be a leftover once it is older than `_OLD`.
+    run started a container is its `udl-tests.pid` label, read on the machine its `udl-tests.host`
+    label names: a pid that is not running there is a container that outlived its run. Anything
+    else — no pid label (a container from before the labels), another machine's, a pid that is
+    not a number — is left to its age, and so is anything older than `_OLD`: a pid may be reused,
+    and a container of a run still going is never that old.
 
     One `docker ps`, and one `docker stop` for them all: a machine with a backlog is not made to
     wait on a call per container. A daemon that does not answer is left alone — the run is not
