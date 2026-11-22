@@ -742,3 +742,108 @@ async def test_a_manager_may_not_suggest_for_another_managers_report(
             await service.call("orch_suggest", {"project": "udl", "agent": STRANGER})
     finally:
         current_principal.reset(token)
+
+
+async def test_a_manager_edits_an_unassigned_task_only_in_its_reports_features(
+    service: UDLService,
+) -> None:
+    """(A task nobody is on is held by where it is: a manager plans in its reports' features, so
+    the one in a feature nobody works in is not its to edit.)"""
+    records = AppRecords(service.db)
+    await FeatureRecords(records).save_feature(Feature(project="udl", key="F-2", title="Nobody's"))
+    tasks = TaskRecords(records)
+    for feature, key in (("F-1", "F-1.5"), ("F-2", "F-2.1")):
+        await tasks.save_task(
+            Task(project="udl", feature=feature, key=key, title="Nobody is on it")
+        )
+
+    token = as_boss()
+    try:
+        await service.call(
+            "orch_set_task", {"project": "udl", "key": "F-1.5", "title": "Mine to edit"}
+        )
+        with pytest.raises(NotAllowed, match="none of ernie-c's reports"):
+            await service.call(
+                "orch_set_task", {"project": "udl", "key": "F-2.1", "title": "Not mine"}
+            )
+    finally:
+        current_principal.reset(token)
+
+    assert (await task_of(service, "F-1.5")).title == "Mine to edit"
+    assert (await task_of(service, "F-2.1")).title == "Nobody is on it"
+
+
+async def test_a_manager_splits_an_unassigned_task_only_in_its_reports_features(
+    service: UDLService,
+) -> None:
+    """(The same rule as an edit: a split is a plan, so it happens where the reports work.)"""
+    records = AppRecords(service.db)
+    await FeatureRecords(records).save_feature(Feature(project="udl", key="F-2", title="Nobody's"))
+    tasks = TaskRecords(records)
+    for feature, key in (("F-1", "F-1.5"), ("F-2", "F-2.1")):
+        await tasks.save_task(
+            Task(project="udl", feature=feature, key=key, title="Nobody is on it")
+        )
+    into = [{"title": "One", "spec": ""}, {"title": "Two", "spec": ""}]
+
+    token = as_boss()
+    try:
+        await service.call("orch_split_task", {"project": "udl", "key": "F-1.5", "into": into})
+        with pytest.raises(NotAllowed, match="none of ernie-c's reports"):
+            await service.call("orch_split_task", {"project": "udl", "key": "F-2.1", "into": into})
+    finally:
+        current_principal.reset(token)
+
+    assert (await task_of(service, "F-1.5")).title == "One"
+    assert (await task_of(service, "F-2.1")).title == "Nobody is on it"
+
+
+async def test_a_persons_task_is_not_an_agents_to_plan(service: UDLService) -> None:
+    """(A person's task is theirs: a manager edits and splits its reports' work, never a
+    person's, whichever feature it is in.)"""
+    tasks = TaskRecords(AppRecords(service.db))
+    await tasks.save_task(
+        Task(project="udl", feature="F-1", key="F-1.5", title="Dana's", assignee="human:dana")
+    )
+
+    token = as_boss()
+    try:
+        with pytest.raises(NotAllowed, match="a person's task"):
+            await service.call(
+                "orch_set_task", {"project": "udl", "key": "F-1.5", "title": "Not mine"}
+            )
+        with pytest.raises(NotAllowed, match="a person's task"):
+            await service.call(
+                "orch_split_task",
+                {
+                    "project": "udl",
+                    "key": "F-1.5",
+                    "into": [{"title": "One", "spec": ""}, {"title": "Two", "spec": ""}],
+                },
+            )
+    finally:
+        current_principal.reset(token)
+
+    assert (await task_of(service, "F-1.5")).title == "Dana's"
+
+
+async def test_a_feature_whose_only_work_is_a_persons_is_not_a_managers_to_plan_in(
+    service: UDLService,
+) -> None:
+    """(A person is nobody's report: a feature whose only task is a person's is not a feature a
+    manager's reports work in.)"""
+    records = AppRecords(service.db)
+    await FeatureRecords(records).save_feature(Feature(project="udl", key="F-2", title="Dana's"))
+    await TaskRecords(records).save_task(
+        Task(project="udl", feature="F-2", key="F-2.1", title="Dana's", assignee="human:dana")
+    )
+
+    token = as_boss()
+    try:
+        with pytest.raises(NotAllowed, match="none of ernie-c's reports"):
+            await service.call(
+                "orch_set_task",
+                {"project": "udl", "key": "F-2.2", "feature": "F-2", "title": "Not mine"},
+            )
+    finally:
+        current_principal.reset(token)
