@@ -957,7 +957,13 @@ class Orch(AppPlugin[OrchSettings]):
 
     async def _may_size(self, task: stored.Task, *, sized: Size) -> None:
         """Whether the caller may set a task's size (26.8): udl and a person may; an agent only
-        with the `plan` power, and never on a task it is the assignee of."""
+        with the `plan` power, never on a task it is the assignee of, and only within its own
+        subtree — `plan` sizes its reports' work, as it assigns it (27.8).
+
+        The edit that carries a size is held to the task already (`_in_subtree()` for a task
+        someone is on, `_plans_in()` for one nobody is on); this repeats both here, so the power
+        is the operation's own rule and not its caller's, and the second walk of the tree is what
+        that costs on a sized edit — a rare edit, and the backstop is `_may_size()`."""
         from udl.core.service import principal  # (the caller's, as each interface set it)
 
         caller = principal()
@@ -974,6 +980,10 @@ class Orch(AppPlugin[OrchSettings]):
                 f"{task.key!r} is {caller.name!r}'s own task, so it does not size it",
                 hint="Who does the work does not say how big it is: its manager, or a person.",
             )
+        if task.assignee:
+            await self._in_subtree(task.assignee)
+        else:
+            await self._plans_in(task.project, task.feature)
 
     async def move_task(self, request: MoveTaskRequest) -> Task:
         """Move a task to another state, through the table (orch.transitions): what it waits on

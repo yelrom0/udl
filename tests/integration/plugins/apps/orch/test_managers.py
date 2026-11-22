@@ -847,3 +847,18 @@ async def test_a_feature_whose_only_work_is_a_persons_is_not_a_managers_to_plan_
             )
     finally:
         current_principal.reset(token)
+
+
+async def test_a_manager_sizes_only_its_own_reports_work(service: UDLService) -> None:
+    """(`plan` sizes its reports' work, as it assigns it: a task another manager's report is on
+    is not its to size.)"""
+    token = as_boss()
+    try:
+        await service.call("orch_set_task", {"project": "udl", "key": "F-1.1", "size": "M"})
+        assert (await task_of(service, "F-1.1")).size == "M"
+        with pytest.raises(NotAllowed, match="not in ernie-c's subtree"):
+            await service.call("orch_set_task", {"project": "udl", "key": "F-1.4", "size": "M"})
+    finally:
+        current_principal.reset(token)
+
+    assert (await task_of(service, "F-1.4")).size is None
