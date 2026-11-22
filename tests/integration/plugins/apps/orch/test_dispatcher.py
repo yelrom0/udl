@@ -68,6 +68,7 @@ from udl.plugins.apps.orch.models import (
     MERGED,
     QUEUED,
     READY,
+    MergeList,
     OwnerKind,
     Principal,
     PullState,
@@ -560,7 +561,13 @@ async def scripted(service: UDLService, key: str, *, prompt: str | None = None) 
 async def ask(name: str, request: dict[str, object]) -> object:
     """Call an operation of the test's service, as a scripted turn's tool call does."""
     assert SERVICE, "a turn ran with no service"
-    return await SERVICE[0].call(name, request)
+    try:
+        return await SERVICE[0].call(name, request)
+    except Exception as error:
+        import traceback
+
+        traceback.print_exc()
+        raise AssertionError(f"{name} failed: {error}") from error
 
 
 def ready_turn(key: str) -> Turn:
@@ -2841,7 +2848,7 @@ def the_merger_s_turn() -> Turn:
     return turn
 
 
-_A_NUMBERED_PULL = re.compile(r"^\d+\. ([A-Z][A-Z0-9_]*-[0-9.]+) \(.*?\) — .*/pull/(\d+) at (\w+)")
+_A_NUMBERED_PULL = re.compile(r"^- ([A-Z][A-Z0-9_]*-[0-9.]+) \(.*?\) — .*/pull/(\d+) at (\w+)")
 """A line of the merger's prompt: the task, its pull's number and the sha it is at."""
 MERGER_PROMPT: list[str] = [""]
 """The prompt the merger's running turn was given (a turn's body starts after `send`)."""
@@ -2861,7 +2868,7 @@ async def test_the_merger_s_turn_merges_a_ready_pull(service: UDLService) -> Non
         for _ in range(40):
             one = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
             assert one is not None
-            if one.state == MERGED:
+            if one.state in (MERGED, DONE):
                 break
             await clock.advance(timedelta(seconds=31))
         else:
@@ -2878,9 +2885,12 @@ async def test_the_merger_s_turn_merges_a_ready_pull(service: UDLService) -> Non
     assert f"{PULL} at {HEAD}" in said
     assert "feature F-1" in said
     assert f"Its spec: {SPEC}" in said
+    assert "git -C /work/merging." in said, "the diff is read in the merger's own worktree"
+    assert f"confirm=yelrom0/udl#7, sha={HEAD}" in said, "the call it is told to make is exact"
     one = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
     assert one is not None
-    assert one.state == MERGED
+    # (Its review is the merger's, so a project with nothing after its base sees it done.)
+    assert one.state == DONE
     notes = await NoteRecords(AppRecords(service.db)).for_owner(OwnerKind.TASK, one.id)
     assert any("Merged by claude (auto merge)" in note.text for note in notes)
 
@@ -2934,9 +2944,10 @@ async def test_a_merger_s_own_task_with_no_review_bot_is_skipped(service: UDLSer
         with contextlib.suppress(asyncio.CancelledError):
             await running
 
-    said = MERGER_PROMPT[0]
-    assert "Skipped: F-1.1 (It 1) is your own task" in said
-    assert "a person merges it" in said
+    assert MERGER_PROMPT[0] == "", "nothing to act on is no turn"
+    listed = await service.call("orch_merge_list", {"project": "udl"})
+    assert isinstance(listed, MergeList)
+    assert "waiting for a person: the merger's own task" in listed.ready[0].blockers
     one = await TaskRecords(records).task("udl", "F-1.1")
     assert one is not None
     assert one.state == READY, "a person's to merge, not the merger's"
@@ -3044,10 +3055,14 @@ async def test_the_merger_takes_a_stack_of_three_by_itself(service: UDLService) 
 
     every = await tasks_of(service)
     assert all(every[key].state in (MERGED, DONE) for key in ("F-1.1", "F-1.2", "F-1.3"))
-    # (Bottom first: the first prompt lists the stack in Ready to merge's order, its bottom first.)
+    # (Bottom first, one at a time: each prompt is the one pull the merger is on, and the first
+    # is the stack's bottom.)
     said = [one for one in PROMPTS if one.startswith(MERGED_KEY)]
-    listed = [one.group(1) for one in map(_A_NUMBERED_PULL.match, said[0].splitlines()) if one]
-    assert listed[0] == "F-1.1", f"the stack's bottom is first: {listed}"
+    assert [one.group(1) for one in map(_A_NUMBERED_PULL.match, said[0].splitlines()) if one] == [
+        "F-1.1"
+    ], f"the stack's bottom is first: {said[0]}"
+    assert "- F-1.2 (It 2)" in said[1], f"then the next: {said[1]}"
+    assert "- F-1.3 (It 3)" in said[2], f"then the last: {said[2]}"
     app = await service.apps.get("github")
     assert isinstance(app, FakeGitHub)
     assert len(app.merged) == 3
@@ -3161,3 +3176,37 @@ async def test_the_merger_moves_on_after_asking_changes(service: UDLService) -> 
     # and a turn that says nothing blocks the task on a question — so it is no longer ready.)
     assert every["F-1.1"].state in (IN_PROGRESS, BLOCKED)
     assert every["F-1.2"].state in (MERGED, DONE)
+
+
+async def test_the_merger_s_task_is_in_the_project_it_merges(service: UDLService) -> None:
+    """(A merger may work on more than one project: its standing task is in the one it is
+    merging, not whichever of its projects came first.)"""
+    await a_merger_and_a_ready_pull(service)
+    records = AppRecords(service.db)
+    projects = ProjectRecords(records)
+    await projects.save_project(Project(name="aaa", title="Another"))
+    agents = AgentRecords(records)
+    claude = await agents.agent("claude")
+    assert claude is not None
+    await agents.save_agent(claude.model_copy(update={"projects": ["aaa", "udl"]}))
+    SCRIPT["manager"] = the_merger_s_turn()
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(20):
+            every = await tasks_of(service)
+            if "merging.1" in every:
+                break
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    every = await tasks_of(service)
+    merging = every.get("merging.1")
+    assert merging is not None, f"no standing merge task: {sorted(every)}"
+    assert merging.project == "udl"
+    assert merging.worktree, "a worktree to read the diff in"

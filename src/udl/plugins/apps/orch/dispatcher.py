@@ -194,40 +194,42 @@ def changed(task: stored.Task, what: str) -> str:
 def merger_prompt(
     agent: stored.Agent,
     project: stored.Project,
-    rows: Sequence[MergeRow],
-    skipped: Sequence[MergeRow],
-    specs: Mapping[str, str] | None = None,
+    row: MergeRow,
+    spec: str,
+    *,
+    worktree: str = "",
+    base: str = "main",
 ) -> str:
-    """The merger's turn (28.7): the ready pulls of `project`, in the order they merge, with what
-    it needs to review and merge each — and the ones it is not to touch, and why."""
+    """The merger's turn (28.7): the one ready pull it is on, with what it needs to review it
+    against its task's spec and merge it — one at a time, as the card has it."""
     lines = [
         f"You are {agent.name}, {project.name}'s merger: the person who runs it turned auto merge "
         "on, and you merge its ready pulls once you have reviewed them.",
         "",
-        "Review each pull's diff against its task's spec, then merge it:",
+        "This one is ready:",
+        f"- {row.task} ({row.title}) — {row.url} at {row.sha} (feature {row.feature}, "
+        f"{row.repo}#{row.number}).",
     ]
-    told = specs or {}
-    for number, row in enumerate(rows, start=1):
-        spec = (told.get(row.task) or "").strip()
+    if spec.strip():
+        lines.append(f"- Its spec: {spec.strip()}")
+    if worktree:
         lines.append(
-            f"{number}. {row.task} ({row.title}) — {row.url} at {row.sha} (feature "
-            f"{row.feature})."
-            + (f" Its spec: {spec}" if spec else "")
-            + " Review its diff against that (it is in the worktree you are on), then merge it "
-            "(`orch_review_task` with `approve`, or `changes` and the reasons, then `orch_merge` "
-            "with the pull's number and this sha)."
+            f"Its diff is in the worktree you are on ({worktree}): `git -C {worktree} fetch "
+            f"origin`, then `git -C {worktree} diff origin/{base}...{row.sha}`."
         )
-    if skipped:
-        lines.append("")
-        for row in skipped:
-            lines.append(
-                f"Skipped: {row.task} ({row.title}) is your own task, and {project.name} has no "
-                "review bot to say whether it is good: a person merges it."
-            )
-    lines.append("")
-    lines.append(
-        "Merge them in this order, one at a time: after each, read the list again "
-        "(`orch_merge_list`) and carry on with what is still ready."
+    else:
+        lines.append(f"Its diff is on its page: {row.url}/files.")
+    lines.extend(
+        [
+            "",
+            "Review it against that spec: `orch_review_task` with "
+            f"project={project.name}, key={row.task}, head={row.sha}, and verdict=approve — or "
+            "changes, with the reasons it needs. Then merge it: `orch_merge` with "
+            f"project={project.name}, key={row.task}, confirm={row.repo}#{row.number}, "
+            f"sha={row.sha}.",
+            "One at a time: after a merge, read the list again (`orch_merge_list`) and carry on "
+            "with what is still ready.",
+        ]
     )
     return "\n".join(lines)
 
@@ -468,14 +470,14 @@ class Dispatcher:
         finished — the merger reads the list again when there is more on it.
 
         False when the agent is not a project's merger, or nothing is waiting on it."""
-        news = await self._merge_news(agent)
+        project, news = await self._merge_news(agent)
         if not news:
             if agent.last_merge_news:
                 await self._merge_told(agent, "")
             return False
         if news == agent.last_merge_news:
             return False  # (told already, and nothing it did changed that: no turn)
-        task = await self._standing_merge(agent)
+        task = await self._standing_merge(agent, project=project)
         if task is None:
             return False
         session = await self._session_for(agent, task)
@@ -497,10 +499,13 @@ class Dispatcher:
             agent.model_copy(update={"last_merge_news": news})
         )
 
-    async def _merge_news(self, agent: stored.Agent) -> str:
-        """What `agent`'s merger turn is told (28.7): per project it merges, the ready pulls it
-        is to review and merge, and the ones it is not (its own, with no review bot)."""
+    async def _merge_news(self, agent: stored.Agent) -> tuple[str, str]:
+        """What `agent`'s merger turn is told (28.7): of the first project it merges that has
+        something for it, the one ready pull it is on — one at a time — with what it needs to
+        review and merge it. Nothing it may act on is no turn at all (its own task, with no review
+        bot, is marked in the list for a person)."""
         told: list[str] = []
+        merges = ""
         projects = stored.ProjectRecords(self._records)
         tasks = stored.TaskRecords(self._records)
         for name in await self._projects_of(agent):
@@ -510,29 +515,55 @@ class Dispatcher:
             listed = await self._service.call("orch_merge_list", {"project": name})
             if not isinstance(listed, MergeList):
                 continue
-            rows = [one for one in listed.ready if one.merger is not MergerState.CHANGES_ASKED]
-            kept: list[MergeRow] = []
-            skipped: list[MergeRow] = []
-            for row in rows:
-                task = await tasks.task(name, row.task)
-                if task is not None and task.assignee == agent.name and not found.review_bot:
-                    skipped.append(row)
-                else:
-                    kept.append(row)
-            if kept or skipped:
-                specs: dict[str, str] = {}
-                for row in kept:
-                    task = await tasks.task(name, row.task)
-                    if task is not None:
-                        specs[row.task] = task.spec
-                told.append(merger_prompt(agent, found, kept, skipped, specs))
-        return "\n\n".join(told)
+            # (The list marks the one it is on: the first it may act on, past its own.)
+            on_it = [one for one in listed.ready if one.merger is MergerState.REVIEWING]
+            if not on_it:
+                continue
+            row = on_it[0]
+            task = await tasks.task(name, row.task)
+            if task is None:
+                continue
+            standing = await self._standing_merge(agent, project=name)
+            if standing is None:
+                continue
+            standing = await self._reviewing(standing, agent)
+            base = "main"
+            with contextlib.suppress(DoesNotExist, PluginError, UDLError):
+                base = (await self._repo_of(standing)).base_branch
+            merges = name
+            told.append(
+                merger_prompt(
+                    agent,
+                    found,
+                    row,
+                    task.spec,
+                    worktree=standing.worktree or "",
+                    base=base,
+                )
+            )
+            break  # (one project's turn at a time: the next tick reads the rest)
+        return merges, "\n\n".join(told)
 
-    async def _standing_merge(self, agent: stored.Agent) -> stored.Task | None:
-        """The merger's standing task (28.7): a `merge` task of its own, made once and never
-        finished, so its sessions always have something to be on."""
+    async def _reviewing(self, task: stored.Task, agent: stored.Agent) -> stored.Task:
+        """The merger's standing task with a worktree to read the diff in (28.7): made once, and
+        left as it is when its project has no repo to check out."""
+        if task.worktree:
+            return task
+        try:
+            made = await self._prepare(task, agent)
+        except DoesNotExist, PluginError, UDLError:
+            return task
+        return await stored.TaskRecords(self._records).save_task(made)
+
+    async def _standing_merge(self, agent: stored.Agent, *, project: str) -> stored.Task | None:
+        """The merger's standing task (28.7): a `merge` task of its own, in the project it merges,
+        made once and never finished, so its sessions always have something to be on."""
         return await self._standing(
-            agent, task_kind="merge", feature="merging", title=f"{agent.name}'s merge queue"
+            agent,
+            project=project,
+            task_kind="merge",
+            feature="merging",
+            title=f"{agent.name}'s merge queue",
         )
 
     async def _told(self, agent: stored.Agent, news: str) -> None:
@@ -545,6 +576,7 @@ class Dispatcher:
         self,
         agent: stored.Agent,
         *,
+        project: str = "",
         task_kind: TaskKind = "review",
         feature: str = "managing",
         title: str = "",
@@ -554,8 +586,9 @@ class Dispatcher:
         on."""
         tasks = stored.TaskRecords(self._records)
         # (One of the manager's own projects: its `projects` when it names them, else any that
-        # udl has — and none at all means there is nothing to manage, 27.8.)
-        project = (await self._projects_of(agent) or [""])[0]
+        # udl has — and none at all means there is nothing to manage, 27.8. A merger's is the
+        # project it merges, which is not always its first, 28.7.)
+        project = project or (await self._projects_of(agent) or [""])[0]
         if not project:
             return None  # (no project, nothing to manage)
         for one in await tasks.tasks(project):

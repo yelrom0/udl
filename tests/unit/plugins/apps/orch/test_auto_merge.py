@@ -27,8 +27,8 @@ from support.engine import registry, settings
 from udl.core.operations import OperationHints
 from udl.core.service import UDLService
 from udl.errors import NotAllowed
+from udl.interfaces.security import OWNER, PrincipalKind, current_principal
 from udl.interfaces.security import Principal as Caller
-from udl.interfaces.security import PrincipalKind, current_principal
 from udl.plugins.apps.base import (
     AppEvent,
     AppEvents,
@@ -39,6 +39,7 @@ from udl.plugins.apps.base import (
 )
 from udl.plugins.apps.orch.agents import AgentRole, ManagerPowers
 from udl.plugins.apps.orch.models import (
+    DONE,
     IN_PROGRESS,
     MERGED,
     READY,
@@ -52,6 +53,9 @@ from udl.plugins.apps.orch.models import (
     Reviewed,
     SetAutoMergeRequest,
     SetProjectRequest,
+)
+from udl.plugins.apps.orch.models import (
+    Project as ProjectShape,
 )
 from udl.plugins.apps.orch.plugin import Orch
 from udl.plugins.apps.orch.records import (
@@ -349,6 +353,8 @@ async def test_the_switch_publishes_what_it_did(service: UDLService) -> None:
             await asyncio.sleep(0)  # (let the subscription take before the switch is made)
         await service.call("orch_set_auto_merge", {"on": True, "merger": "claude"})
         await service.call("orch_set_auto_merge", {"on": False})
+        # (On again with the same merger is news again, not one the bus has seen.)
+        await service.call("orch_set_auto_merge", {"on": True})
         for _ in range(20):
             await asyncio.sleep(0)
     finally:
@@ -356,9 +362,10 @@ async def test_the_switch_publishes_what_it_did(service: UDLService) -> None:
         with contextlib.suppress(asyncio.CancelledError):
             await taking
 
-    assert [one.type for one in heard] == ["orch.project.changed", "orch.project.changed"]
+    assert [one.type for one in heard] == ["orch.project.changed"] * 3
     assert heard[0].data == {"project": "udl", "auto_merge": True, "merger": "claude"}
     assert heard[1].data == {"project": "udl", "auto_merge": False, "merger": "claude"}
+    assert heard[2].data == {"project": "udl", "auto_merge": True, "merger": "claude"}
 
 
 async def test_an_agent_cannot_turn_it_on(service: UDLService) -> None:
@@ -396,6 +403,20 @@ async def test_set_project_cannot_turn_auto_merge_on(service: UDLService) -> Non
 
     found = await project(service)
     assert found.auto_merge is False
+
+
+async def test_set_project_cannot_make_a_new_project_with_auto_merge_on(
+    service: UDLService,
+) -> None:
+    # (A new project starts with it off: turning it on is the switch's, even on the way in.)
+    with pytest.raises(NotAllowed, match="orch_set_auto_merge"):
+        await service.call(
+            "orch_set_project",
+            SetProjectRequest(name="other", title="Other", auto_merge=True, merger="claude"),
+        )
+
+    found = await ProjectRecords(AppRecords(service.db)).project("other")
+    assert found is None
 
 
 async def test_set_project_cannot_change_the_merger(service: UDLService) -> None:
@@ -476,7 +497,8 @@ async def test_the_merger_merges_a_ready_pull(service: UDLService) -> None:
     merged = await merge_ready(service, as_=as_caller("claude", "manager"))
 
     assert isinstance(merged, Merged)
-    assert merged.state == MERGED
+    # (Its review is the merger's, so a project with nothing after its base sees it done.)
+    assert merged.state == DONE
 
 
 async def test_a_reviewer_merger_merges_too(service: UDLService) -> None:
@@ -487,7 +509,35 @@ async def test_a_reviewer_merger_merges_too(service: UDLService) -> None:
     merged = await merge_ready(service, as_=as_caller("ernie-c", "reviewer"))
 
     assert isinstance(merged, Merged)
+    assert merged.state == DONE
+
+
+async def test_an_auto_merge_waits_for_its_promotion(service: UDLService) -> None:
+    # (A project whose branches go on after its base keeps it `merged` until the promotion.)
+    records = AppRecords(service.db)
+    projects = ProjectRecords(records)
+    found = await projects.project("udl")
+    assert found is not None
+    await projects.save_project(found.model_copy(update={"promotion": ["rc"]}))
+    await service.call("orch_set_auto_merge", {"on": True, "merger": "claude"})
+
+    merged = await merge_ready(service, as_=as_caller("claude", "manager"))
+
     assert merged.state == MERGED
+
+
+async def test_the_owner_turns_it_on_through_an_interface(service: UDLService) -> None:
+    # (A person on the web, HTTP or MCP arrives as `OWNER`, not as udl itself: the switch is
+    # theirs to turn there, too.)
+    caller = current_principal.set(OWNER)
+    try:
+        turned = await service.call("orch_set_auto_merge", {"on": True, "merger": "claude"})
+    finally:
+        current_principal.reset(caller)
+
+    assert isinstance(turned, ProjectShape)
+    assert turned.auto_merge
+    assert turned.merger == "claude"
 
 
 async def test_an_auto_merge_s_note_and_event_carry_its_merger(
@@ -603,7 +653,7 @@ async def test_the_merger_s_own_task_merges_with_a_review_bot(service: UDLServic
 
     merged = await merge_ready(service, as_=as_caller("claude", "manager"))
 
-    assert merged.state == MERGED
+    assert merged.state == DONE
 
 
 async def test_an_implementer_cannot_merge_while_auto_merge_is_on(
@@ -658,6 +708,62 @@ async def test_a_ready_row_says_what_the_merger_is_doing(service: UDLService) ->
         ("F-1.1", "reviewing"),
         ("F-1.2", "next"),
     ]
+
+
+async def test_the_merger_s_own_task_is_marked_and_passed_over(service: UDLService) -> None:
+    # (No bot to say whether the merger's own pull is good: it is a person's, so it is marked so
+    # and the next one is the one the merger is on.)
+    records = AppRecords(service.db)
+    tasks = TaskRecords(records)
+    found = await tasks.task("udl", "F-1.1")
+    assert found is not None
+    await tasks.save_all([found.model_copy(update={"assignee": "claude"})])
+    projects = ProjectRecords(records)
+    kept = await projects.project("udl")
+    assert kept is not None
+    await projects.save_project(kept.model_copy(update={"review_bot": None}))
+    await add_task(service, "F-1.2", number=2, state=READY)
+    await service.call("orch_set_auto_merge", {"on": True, "merger": "claude"})
+
+    listed = await service.call("orch_merge_list", MergeListRequest())
+
+    assert isinstance(listed, MergeList)
+    assert [(one.task, one.merger) for one in listed.ready] == [
+        ("F-1.1", None),
+        ("F-1.2", "reviewing"),
+    ]
+    assert "waiting for a person: the merger's own task" in listed.ready[0].blockers
+
+
+async def test_another_manager_s_changes_leave_it_ready(service: UDLService) -> None:
+    # (Only the merger's changes verdict sends a ready pull back: another manager's review is
+    # 27.8's, and what it says is its note.)
+    records = AppRecords(service.db)
+    tasks = TaskRecords(records)
+    found = await tasks.task("udl", "F-1.1")
+    assert found is not None
+    await tasks.save_all([found.model_copy(update={"assignee": "deepseek-a"})])
+    agents = AgentRecords(records)
+    worker = await agents.agent("deepseek-a")
+    assert worker is not None
+    await agents.save_agent(worker.model_copy(update={"manager": "claude"}))
+    await service.call("orch_set_auto_merge", {"on": True, "merger": "ernie-c"})
+    caller = current_principal.set(as_caller("claude", "manager"))
+    try:
+        await service.call(
+            "orch_review_task",
+            {"key": "F-1.1", "verdict": "changes", "reasons": "Fix it.", "head": HEAD},
+        )
+    finally:
+        current_principal.reset(caller)
+
+    moved = await tasks.task("udl", "F-1.1")
+
+    assert moved is not None
+    assert moved.state == READY
+    listed = await service.call("orch_merge_list", MergeListRequest())
+    assert isinstance(listed, MergeList)
+    assert [(one.task, one.merger) for one in listed.ready] == [("F-1.1", "reviewing")]
 
 
 async def test_a_row_whose_changes_were_asked_says_so(service: UDLService) -> None:
