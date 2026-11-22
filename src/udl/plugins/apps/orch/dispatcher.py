@@ -704,8 +704,9 @@ class Dispatcher:
         first turn says which task it is (or that udl restarted), and each one after it what
         changed — or, with nothing new, a nudge.
 
-        True when the runner said anything at all: a turn that never started (the harness
-        refused, the host did not answer) is False, so its news is not counted as told."""
+        True when a manager's turn ended done: the harness heard the news and answered it. A
+        turn that never started, or that ended limited or failed, is False, so its news is not
+        counted as told."""
         sessions = stored.SessionRecords(self._records)
         prompt: str
         kind = "changed"
@@ -722,7 +723,9 @@ class Dispatcher:
             if outcome is Outcome.RETRY:
                 await self._retried(agent, session, session.last_error)
             await self._end(agent, session)
-            return spoke
+            # (Only a turn that ended done carried the news: a limit or a failure said
+            # something, but the manager did not hear what it was to, 27.8.)
+            return outcome is Outcome.DONE
         if resume:
             said = await self._answers(task, session)
             base = "udl restarted; continue where you were."
