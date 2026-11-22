@@ -40,7 +40,13 @@ from udl.plugins.apps.orch.models import (
     Totals,
 )
 from udl.plugins.apps.orch.plugin import Orch
-from udl.plugins.apps.orch.records import Agent, AgentRecords, TaskRecords
+from udl.plugins.apps.orch.records import (
+    Agent,
+    AgentRecords,
+    Feature,
+    FeatureRecords,
+    TaskRecords,
+)
 from udl.plugins.apps.orch.settings import OrchSettings
 
 PLAN = Path(__file__).resolve().parents[5] / "planning" / "02-agent-orchastrator.md"
@@ -205,6 +211,52 @@ async def test_a_manager_with_plan_sizes_its_report_s_task(service: UDLService) 
         sized = await _app(service).set_task(SetTaskRequest(key="26.1", size="XL"))
 
     assert (sized.size, sized.points) == ("XL", 8)
+
+
+async def test_the_plan_power_sizes_only_its_subtree(service: UDLService) -> None:
+    # (The power's own rule, called directly: the edit that carries a size checks the task
+    # already, so this is the backstop — `plan` sizes its reports' work and nothing else.)
+    await _manager_with_plan(service)
+    records = AppRecords(service.db)
+    outside = await TaskRecords(records).task("udl", "26.2")
+    assert outside is not None
+    await TaskRecords(records).save_all([outside.model_copy(update={"assignee": "someone-else"})])
+    outside = await TaskRecords(records).task("udl", "26.2")
+    assert outside is not None
+    inside = await TaskRecords(records).task("udl", "26.1")
+    assert inside is not None
+
+    with _as(Caller(kind=PrincipalKind.AGENT, name="deepseek-m", role="manager")):
+        await _app(service)._may_size(inside, sized="M")  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(NotAllowed, match="not in deepseek-m's subtree"):
+            await _app(service)._may_size(  # pyright: ignore[reportPrivateUsage]
+                outside, sized="M"
+            )
+
+
+async def test_the_plan_power_sizes_an_unassigned_task_only_in_its_reports_features(
+    service: UDLService,
+) -> None:
+    # (A task nobody is on is held by where it is, as an edit of one is: a feature none of the
+    # manager's reports works in is not one it sizes in.)
+    await _manager_with_plan(service)
+    records = AppRecords(service.db)
+    await FeatureRecords(records).save_feature(Feature(project="udl", key="9", title="Nobody's"))
+    nobody = await TaskRecords(records).task("udl", "26.2")
+    assert nobody is not None
+    await TaskRecords(records).save_all(
+        [nobody.model_copy(update={"assignee": "", "feature": "9"})]
+    )
+    nobody = await TaskRecords(records).task("udl", "26.2")
+    assert nobody is not None
+
+    with (
+        _as(Caller(kind=PrincipalKind.AGENT, name="deepseek-m", role="manager")),
+        pytest.raises(NotAllowed, match="none of deepseek-m's reports"),
+    ):
+        await _app(service)._may_size(  # pyright: ignore[reportPrivateUsage]
+            nobody, sized="M"
+        )
 
 
 async def test_a_manager_with_plan_may_not_size_its_own_task(service: UDLService) -> None:
