@@ -1445,6 +1445,7 @@ async def watch_inbox(console: Console, source: InboxSource, request: InboxReque
     loop = asyncio.get_running_loop()
     seen, problem = await looked()
     await draw()
+    said.clear()  # (a draw clears the screen: whatever was said before it is not there now)
     say(problem)
     drawn_at = loop.time()
     while True:
@@ -1454,4 +1455,5 @@ async def watch_inbox(console: Console, source: InboxSource, request: InboxReque
             seen = found
             drawn_at = loop.time()
             await draw()
+            said.clear()  # (and the outage that lasts across it is said again)
         say(problem)

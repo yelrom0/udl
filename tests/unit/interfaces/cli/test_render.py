@@ -987,6 +987,34 @@ async def test_the_watch_says_why_and_keeps_going_when_the_inbox_cannot_be_read(
     assert "Ready to merge" in output.getvalue(), "and then it drew the inbox it could read"
 
 
+async def test_an_outage_that_lasts_across_a_draw_is_said_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(The refresh draws the inbox and clears the screen: if the events still cannot be read,
+    that is said again — a clean inbox with no word of the outage would look like a good one.)"""
+    output = io.StringIO()
+    drawn = 0
+
+    class _Source:
+        async def call(self, name: str, request: JsonObject) -> BaseModel:
+            nonlocal drawn
+            if name == "list_events":
+                raise PluginError("the events cannot be read")
+            drawn += 1
+            if drawn == 3:
+                raise asyncio.CancelledError
+            return _inbox()
+
+    monkeypatch.setattr(render, "WATCH_POLL", 0.0)
+    monkeypatch.setattr(render, "WATCH_REFRESH", 0.0)  # (every look redraws: one outage, drawn)
+    console = Console(file=output, width=200, color_system=None)
+
+    with pytest.raises(asyncio.CancelledError):
+        await render.watch_inbox(console, _Source(), InboxRequest(project="udl"))
+
+    assert output.getvalue().count("the events cannot be read") == 2, "once per draw"
+
+
 async def test_the_watch_says_a_second_outage_too(monkeypatch: pytest.MonkeyPatch) -> None:
     """(An outage is said once; when the events can be read again and then cannot, that is a new
     outage and it is said again — a watch that went quiet would look like one that is fine.)"""
@@ -1021,27 +1049,26 @@ async def test_the_watch_says_an_outage_once_and_draws_anyway(
     """(The events cannot be read at all — the first look included: it says so once, draws the
     inbox it can, and does not add a line every two seconds for as long as the outage lasts.)"""
     output = io.StringIO()
-    drawn = 0
+    looks = 0
 
     class _Source:
         async def call(self, name: str, request: JsonObject) -> BaseModel:
-            nonlocal drawn
-            if name == "list_events":
-                raise PluginError("the events cannot be read")
-            drawn += 1
-            if drawn == 3:
+            nonlocal looks
+            if name != "list_events":
+                return _inbox()
+            looks += 1
+            if looks == 5:  # (five looks, one outage, no draw between them)
                 raise asyncio.CancelledError
-            return _inbox()
+            raise PluginError("the events cannot be read")
 
     monkeypatch.setattr(render, "WATCH_POLL", 0.0)
-    monkeypatch.setattr(render, "WATCH_REFRESH", 0.0)
     console = Console(file=output, width=200, color_system=None)
 
     with pytest.raises(asyncio.CancelledError):
         await render.watch_inbox(console, _Source(), InboxRequest(project="udl"))
 
     assert output.getvalue().count("the events cannot be read") == 1
-    assert output.getvalue().count("Ready to merge") == 2, "and it drew, twice"
+    assert output.getvalue().count("Ready to merge") == 1, "and it drew the inbox it could read"
 
 
 async def test_the_watch_draws_it_again_on_its_timer_when_no_event_says_so(
