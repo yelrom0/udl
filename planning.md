@@ -120,9 +120,9 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 26.3 `Feature` and `Task` records, task states and their transitions
   - [x] 26.4 `Link` records: everything linked, both ways; GitHub links kept current by the watcher
   - [x] 26.5 `Note` records: what was done, decisions, findings, on a task or feature
-  - [~] 26.6 Operations (projects, repos, features, tasks, links, notes) via CLI, API and MCP
+  - [x] 26.6 Operations (projects, repos, features, tasks, links, notes) via CLI, API and MCP
   - [~] 26.7 Markdown import: a planning file's tracker, cards and spec sections become features and tasks
-  - [~] 26.8 Task sizes: S, M, L, XL (1, 3, 5, 8 points), set by whoever plans the task; points per feature and project
+  - [x] 26.8 Task sizes: S, M, L, XL (1, 3, 5, 8 points), set by whoever plans the task; points per feature and project
 - [ ] **Phase 27: Agents, assignment and the dispatcher**
   - [x] 27.1 `Agent` records: runner, model, host, role, manager (the hierarchy), permissions
   - [x] 27.2 Agent tokens: an agent calls udl as itself, and only the operations its role allows
@@ -132,12 +132,12 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 27.5 Worktrees and the gate lane: `orch_push` runs the repo's gates, pushes, opens or updates the PR
   - [x] 27.6 PR readiness: CI, the review bot's verdict, mergeability, stacks, holds
   - [x] 27.7 The dispatcher: start, prompt, nudge, resume and stop agent sessions; limits and crashes
-  - [~] 27.8 Managers: a manager agent's duties over its reports, each one switchable
+  - [x] 27.8 Managers: a manager agent's duties over its reports, each one switchable
   - [ ] 27.9 Operations (agents, queues, sessions, suggestions) via CLI, API and MCP
-  - [~] 27.10 Working time, hours per point learned per model, forecasts: `orch_progress`
+  - [x] 27.10 Working time, hours per point learned per model, forecasts: `orch_progress`
   - [ ] 27.11 Chat sessions: Claude Code or Codex as the user, its permission prompts relayed to the web UI, a token per chat
 - [ ] **Phase 28: Human comms: Q&A, Ready to merge, To action**
-  - [~] 28.1 `Question` records and their thread; an answer reaches the agent and is written into the tasks it concerns
+  - [x] 28.1 `Question` records and their thread; an answer reaches the agent and is written into the tasks it concerns
   - [x] 28.2 `HumanAction` records ("To action") with a result
   - [x] 28.3 Ready to merge: ready now (in merge order), coming soon, held, done; merging and what follows a merge
   - [ ] 28.4 `orch_inbox`: the three sections in one call; `udl orch inbox`
