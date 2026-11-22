@@ -550,6 +550,43 @@ async def test_the_last_of_the_plain_lines_is_the_one_kept() -> None:
     assert "trusted directory" in (events[-1].text or "")
 
 
+async def test_a_json_line_split_across_two_chunks_is_read_whole() -> None:
+    """The shell yields fixed-size chunks, not lines: a JSON line longer than one chunk (a long
+    answer, a command's output) arrives in pieces, and each piece must be joined before it is
+    read — otherwise both halves are dropped and the turn says nothing."""
+    whole = (
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {"id": "i1", "type": "agent_message", "text": "x" * 9000},
+            }
+        ).encode()
+        + b"\n"
+    )
+    shell = FakeShell(output=[whole[:100], whole[100:5000], whole[5000:]])
+    given, _ = runner(shell)
+    started = await given.start(session())
+
+    events = await turn_of(given, started)
+
+    [said_text] = [event.text for event in events if isinstance(event, TextDelta)]
+    assert said_text == "x" * 9000
+
+
+async def test_a_turn_ended_line_split_across_chunks_ends_the_turn() -> None:
+    """`turn.completed` is the one line that must never be lost: split, it would end the turn as
+    an error whose text is a fragment of JSON."""
+    whole = b'{"type": "turn.completed", "usage": {"input_tokens": 3, "output_tokens": 4}}\n'
+    shell = FakeShell(output=[whole[:20], whole[20:]])
+    given, _ = runner(shell)
+    started = await given.start(session())
+
+    events = await turn_of(given, started)
+
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.DONE
+
+
 async def test_a_plain_line_does_not_hide_a_failed_turns_own_message() -> None:
     """When the turn says how it failed (a `turn.failed`), that is the reason, not the last
     line printed."""

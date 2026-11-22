@@ -84,8 +84,6 @@ _LIMIT: Final = re.compile(
 """How a limit's message says when it lifts (an ISO time, or an epoch)."""
 _EPOCH: Final = re.compile(r"(\d{10})")
 """The other way it says it: an epoch second."""
-_PLAIN: Final = 5
-"""How many of a turn's non-JSON lines are kept (the last of them is what it stopped on)."""
 _METADATA: Final = "model metadata"
 """The warning a real turn's stream opens with (an `error` item that is only a warning)."""
 
@@ -300,27 +298,56 @@ class Codex(AgentRunner[CodexOptions]):
             return
         first = session.id not in self._sessions.sent
         ended: TurnEnded | None = None
-        plain: list[str] = []
-        """The last lines the CLI printed that are not JSON (its own failures read that way)."""
+        plain = ""
+        """The last line the CLI printed that is not JSON (its own failures read that way)."""
+        # (The shell yields fixed-size chunks, not lines: a line longer than one chunk — a long
+        # answer, a command's output — arrives in pieces, so the parts are kept until the newline
+        # that ends the line comes. Split, neither half reads as JSON and both would be dropped.)
+        buffer = ""
         try:
             async for chunk in self._chunks(session, prompt, spec, first=first):
-                for line in chunk.decode(errors="replace").splitlines():
-                    if not line.strip():
-                        continue
-                    if not line.lstrip().startswith("{"):
-                        plain = [*plain, line.strip()][-_PLAIN:]  # (the last few, as said)
-                        continue
-                    for event in self._events(session, line):
-                        if isinstance(event, TurnEnded):
-                            ended = event
-                        else:
-                            yield event
+                buffer += chunk.decode(errors="replace")
+                lines, _, rest = buffer.rpartition("\n")
+                buffer = rest
+                plain = self._plain(lines) or plain  # (the last plain line, if it had one)
+                for event in self._lines(session, lines):
+                    if isinstance(event, TurnEnded):
+                        ended = event
+                    else:
+                        yield event
+            for event in self._lines(session, buffer):
+                if isinstance(event, TurnEnded):
+                    ended = event
+                else:
+                    yield event
+            plain = self._plain(buffer) or plain
         except (ToolUnavailable, PluginFailed) as failure:
             ended = TurnEnded(reason=TurnReason.ERROR, text=str(failure))
         if session.id in self._stopped:
             yield TurnEnded(reason=TurnReason.STOPPED, text="The session was stopped.")
             return
         yield ended or TurnEnded(reason=TurnReason.ERROR, text=_unsaid(plain))
+
+    def _lines(self, session: SessionRef, said: str) -> list[AgentEvent]:
+        """What a run of whole lines is: the events they are (the last plain line is kept by
+        `_plain`, since only it can say why a turn that never ended failed)."""
+        events: list[AgentEvent] = []
+        for line in said.splitlines():
+            if not line.strip():
+                continue
+            if not line.lstrip().startswith("{"):
+                continue  # (a plain line: the CLI's own failures read that way, kept by _plain)
+            events.extend(self._events(session, line))
+        return events
+
+    @staticmethod
+    def _plain(said: str) -> str:
+        """The last line of `said` that is not JSON (the CLI's own failures are plain lines)."""
+        plain = ""
+        for line in said.splitlines():
+            if line.strip() and not line.lstrip().startswith("{"):
+                plain = line.strip()
+        return plain
 
     async def _chunks(
         self, session: SessionRef, prompt: str, spec: SessionSpec, *, first: bool
@@ -541,12 +568,10 @@ def _ended(usage: _Usage | None, reason: TurnReason) -> list[AgentEvent]:
     return events
 
 
-def _unsaid(plain: Sequence[str]) -> str:
+def _unsaid(plain: str) -> str:
     """Why a turn that never said how it ended failed: the last line it printed, when it printed
     one (the CLI's own errors are plain lines, not JSON)."""
-    if plain:
-        return plain[-1]
-    return "The turn ended without saying how."
+    return plain or "The turn ended without saying how."
 
 
 def _is_limited(message: str) -> bool:
