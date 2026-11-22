@@ -789,7 +789,7 @@ class Dispatcher:
             if ran is None:
                 return spoke  # (another holder had its turn: nothing told, not this one's to fail)
             if ran.started:
-                await self._wrote(telling)
+                await self._wrote(telling, session)
                 await stored.WaitRecords(self._records).closing(task.id, at=began)
             telling = Telling()
             outcome, spoke = ran.outcome, ran.spoke
@@ -862,18 +862,24 @@ class Dispatcher:
         if what is None or what == session.last_text:
             return nudge(task), session, "nudge", None
         session = session.model_copy(update={"last_text": what})
-        telling.session = session  # (saved when the turn starts: not before)
+        telling.last_text = what  # (written when the turn has run: not before)
         return changed(task, what), session, "changed", None
 
-    async def _wrote(self, telling: Telling) -> None:
-        """Write what a prompt told, now that its turn has started: the answers as delivered, and
-        the session's memory of what it was told."""
+    async def _wrote(self, telling: Telling, session: stored.AgentSession) -> None:
+        """Write what a prompt told, now that its turn has run: the answers as delivered, and the
+        session's memory of what it was told — onto the session as it is stored now, never the
+        copy taken before the turn (its turn number, its tokens and cost, and the state it ended
+        in are the turn's), and not at all onto a session that has ended."""
         if telling.questions:
             await self._records.save_all(
                 [one.model_copy(update={"delivered": True}) for one in telling.questions]
             )
-        if telling.session is not None:
-            await stored.SessionRecords(self._records).save_session(telling.session)
+        if not telling.last_text:
+            return
+        sessions = stored.SessionRecords(self._records)
+        now = await sessions.session(session.id)
+        if now is not None and now.state is not SessionState.ENDED:
+            await sessions.save_session(now.model_copy(update={"last_text": telling.last_text}))
 
     async def _what_changed(
         self, task: stored.Task, session: stored.AgentSession
@@ -1241,15 +1247,15 @@ class Ran:
 
 @dataclass(slots=True)
 class Telling:
-    """What a prompt says it told, to be written when its turn starts rather than when the prompt
-    is built: a turn that never starts — another process had the session's turn — told nothing,
-    so an answer it carried is still to be delivered and its news is still new (27.9)."""
+    """What a prompt says it told, written once its turn has run rather than when the prompt is
+    built: a turn that never starts — another process had the session's turn — told nothing, so
+    an answer it carried is still to be delivered and its news is still new (27.9)."""
 
     questions: list[stored.Question] = field(default_factory=list[stored.Question])
     """The answers it carries, to be marked delivered."""
 
-    session: stored.AgentSession | None = None
-    """The session with its memory of what it was told (`last_text`), to be saved."""
+    last_text: str = ""
+    """What the session is to remember it was told (empty when the prompt said nothing new)."""
 
 
 class Turns:
