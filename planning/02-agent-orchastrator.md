@@ -1301,7 +1301,13 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   Tests: `test_timing.py` (12), `test_estimates.py` (9), `test_forecast.py` (10),
   `test_history.py` (7), `test_progress_operations.py` (11, through the service on a fixture
   history), the CLI's `udl orch progress udl` (the human output and its `--json`), and the
-  dispatcher's checks and quota tests now assert their `Wait`.
+  dispatcher's checks and quota tests now assert their `Wait`. `Readiness.pending_kinds`
+  (`checks`, `mergeable`, `bot`) is the typed reason the dispatcher's wait kind is read from;
+  a manager who has not reviewed the head counts as a `bot` one, so `orch_pr_status --wait` waits
+  on the manager as it does on the bot. Only a feature's merged points read an imported `[x]` as a
+  merge (an import writes no move, so its hours are unknown and it is in no series, recent list
+  or rate). The merge path and the plugin's own moves write their `StateChange`s on the app's
+  clock.
 
 **27.11 Chat sessions** · needs 27.2, 27.9, 25.8, and 25.12 for its Codex half only (25.12 is optional, Q-9: the Claude Code half doesn't wait for it) · size XL (O-D15, O-C15)
 - Build: `orch/chat.py`, the sessions behind the chat sidebar (29.12).
