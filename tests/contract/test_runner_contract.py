@@ -91,8 +91,9 @@ def _case(plugin: type[AnAgentRunner], options: RunnerOptions, build: Build) -> 
 HARNESS = Path(__file__).resolve().parents[1] / "support" / "fake_harness.py"
 """The fake harness, as a command a command runner runs (it answers as the harnesses do)."""
 
-ENDLESS = timedelta(hours=1)
-"""How long a contract test's turn may run: the runner's default, and longer than any test."""
+ENDLESS = timedelta(hours=24)
+"""How long a contract test's turn may run: longer than any test, so a turn ends by `stop()` or
+by its own event, never by its time."""
 
 COMMAND = CommandRunnerOptions(
     argv=[sys.executable, str(HARNESS)],
@@ -124,8 +125,8 @@ def _fake(shell: RecordingShell, store: Sessions) -> AnAgentRunner:
 
 # (`HARNESS` is above: the same fake harness, as the CLI a claude-code runner runs.)
 CLAUDE = ClaudeCodeOptions(cli=[sys.executable, str(HARNESS)], turn_within=ENDLESS)
-"""The fake harness as the CLI, with a turn that is never cut off (a contract test's stop comes
-from stop(), not from a timeout)."""
+"""The fake harness as the CLI, with a day for a turn (a contract test's stop comes from stop(),
+not from a timeout)."""
 
 
 def _claude(shell: RecordingShell, store: Sessions) -> AnAgentRunner:

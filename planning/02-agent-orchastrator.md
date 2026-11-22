@@ -598,7 +598,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
       carried to the reader and becomes `TurnEnded(error)`.
     - **The stream is read with `stream()` here** (unlike the `command` runner): the CLI's result line
       says how the turn ended, so the exit code is not needed.
-- **Fixed (deepseek-a, 2026-11-22, PR to follow; from `ernie-d`):** every turn was cut off at 30 s on
+- **Fixed (`deepseek-a`, 21 Nov 2026, PR #70; from `ernie-d`):** every turn was cut off at 30 s on
   `main`. `LocalShell._output()` gives a stream `within or DEFAULT_TIMEOUT` (30 s), and this turn called
   `shell.stream(...)` with no `within`, so a real turn ended at 30 s and the `TimeoutError` came out of
   `send()` uncaught (found reviewing #64). `RunnerOptions.turn_within` (default: one hour) is now how long

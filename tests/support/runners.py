@@ -141,6 +141,8 @@ class RecordingShell:
             stdin=stdin,
             within=within,
             cancel=cancel,
+            check=check,
+            tail=tail,
         )
 
     def stream(
@@ -156,7 +158,9 @@ class RecordingShell:
         self.calls.append(list(argv))
         self.withins.append(within)
         self.secret_envs.append(dict(secret_env or {}))
-        return self._shell.stream(argv, cwd=cwd, env=env, secret_env=secret_env, within=within)
+        return self._shell.stream(
+            argv, cwd=cwd, env=env, secret_env=secret_env, stdin=stdin, within=within
+        )
 
     async def interact(
         self,

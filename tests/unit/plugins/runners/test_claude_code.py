@@ -14,6 +14,7 @@ what a turn cost, and how it ended (done, an error, or a limit). `health` reads 
 # System Imports
 import asyncio
 import json
+import sys
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from datetime import UTC, datetime, timedelta
@@ -216,7 +217,7 @@ async def test_a_real_shell_stops_a_turn_that_runs_past_its_time(tmp_path: Path)
     shell, and the turn ends as an error rather than hanging (the bug a 30 s default made)."""
     runner = ClaudeCode(
         ClaudeCodeOptions(
-            cli=[str(Path("/usr/bin/env").parent / "python3"), "-c", "import time; time.sleep(5)"],
+            cli=[sys.executable, "-c", "import time; time.sleep(5)"],
             turn_within=timedelta(seconds=0.3),
         ),
         shell=LocalShell(Host.local(str(tmp_path))),
