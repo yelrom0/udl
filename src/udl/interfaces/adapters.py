@@ -26,7 +26,7 @@ import json
 import re
 import types
 import typing
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
@@ -49,6 +49,7 @@ from udl.interfaces.cli.common import (
     parse,
     run,
     show,
+    stdout,
     usage_error,
 )
 
@@ -69,9 +70,17 @@ type FieldKind = Literal["flag", "plain", "list", "json", "json_list", "secret",
 # ---------------------------------------------------------------------------------------------
 
 
-def cli_groups(ops: OperationRegistry) -> dict[str, TyperGroup]:
+def cli_groups(
+    ops: OperationRegistry,
+    *,
+    renderers: Mapping[str, Callable[..., None]] | None = None,
+    watchers: Mapping[str, Callable[..., Awaitable[None]]] | None = None,
+) -> dict[str, TyperGroup]:
     """The command groups of the operations plugins add (`udl <plugin> <op>`, or the path their
-    CLISpec gives), by their first word."""
+    CLISpec gives), by their first word: shown by the renderer in `renderers`, and followed by
+    the watcher in `watchers` (both by operation name: a plugin's own drawing is the CLI's)."""
+    renderers = renderers or {}
+    watchers = watchers or {}
     apps: dict[tuple[str, ...], typer.Typer] = {}
     own = _own_paths(op for op in ops if op.namespace is not None)
     for op in ops:
@@ -80,7 +89,8 @@ def cli_groups(ops: OperationRegistry) -> dict[str, TyperGroup]:
         path = cli_path(op)
         if path in own:  # (it is the group's own command: made with the group, below)
             continue
-        _group(apps, path[:-1], own=own).command(path[-1], help=op.description)(cli_command(op))
+        command = cli_command(op, shown=renderers.get(op.name), watcher=watchers.get(op.name))
+        _group(apps, path[:-1], own=own).command(path[-1], help=op.description)(command)
     return {path[0]: typer.main.get_group(app) for path, app in apps.items() if len(path) == 1}
 
 
@@ -91,6 +101,7 @@ def add_commands(
     renderers: Mapping[str, Callable[..., None]],
     helps: Mapping[str, str],
     groups: Mapping[tuple[str, ...], typer.Typer] | None = None,
+    watchers: Mapping[str, Callable[..., Awaitable[None]]] | None = None,
 ) -> None:
     """Add to `app` (udl's) a command for each of udl's own operations in `ops` that has a
     CLISpec path: a top-level one for a word (`udl status`), else in the group of its first
@@ -98,6 +109,7 @@ def add_commands(
     `app` with commands of its own), shown by its renderer in `renderers` (by operation
     name)."""
     groups = dict(groups or {})
+    watchers = watchers or {}
     ops = [op for op in ops if op.namespace is None and op.cli is not None and op.cli.path]
     own = _own_paths(ops)
     for op in ops:
@@ -105,7 +117,7 @@ def add_commands(
         if spec is None or not spec.path:
             continue
         path = spec.path
-        command = cli_command(op, shown=renderers.get(op.name))
+        command = cli_command(op, shown=renderers.get(op.name), watcher=watchers.get(op.name))
         if len(path) == 1:
             app.command(path[0], help=op.description)(command)
             continue
@@ -188,10 +200,12 @@ def cli_command(
     op: Operation,
     *,
     shown: Callable[..., None] | None = None,
+    watcher: Callable[..., Awaitable[None]] | None = None,
     only_alone: bool = False,
 ) -> Callable[..., None]:
     """The command that runs `op`: its options (and arguments) are the request's fields. Its
-    response is shown by `shown`, else its CLISpec's renderer, else render.model.
+    response is shown by `shown`, else its CLISpec's renderer, else render.model; a `watcher`
+    gives it `--watch`, which runs that instead (it draws the answer again as things happen).
 
     `only_alone` is for a group's own command: a group's callback runs even when a subcommand is
     given, so the operation must stand aside then (`udl orch runners install` is not also
@@ -210,6 +224,26 @@ def cli_command(
     ]
     show_it = shown or (spec.render if spec is not None and spec.render is not None else None)
     show_it = show_it or render.model
+    watch_it = watcher
+    if watch_it is not None:
+        # (The CLI's own flag: it is not a field of the request, so the API and MCP never see it —
+        # a command that follows is what a person reads, not what an agent calls.)
+        fields.append(
+            _Field(
+                name="watch",
+                kind="flag",
+                parameter=inspect.Parameter(
+                    "watch",
+                    inspect.Parameter.KEYWORD_ONLY,
+                    default=False,
+                    annotation=Annotated[
+                        bool,
+                        typer.Option("--watch", help="Follow it: draw it again as things happen."),
+                    ],
+                ),
+                option_names=("--watch",),
+            )
+        )
 
     def command(ctx: typer.Context, **options: Any) -> None:
         if only_alone and ctx.invoked_subcommand is not None:
@@ -229,7 +263,13 @@ def cli_command(
                 values[found.name] = {**values.get(found.name, {}), **key_values(given, option)}
             elif given is not None and given != [] and given != ():
                 values[found.name] = _value(found.kind, given)
+        # (The flag the CLI added, not a field of the request: read before it is parsed.)
+        watching = bool(values.pop("watch", False))
         request = parse(op.request, **values)
+        if watching and watch_it is not None:
+            follow = watch_it
+            run(ctx, lambda service: follow(stdout(), service, request))
+            return
         # (As data, which the service reads as its own operation's request: a local plugin's
         # file is imported again by each service, so its models are other classes there.)
         given = request.model_dump(round_trip=True)

@@ -9,11 +9,12 @@ for the operations plugins add)
 """
 
 # System Imports
+import asyncio
 import enum
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from types import TracebackType
-from typing import Any, Final, Self, cast
+from typing import Any, Final, Protocol, Self, cast
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -78,8 +79,8 @@ from udl.core.models import (
     SiteList,
     SyncReport,
 )
-from udl.db.models import JobStatus, Strategy
-from udl.errors import ErrorInfo
+from udl.db.models import JobStatus, JsonObject, Strategy
+from udl.errors import ErrorInfo, UDLError
 from udl.fetch.cookies import ImportedCookies
 from udl.fetch.models import (
     ChallengeList,
@@ -93,6 +94,14 @@ from udl.fetch.models import (
 from udl.hosts.models import HostCheck, HostInfo, HostList
 from udl.integrations.models import AccountInfo, AccountList, Disconnected
 from udl.integrations.watchers import WatcherState, WatcherStatus
+from udl.plugins.apps.orch.models import (
+    Action,
+    AgentLine,
+    Inbox,
+    InboxRequest,
+    MergeList,
+    Question,
+)
 from udl.plugins.downloaders.base import MediaCandidate, MediaKind
 from udl.plugins.integrations.base import AccountHealth, AccountStatus
 from udl.plugins.registry import ACTIONS, DATABASES, DOWNLOADERS, INTEGRATIONS, SECRETS, SITES
@@ -1293,3 +1302,158 @@ def secrets_status(console: Console, found: SecretsStatus) -> None:
             escape("\n".join(resolver.problems)),
         )
     console.print(table)
+
+
+def inbox(console: Console, found: Inbox) -> None:
+    """What waits on a person (28.4), in the three sections they read today: what is ready to
+    merge, what is being asked, and what only they can do — with what every agent is doing."""
+    _merge_section(console, found.merge)
+    console.print()
+    _question_section(console, found.questions)
+    console.print()
+    _action_section(console, found.actions)
+    console.print()
+    _agent_section(console, found.agents)
+
+
+def _merge_section(console: Console, listed: MergeList) -> None:
+    console.rule("[bold]Ready to merge[/]", align="left")
+    for row in listed.ready:
+        said = f"[bold]{escape(row.task)}[/]  {escape(row.title)}  {escape(row.url)}"
+        if row.blockers:
+            said += f"  [yellow]({escape('; '.join(row.blockers))})[/]"
+        console.print(said)
+    for row in listed.held:
+        console.print(
+            f"[dim]held[/] [bold]{escape(row.task)}[/]  {escape(row.title)}  {escape(row.url)}"
+        )
+    if listed.coming:
+        console.print(f"[dim]Coming: {'  '.join(escape(row.task) for row in listed.coming)}[/]")
+    if listed.done:
+        console.print(
+            f"[dim]Merged lately: {'  '.join(escape(row.task) for row in listed.done)}[/]"
+        )
+    if not (listed.ready or listed.held or listed.coming or listed.done):
+        console.print("[dim]Nothing waits for a merge.[/]")
+
+
+def _question_section(console: Console, questions: list[Question]) -> None:
+    console.rule("[bold]Questions[/]", align="left")
+    for one in questions:
+        asked = f"  [dim]({escape(one.task)})[/]" if one.task is not None else ""
+        blocking = "[red]blocking[/]  " if one.blocking else ""
+        console.print(
+            f"{blocking}[bold]{escape(one.key)}[/]  {escape(one.title)}{asked}"
+            f"  [dim]asked by {escape(one.asked_by or 'udl')}[/]"
+        )
+    if not questions:
+        console.print("[dim]Nothing is being asked.[/]")
+
+
+def _action_section(console: Console, actions: list[Action]) -> None:
+    console.rule("[bold]To action[/]", align="left")
+    for one in actions:
+        about = f"  [dim]({escape(one.task)})[/]" if one.task is not None else ""
+        console.print(
+            f"[bold]{escape(one.key)}[/]  [cyan]{one.when.value}[/]  {escape(one.title)}{about}"
+        )
+    if not actions:
+        console.print("[dim]Nothing is only yours to do.[/]")
+
+
+def _agent_section(console: Console, agents: list[AgentLine]) -> None:
+    console.rule("[bold]Agents[/]", align="left")
+    for one in agents:
+        console.print(escape(one.line))
+    if not agents:
+        console.print("[dim]No agents.[/]")
+
+
+WATCH_POLL: Final = 2.0
+"""How often `--watch` looks for what changed, in seconds: a burst of events (a merge moves
+several tasks) is one draw, and the redraws do not run faster than the inbox can be read."""
+WATCH_REFRESH: Final = 30.0
+"""How long `--watch` goes without a redraw before drawing it anyway, in seconds: a change that
+publishes no event (an ask made over the API, or a task moved by hand) is still shown, and the
+pulls' state on GitHub is read again — often enough to be current, rarely enough to be kind."""
+_ORCH_EVENTS: Final = "orch.*"
+"""The events the inbox follows: the orchestrator's own."""
+
+
+class InboxSource(Protocol):
+    """What `--watch` reads the inbox through (a UDLService is one: it is its operations)."""
+
+    async def call(self, name: str, request: JsonObject) -> BaseModel:
+        """Run the operation called `name` with `request`."""
+        ...
+
+
+async def watch_inbox(console: Console, source: InboxSource, request: InboxRequest) -> None:
+    """`udl orch inbox --watch`: the inbox again as things happen (28.4), until Ctrl-C.
+
+    It draws once, then looks every couple of seconds at the newest stored `orch.*` event and
+    draws again when that is a new one. It reads the events udl *stored*, not the ones this
+    process hears: the dispatcher, the GitHub watcher and the API's asks all publish in
+    `udl serve`'s process, so a watch that only listened here would draw once and wait forever.
+
+    A burst is one draw, and an inbox it cannot read (GitHub down, say) says why and keeps
+    watching: a dashboard is no good if it stops."""
+    given = request.model_dump(round_trip=True)
+    started = datetime.now(UTC)  # (the poll's own window: nothing before the watch is its news)
+
+    async def newest() -> UUID | None:
+        # (`type` is a glob, so the events are filtered here: `since` keeps the scan small — the
+        # events stored while the watch has been running, not the whole table.)
+        listed = EventList.model_validate(
+            await source.call(
+                "list_events",
+                {"type": _ORCH_EVENTS, "limit": 1, "since": started.isoformat()},
+            )
+        )
+        return listed.events[0].id if listed.events else None
+
+    async def draw() -> None:
+        console.clear()
+        try:
+            found = Inbox.model_validate(await source.call("orch_inbox", given))
+        except UDLError as e:
+            console.print(f"[bold red]Error:[/] {escape(e.message)}")
+            if e.hint:
+                console.print(escape(e.hint), style="dim")
+            console.print("[dim]Watching: it draws again when something changes.[/]")
+            return
+        inbox(console, found)
+
+    said: list[str] = []  # (what the last look could not read: an outage is one line, not thirty)
+
+    async def looked() -> tuple[UUID | None, str | None]:
+        """The newest event's id, and what could not be read (None when it was read)."""
+        try:
+            return await newest(), None
+        except UDLError as e:
+            return None, e.message
+
+    def say(problem: str | None) -> None:
+        """What the look could not read, once for an outage, and after the draw: a draw clears
+        the screen, so a line said before it would not be seen."""
+        if problem is None:
+            said.clear()
+        elif not said or said[0] != problem:
+            said[:] = [problem]
+            console.print(f"[bold red]Error:[/] {escape(problem)}")
+
+    loop = asyncio.get_running_loop()
+    seen, problem = await looked()
+    await draw()
+    said.clear()  # (a draw clears the screen: whatever was said before it is not there now)
+    say(problem)
+    drawn_at = loop.time()
+    while True:
+        await asyncio.sleep(WATCH_POLL)
+        found, problem = await looked()
+        if found != seen or loop.time() - drawn_at >= WATCH_REFRESH:
+            seen = found
+            drawn_at = loop.time()
+            await draw()
+            said.clear()  # (and the outage that lasts across it is said again)
+        say(problem)

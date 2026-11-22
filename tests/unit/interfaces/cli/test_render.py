@@ -14,15 +14,19 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID
 
 # Package Imports
+import pytest
 from pydantic import BaseModel, SecretStr
 from rich.console import Console
 
 # Local Imports
+from udl.automations.events import EventStatus
 from udl.automations.models import (
     ActionInfo,
     EventInfo,
+    EventList,
     RunDetail,
     RunList,
     ScheduleInfo,
@@ -51,11 +55,23 @@ from udl.core.models import (
     SiteInfo,
     SiteList,
 )
-from udl.db.models import JobStatus, Site, Strategy, StrategySource
-from udl.errors import AuthRequired, ErrorCode, ErrorInfo, NoStrategyFound
+from udl.db.models import JobStatus, JsonObject, Site, Strategy, StrategySource
+from udl.errors import AuthRequired, ErrorCode, ErrorInfo, NoStrategyFound, PluginError
 from udl.integrations.models import AccountInfo
 from udl.integrations.watchers import WatcherState, WatcherStatus
 from udl.interfaces.cli import render
+from udl.plugins.apps.orch.models import (
+    Action,
+    AgentLine,
+    AgentRole,
+    AgentStatus,
+    Inbox,
+    InboxRequest,
+    MergeList,
+    MergeRow,
+    Question,
+    agent_line,
+)
 from udl.plugins.downloaders.base import (
     DownloadProgress,
     Handoff,
@@ -739,3 +755,345 @@ def test_a_preview_of_a_time_gone_by_says_so() -> None:
     )
 
     assert "It fires no more." in text
+
+
+# ---------------------------------------------------------------------------------------------
+# 28.4: the inbox, in the three sections a person reads
+# ---------------------------------------------------------------------------------------------
+
+
+def _orch_event(one: UUID) -> EventInfo:
+    """An `orch.*` event, as `list_events` answers it."""
+    return EventInfo(
+        id=one,
+        type="orch.task.changed",
+        source="udl",
+        account_id=None,
+        occurred_at=NOW,
+        stored_at=NOW,
+        subject="26.4 ready",
+        data={},
+        dedupe_key=None,
+        caused_by=None,
+        depth=0,
+        status=EventStatus.DISPATCHED,
+        dispatched_at=NOW,
+        dropped_reason=None,
+    )
+
+
+def _inbox(**fields: object) -> Inbox:
+    return Inbox.model_validate(
+        {
+            "project": "udl",
+            "merge": MergeList(
+                ready=[
+                    MergeRow(
+                        project="udl",
+                        task="27.10",
+                        feature="27",
+                        title="Progress",
+                        repo="yelrom0/udl",
+                        number=72,
+                        url="https://github.com/yelrom0/udl/pull/72",
+                        sha="0b06c41",
+                        state="ready",
+                    ),
+                    MergeRow(
+                        project="udl",
+                        task="26.4",
+                        feature="26",
+                        title="Features",
+                        repo="yelrom0/udl",
+                        number=70,
+                        url="https://github.com/yelrom0/udl/pull/70",
+                        sha="d5d5584",
+                        state="ready",
+                        blockers=["its checks failed"],
+                    ),
+                ],
+                held=[
+                    MergeRow(
+                        project="udl",
+                        task="26.9",
+                        feature="26",
+                        title="Held one",
+                        repo="yelrom0/udl",
+                        number=73,
+                        url="https://github.com/yelrom0/udl/pull/73",
+                        sha="aaaaaaa",
+                        state="ready",
+                        hold=True,
+                    )
+                ],
+                coming=[
+                    MergeRow(
+                        project="udl",
+                        task="26.8",
+                        feature="26",
+                        title="Sizes",
+                        repo="yelrom0/udl",
+                        number=69,
+                        url="https://github.com/yelrom0/udl/pull/69",
+                        sha="0c4f331",
+                        state="in_progress",
+                    )
+                ],
+                done=[],
+            ),
+            "questions": [
+                Question(
+                    key="Q-1",
+                    project="udl",
+                    asked_by="deepseek-a",
+                    title="Which theme?",
+                    blocking=True,
+                    task="26.4",
+                ),
+                Question(key="Q-2", project="udl", title="A later one"),
+            ],
+            "actions": [
+                Action(key="A-1", project="udl", title="Merge 27.10", task="27.10"),
+            ],
+            "agents": [
+                AgentLine(
+                    name="deepseek-a",
+                    title="deepseek-a",
+                    role=AgentRole.IMPLEMENTER,
+                    state=AgentStatus.WORKING,
+                    task="28.4",
+                    line=agent_line(
+                        "deepseek-a", AgentRole.IMPLEMENTER, AgentStatus.WORKING, "28.4"
+                    ),
+                ),
+                AgentLine(
+                    name="claude",
+                    title="Claude",
+                    role=AgentRole.MANAGER,
+                    state=AgentStatus.IDLE,
+                    line=agent_line("claude", AgentRole.MANAGER, AgentStatus.IDLE, None),
+                ),
+            ],
+            "updated_at": NOW,
+            **fields,
+        }
+    )
+
+
+def test_the_inbox_s_three_sections_and_its_agents() -> None:
+    said = shown(render.inbox, _inbox())
+
+    assert "Ready to merge" in said
+    assert "27.10  Progress  https://github.com/yelrom0/udl/pull/72" in said
+    assert "26.4  Features  https://github.com/yelrom0/udl/pull/70  (its checks failed)" in said
+    assert "held 26.9  Held one" in said
+    assert "Coming: 26.8" in said
+    assert "blocking  Q-1  Which theme?  (26.4)  asked by deepseek-a" in said
+    assert "Q-2  A later one  asked by udl" in said
+    assert "A-1  now  Merge 27.10  (27.10)" in said
+    assert "deepseek-a — implementing 28.4" in said
+    assert "claude — idle" in said
+
+
+def test_an_empty_inbox_says_so_in_each_section() -> None:
+    said = shown(render.inbox, _inbox(questions=[], actions=[], agents=[]))
+
+    assert "Nothing waits for a merge." not in said  # (its ready rows are there)
+    assert "Nothing is being asked." in said
+    assert "Nothing is only yours to do." in said
+    assert "No agents." in said
+
+
+def test_an_inbox_with_nothing_in_it_says_so_everywhere() -> None:
+    said = shown(
+        render.inbox,
+        _inbox(merge=MergeList(), questions=[], actions=[], agents=[]),
+    )
+
+    assert "Nothing waits for a merge." in said
+    assert "Nothing is being asked." in said
+
+
+async def test_the_watch_draws_it_and_again_when_a_new_event_is_stored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(28.4's `--watch`: one draw at once, then one for each new `orch.*` event *stored* — the
+    events are in the database, so a watch in the CLI's own process hears what `udl serve`
+    published, which a listener in this process would never hear.)"""
+    output = io.StringIO()
+    events: list[UUID] = [uuid.uuid4()]  # (one already stored: the first look finds it)
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class _Source:
+        looks = 0
+
+        async def call(self, name: str, request: JsonObject) -> BaseModel:
+            calls.append((name, dict(request)))
+            if name != "list_events":
+                return _inbox()
+            self.looks += 1
+            if (
+                self.looks == 4
+            ):  # (three draws is the whole test: the watch then ends as Ctrl-C does)
+                raise asyncio.CancelledError
+            if self.looks in (2, 3):  # (a new event is stored between the looks)
+                events.append(uuid.uuid4())
+            return EventList(events=[_orch_event(events[-1])])
+
+    monkeypatch.setattr(render, "WATCH_POLL", 0.0)
+    console = Console(file=output, width=200, color_system=None)
+
+    with pytest.raises(asyncio.CancelledError):
+        await render.watch_inbox(console, _Source(), InboxRequest(project="udl"))
+
+    assert [name for name, _ in calls].count("orch_inbox") == 3, "once, then once per new event"
+    assert output.getvalue().count("Ready to merge") == 3
+    name, asked = calls[0]
+    assert (name, asked["type"], asked["limit"]) == ("list_events", "orch.*", 1)
+    assert "since" in asked, "the poll reads what was stored while the watch has run"
+
+
+async def test_the_watch_says_why_and_keeps_going_when_the_inbox_cannot_be_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # (GitHub unreachable, say: a dashboard that stops is no use, so it says why, and draws on
+    # as soon as the next event gives it a reason to.)
+    output = io.StringIO()
+    drawn = 0
+
+    class _Source:
+        looks = 0
+
+        async def call(self, name: str, request: JsonObject) -> BaseModel:
+            nonlocal drawn
+            if name != "list_events":
+                drawn += 1
+                if drawn == 1:
+                    raise PluginError("GitHub did not answer")
+                return _inbox()
+            self.looks += 1
+            if self.looks == 3:  # (the second draw is the test's end)
+                raise asyncio.CancelledError
+            return EventList(events=[] if self.looks == 1 else [_orch_event(uuid.uuid4())])
+
+    monkeypatch.setattr(render, "WATCH_POLL", 0.0)
+    console = Console(file=output, width=200, color_system=None)
+
+    with pytest.raises(asyncio.CancelledError):
+        await render.watch_inbox(console, _Source(), InboxRequest(project="udl"))
+
+    assert "GitHub did not answer" in output.getvalue()
+    assert "Watching: it draws again when something changes." in output.getvalue()
+    assert "Ready to merge" in output.getvalue(), "and then it drew the inbox it could read"
+
+
+async def test_an_outage_that_lasts_across_a_draw_is_said_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(The refresh draws the inbox and clears the screen: if the events still cannot be read,
+    that is said again — a clean inbox with no word of the outage would look like a good one.)"""
+    output = io.StringIO()
+    drawn = 0
+
+    class _Source:
+        async def call(self, name: str, request: JsonObject) -> BaseModel:
+            nonlocal drawn
+            if name == "list_events":
+                raise PluginError("the events cannot be read")
+            drawn += 1
+            if drawn == 3:
+                raise asyncio.CancelledError
+            return _inbox()
+
+    monkeypatch.setattr(render, "WATCH_POLL", 0.0)
+    monkeypatch.setattr(render, "WATCH_REFRESH", 0.0)  # (every look redraws: one outage, drawn)
+    console = Console(file=output, width=200, color_system=None)
+
+    with pytest.raises(asyncio.CancelledError):
+        await render.watch_inbox(console, _Source(), InboxRequest(project="udl"))
+
+    assert output.getvalue().count("the events cannot be read") == 2, "once per draw"
+
+
+async def test_the_watch_says_a_second_outage_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    """(An outage is said once; when the events can be read again and then cannot, that is a new
+    outage and it is said again — a watch that went quiet would look like one that is fine.)"""
+    output = io.StringIO()
+    looks = 0
+
+    class _Source:
+        async def call(self, name: str, request: JsonObject) -> BaseModel:
+            nonlocal looks
+            if name != "list_events":
+                return _inbox()
+            looks += 1
+            if looks == 4:
+                raise asyncio.CancelledError
+            if looks == 2:  # (one look that reads them, between the two outages)
+                return EventList(events=[])
+            raise PluginError("the events cannot be read")
+
+    monkeypatch.setattr(render, "WATCH_POLL", 0.0)
+    monkeypatch.setattr(render, "WATCH_REFRESH", 0.0)
+    console = Console(file=output, width=200, color_system=None)
+
+    with pytest.raises(asyncio.CancelledError):
+        await render.watch_inbox(console, _Source(), InboxRequest(project="udl"))
+
+    assert output.getvalue().count("the events cannot be read") == 2
+
+
+async def test_the_watch_says_an_outage_once_and_draws_anyway(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(The events cannot be read at all — the first look included: it says so once, draws the
+    inbox it can, and does not add a line every two seconds for as long as the outage lasts.)"""
+    output = io.StringIO()
+    looks = 0
+
+    class _Source:
+        async def call(self, name: str, request: JsonObject) -> BaseModel:
+            nonlocal looks
+            if name != "list_events":
+                return _inbox()
+            looks += 1
+            if looks == 5:  # (five looks, one outage, no draw between them)
+                raise asyncio.CancelledError
+            raise PluginError("the events cannot be read")
+
+    monkeypatch.setattr(render, "WATCH_POLL", 0.0)
+    console = Console(file=output, width=200, color_system=None)
+
+    with pytest.raises(asyncio.CancelledError):
+        await render.watch_inbox(console, _Source(), InboxRequest(project="udl"))
+
+    assert output.getvalue().count("the events cannot be read") == 1
+    assert output.getvalue().count("Ready to merge") == 1, "and it drew the inbox it could read"
+
+
+async def test_the_watch_draws_it_again_on_its_timer_when_no_event_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(Not every change publishes an event — an ask made over the API, a task moved by hand —
+    so the watch draws again when its refresh is up, whether or not anything was published.)"""
+    output = io.StringIO()
+    drawn = 0
+
+    class _Source:
+        async def call(self, name: str, request: JsonObject) -> BaseModel:
+            nonlocal drawn
+            if name == "list_events":
+                return EventList(events=[])  # (nothing was published at all)
+            drawn += 1
+            if drawn == 3:  # (two draws are the whole test)
+                raise asyncio.CancelledError
+            return _inbox()
+
+    monkeypatch.setattr(render, "WATCH_POLL", 0.0)
+    monkeypatch.setattr(render, "WATCH_REFRESH", 0.0)
+    console = Console(file=output, width=200, color_system=None)
+
+    with pytest.raises(asyncio.CancelledError):
+        await render.watch_inbox(console, _Source(), InboxRequest(project="udl"))
+
+    assert output.getvalue().count("Ready to merge") == 2

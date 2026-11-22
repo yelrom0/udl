@@ -44,6 +44,7 @@ from udl.plugins.apps.base import (
     AppRecords,
 )
 from udl.plugins.apps.orch import actions as acted
+from udl.plugins.apps.orch import agents as agents_shape
 from udl.plugins.apps.orch import managers as bosses
 from udl.plugins.apps.orch import merge as merged
 from udl.plugins.apps.orch import questions as asked
@@ -84,6 +85,7 @@ from udl.plugins.apps.orch.models import (
     ActionState,
     AddLinkRequest,
     AddNoteRequest,
+    AgentLine,
     AnswerRequest,
     AQuestion,
     AskRequest,
@@ -107,6 +109,8 @@ from udl.plugins.apps.orch.models import (
     GetTaskRequest,
     ImportPlanRequest,
     ImportReport,
+    Inbox,
+    InboxRequest,
     Link,
     Links,
     ListActionsRequest,
@@ -145,6 +149,7 @@ from udl.plugins.apps.orch.models import (
     PushResult,
     Question,
     Questions,
+    QuestionState,
     QueueEntry,
     QueueRequest,
     Readiness,
@@ -171,6 +176,7 @@ from udl.plugins.apps.orch.models import (
     Tasks,
     Totals,
     UnassignTaskRequest,
+    agent_line,
     as_shape,
 )
 from udl.plugins.apps.orch.readiness import TASK_READY, Pull, TaskReady
@@ -228,6 +234,9 @@ _TASKS: Final = ("orch", "tasks")
 """The CLI group the tasks' commands are under (`udl orch tasks`)."""
 _LINKS: Final = ("orch", "links")
 """The CLI group the links' commands are under (`udl orch links`)."""
+_INBOX: Final = ("orch", "inbox")
+"""The inbox's own command (`udl orch inbox`): the one thing a person reads first (28.4)."""
+
 
 _UDL: Final = Principal(kind="system", role="ready")
 """(Who udl is when it moves a task itself: the system, in the role `ready` — not a person, who may
@@ -572,6 +581,13 @@ class Orch(AppPlugin[OrchSettings]):
                 title="Sign a harness out",
                 hints=OperationHints(admin=True, destructive=True),
                 cli=CLISpec(path=(*_RUNNERS, "logout"), arguments=("host", "runner", "confirm")),
+            ),
+            cls.operation(
+                "inbox",
+                title="What waits on a person",
+                hints=OperationHints(read_only=True, open_world=True),
+                # (How the CLI draws it, and its `--watch`, are the CLI's own: udl.interfaces.cli)
+                cli=CLISpec(path=_INBOX),
             ),
             cls.operation(
                 "list_projects",
@@ -1822,6 +1838,66 @@ class Orch(AppPlugin[OrchSettings]):
                 ]
             ),
         )
+
+    async def inbox(self, request: InboxRequest, *, service: UDLService) -> Inbox:
+        """Everything that waits on a person (28.4): what is ready to merge, the open questions,
+        what only a person can do, and what every agent is doing — in one read.
+
+        The three lists keep each one's own rules (28.3's merge order, blocking questions first
+        and newest first within them, actions now/after/later), so one call is what a person
+        reads today in human-comms.md. It reads: nothing changes."""
+        project = await self._project(request.project)
+        merge = await self.merge_list(MergeListRequest(project=project), service=service)
+        # (Only what is asked of the humans: a question a manager is asked waits on that agent,
+        # not on a person. Blocking first, then newest first: what blocks an agent today is what
+        # a person reads first, and the rest are the most recent asks. The records carry the
+        # times the shape does not, so the inbox reads them itself.)
+        open_questions = await stored.QuestionRecords(self.records).questions(
+            project, state=QuestionState.OPEN, to="humans"
+        )
+        questions = [
+            _question(one)
+            for one in sorted(
+                open_questions, key=lambda one: (not one.blocking, -one.created_at.timestamp())
+            )
+        ]
+        to_do = await self.list_actions(ListActionsRequest(project=project))
+        return Inbox(
+            project=project,
+            merge=merge,
+            questions=questions,
+            actions=list(to_do.actions),
+            agents=await self._agent_lines(),
+            updated_at=self.clock.now(),
+        )
+
+    async def _agent_lines(self) -> list[AgentLine]:
+        """What every agent is doing, by name: its role, its state from its session, and the task
+        it is on (27.1's records and 27.7's sessions, derived — never stored)."""
+        agents = stored.AgentRecords(self.records)
+        sessions = stored.SessionRecords(self.records)
+        lines: list[AgentLine] = []
+        for stored_agent in await agents.agents():
+            current = await sessions.current(stored_agent.name)
+            agent = as_shape(agents_shape.Agent, stored_agent)
+            line = AgentLine(
+                name=agent.name,
+                title=agent.title,
+                role=agent.role,
+                state=agent.status(
+                    None if current is None else as_shape(agents_shape.AgentSession, current),
+                    offline=stored_agent.offline,
+                    now=self.clock.now(),
+                ),
+                task=current.task or None if current is not None else None,
+                since=current.updated_at if current is not None else None,
+            )
+            lines.append(
+                line.model_copy(
+                    update={"line": agent_line(line.name, line.role, line.state, line.task)}
+                )
+            )
+        return lines
 
     async def _merge_row(
         self,

@@ -34,6 +34,7 @@ from udl.plugins.apps.orch.plugin import Orch
 from udl.plugins.registry import APPS
 
 CATALOGUE: Final[dict[str, tuple[str, ...]]] = {
+    "orch_inbox": ("orch", "inbox"),
     "orch_list_projects": ("orch", "projects"),
     "orch_get_project": ("orch", "projects", "show"),
     "orch_set_project": ("orch", "projects", "set"),
