@@ -32,9 +32,9 @@ from support.runners import SharedRunner
 from udl.interfaces.adapters import cli_groups
 from udl.interfaces.cli.common import operation_of
 from udl.plugins.apps.base import AppRecords
-from udl.plugins.apps.orch.agents import SessionState
+from udl.plugins.apps.orch.agents import AgentRole, ManagerPowers, SessionState
 from udl.plugins.apps.orch.plugin import Orch
-from udl.plugins.apps.orch.records import AgentSession, SessionRecords
+from udl.plugins.apps.orch.records import Agent, AgentRecords, AgentSession, SessionRecords
 from udl.plugins.registry import APPS, RUNNERS
 from udl.plugins.runners.base import SessionSpec
 
@@ -217,6 +217,7 @@ async def test_the_owner_reads_the_catalogue_over_mcp(with_a_project: Harness) -
     assert [project["name"] for project in json.loads(found.text)["projects"]] == ["udl"]
 
 
+<<<<<<< HEAD
 def test_the_owner_sets_and_reads_an_agent_over_the_cli(with_a_project: Harness) -> None:
     made = CLI(with_a_project)(
         "orch",
@@ -352,3 +353,37 @@ async def test_the_owner_asks_what_to_do_next_over_mcp(with_a_project: Harness) 
     [found] = answer.content
     assert isinstance(found, TextContent)
     assert [one["task"] for one in json.loads(found.text)["suggestions"]] == ["26.1"]
+# ---------------------------------------------------------------------------------------------
+# 28.7: the switch, as the card writes it
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def with_a_merger(harness: Harness) -> AsyncIterator[Harness]:
+    """A udl on the fakes, its project, and `claude`, a manager of it (28.7's merger)."""
+    async with harness.service() as service:
+        await service.call("orch_set_project", {"name": "udl", "title": "udl"})
+        await AgentRecords(AppRecords(service.db)).save_agent(
+            Agent(
+                name="claude",
+                title="Claude",
+                runner="fake",
+                host="local",
+                role=AgentRole.MANAGER,
+                manages=ManagerPowers(assign=True, answer=True, review=True, plan=True),
+            )
+        )
+    yield harness  # noqa: PT022 - (the service closes itself: there is nothing to undo)
+
+
+def test_the_owner_turns_auto_merge_on_over_the_cli(with_a_merger: Harness) -> None:
+    """(The card's own line: `udl orch projects auto-merge udl --on --merger claude`.)"""
+    result = CLI(with_a_merger)(
+        "orch", "projects", "auto-merge", "udl", "--on", "--merger", "claude"
+    )
+
+    assert result.exit_code == 0, result.output
+    shown = CLI(with_a_merger)("orch", "projects", "show", "udl", "--json")
+    assert shown.exit_code == 0, shown.output
+    found = json.loads(shown.stdout)
+    assert (found["project"]["auto_merge"], found["project"]["merger"]) == (True, "claude")

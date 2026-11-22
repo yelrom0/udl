@@ -337,6 +337,30 @@ async def test_a_merger_that_is_not_an_agent_of_this_project_is_refused(
         await service.call("orch_set_auto_merge", {"on": True, "merger": "elsewhere"})
 
 
+async def test_the_switch_publishes_what_it_did(service: UDLService) -> None:
+    """(A watch or the UI follows the switch: `orch.project.changed` says on or off, and whose.)"""
+    heard: list[AppEvent] = []
+    subscription = AppEvents(service.bus, "orch", Orch.event_types()).subscribe(
+        "orch.project.changed"
+    )
+    taking = asyncio.create_task(_collect(subscription, heard))
+    try:
+        for _ in range(5):
+            await asyncio.sleep(0)  # (let the subscription take before the switch is made)
+        await service.call("orch_set_auto_merge", {"on": True, "merger": "claude"})
+        await service.call("orch_set_auto_merge", {"on": False})
+        for _ in range(20):
+            await asyncio.sleep(0)
+    finally:
+        taking.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await taking
+
+    assert [one.type for one in heard] == ["orch.project.changed", "orch.project.changed"]
+    assert heard[0].data == {"project": "udl", "auto_merge": True, "merger": "claude"}
+    assert heard[1].data == {"project": "udl", "auto_merge": False, "merger": "claude"}
+
+
 async def test_an_agent_cannot_turn_it_on(service: UDLService) -> None:
     # (No model gives itself the merge: its token is refused, whoever it is.)
     caller = current_principal.set(Caller(kind=PrincipalKind.AGENT, name="claude", role="manager"))

@@ -196,6 +196,7 @@ def merger_prompt(
     project: stored.Project,
     rows: Sequence[MergeRow],
     skipped: Sequence[MergeRow],
+    specs: Mapping[str, str] | None = None,
 ) -> str:
     """The merger's turn (28.7): the ready pulls of `project`, in the order they merge, with what
     it needs to review and merge each — and the ones it is not to touch, and why."""
@@ -205,11 +206,16 @@ def merger_prompt(
         "",
         "Review each pull's diff against its task's spec, then merge it:",
     ]
+    told = specs or {}
     for number, row in enumerate(rows, start=1):
+        spec = (told.get(row.task) or "").strip()
         lines.append(
             f"{number}. {row.task} ({row.title}) — {row.url} at {row.sha} (feature "
-            f"{row.feature}). Review it (`orch_review_task` with `approve`, or `changes` and the "
-            f"reasons), then merge it (`orch_merge` with the pull's number and this sha)."
+            f"{row.feature})."
+            + (f" Its spec: {spec}" if spec else "")
+            + " Review its diff against that (it is in the worktree you are on), then merge it "
+            "(`orch_review_task` with `approve`, or `changes` and the reasons, then `orch_merge` "
+            "with the pull's number and this sha)."
         )
     if skipped:
         lines.append("")
@@ -514,7 +520,12 @@ class Dispatcher:
                 else:
                     kept.append(row)
             if kept or skipped:
-                told.append(merger_prompt(agent, found, kept, skipped))
+                specs: dict[str, str] = {}
+                for row in kept:
+                    task = await tasks.task(name, row.task)
+                    if task is not None:
+                        specs[row.task] = task.spec
+                told.append(merger_prompt(agent, found, kept, skipped, specs))
         return "\n\n".join(told)
 
     async def _standing_merge(self, agent: stored.Agent) -> stored.Task | None:

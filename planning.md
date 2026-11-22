@@ -143,7 +143,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [~] 28.4 `orch_inbox`: the three sections in one call; `udl orch inbox`
   - [ ] 28.5 Events for all of it, and a `notify` example
   - [ ] 28.6 End to end on fakes: task → agent → question → answer → PR → ready → merged
-  - [ ] 28.7 Auto merge: a project's merger (a reviewer or manager agent) merges its ready PRs after its own review
+  - [~] 28.7 Auto merge: a project's merger (a reviewer or manager agent) merges its ready PRs after its own review
 - [ ] **Phase 29: Screens (Google Stitch) and the `orch` UI plugin**
   - [x] 29.1 **(Claude)** A new Stitch project: design system from the shell's daisyUI themes; every screen below, desktop and phone, light and dark ([web/plugins/orch/design/](web/plugins/orch/design/README.md)); the user's changes (Q-8) made
   - [ ] 29.2 The `orch` UI plugin's skeleton: manifest, routes, stores, live data
