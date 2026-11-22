@@ -92,7 +92,7 @@ from udl.plugins.apps.orch.links import (
     pull_ref,
 )
 from udl.plugins.apps.orch.managers import in_subtree, managers_of
-from udl.plugins.apps.orch.merge import after_close, after_merge, order
+from udl.plugins.apps.orch.merge import TASK_MERGED, TaskMerged, after_close, after_merge, order
 from udl.plugins.apps.orch.models import (
     CANCELLED,
     DONE,
@@ -441,6 +441,7 @@ class Orch(AppPlugin[OrchSettings]):
             LINK_CHANGED,
             PROJECT_CHANGED,
             TASK_READY,
+            TASK_MERGED,
             SESSION_STARTED,
             SESSION_EVENT,
             SESSION_ENDED,
@@ -567,7 +568,10 @@ class Orch(AppPlugin[OrchSettings]):
             cls.operation(
                 "merge",
                 title="Merge a task's pull",
-                hints=OperationHints(destructive=True, open_world=True, admin=True),
+                # (28.7: not admin, because the project's merger may be a reviewer, and the role
+                # table cannot know which agent that is: the operation itself decides who may
+                # merge — a person, the assignee where `merge = agent`, or the project's merger.)
+                hints=OperationHints(destructive=True, open_world=True),
             ),
             cls.operation(
                 "promotion",
@@ -2461,6 +2465,7 @@ class Orch(AppPlugin[OrchSettings]):
         """Merge `task`'s pull at `pull.head_sha` and do what a merge sets off: the one place a
         merge is made, whether a person asked for it or its own agent marked it ready."""
         link = await self._pull_url(project, task.key)
+        before = task.state
         ref = pull_ref(link)
         if ref is None:
             raise NotAllowed(f"{task.key!r} has no pull to merge")
@@ -2486,6 +2491,20 @@ class Orch(AppPlugin[OrchSettings]):
             promoted=promoted,
             auto=auto,
         )
+        if moved.state != before:
+            events = AppEvents(service.bus, self.name, self.event_types())
+            await events.emit(
+                TASK_MERGED.name,
+                TaskMerged(
+                    project=project,
+                    task=task.key,
+                    pull=link,
+                    sha=pull.head_sha,
+                    by=by,
+                    auto=auto,
+                ),
+                dedupe_key=f"{task.key}:{pull.head_sha}",
+            )
         return Merged(task=task.key, url=link, sha=pull.head_sha, state=moved.state)
 
     async def promotion(self, request: PromotionRequest) -> PromotionList:
@@ -2590,7 +2609,15 @@ class Orch(AppPlugin[OrchSettings]):
         if ref is None:
             return task, None, f"its pull link is not a pull ({found.url})"
         repo, number = ref
-        detail = await service.call("github_get_pull", {"repo": repo, "number": number})
+        # (udl reads GitHub on its own behalf: a merger may be a reviewer, which is not given
+        # GitHub's operations as tools, 28.7.)
+        from udl.interfaces.security import current_principal
+
+        calling = current_principal.set(None)
+        try:
+            detail = await service.call("github_get_pull", {"repo": repo, "number": number})
+        finally:
+            current_principal.reset(calling)
         return task, Pull.model_validate(detail.model_dump()), ""
 
     async def _pull_url(self, project: str, key: str) -> str:

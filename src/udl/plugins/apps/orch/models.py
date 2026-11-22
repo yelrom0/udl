@@ -296,7 +296,7 @@ type Role = Literal["assign", "start", "block", "ready", "merge", "review", "mov
 ROLE: Final[tuple[Role, ...]] = get_args(Role.__value__)
 """Every role, read from `Role` (one list of them)."""
 
-type TaskKind = Literal["build", "human", "review"]
+type TaskKind = Literal["build", "human", "review", "merge"]
 """What kind of work a task is (the card's build | human | review)."""
 
 type ManagerVerdict = Literal["approve", "changes"]

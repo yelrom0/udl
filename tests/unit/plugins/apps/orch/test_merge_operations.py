@@ -196,7 +196,9 @@ def test_the_operations_and_their_hints() -> None:
     assert offered["merge_list"].hints == OperationHints(read_only=True, open_world=True)
     assert offered["merge_list"].request is MergeListRequest
     assert offered["merge_list"].response is MergeList
-    assert offered["merge"].hints == OperationHints(destructive=True, open_world=True, admin=True)
+    # (28.7: not admin — a project's merger may be a reviewer, and the role table cannot know
+    # which agent that is, so the operation's own checks decide who may merge.)
+    assert offered["merge"].hints == OperationHints(destructive=True, open_world=True)
     assert offered["merge"].request is MergeRequest
     assert offered["merge"].response is Merged
     assert offered["promotion"].hints == OperationHints(read_only=True)

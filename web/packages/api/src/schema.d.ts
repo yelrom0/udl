@@ -9865,7 +9865,7 @@ export interface components {
             task: components["schemas"]["Task"];
         };
         /** @enum {string} */
-        TaskKind: "build" | "human" | "review";
+        TaskKind: "build" | "human" | "review" | "merge";
         /**
          * TaskQueue
          * @description One agent's queue: the tasks it is on, in the order it works them.

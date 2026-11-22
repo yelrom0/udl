@@ -15,6 +15,9 @@ is the app's `orch_merge_list` and `orch_merge`; what a merge sets off, however 
 from collections.abc import Sequence
 from typing import Final
 
+from pydantic import BaseModel, ConfigDict
+
+from udl.automations.events import EventType
 from udl.clock import Clock
 
 # Local Imports
@@ -35,7 +38,44 @@ from udl.plugins.apps.orch.models import (
 )
 from udl.plugins.apps.orch.records import Note, NoteRecords, Task, TaskRecords
 
-__all__ = ["after_close", "after_merge", "order", "stacked"]
+__all__ = ["TASK_MERGED", "TaskMerged", "after_close", "after_merge", "order", "stacked"]
+
+
+class TaskMerged(BaseModel):
+    """What orch publishes when a task's pull is merged (28.7): by whom, and whether a merger
+    merged it rather than a person."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
+
+    project: str
+    """The project the task is in."""
+    task: str
+    """The task, by key (`28.3`)."""
+    pull: str
+    """Its pull's URL."""
+    sha: str
+    """The commit that merged."""
+    by: str
+    """Who merged it: a person's name, or the project's merger's."""
+    auto: bool = False
+    """Whether a merger merged it (auto merge, 28.7) rather than a person."""
+
+
+TASK_MERGED: Final = EventType(
+    name="orch.task.merged",
+    data=TaskMerged,
+    summary="A task's pull is merged",
+    example=TaskMerged(
+        project="udl",
+        task="28.7",
+        pull="https://github.com/yelrom0/udl/pull/80",
+        sha="dc1fd19",
+        by="claude",
+        auto=True,
+    ),
+    subject=lambda event: f"Task {event.task} is merged: {event.pull}",
+    source="orch",
+)
 
 
 def _actor(name: str) -> Principal:

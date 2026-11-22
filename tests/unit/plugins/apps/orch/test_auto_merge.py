@@ -11,6 +11,8 @@ write can: `orch_set_project`, the importer and the rest keep both fields as the
 """
 
 # System Imports
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,7 +29,14 @@ from udl.core.service import UDLService
 from udl.errors import NotAllowed
 from udl.interfaces.security import Principal as Caller
 from udl.interfaces.security import PrincipalKind, current_principal
-from udl.plugins.apps.base import AppPlugin, AppRecords, AppSettings
+from udl.plugins.apps.base import (
+    AppEvent,
+    AppEvents,
+    AppPlugin,
+    AppRecords,
+    AppSettings,
+    AppSubscription,
+)
 from udl.plugins.apps.orch.agents import AgentRole, ManagerPowers
 from udl.plugins.apps.orch.models import (
     IN_PROGRESS,
@@ -51,6 +60,7 @@ from udl.plugins.apps.orch.records import (
     Feature,
     FeatureRecords,
     LinkRecords,
+    NoteRecords,
     Project,
     ProjectRecords,
     Task,
@@ -443,6 +453,57 @@ async def test_the_merger_merges_a_ready_pull(service: UDLService) -> None:
 
     assert isinstance(merged, Merged)
     assert merged.state == MERGED
+
+
+async def test_a_reviewer_merger_merges_too(service: UDLService) -> None:
+    # (A reviewer may be the merger: the role table cannot know which agent that is, so
+    # `orch_merge` is not admin, and its own checks decide.)
+    await service.call("orch_set_auto_merge", {"on": True, "merger": "ernie-c"})
+
+    merged = await merge_ready(service, as_=as_caller("ernie-c", "reviewer"))
+
+    assert isinstance(merged, Merged)
+    assert merged.state == MERGED
+
+
+async def test_an_auto_merge_s_note_and_event_carry_its_merger(
+    service: UDLService,
+) -> None:
+    await service.call("orch_set_auto_merge", {"on": True, "merger": "claude"})
+    heard: list[AppEvent] = []
+    subscription = AppEvents(service.bus, "orch", Orch.event_types()).subscribe("orch.task.merged")
+    taking = asyncio.create_task(_collect(subscription, heard))
+    try:
+        for _ in range(5):
+            await asyncio.sleep(0)  # (let the subscription take before the merge is made)
+        await merge_ready(service, as_=as_caller("claude", "manager"))
+        for _ in range(20):
+            await asyncio.sleep(0)
+    finally:
+        taking.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await taking
+
+    merged_task = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
+    assert merged_task is not None
+    notes = await NoteRecords(AppRecords(service.db)).for_owner(OwnerKind.TASK, merged_task.id)
+    assert any("Merged by claude (auto merge)" in one.text for one in notes)
+    assert [one.type for one in heard] == ["orch.task.merged"]
+    assert heard[0].data == {
+        "project": "udl",
+        "task": "F-1.1",
+        "pull": "https://github.com/yelrom0/udl/pull/1",
+        "sha": HEAD,
+        "by": "claude",
+        "auto": True,
+    }
+
+
+async def _collect(subscription: AppSubscription, into: list[AppEvent]) -> None:
+    """Take every event `subscription` gives into `into` (until the test cancels it)."""
+    async with subscription as notes:
+        async for event in notes:
+            into.append(event)
 
 
 async def test_the_merger_does_not_merge_another_project_s_task(

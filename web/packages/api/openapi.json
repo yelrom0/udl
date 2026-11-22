@@ -13143,7 +13143,8 @@
         "enum": [
           "build",
           "human",
-          "review"
+          "review",
+          "merge"
         ],
         "type": "string"
       },

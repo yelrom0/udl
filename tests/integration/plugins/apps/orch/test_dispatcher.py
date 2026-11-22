@@ -64,6 +64,7 @@ from udl.plugins.apps.orch.dispatcher import (
 from udl.plugins.apps.orch.models import (
     BLOCKED,
     IN_PROGRESS,
+    MERGED,
     QUEUED,
     READY,
     OwnerKind,
@@ -163,6 +164,24 @@ class GetPullRequest(BaseModel):
     number: int
 
 
+class MergePullRequest(BaseModel):
+    """`github_merge_pull`'s request, as the fake reads it."""
+
+    repo: str
+    number: int
+    sha: str
+    confirm: str
+    method: str = "squash"
+
+
+class MergeResult(BaseModel):
+    """`github_merge_pull`'s answer."""
+
+    merged: bool = True
+    sha: str = HEAD
+    message: str = "merged"
+
+
 class FakeGitHub(AppPlugin[AppSettings]):
     """A `github` app whose one operation answers a pull (what readiness calls)."""
 
@@ -176,13 +195,20 @@ class FakeGitHub(AppPlugin[AppSettings]):
         """How many pulls it was asked for (what a test counts a wake by)."""
         self.fails: Exception | None = None
         """What reading the pull raises, when a test wants one that cannot be read."""
+        self.merged: list[MergePullRequest] = []
+        """The merges it was asked for (28.7's merger merges through it)."""
 
     @classmethod
     def operations(cls) -> list[Any]:
         return [
             cls.operation(
                 "get_pull", title="One pull", hints=OperationHints(read_only=True, open_world=True)
-            )
+            ),
+            cls.operation(
+                "merge_pull",
+                title="Merge a pull",
+                hints=OperationHints(destructive=True, open_world=True, admin=True, mcp=False),
+            ),
         ]
 
     async def get_pull(self, request: GetPullRequest) -> FakePull:
@@ -191,6 +217,11 @@ class FakeGitHub(AppPlugin[AppSettings]):
         if self.fails is not None:
             raise self.fails
         return self.pull
+
+    async def merge_pull(self, request: MergePullRequest) -> MergeResult:
+        """Record the merge and answer it (28.7)."""
+        self.merged.append(request)
+        return MergeResult(sha=request.sha)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -233,6 +264,11 @@ class ScriptedRunner(FakeRunner):
         PROMPTS.append(prompt)
         if prompt in RAISES:
             return _raising(RAISES[prompt])
+        if prompt.startswith(MERGED_KEY):
+            # (28.7's merger: its prompt is the list, so a test scripts the merger's turn.)
+            MERGER_PROMPT[0] = prompt
+            if "manager" in SCRIPT:
+                return self._manager(session, SCRIPT["manager"])
         if prompt.startswith(MANAGER_KEY) and "manager" in SCRIPT:
             # (A turn's body runs when it is first iterated, after other sessions' prompts may
             # have been recorded: keep this one aside for it.)
@@ -385,6 +421,7 @@ def clean() -> Iterator[None]:
     SCRIPT.clear()
     RAISES.clear()
     PROMPTS.clear()
+    MERGER_PROMPT[0] = ""
     STORE.specs.clear()
     STORE.stopped.clear()
     STORE.gates.clear()
@@ -2706,3 +2743,188 @@ async def test_a_limited_turn_does_not_count_the_news_as_told(service: UDLServic
     told = await AgentRecords(AppRecords(service.db)).agent("ernie-c")
     assert told is not None
     assert told.last_news
+
+
+# ---------------------------------------------------------------------------------------------
+# 28.7: the merger's turn
+# ---------------------------------------------------------------------------------------------
+
+
+MERGED_KEY: str = "You are claude, udl's merger"
+"""How a merger's prompt starts (28.7)."""
+
+
+async def a_merger_and_a_ready_pull(service: UDLService, *, own: bool = False) -> None:
+    """`claude` as udl's merger, auto merge on, and `F-1.1` ready with its pull read at `HEAD`.
+
+    `own` makes the ready pull the merger's own task (what needs a review bot, or a person)."""
+    records = AppRecords(service.db)
+    agents = AgentRecords(records)
+    await agents.save_agent(
+        Agent(
+            name="claude",
+            title="Claude",
+            runner="fake",
+            host="local",
+            role=AgentRole.MANAGER,
+            manages=ManagerPowers(assign=True, answer=True, review=True, plan=True),
+            brief="Merge what is ready.",
+        )
+    )
+    tasks = TaskRecords(records)
+    found = await tasks.task("udl", "F-1.1")
+    assert found is not None
+    await tasks.save_all(
+        [found.model_copy(update={"assignee": "claude" if own else AGENT, "state": IN_PROGRESS})]
+    )
+    found = await tasks.task("udl", "F-1.1")
+    assert found is not None
+    await tasks.move(found, READY, by=Principal(kind="system", role="ready"))
+    links = LinkRecords(records)
+    for one in await links.for_owner("udl", OwnerKind.TASK, "F-1.1"):
+        if one.link_kind == "pull":
+            await links.records.save(one.model_copy(update={"state": PullState(head_sha=HEAD)}))
+    projects = ProjectRecords(records)
+    project = await projects.project("udl")
+    assert project is not None
+    await projects.save_project(project.model_copy(update={"auto_merge": True, "merger": "claude"}))
+
+
+def the_merger_s_turn() -> Turn:
+    """The merger's turn (28.7): it reviews each pull its prompt lists, then merges it."""
+
+    async def turn(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
+        token = current_principal.set(
+            Caller(kind=PrincipalKind.AGENT, name="claude", role="manager")
+        )
+        try:
+            said = MERGER_PROMPT[0]
+            for line in said.splitlines():
+                found = _A_NUMBERED_PULL.match(line)
+                if found is None:
+                    continue
+                key, number, sha = found.groups()
+                await ask(
+                    "orch_review_task",
+                    {
+                        "project": "udl",
+                        "key": key,
+                        "verdict": "approve",
+                        "reasons": "It does what its card says.",
+                        "head": sha,
+                    },
+                )
+                await ask(
+                    "orch_merge",
+                    {
+                        "project": "udl",
+                        "key": key,
+                        "confirm": f"yelrom0/udl#{number}",
+                        "sha": sha,
+                    },
+                )
+            yield TextDelta(text="merged what was ready")
+        finally:
+            current_principal.reset(token)
+
+    return turn
+
+
+_A_NUMBERED_PULL = re.compile(r"^\d+\. ([A-Z][A-Z0-9_]*-[0-9.]+) \(.*?\) — .*/pull/(\d+) at (\w+)")
+"""A line of the merger's prompt: the task, its pull's number and the sha it is at."""
+MERGER_PROMPT: list[str] = [""]
+"""The prompt the merger's running turn was given (a turn's body starts after `send`)."""
+
+
+async def test_the_merger_s_turn_merges_a_ready_pull(service: UDLService) -> None:
+    """(28.7's done-when: with auto merge on, the merger's turn is given the row's data — the
+    task, its title, its pull's URL and head sha, its feature — it reviews the pull for that head
+    and merges it, and the merge carries its name.)"""
+    await a_merger_and_a_ready_pull(service)
+    SCRIPT["manager"] = the_merger_s_turn()
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(40):
+            one = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
+            assert one is not None
+            if one.state == MERGED:
+                break
+            await clock.advance(timedelta(seconds=31))
+        else:
+            now = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
+            raise AssertionError(f"never merged: {now} sent: {PROMPTS[-4:]}")
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    said = MERGER_PROMPT[0]
+    assert said.startswith(MERGED_KEY)
+    assert "F-1.1 (It 1)" in said
+    assert f"{PULL} at {HEAD}" in said
+    assert "feature F-1" in said
+    one = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
+    assert one is not None
+    assert one.state == MERGED
+    notes = await NoteRecords(AppRecords(service.db)).for_owner(OwnerKind.TASK, one.id)
+    assert any("Merged by claude (auto merge)" in note.text for note in notes)
+
+
+async def _quiet(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
+    """A turn that does nothing, and ends done (a merger's, when it acts on nothing)."""
+    yield TextDelta(text="nothing to merge")
+    yield TurnEnded(reason=TurnReason.DONE, text="nothing to merge")
+
+
+async def test_the_merger_is_not_told_the_same_list_twice(service: UDLService) -> None:
+    """(A list the merger did nothing with is not sent again on every tick.)"""
+    await a_merger_and_a_ready_pull(service)
+    SCRIPT["manager"] = _quiet
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(10):
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert len([one for one in PROMPTS if one.startswith(MERGED_KEY)]) == 1
+
+
+async def test_a_merger_s_own_task_with_no_review_bot_is_skipped(service: UDLService) -> None:
+    """(Nobody reviews the reviewer: with no review bot, the merger's own ready pull is left to a
+    person, and the list says so rather than asking it to review itself.)"""
+    await a_merger_and_a_ready_pull(service, own=True)
+    records = AppRecords(service.db)
+    projects = ProjectRecords(records)
+    project = await projects.project("udl")
+    assert project is not None
+    await projects.save_project(project.model_copy(update={"review_bot": None}))
+    SCRIPT["manager"] = _quiet
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(10):
+            if MERGER_PROMPT[0]:
+                break
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    said = MERGER_PROMPT[0]
+    assert "Skipped: F-1.1 (It 1) is your own task" in said
+    assert "a person merges it" in said
+    one = await TaskRecords(records).task("udl", "F-1.1")
+    assert one is not None
+    assert one.state == READY, "a person's to merge, not the merger's"
