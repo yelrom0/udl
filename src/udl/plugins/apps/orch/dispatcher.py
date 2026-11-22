@@ -826,8 +826,9 @@ class Dispatcher:
     async def _answers(
         self, task: stored.Task, session: stored.AgentSession, telling: Telling
     ) -> str:
-        """What `session` is told of the answers to its own questions, to be marked told when the
-        turn starts: an answer reaches a session once, not on every prompt (28.1)."""
+        """What `session` is told of the answers to its own questions, to be marked told once the
+        turn carrying them has run: an answer reaches a session once, not on every prompt
+        (28.1)."""
         agent = session.agent or ""
         if not agent:
             return ""
