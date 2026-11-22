@@ -1193,6 +1193,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/estimate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * One task's size, what it is expected to take at its model's rate, and the time worked
+         * @description One task's size, what it is expected to take at its model's rate, and the time worked
+         *     on it so far (its history, less its waits).
+         */
+        post: operations["orch_estimate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/orch/find_links": {
         parameters: {
             query?: never;
@@ -1627,6 +1648,27 @@ export interface paths {
          *     an open item) is answered at once, as is one that has no pull yet.
          */
         post: operations["orch_pr_status"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A project's progress (27.10): its burn-up, its pace, its forecast, each feature's
+         * @description A project's progress (27.10): its burn-up, its pace, its forecast, each feature's
+         *     points, what a point costs each model, and the tasks merged lately.
+         */
+        post: operations["orch_progress"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4026,6 +4068,44 @@ export interface components {
              */
             why: string;
         };
+        /**
+         * Estimate
+         * @description One task's estimate (27.10): its size, what that is expected to take, and the time worked
+         *     on it so far.
+         */
+        Estimate: {
+            /**
+             * Estimate
+             * @description What its size is expected to take, at its model's rate (None: unsized).
+             */
+            estimate?: string | null;
+            /**
+             * Size
+             * @description How big it is (None: not sized, so not estimated).
+             */
+            size?: ("S" | "M" | "L" | "XL") | null;
+            /** @description The task. */
+            task: components["schemas"]["Task"];
+            /**
+             * Worked
+             * Format: duration
+             * @description The time worked on it so far (its history, less its waits).
+             */
+            worked: string;
+        };
+        /**
+         * EstimateRequest
+         * @description Asking for one task's estimate.
+         */
+        EstimateRequest: {
+            /** @description The task's project. */
+            project: components["schemas"]["Name"];
+            /**
+             * Task
+             * @description The task's key.
+             */
+            task: string;
+        };
         /** EventDetail */
         EventDetail: {
             /** @description The event. */
@@ -4329,6 +4409,34 @@ export interface components {
             tasks?: components["schemas"]["Task"][];
             /** @description The feature's points: what its tasks come to (26.8). */
             totals?: components["schemas"]["Totals"];
+        };
+        /**
+         * FeatureProgress
+         * @description One feature's points, and when it is forecast to be done.
+         */
+        FeatureProgress: {
+            /** @description When what is left of it is done (None: nothing sized is left). */
+            forecast?: components["schemas"]["ForecastInfo"] | null;
+            /**
+             * Key
+             * @description The feature's key.
+             */
+            key: string;
+            /**
+             * Merged
+             * @description The points merged.
+             */
+            merged: number;
+            /**
+             * Points
+             * @description Its points, merged and not.
+             */
+            points: number;
+            /**
+             * Title
+             * @description What it is called.
+             */
+            title: string;
         };
         /** @enum {string} */
         FeatureStatus: "planned" | "active" | "done" | "parked";
@@ -4847,6 +4955,36 @@ export interface components {
              * @constant
              */
             follow: true;
+        };
+        /**
+         * ForecastInfo
+         * @description When the work is done: the last agent's own day, and the spread's range around it.
+         */
+        ForecastInfo: {
+            /**
+             * Early
+             * Format: date-time
+             * @description The earliest the work could be done (the spread's 25th percentile).
+             */
+            early: string;
+            /**
+             * Late
+             * Format: date-time
+             * @description The latest (its 75th).
+             */
+            late: string;
+            /**
+             * Likely
+             * Format: date-time
+             * @description When the last agent finishes, at its own rate.
+             */
+            likely: string;
+            /**
+             * Unsized
+             * @description The tasks left out of it because nobody sized them.
+             * @default 0
+             */
+            unsized: number;
         };
         /**
          * GateRun
@@ -5987,6 +6125,36 @@ export interface components {
          */
         Misfire: "skip" | "once";
         /**
+         * ModelRow
+         * @description One model's work, as the progress page shows it.
+         */
+        ModelRow: {
+            /** @description What a point costs it. */
+            hours_per_point: components["schemas"]["RateInfo"];
+            /**
+             * Hours Per Size
+             * @description What each size came to, in hours (the median of the tasks of that size).
+             */
+            hours_per_size?: {
+                [key: string]: number;
+            };
+            /**
+             * Model
+             * @description The model (an agent's, as its runner was given it).
+             */
+            model: string;
+            /**
+             * Runner
+             * @description The runner that runs it (an agent's own, the first of them).
+             */
+            runner: string;
+            /**
+             * Tasks
+             * @description How many merged, sized tasks it is learned from.
+             */
+            tasks: number;
+        };
+        /**
          * MoveTaskRequest
          * @description Moving a task to another state (the table is orch.transitions').
          */
@@ -6443,6 +6611,62 @@ export interface components {
             title?: string | null;
             /** Tool */
             tool: string;
+        };
+        /**
+         * Progress
+         * @description A project's progress (27.10): its burn-up, its pace, its forecast, its features, its
+         *     models and the tasks merged lately.
+         */
+        Progress: {
+            /**
+             * Estimate Ratio
+             * @description The median of actual ÷ estimated over them (how far the estimates are off).
+             * @default 0
+             */
+            estimate_ratio: number;
+            /**
+             * Features
+             * @description Each feature's points and its own forecast.
+             */
+            features?: components["schemas"]["FeatureProgress"][];
+            /** @description When the open, sized work is done. */
+            forecast: components["schemas"]["ForecastInfo"];
+            /**
+             * Models
+             * @description What a point costs each model.
+             */
+            models?: components["schemas"]["ModelRow"][];
+            /**
+             * Pace
+             * @description The points merged a day over the last seven.
+             * @default 0
+             */
+            pace: number;
+            /** @description The project it is of. */
+            project: components["schemas"]["Name"];
+            /**
+             * Recent
+             * @description The last 20 merged, sized tasks.
+             */
+            recent?: components["schemas"]["RecentTask"][];
+            /**
+             * Series
+             * @description The burn-up, a day at a time.
+             */
+            series?: components["schemas"]["SeriesPoint"][];
+        };
+        /**
+         * ProgressRequest
+         * @description Asking for a project's progress.
+         */
+        ProgressRequest: {
+            /** @description The project. */
+            project: components["schemas"]["Name"];
+            /**
+             * Since
+             * @description The day the series starts (None: thirty days before now).
+             */
+            since?: string | null;
         };
         /**
          * Project
@@ -6980,6 +7204,24 @@ export interface components {
             project?: components["schemas"]["Name"] | null;
         };
         /**
+         * RateInfo
+         * @description What a point costs in hours, and which rate said so: the model's own, its project's, or
+         *     an hour a point (nothing has been learned yet).
+         */
+        RateInfo: {
+            /**
+             * Hours
+             * @description The hours a point.
+             */
+            hours: number;
+            /**
+             * Source
+             * @description Which rate answered.
+             * @enum {string}
+             */
+            source: "model" | "project" | "default";
+        };
+        /**
          * ReadPolicy
          * @description How lookups use several databases.
          * @enum {string}
@@ -7058,6 +7300,40 @@ export interface components {
             note: string;
             /** @description The project it is in (None: the only one, while udl has one). */
             project?: components["schemas"]["Name"] | null;
+        };
+        /**
+         * RecentTask
+         * @description A merged, sized task: what it was estimated at, and what it took.
+         */
+        RecentTask: {
+            /**
+             * Actual
+             * Format: duration
+             * @description How long it really took (its working time).
+             */
+            actual: string;
+            /**
+             * Estimate
+             * Format: duration
+             * @description What its size was expected to take, at the rate it is learned at.
+             */
+            estimate: string;
+            /**
+             * Key
+             * @description Its key.
+             */
+            key: string;
+            /**
+             * Size
+             * @description How big it was.
+             * @enum {string}
+             */
+            size: "S" | "M" | "L" | "XL";
+            /**
+             * Title
+             * @description What it is called.
+             */
+            title: string;
         };
         /**
          * RegexStep
@@ -8092,6 +8368,28 @@ export interface components {
              * @default false
              */
             text: boolean;
+        };
+        /**
+         * SeriesPoint
+         * @description One day of the burn-up: the scope's points at its end, and the points merged in it.
+         */
+        SeriesPoint: {
+            /**
+             * Day
+             * Format: date
+             * @description The day.
+             */
+            day: string;
+            /**
+             * Merged
+             * @description The points merged in it.
+             */
+            merged: number;
+            /**
+             * Points
+             * @description The scope's points (the tasks made by then and not cancelled by then, at their size now).
+             */
+            points: number;
         };
         /** SetAccountRequestBody */
         SetAccountRequestBody: {
@@ -13972,6 +14270,84 @@ export interface operations {
             };
         };
     };
+    orch_estimate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EstimateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Estimate"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
     orch_find_links: {
         parameters: {
             query?: never;
@@ -15461,6 +15837,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Readiness"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_progress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProgressRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Progress"];
                 };
             };
             /** @description Bad Request */

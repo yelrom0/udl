@@ -2654,6 +2654,82 @@
         "title": "EscalateRequest",
         "type": "object"
       },
+      "Estimate": {
+        "additionalProperties": false,
+        "description": "One task's estimate (27.10): its size, what that is expected to take, and the time worked\non it so far.",
+        "properties": {
+          "estimate": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What its size is expected to take, at its model's rate (None: unsized).",
+            "title": "Estimate"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "enum": [
+                  "S",
+                  "M",
+                  "L",
+                  "XL"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How big it is (None: not sized, so not estimated).",
+            "title": "Size"
+          },
+          "task": {
+            "$ref": "#/components/schemas/Task",
+            "description": "The task."
+          },
+          "worked": {
+            "description": "The time worked on it so far (its history, less its waits).",
+            "format": "duration",
+            "title": "Worked",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "worked"
+        ],
+        "title": "Estimate",
+        "type": "object"
+      },
+      "EstimateRequest": {
+        "additionalProperties": false,
+        "description": "Asking for one task's estimate.",
+        "properties": {
+          "project": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The task's project."
+          },
+          "task": {
+            "description": "The task's key.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Task",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "task"
+        ],
+        "title": "EstimateRequest",
+        "type": "object"
+      },
       "EventDetail": {
         "additionalProperties": false,
         "properties": {
@@ -3178,6 +3254,54 @@
           "feature"
         ],
         "title": "FeatureInfo",
+        "type": "object"
+      },
+      "FeatureProgress": {
+        "additionalProperties": false,
+        "description": "One feature's points, and when it is forecast to be done.",
+        "properties": {
+          "forecast": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ForecastInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When what is left of it is done (None: nothing sized is left)."
+          },
+          "key": {
+            "description": "The feature's key.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "merged": {
+            "description": "The points merged.",
+            "title": "Merged",
+            "type": "integer"
+          },
+          "points": {
+            "description": "Its points, merged and not.",
+            "title": "Points",
+            "type": "integer"
+          },
+          "title": {
+            "description": "What it is called.",
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "points",
+          "merged"
+        ],
+        "title": "FeatureProgress",
         "type": "object"
       },
       "FeatureStatus": {
@@ -4219,6 +4343,44 @@
           "follow"
         ],
         "title": "FollowStep",
+        "type": "object"
+      },
+      "ForecastInfo": {
+        "additionalProperties": false,
+        "description": "When the work is done: the last agent's own day, and the spread's range around it.",
+        "properties": {
+          "early": {
+            "description": "The earliest the work could be done (the spread's 25th percentile).",
+            "format": "date-time",
+            "title": "Early",
+            "type": "string"
+          },
+          "late": {
+            "description": "The latest (its 75th).",
+            "format": "date-time",
+            "title": "Late",
+            "type": "string"
+          },
+          "likely": {
+            "description": "When the last agent finishes, at its own rate.",
+            "format": "date-time",
+            "title": "Likely",
+            "type": "string"
+          },
+          "unsized": {
+            "default": 0,
+            "description": "The tasks left out of it because nobody sized them.",
+            "minimum": 0.0,
+            "title": "Unsized",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "likely",
+          "early",
+          "late"
+        ],
+        "title": "ForecastInfo",
         "type": "object"
       },
       "GateRun": {
@@ -6309,6 +6471,47 @@
         "title": "Misfire",
         "type": "string"
       },
+      "ModelRow": {
+        "additionalProperties": false,
+        "description": "One model's work, as the progress page shows it.",
+        "properties": {
+          "hours_per_point": {
+            "$ref": "#/components/schemas/RateInfo",
+            "description": "What a point costs it."
+          },
+          "hours_per_size": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "What each size came to, in hours (the median of the tasks of that size).",
+            "title": "Hours Per Size",
+            "type": "object"
+          },
+          "model": {
+            "description": "The model (an agent's, as its runner was given it).",
+            "title": "Model",
+            "type": "string"
+          },
+          "runner": {
+            "description": "The runner that runs it (an agent's own, the first of them).",
+            "title": "Runner",
+            "type": "string"
+          },
+          "tasks": {
+            "description": "How many merged, sized tasks it is learned from.",
+            "title": "Tasks",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "model",
+          "runner",
+          "tasks",
+          "hours_per_point"
+        ],
+        "title": "ModelRow",
+        "type": "object"
+      },
       "MoveTaskRequest": {
         "additionalProperties": false,
         "description": "Moving a task to another state (the table is orch.transitions').",
@@ -7121,6 +7324,98 @@
           "ok"
         ],
         "title": "ProbeResult",
+        "type": "object"
+      },
+      "Progress": {
+        "additionalProperties": false,
+        "description": "A project's progress (27.10): its burn-up, its pace, its forecast, its features, its\nmodels and the tasks merged lately.",
+        "properties": {
+          "estimate_ratio": {
+            "default": 0.0,
+            "description": "The median of actual \u00f7 estimated over them (how far the estimates are off).",
+            "title": "Estimate Ratio",
+            "type": "number"
+          },
+          "features": {
+            "description": "Each feature's points and its own forecast.",
+            "items": {
+              "$ref": "#/components/schemas/FeatureProgress"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "forecast": {
+            "$ref": "#/components/schemas/ForecastInfo",
+            "description": "When the open, sized work is done."
+          },
+          "models": {
+            "description": "What a point costs each model.",
+            "items": {
+              "$ref": "#/components/schemas/ModelRow"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "pace": {
+            "default": 0.0,
+            "description": "The points merged a day over the last seven.",
+            "title": "Pace",
+            "type": "number"
+          },
+          "project": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The project it is of."
+          },
+          "recent": {
+            "description": "The last 20 merged, sized tasks.",
+            "items": {
+              "$ref": "#/components/schemas/RecentTask"
+            },
+            "title": "Recent",
+            "type": "array"
+          },
+          "series": {
+            "description": "The burn-up, a day at a time.",
+            "items": {
+              "$ref": "#/components/schemas/SeriesPoint"
+            },
+            "title": "Series",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project",
+          "forecast"
+        ],
+        "title": "Progress",
+        "type": "object"
+      },
+      "ProgressRequest": {
+        "additionalProperties": false,
+        "description": "Asking for a project's progress.",
+        "properties": {
+          "project": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The project."
+          },
+          "since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The day the series starts (None: thirty days before now).",
+            "title": "Since"
+          }
+        },
+        "required": [
+          "project"
+        ],
+        "title": "ProgressRequest",
         "type": "object"
       },
       "Project": {
@@ -7987,6 +8282,33 @@
         "title": "QueueRequest",
         "type": "object"
       },
+      "RateInfo": {
+        "additionalProperties": false,
+        "description": "What a point costs in hours, and which rate said so: the model's own, its project's, or\nan hour a point (nothing has been learned yet).",
+        "properties": {
+          "hours": {
+            "description": "The hours a point.",
+            "title": "Hours",
+            "type": "number"
+          },
+          "source": {
+            "description": "Which rate answered.",
+            "enum": [
+              "model",
+              "project",
+              "default"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hours",
+          "source"
+        ],
+        "title": "RateInfo",
+        "type": "object"
+      },
       "ReadPolicy": {
         "description": "How lookups use several databases.",
         "enum": [
@@ -8111,6 +8433,57 @@
           "key"
         ],
         "title": "ReadyRequest",
+        "type": "object"
+      },
+      "RecentTask": {
+        "additionalProperties": false,
+        "description": "A merged, sized task: what it was estimated at, and what it took.",
+        "properties": {
+          "actual": {
+            "description": "How long it really took (its working time).",
+            "format": "duration",
+            "title": "Actual",
+            "type": "string"
+          },
+          "estimate": {
+            "description": "What its size was expected to take, at the rate it is learned at.",
+            "format": "duration",
+            "title": "Estimate",
+            "type": "string"
+          },
+          "key": {
+            "description": "Its key.",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "size": {
+            "description": "How big it was.",
+            "enum": [
+              "S",
+              "M",
+              "L",
+              "XL"
+            ],
+            "title": "Size",
+            "type": "string"
+          },
+          "title": {
+            "description": "What it is called.",
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "size",
+          "estimate",
+          "actual"
+        ],
+        "title": "RecentTask",
         "type": "object"
       },
       "RegexStep": {
@@ -9997,6 +10370,35 @@
           "select"
         ],
         "title": "SelectStep",
+        "type": "object"
+      },
+      "SeriesPoint": {
+        "additionalProperties": false,
+        "description": "One day of the burn-up: the scope's points at its end, and the points merged in it.",
+        "properties": {
+          "day": {
+            "description": "The day.",
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "merged": {
+            "description": "The points merged in it.",
+            "title": "Merged",
+            "type": "integer"
+          },
+          "points": {
+            "description": "The scope's points (the tasks made by then and not cancelled by then, at their size now).",
+            "title": "Points",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "day",
+          "points",
+          "merged"
+        ],
+        "title": "SeriesPoint",
         "type": "object"
       },
       "SetAccountRequestBody": {
@@ -18886,6 +19288,103 @@
         ]
       }
     },
+    "/plugins/orch/estimate": {
+      "post": {
+        "description": "One task's size, what it is expected to take at its model's rate, and the time worked\non it so far (its history, less its waits).",
+        "operationId": "orch_estimate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EstimateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Estimate"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "One task's size, what it is expected to take at its model's rate, and the time worked",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
     "/plugins/orch/find_links": {
       "post": {
         "description": "What hangs on a URL (the other way round from a task's own links): the tasks a PR\nbelongs to, however the URL is written.",
@@ -20801,6 +21300,103 @@
           }
         ],
         "summary": "Whether the task `key`'s pull may be merged (27.6), and with `wait`, holding until",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/progress": {
+      "post": {
+        "description": "A project's progress (27.10): its burn-up, its pace, its forecast, each feature's\npoints, what a point costs each model, and the tasks merged lately.",
+        "operationId": "orch_progress",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgressRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Progress"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "A project's progress (27.10): its burn-up, its pace, its forecast, each feature's",
         "tags": [
           "orch"
         ]
