@@ -60,6 +60,7 @@ from udl.plugins.apps.orch.models import (
     Principal,
     QuestionState,
     Readiness,
+    Role,
     WaitKind,
 )
 from udl.plugins.apps.orch.settings import OrchSettings
@@ -1193,6 +1194,13 @@ def _plain(value: object) -> JsonValue:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return str(value)
+
+
+def _system(role: Role) -> Principal:
+    """udl's own principal for a move it makes on its own account (never a person's, never an
+    agent's: assigning a queued task to the agent that takes it is the queue's bookkeeping, while
+    the start of the work is the agent's, `_starting`)."""
+    return Principal(kind="system", role=role)
 
 
 def _starting(agent: stored.Agent) -> Principal:
