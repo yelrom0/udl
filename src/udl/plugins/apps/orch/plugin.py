@@ -19,7 +19,7 @@ import logging
 from collections.abc import Awaitable, Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol
+from typing import TYPE_CHECKING, Any, Final, Protocol
 from uuid import UUID
 
 # Package Imports
@@ -243,7 +243,6 @@ from udl.plugins.runners.manage import (
     StartLoginRequest,
 )
 from udl.plugins.secrets.base import SecretField, SecretStore, load_secrets
-from udl.plugins.ui.base import UIBundle
 
 if TYPE_CHECKING:
     from udl.core.service import UDLService
@@ -388,18 +387,11 @@ _RUNNERS: tuple[str, ...] = ("orch", "runners")
 __all__ = ["Orch"]
 
 
-UI_FOLDER: Final[Path] = Path(__file__).parent / "ui"
+UI_FOLDER: Final[Path] = (Path(__file__).parent / "ui").resolve()
 """Its own UI (29.2), where `make web` builds it: the folder is the bundle (`manifest.json` and
-its files), so a checkout that has not built the web tree has no bundle here."""
-
-
-def ui_bundle(folder: Path) -> UIBundle | None:
-    """The UI bundle in `folder`, when it has been built; None when it has not (the generated
-    page alone). A bundle that is there but broken is `UIBundle.of`'s `PluginError`: a bundle
-    that cannot load is said out loud, not dropped."""
-    if not (folder / "manifest.json").is_file():
-        return None
-    return UIBundle.of(folder)
+its files). It is named here and loaded by discovery, so a checkout that has not built the web
+tree has no bundle (the generated page alone) and a half-written one is a problem on
+`GET /ui/plugins.json` rather than an import that takes the CLI, the API and the MCP down."""
 
 
 class Orch(AppPlugin[OrchSettings]):
@@ -414,7 +406,7 @@ class Orch(AppPlugin[OrchSettings]):
     settings_model = OrchSettings
     # (Its own UI (29.2), built beside this module by `make web`; until it is built, the
     # generated page alone.)
-    ui: ClassVar[UIBundle | None] = ui_bundle(UI_FOLDER)
+    ui_folder = UI_FOLDER
 
     @classmethod
     def record_kinds(cls) -> Sequence[type[Record]]:

@@ -53,6 +53,26 @@ describe("the sessions store", () => {
 		stop();
 	});
 
+	it("says what a refetch failed with, and keeps what it drew", async () => {
+		let fail = false;
+		const fake = fakeCtx(() => {
+			if (fail) {
+				throw new Error("no such session");
+			}
+			return SESSION;
+		});
+		const { store, read, stop } = sessionsStore(fake.ctx);
+		await read("ses_1");
+
+		fail = true;
+		fake.emit("orch.session.event", { session: "ses_1" });
+		await settle();
+
+		expect(store.getState().error).toBe("no such session");
+		expect(store.getState().sessions.ses_1?.state).toBe("working");
+		stop();
+	});
+
 	it("stops listening when it is stopped", async () => {
 		const fake = fakeCtx(() => SESSION);
 		const { read, stop } = sessionsStore(fake.ctx);

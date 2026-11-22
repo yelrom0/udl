@@ -68,17 +68,53 @@ describe("the board store", () => {
 		stop();
 	});
 
-	it("reads it again when a task, a feature or an agent moves", async () => {
+	it("reads it again when a pull is readied, and when a session starts or ends", async () => {
 		const fake = fakeCtx((name) => ANSWERS[name] as never);
 		const { stop } = boardStore(fake.ctx);
 		await settle();
 
-		fake.emit("orch.task.moved");
+		fake.emit("orch.task.ready", { task: "29.2" });
 		await settle();
-		fake.emit("orch.agent.changed");
+		fake.emit("orch.session.ended", { agent: "deepseek-a" });
 		await settle();
 
 		expect(fake.calls).toHaveLength(12);
+		stop();
+	});
+
+	it("reads once for a burst of events, not once each", async () => {
+		const fake = fakeCtx((name) => ANSWERS[name] as never);
+		const { stop } = boardStore(fake.ctx);
+		await settle();
+
+		// (A runner streams a line at a time: the board is not asked to read for each one.)
+		for (let line = 0; line < 20; line += 1) {
+			fake.emit("orch.session.started", { agent: "deepseek-a" });
+		}
+		await settle();
+
+		// (Twenty lines published together are one read: 8 calls, not 20 × 4.)
+		expect(fake.calls).toHaveLength(8);
+		stop();
+	});
+
+	it("says what a refetch failed with, and keeps what it drew", async () => {
+		let fail = false;
+		const fake = fakeCtx((name) => {
+			if (fail) {
+				throw new Error("udl is not answering");
+			}
+			return ANSWERS[name] as never;
+		});
+		const { store, stop } = boardStore(fake.ctx);
+		await settle();
+
+		fail = true;
+		fake.emit("orch.task.ready", { task: "29.2" });
+		await settle();
+
+		expect(store.getState().error).toBe("udl is not answering");
+		expect(store.getState().tasks.map((one) => one.key)).toEqual(["29.2"]);
 		stop();
 	});
 

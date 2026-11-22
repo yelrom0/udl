@@ -124,7 +124,17 @@ def _folders(settings: Settings) -> list[Path]:
 
 
 def _bundle_of(name: str, origin: str, cls: type[object]) -> UIBundle | UIBundleProblem | None:
-    """The bundle a plugin brings (its `ui`), a problem when that is not a bundle, or None."""
+    """The bundle a plugin brings (its `ui`, or the folder `ui_folder` names), a problem when that
+    is not a bundle, or None. A folder is loaded here, not by the plugin at import: a checkout
+    that has not built it has no bundle, and a broken one is a problem, never a failed import."""
+    folder = getattr(cls, "ui_folder", None)
+    if isinstance(folder, Path):
+        if not (folder / "manifest.json").is_file():
+            return None
+        try:
+            return UIBundle.of(folder)
+        except PluginError as e:
+            return UIBundleProblem(origin=origin, error=e.message)
     bundle = getattr(cls, "ui", None)
     if bundle is None:
         return None

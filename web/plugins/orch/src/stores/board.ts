@@ -10,6 +10,7 @@ import {
 	type Task,
 } from "../model";
 import type { Loaded } from "./inbox";
+import { coalesced, on } from "./once";
 
 /** What the board store holds: a project's features, tasks, agents and suggestions. */
 export interface BoardState extends Board {
@@ -24,8 +25,21 @@ const READS: readonly string[] = [
 	"orch_suggest",
 ];
 
-/** What moves what the board draws (a task, a feature, an agent): its own events, not every one. */
-const WATCHED: readonly string[] = ["orch.task.*", "orch.feature.*", "orch.agent.*"];
+/**
+ * What moves what the board draws: a pull readied or merged, a link refreshed, and an agent's
+ * session starting, ending, failing or running out of quota — which is where its status comes
+ * from. A feature and a task's state have no event of their own yet (28.5), and
+ * `orch.session.event` is a line a runner streamed, not a status change.
+ */
+const WATCHED: readonly string[] = [
+	"orch.task.ready",
+	"orch.task.merged",
+	"orch.link.changed",
+	"orch.session.started",
+	"orch.session.ended",
+	"orch.session.failed",
+	"orch.agent.limited",
+];
 
 /** The board's four lists (29.4), read when the store is made and again when any of them moves. */
 export function boardStore(ctx: UIContext): Loaded<BoardState> {
@@ -37,30 +51,30 @@ export function boardStore(ctx: UIContext): Loaded<BoardState> {
 		error: null,
 	}));
 	let stopped = false;
-	const load = async (): Promise<void> => {
-		try {
+	const reads = coalesced(
+		async () => {
 			const [features, tasks, agents, suggestions] = await Promise.all(
 				READS.map((name) => ctx.call(name, {})),
 			);
 			if (!stopped) {
 				store.setState({ ...boardOf(features, tasks, agents, suggestions), error: null });
 			}
-		} catch (error) {
+		},
+		(error) => {
 			if (!stopped) {
 				store.setState({ error: messageOf(error) });
 			}
-		}
-	};
-	const unsubscribes = WATCHED.map((filter) =>
-		ctx.events.subscribe(filter, () => {
-			void load();
-		}),
+		},
 	);
-	void load();
+	const unsubscribes = on(ctx, WATCHED, () => {
+		void reads.ask();
+	});
+	void reads.ask();
 	return {
 		store,
 		stop: () => {
 			stopped = true;
+			reads.stop();
 			for (const unsubscribe of unsubscribes) {
 				unsubscribe();
 			}

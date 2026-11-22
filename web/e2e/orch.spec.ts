@@ -31,6 +31,13 @@ async function headingOf(page: Page): Promise<string> {
 	return slot.evaluate((host) => host.shadowRoot?.querySelector("h1")?.textContent ?? "");
 }
 
+/** The headings the shell's own DOM has: what a shadow root keeps out of `document`. */
+async function shellHeadings(page: Page): Promise<string[]> {
+	return page.evaluate(() =>
+		[...document.querySelectorAll("h1")].map((one) => (one.textContent ?? "").trim()),
+	);
+}
+
 test("every page the manifest contributes draws its heading, in the plugin's shadow root", async ({
 	page,
 }) => {
@@ -39,11 +46,10 @@ test("every page the manifest contributes draws its heading, in the plugin's sha
 
 		await expect(page.locator(".udl-plugin-slot")).toHaveCount(1);
 		await expect.poll(async () => headingOf(page), { timeout: 15_000 }).toBe(heading);
-		// (Its own root: the shell's own DOM has not got the heading — a locator pierces shadow
-		// roots, `textContent` does not.)
-		expect(await page.evaluate(() => document.body.textContent ?? "")).not.toContain(
-			`${heading}\n`,
-		);
+		// (Isolated: the heading is in the plugin's shadow root, and not in the shell's own DOM.
+		// `querySelectorAll` does not pierce a shadow root, so a page drawn outside one fails
+		// here — which is the card's "inside the shell, isolated in its shadow root".)
+		expect(await shellHeadings(page)).not.toContain(heading);
 	}
 });
 

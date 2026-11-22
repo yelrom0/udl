@@ -8,12 +8,12 @@
 	"contributes": {
 		"nav": [
 			{ "title": "Inbox", "route": "inbox", "icon": "inbox" },
-			{ "title": "Board", "route": "board", "icon": "view-columns" },
-			{ "title": "Progress", "route": "progress", "icon": "chart-bar" },
+			{ "title": "Board", "route": "board", "icon": "layout-dashboard" },
+			{ "title": "Progress", "route": "progress", "icon": "chart-line" },
 			{ "title": "Agents", "route": "agents", "icon": "users" },
-			{ "title": "Q&A", "route": "questions", "icon": "chat-bubble-left-right" },
-			{ "title": "Merge", "route": "merge", "icon": "arrow-up-tray" },
-			{ "title": "To action", "route": "actions", "icon": "bolt" }
+			{ "title": "Q&A", "route": "questions", "icon": "message-circle-question" },
+			{ "title": "Merge", "route": "merge", "icon": "git-pull-request" },
+			{ "title": "To action", "route": "actions", "icon": "list-checks" }
 		],
 		"routes": [
 			"inbox",

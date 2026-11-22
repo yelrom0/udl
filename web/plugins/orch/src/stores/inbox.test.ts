@@ -64,6 +64,57 @@ describe("the inbox store", () => {
 		stop();
 	});
 
+	it("does not read again for every line a runner streams", async () => {
+		// (`orch_inbox` reads GitHub: a line of a session's transcript is not what waits on a
+		// person, and twenty of them are not twenty reads.)
+		const fake = fakeCtx(() => INBOX);
+		const { stop } = inboxStore(fake.ctx);
+		await settle();
+
+		for (let line = 0; line < 20; line += 1) {
+			fake.emit("orch.session.event", { session: "ses_1" });
+		}
+		await settle();
+
+		expect(fake.calls.map((one) => one.name)).toEqual(["orch_inbox"]);
+		stop();
+	});
+
+	it("reads once for a burst of events, not once each", async () => {
+		const fake = fakeCtx(() => INBOX);
+		const { stop } = inboxStore(fake.ctx);
+		await settle();
+
+		fake.emit("orch.task.ready", { task: "29.2" });
+		fake.emit("orch.task.merged", { task: "28.7" });
+		fake.emit("orch.project.changed", {});
+		await settle();
+
+		// (Three events published together are one read, not three.)
+		expect(fake.calls.map((one) => one.name)).toEqual(["orch_inbox", "orch_inbox"]);
+		stop();
+	});
+
+	it("says what a refetch failed with, and keeps what it drew", async () => {
+		let fail = false;
+		const fake = fakeCtx(() => {
+			if (fail) {
+				throw new Error("udl is not answering");
+			}
+			return INBOX;
+		});
+		const { store, stop } = inboxStore(fake.ctx);
+		await settle();
+
+		fail = true;
+		fake.emit("orch.task.ready", { task: "29.2" });
+		await settle();
+
+		expect(store.getState().error).toBe("udl is not answering");
+		expect(store.getState().inbox?.project).toBe("udl");
+		stop();
+	});
+
 	it("ignores events that are not orch's", async () => {
 		const fake = fakeCtx(() => INBOX);
 		const { stop } = inboxStore(fake.ctx);

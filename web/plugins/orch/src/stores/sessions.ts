@@ -3,6 +3,7 @@ import { createStore } from "zustand/vanilla";
 import { asObject, asText, messageOf } from "../json";
 import { type Session, sessionOf } from "../model";
 import type { Loaded } from "./inbox";
+import { coalesced } from "./once";
 
 /** What the sessions store holds: each session it was asked for, by its id. */
 export interface SessionsState {
@@ -24,27 +25,44 @@ export function sessionsStore(ctx: UIContext): Sessions {
 	const store = createStore<SessionsState>(() => ({ sessions: {}, error: null }));
 	const watched = new Set<string>();
 	let stopped = false;
-	const read = async (session: string): Promise<void> => {
-		watched.add(session);
-		try {
-			const value = await ctx.call("orch_get_session", { session });
-			if (!stopped) {
-				store.setState((state) => ({
-					sessions: { ...state.sessions, [session]: sessionOf(value) },
-					error: null,
-				}));
+	const pending = new Set<string>();
+	const reads = coalesced(
+		async () => {
+			// (Every session asked for is read once: one event naming none is a read per session
+			// watched, not a read of whichever was asked for last.)
+			while (pending.size > 0) {
+				const ids = [...pending];
+				pending.clear();
+				for (const session of ids) {
+					const value = await ctx.call("orch_get_session", { session });
+					if (!stopped) {
+						store.setState((state) => ({
+							sessions: { ...state.sessions, [session]: sessionOf(value) },
+							error: null,
+						}));
+					}
+				}
 			}
-		} catch (error) {
+		},
+		(error) => {
 			if (!stopped) {
 				store.setState({ error: messageOf(error) });
 			}
-		}
+		},
+	);
+	const ask = (session: string): Promise<void> => {
+		watched.add(session);
+		pending.add(session);
+		return reads.ask();
+	};
+	const read = async (session: string): Promise<void> => {
+		await ask(session);
 	};
 	const unsubscribe = ctx.events.subscribe("orch.session.*", (event) => {
 		const named = asText(asObject(event.data).session);
 		for (const session of [...watched]) {
 			if (named === "" || named === session) {
-				void read(session);
+				void ask(session);
 			}
 		}
 	});
@@ -53,6 +71,7 @@ export function sessionsStore(ctx: UIContext): Sessions {
 		read,
 		stop: () => {
 			stopped = true;
+			reads.stop();
 			unsubscribe();
 		},
 	};
