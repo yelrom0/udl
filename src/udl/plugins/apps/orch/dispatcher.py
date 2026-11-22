@@ -483,12 +483,14 @@ class Dispatcher:
         session = await self._session_for(agent, task)
         if session is None:
             return False
-        outcome, spoke = await self._turn(agent, session, news)
+        ran = await self._turn(agent, session, news)
+        if ran is None:
+            return False  # (another holder had its turn: nothing told, nothing failed)
         session = await stored.SessionRecords(self._records).session(session.id) or session
-        if outcome is Outcome.RETRY:
+        if ran.outcome is Outcome.RETRY:
             await self._retried(agent, session, session.last_error)
         await self._end(agent, session)
-        if spoke:
+        if ran.spoke:
             # (Only a turn whose runner started heard the news: the next tick says it again.)
             await self._merge_told(agent, news)
         return True

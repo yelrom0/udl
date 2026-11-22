@@ -217,7 +217,6 @@ async def test_the_owner_reads_the_catalogue_over_mcp(with_a_project: Harness) -
     assert [project["name"] for project in json.loads(found.text)["projects"]] == ["udl"]
 
 
-<<<<<<< HEAD
 def test_the_owner_sets_and_reads_an_agent_over_the_cli(with_a_project: Harness) -> None:
     made = CLI(with_a_project)(
         "orch",
@@ -353,6 +352,8 @@ async def test_the_owner_asks_what_to_do_next_over_mcp(with_a_project: Harness) 
     [found] = answer.content
     assert isinstance(found, TextContent)
     assert [one["task"] for one in json.loads(found.text)["suggestions"]] == ["26.1"]
+
+
 # ---------------------------------------------------------------------------------------------
 # 28.7: the switch, as the card writes it
 # ---------------------------------------------------------------------------------------------
