@@ -158,3 +158,11 @@ def test_an_agent_s_part_has_its_own_waits_taken_off() -> None:
         "deepseek-a": timedelta(hours=2),
         "deepseek-b": timedelta(minutes=30),
     }
+
+
+def test_a_since_counts_only_the_time_after_it() -> None:
+    # (A stretch from 9:00 to 13:00, counted from 11:00: two hours.)
+    changes = [_change(_at(9), IN_PROGRESS), _change(_at(13), DONE)]
+
+    assert working_time(changes, [], now=_at(14), since=_at(11)) == timedelta(hours=2)
+    assert by_agent(changes, [], now=_at(14), since=_at(11)) == {"deepseek-a": timedelta(hours=2)}

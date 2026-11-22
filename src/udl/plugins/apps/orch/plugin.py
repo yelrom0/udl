@@ -94,6 +94,8 @@ from udl.plugins.apps.orch.models import (
     DeleteRepoRequest,
     DropActionRequest,
     EscalateRequest,
+    Estimate,
+    EstimateRequest,
     Feature,
     FeatureInfo,
     Features,
@@ -128,6 +130,8 @@ from udl.plugins.apps.orch.models import (
     NoteKind,
     OwnerKind,
     Principal,
+    Progress,
+    ProgressRequest,
     Project,
     ProjectInfo,
     Projects,
@@ -172,6 +176,7 @@ from udl.plugins.apps.orch.models import (
 from udl.plugins.apps.orch.readiness import TASK_READY, Pull, TaskReady
 from udl.plugins.apps.orch.readiness import readiness as assess
 from udl.plugins.apps.orch.records import scan_links
+from udl.plugins.apps.orch.reporting import Reporting
 from udl.plugins.apps.orch.sessions import (
     AGENT_LIMITED,
     SESSION_ENDED,
@@ -623,6 +628,18 @@ class Orch(AppPlugin[OrchSettings]):
                 cli=CLISpec(path=(*_FEATURES, "set")),
             ),
             cls.operation(
+                "progress",
+                title="A project's progress: its burn-up, pace and forecast",
+                hints=OperationHints(read_only=True),
+                cli=CLISpec(path=("orch", "progress"), arguments=("project",)),
+            ),
+            cls.operation(
+                "estimate",
+                title="A task's size, its estimate and the time worked on it",
+                hints=OperationHints(read_only=True),
+                cli=CLISpec(path=("orch", "estimate"), arguments=("project", "task")),
+            ),
+            cls.operation(
                 "list_tasks",
                 title="List a project's tasks",
                 hints=OperationHints(read_only=True),
@@ -853,6 +870,20 @@ class Orch(AppPlugin[OrchSettings]):
         else:
             found = found.model_copy(update=given)
         return as_shape(Feature, await features.save_feature(found))
+
+    async def progress(self, request: ProgressRequest) -> Progress:
+        """A project's progress (27.10): its burn-up, its pace, its forecast, each feature's
+        points, what a point costs each model, and the tasks merged lately."""
+        return await Reporting(self.records, now=self.clock.now()).progress(
+            request.project, since=request.since
+        )
+
+    async def estimate(self, request: EstimateRequest) -> Estimate:
+        """One task's size, what it is expected to take at its model's rate, and the time worked
+        on it so far (its history, less its waits)."""
+        return await Reporting(self.records, now=self.clock.now()).estimate(
+            request.project, request.task
+        )
 
     async def list_tasks(self, request: ListTasksRequest) -> Tasks:
         """A project's tasks, by key, narrowed by feature, state, assignee and text."""

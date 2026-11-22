@@ -1,0 +1,225 @@
+"""
+-------------------------------------
+- test_progress_operations.py -
+-------------------------------------
+
+The catalogue's progress (27.10): `orch_progress` (a project's burn-up, pace, forecast, features,
+models and the tasks merged lately) and `orch_estimate` (one task's size, its estimate and the
+time worked on it so far), through the service.
+
+The history is written as a history: five one-point tasks, two hours' work each, merged a day
+apart, and one three-point task on the agent's queue — so a point is two hours, the five samples
+make that the model's own rate, and the estimate of the queued task is six hours.
+"""
+
+# System Imports
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+# Package Imports
+import pytest
+
+# Local Imports
+from support.engine import settings
+from support.orch import orch_registry
+from udl.core.operations import OperationHints
+from udl.core.service import UDLService
+from udl.errors import DoesNotExist
+from udl.plugins.apps.base import AppRecords
+from udl.plugins.apps.orch.models import (
+    IN_PROGRESS,
+    MERGED,
+    OPEN,
+    Estimate,
+    EstimateRequest,
+    Progress,
+    ProgressRequest,
+)
+from udl.plugins.apps.orch.plugin import Orch
+from udl.plugins.apps.orch.records import (
+    Agent,
+    AgentRecords,
+    Feature,
+    FeatureRecords,
+    Project,
+    ProjectRecords,
+    StateChange,
+    Task,
+    TaskRecords,
+)
+
+PROGRESS_OPERATIONS: list[str] = ["progress", "estimate"]
+
+START = datetime(2026, 11, 15, 9, tzinfo=UTC)
+"""When the fixture history begins (a week before the merges' last day)."""
+
+
+@pytest.fixture
+async def service(tmp_path: Path) -> AsyncIterator[UDLService]:
+    """A service over a fresh in-memory database, with five merged one-point tasks (two hours
+    each, a day apart) and one three-point task on the agent's queue."""
+    async with UDLService(settings(tmp_path), registry=orch_registry()) as running:
+        records = AppRecords(running.db)
+        await ProjectRecords(records).save_project(Project(name="udl", title="udl"))
+        await FeatureRecords(records).save_feature(
+            Feature(project="udl", key="26", title="Work tracking", order=26)
+        )
+        await AgentRecords(records).save_agent(
+            Agent(name="deepseek-a", title="deepseek-a", runner="fake", model="m")
+        )
+        tasks = TaskRecords(records)
+        for number in range(5):
+            task = await tasks.save_task(
+                Task(  # pyright: ignore[reportArgumentType]
+                    project="udl",
+                    feature="26",
+                    key=f"26.{number + 1}",
+                    title=f"Merged {number}",
+                    size="S",
+                    assignee="deepseek-a",
+                )
+            )
+            await tasks.import_task(task.model_copy(update={"state": MERGED}))
+            await records.save_all(
+                [
+                    StateChange(
+                        task=task.id,
+                        from_state=OPEN,
+                        to_state=IN_PROGRESS,
+                        at=START + timedelta(days=number),
+                        by="deepseek-a",
+                    ),
+                    StateChange(
+                        task=task.id,
+                        from_state=IN_PROGRESS,
+                        to_state=MERGED,
+                        at=START + timedelta(days=number, hours=2),
+                        by="deepseek-a",
+                    ),
+                ]
+            )
+        await tasks.save_task(
+            Task(  # pyright: ignore[reportArgumentType]
+                project="udl",
+                feature="26",
+                key="26.9",
+                title="Queued",
+                size="M",
+                assignee="deepseek-a",
+            )
+        )
+        yield running
+
+
+def test_orch_offers_the_progress_operations() -> None:
+    offered = {op.name: op for op in Orch.operations()}
+
+    assert [name for name in offered if name in PROGRESS_OPERATIONS] == PROGRESS_OPERATIONS
+    assert offered["progress"].hints == OperationHints(read_only=True)
+    assert offered["estimate"].hints == OperationHints(read_only=True)
+    assert offered["progress"].request is ProgressRequest
+    assert offered["progress"].response is Progress
+    assert offered["estimate"].request is EstimateRequest
+    assert offered["estimate"].response is Estimate
+
+
+async def test_the_burn_up_counts_a_day_s_scope_and_what_merged(service: UDLService) -> None:
+    found = await service.call("orch_progress", {"project": "udl"})
+
+    assert isinstance(found, Progress)
+    assert found.project == "udl"
+    assert len(found.series) == 31  # (thirty days back, and today)
+    assert [one.merged for one in found.series if one.merged] == [1, 1, 1, 1, 1]
+    assert found.series[-1].points == 8  # (the five merged, and the three-point one)
+
+
+async def test_the_forecast_is_the_queued_work_at_the_model_s_rate(service: UDLService) -> None:
+    found = await service.call("orch_progress", {"project": "udl"})
+
+    assert isinstance(found, Progress)
+    assert found.models[0].model == "m"
+    assert found.models[0].runner == "fake"
+    assert found.models[0].tasks == 5
+    assert found.models[0].hours_per_point.hours == 2.0
+    assert found.models[0].hours_per_point.source == "model"
+    assert found.forecast.likely > datetime.now(UTC)
+    assert found.forecast.early <= found.forecast.likely <= found.forecast.late
+    assert found.forecast.unsized == 0
+
+
+async def test_a_feature_has_its_points_and_its_own_forecast(service: UDLService) -> None:
+    found = await service.call("orch_progress", {"project": "udl"})
+
+    assert isinstance(found, Progress)
+    (feature,) = found.features
+    assert (feature.key, feature.points, feature.merged) == ("26", 8, 5)
+    assert feature.forecast is not None
+    assert feature.forecast.likely > datetime.now(UTC)
+
+
+async def test_the_recent_tasks_say_what_they_were_estimated_at_and_took(
+    service: UDLService,
+) -> None:
+    found = await service.call("orch_progress", {"project": "udl"})
+
+    assert isinstance(found, Progress)
+    assert len(found.recent) == 5
+    assert {one.size for one in found.recent} == {"S"}
+    assert all(one.estimate == timedelta(hours=2) for one in found.recent)
+    assert all(one.actual == timedelta(hours=2) for one in found.recent)
+    assert found.estimate_ratio == 1.0
+
+
+async def test_the_pace_is_the_points_merged_a_day_over_the_last_seven(
+    service: UDLService,
+) -> None:
+    found = await service.call("orch_progress", {"project": "udl"})
+
+    assert isinstance(found, Progress)
+    # (Four of the five merges fell in the last seven days: 15 November is older.)
+    assert found.pace == pytest.approx(4 / 7)
+
+
+async def test_a_since_starts_the_series_earlier_or_later(service: UDLService) -> None:
+    found = await service.call(
+        "orch_progress", {"project": "udl", "since": (START - timedelta(days=2)).isoformat()}
+    )
+
+    assert isinstance(found, Progress)
+    assert found.series[0].day.isoformat() == (START - timedelta(days=2)).date().isoformat()
+
+
+async def test_an_estimate_is_a_task_s_size_and_the_time_worked_on_it(
+    service: UDLService,
+) -> None:
+    found = await service.call("orch_estimate", {"project": "udl", "task": "26.9"})
+
+    assert isinstance(found, Estimate)
+    assert (found.size, found.worked) == ("M", timedelta(0))
+    assert found.estimate == timedelta(hours=6)
+
+
+async def test_a_merged_task_s_estimate_says_what_it_really_took(service: UDLService) -> None:
+    found = await service.call("orch_estimate", {"project": "udl", "task": "26.1"})
+
+    assert isinstance(found, Estimate)
+    assert (found.size, found.worked) == ("S", timedelta(hours=2))
+    assert found.estimate == timedelta(hours=2)
+
+
+async def test_an_unsized_task_is_not_estimated(service: UDLService) -> None:
+    records = AppRecords(service.db)
+    await TaskRecords(records).save_task(
+        Task(project="udl", feature="26", key="26.20", title="Unsized")  # pyright: ignore[reportArgumentType]
+    )
+
+    found = await service.call("orch_estimate", {"project": "udl", "task": "26.20"})
+
+    assert isinstance(found, Estimate)
+    assert (found.size, found.estimate, found.worked) == (None, None, timedelta(0))
+
+
+async def test_a_task_that_is_not_there_is_refused(service: UDLService) -> None:
+    with pytest.raises(DoesNotExist, match=r"26\.99"):
+        await service.call("orch_estimate", {"project": "udl", "task": "26.99"})
