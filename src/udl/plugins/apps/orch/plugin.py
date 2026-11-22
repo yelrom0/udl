@@ -1545,6 +1545,7 @@ class Orch(AppPlugin[OrchSettings]):
             tasks=request.tasks,
             features=request.features,
             asked_by=await self._asker(request.task, project=project),
+            clock=self.clock,
         )
         return _question(found)
 
@@ -1557,6 +1558,7 @@ class Orch(AppPlugin[OrchSettings]):
             task=request.task,
             reason=request.reason,
             asked_by=await self._asker(request.task, project=project),
+            clock=self.clock,
         )
         return _question(found)
 
@@ -1583,6 +1585,7 @@ class Orch(AppPlugin[OrchSettings]):
             key=request.key,
             answer=request.answer,
             by=_principal(),
+            clock=self.clock,
         )
         return _question(found)
 

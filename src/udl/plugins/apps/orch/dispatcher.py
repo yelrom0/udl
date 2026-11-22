@@ -918,6 +918,7 @@ class Dispatcher:
                 text=text,
                 blocking=blocking,
                 asked_by=name,
+                clock=self._clock,
             )
         except UDLError:
             # (A blocking question is the task's state: dropping it would leave the task running
@@ -953,6 +954,7 @@ class Dispatcher:
                     question=open_ones[0],
                     asked_by=name,
                     why=title,
+                    clock=self._clock,
                 )
                 return
             if task.state == BLOCKED:

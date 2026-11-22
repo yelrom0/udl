@@ -112,7 +112,7 @@ class Reporting:
         rates = {model: hours_per_point(samples, model=model) for model in every}
         spreads = {model: spread(_mine(samples, model), rate=rate) for model, rate in rates.items()}
         hours_a_day = self._hours_a_day(history, rests, agents)
-        merged = {task.id: moved_at(task, history[task.id]) for task in tasks}
+        merged = {task.id: moved_at(history[task.id]) for task in tasks}
         remaining = {
             task.id: left_of(task, history[task.id], rests[task.id], rates, agents, self._now)
             for task in tasks
@@ -206,7 +206,7 @@ class Reporting:
         found: list[Sample] = []
         for task in tasks:
             points = points_of(task.size)
-            merged = moved_at(task, history.get(task.id, []))
+            merged = moved_at(history.get(task.id, []))
             if points is None or merged is None:
                 continue
             worked = by_agent(history.get(task.id, []), waits.get(task.id, []), now=self._now)
@@ -309,7 +309,7 @@ class Reporting:
     ) -> list[RecentTask]:
         """The last `RECENT` merged, sized tasks: what each was estimated at, and what it took."""
         merged = [
-            (task, moved_at(task, history.get(task.id, [])))
+            (task, moved_at(history.get(task.id, [])))
             for task in tasks
             if points_of(task.size) is not None
         ]
@@ -518,7 +518,7 @@ def _rate_model(
     )
 
 
-def moved_at(task: Task, changes: Sequence[StateChange]) -> datetime | None:
+def moved_at(changes: Sequence[StateChange]) -> datetime | None:
     """When a task merged, by its history: the move's time, or None — a plan imported as merged
     writes no move, so when it merged is not known (and its hours are not known either: it is in
     no series' merge, no recent list and no rate)."""

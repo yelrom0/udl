@@ -24,6 +24,7 @@ from udl.db.records import RecordQuery
 from udl.errors import NotAllowed
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.models import (
+    BLOCKED,
     IN_PROGRESS,
     MERGED,
     OPEN,
@@ -38,6 +39,7 @@ from udl.plugins.apps.orch.records import (
     NoteRecords,
     Project,
     ProjectRecords,
+    QuestionRecords,
     StateChange,
     Task,
     TaskRecords,
@@ -150,3 +152,30 @@ async def test_an_import_records_no_move(records: AppRecords) -> None:
     await tasks.import_task(task.model_copy(update={"state": MERGED}))
 
     assert await history(records, task) == []
+
+
+async def test_a_blocked_task_s_block_and_its_answer_are_history(records: AppRecords) -> None:
+    # (27.10's review: a question's block and its answer moved the task without a move in its
+    # history, so the blocked hours counted as the agent's work.)
+    from udl.plugins.apps.orch import questions as asked
+
+    tasks = TaskRecords(records)
+    task = await a_task(records, assignee="deepseek-a")
+    working = await tasks.move(task, IN_PROGRESS, by=AGENT)
+    questions = QuestionRecords(records)
+
+    found = await asked.ask(
+        questions,
+        project="udl",
+        task=working.key,
+        title="Which way?",
+        blocking=True,
+        asked_by="deepseek-a",
+    )
+    await asked.answer(questions, project="udl", key=found.key, answer="That way.")
+
+    assert [(one.from_state, one.to_state) for one in await history(records, task)] == [
+        (OPEN, IN_PROGRESS),
+        (IN_PROGRESS, BLOCKED),
+        (BLOCKED, QUEUED),
+    ]
