@@ -99,6 +99,10 @@ class FakeShell:
         self.output = list(output)
         self.runs: list[tuple[list[str], bytes | None]] = []
         self.streams: list[tuple[list[str], bytes | None, Mapping[str, str]]] = []
+        self.stream_withins: list[timedelta | None] = []
+        """How long each stream it was asked for got (a turn's `within`, never the default)."""
+        self.endless = False
+        """Whether its stream never ends (so only a turn's own time can)."""
         self.answers: dict[str, ProcessResult] = {}
         self.status: ProcessResult | None = None
         """What `login status` answers (a signed-out CLI exits 1 and says so on stderr)."""
@@ -149,10 +153,15 @@ class FakeShell:
         within: timedelta | None = None,
     ) -> AsyncIterator[bytes]:
         self.streams.append((list(argv), stdin, dict(secret_env or {})))
+        self.stream_withins.append(within)
 
         async def chunks() -> AsyncIterator[bytes]:
-            for chunk in self.output:
-                yield chunk
+            # (As a real shell: `within` is how long the whole stream gets.)
+            async with asyncio.timeout(within.total_seconds() if within else None):
+                if self.endless:
+                    await asyncio.sleep(3600)  # pragma: no cover - (the turn is timed)
+                for chunk in self.output:
+                    yield chunk
 
         return chunks()
 
@@ -334,6 +343,33 @@ def test_its_models_are_the_options() -> None:
 # ---------------------------------------------------------------------------------------------
 # A turn's process
 # ---------------------------------------------------------------------------------------------
+
+
+async def test_a_turn_gets_its_options_turn_within() -> None:
+    """A turn is one process, and it is given how long it may run: never the shell's 30 s
+    default, which cut a real turn off."""
+    shell = FakeShell(output=said(thread(), item("agent_message", text="hi"), turn_done()))
+    given, _ = runner(shell, turn_within=timedelta(minutes=20))
+    started = await given.start(session())
+
+    await turn_of(given, started)
+
+    assert shell.stream_withins == [timedelta(minutes=20)]
+
+
+async def test_a_turn_that_runs_past_its_time_ends_as_an_error() -> None:
+    """A turn that runs past its `turn_within` is ended by the runner: the turn says so, and
+    nothing raises out of send()."""
+    shell = FakeShell()  # (its stream never ends, so only the turn's own time can)
+    shell.endless = True
+    given, _ = runner(shell, turn_within=timedelta(seconds=0.05))
+    started = await given.start(session())
+
+    events = await turn_of(given, started)
+
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.ERROR
+    assert "past" in (events[-1].text or "")
 
 
 async def test_a_first_turn_is_one_process_with_the_worktree_and_the_sandbox() -> None:
@@ -585,6 +621,30 @@ async def test_a_turn_ended_line_split_across_chunks_ends_the_turn() -> None:
 
     assert isinstance(events[-1], TurnEnded)
     assert events[-1].reason is TurnReason.DONE
+
+
+async def test_a_character_split_across_two_chunks_is_not_corrupted() -> None:
+    """The chunks are bytes, and a multi-byte character may be cut in half by a chunk boundary:
+    the line is only whole once its newline comes, so the character is decoded once, whole."""
+    whole = (
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {"id": "i1", "type": "agent_message", "text": "a — b"},
+            },
+            ensure_ascii=False,
+        )
+        + "\n"
+    ).encode()
+    cut = whole.index("—".encode()) + 1  # (inside the three-byte dash)
+    shell = FakeShell(output=[whole[:cut], whole[cut:]])
+    given, _ = runner(shell)
+    started = await given.start(session())
+
+    events = await turn_of(given, started)
+
+    [said_text] = [event.text for event in events if isinstance(event, TextDelta)]
+    assert said_text == "a — b"
 
 
 async def test_a_plain_line_does_not_hide_a_failed_turns_own_message() -> None:

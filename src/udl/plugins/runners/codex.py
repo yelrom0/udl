@@ -66,6 +66,7 @@ from udl.plugins.runners.base import (
     TurnReason,
     Usage,
     lines,
+    turn_too_long,
 )
 
 log = logging.getLogger(__name__)
@@ -303,24 +304,31 @@ class Codex(AgentRunner[CodexOptions]):
         # (The shell yields fixed-size chunks, not lines: a line longer than one chunk — a long
         # answer, a command's output — arrives in pieces, so the parts are kept until the newline
         # that ends the line comes. Split, neither half reads as JSON and both would be dropped.)
-        buffer = ""
+        buffer = b""
         try:
             async for chunk in self._chunks(session, prompt, spec, first=first):
-                buffer += chunk.decode(errors="replace")
-                lines, _, rest = buffer.rpartition("\n")
+                # (Split on the byte, not on the decoded string: a multi-byte character cut at a
+                # chunk boundary would otherwise become two replacement characters.)
+                buffer += chunk
+                lines, _, rest = buffer.rpartition(b"\n")
                 buffer = rest
-                plain = self._plain(lines) or plain  # (the last plain line, if it had one)
-                for event in self._lines(session, lines):
+                said = lines.decode(errors="replace")
+                plain = self._plain(said) or plain  # (the last plain line, if it had one)
+                for event in self._lines(session, said):
                     if isinstance(event, TurnEnded):
                         ended = event
                     else:
                         yield event
-            for event in self._lines(session, buffer):
+            last = buffer.decode(errors="replace")
+            for event in self._lines(session, last):
                 if isinstance(event, TurnEnded):
                     ended = event
                 else:
                     yield event
-            plain = self._plain(buffer) or plain
+            plain = self._plain(last) or plain
+        except TimeoutError:
+            # (The turn ran past its turn_within: say so, rather than raising out of send().)
+            ended = TurnEnded(reason=TurnReason.ERROR, text=turn_too_long(self.options.turn_within))
         except (ToolUnavailable, PluginFailed) as failure:
             ended = TurnEnded(reason=TurnReason.ERROR, text=str(failure))
         if session.id in self._stopped:
@@ -362,6 +370,7 @@ class Codex(AgentRunner[CodexOptions]):
             env=spec.env,
             secret_env={name: value.get_secret_value() for name, value in spec.secret_env.items()},
             stdin=self._prompt(spec, prompt, first=first).encode(),
+            within=self.options.turn_within,
         )
         queue: asyncio.Queue[bytes | Exception | None] = asyncio.Queue()
 
