@@ -46,7 +46,7 @@ from udl.plugins.apps.orch import questions as asked
 from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch import records as stored
 from udl.plugins.apps.orch import workspace as space
-from udl.plugins.apps.orch.agents import AnAgentEvent, SessionState
+from udl.plugins.apps.orch.agents import AnAgentEvent, SessionState, an_event
 from udl.plugins.apps.orch.models import (
     BLOCKED,
     CANCELLED,
@@ -1181,9 +1181,8 @@ class Dispatcher:
 
 
 def _an_event(event: AgentEvent) -> AnAgentEvent:
-    """`event` as the transcript holds it: the kinds are the same, so this reads it as one of
-    them (`kind` says which)."""
-    return _AN_EVENT.validate_python(event)
+    """`event` as the transcript holds it (agents.an_event: the kinds are the same)."""
+    return an_event(event)
 
 
 def _address(host: str) -> str:

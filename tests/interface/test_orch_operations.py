@@ -54,6 +54,21 @@ CATALOGUE: Final[dict[str, tuple[str, ...]]] = {
     "orch_find_links": ("orch", "links", "find"),
     "orch_add_note": ("orch", "note"),
     "orch_import_plan": ("orch", "import"),
+    "orch_list_agents": ("orch", "agents"),
+    "orch_get_agent": ("orch", "agents", "show"),
+    "orch_set_agent": ("orch", "agents", "set"),
+    "orch_delete_agent": ("orch", "agents", "rm"),
+    "orch_pause_agent": ("orch", "agents", "pause"),
+    "orch_resume_agent": ("orch", "agents", "resume"),
+    "orch_get_session": ("orch", "agents", "session"),
+    "orch_stop_session": ("orch", "agents", "stop"),
+    "orch_send": ("orch", "agents", "send"),
+    "orch_get_queue": ("orch", "queue", "show"),
+    "orch_my_task": ("orch", "queue", "mine"),
+    "orch_assign": ("orch", "queue", "add"),
+    "orch_reorder_queue": ("orch", "queue", "set"),
+    "orch_unassign": ("orch", "queue", "rm"),
+    "orch_suggest": ("orch", "suggest"),
 }
 """The card's CLI command for each of the catalogue's operations (26.6)."""
 
@@ -194,3 +209,66 @@ async def test_the_owner_reads_the_catalogue_over_mcp(with_a_project: Harness) -
     [found] = answer.content
     assert isinstance(found, TextContent)
     assert [project["name"] for project in json.loads(found.text)["projects"]] == ["udl"]
+
+
+def test_the_owner_sets_and_reads_an_agent_over_the_cli(with_a_project: Harness) -> None:
+    made = CLI(with_a_project)(
+        "orch",
+        "agents",
+        "set",
+        "--name",
+        "boss",
+        "--title",
+        "Boss",
+        "--runner",
+        "fake",
+        "--role",
+        "manager",
+        "--json",
+    )
+    assert made.exit_code == 0, made.output
+    assert json.loads(made.stdout)["role"] == "manager"
+
+    listed = CLI(with_a_project)("orch", "agents", "--json")
+
+    assert listed.exit_code == 0, listed.output
+    assert [one["agent"]["name"] for one in json.loads(listed.stdout)["items"]] == ["boss"]
+
+
+def test_the_owner_reads_a_queue_over_the_cli(with_a_project: Harness) -> None:
+    made = CLI(with_a_project)(
+        "orch", "agents", "set", "--name", "boss", "--title", "Boss", "--runner", "fake", "--json"
+    )
+    assert made.exit_code == 0, made.output
+    task = CLI(with_a_project)(
+        "orch", "tasks", "set", "--feature", "26", "--title", "One", "--json"
+    )
+    assert task.exit_code == 0, task.output
+    assigned = CLI(with_a_project)("orch", "queue", "add", "26.1", "--agent", "boss", "--json")
+    assert assigned.exit_code == 0, assigned.output
+
+    queue = CLI(with_a_project)("orch", "queue", "show", "boss", "--json")
+
+    assert queue.exit_code == 0, queue.output
+    assert [one["key"] for one in json.loads(queue.stdout)["tasks"]] == ["26.1"]
+
+
+async def test_the_owner_asks_what_to_do_next_over_mcp(with_a_project: Harness) -> None:
+    async with api_client_for(with_a_project) as client:
+        made = await client.post(
+            "/plugins/orch/set_task", json={"key": "26.1", "feature": "26", "title": "One"}
+        )
+        agent = await client.post(
+            "/plugins/orch/set_agent",
+            json={"name": "boss", "title": "Boss", "runner": "fake"},
+        )
+    assert made.status_code == 200, made.text
+    assert agent.status_code == 200, agent.text
+
+    async with mcp_client_for(with_a_project) as client:
+        answer = await client.call_tool("orch_suggest", {"project": "udl"})
+
+    assert not answer.is_error
+    [found] = answer.content
+    assert isinstance(found, TextContent)
+    assert [one["task"] for one in json.loads(found.text)["suggestions"]] == ["26.1"]

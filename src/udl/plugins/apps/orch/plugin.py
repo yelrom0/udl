@@ -53,7 +53,29 @@ from udl.plugins.apps.orch import records as stored
 from udl.plugins.apps.orch import suggest as suggested
 from udl.plugins.apps.orch import transitions
 from udl.plugins.apps.orch import workspace as space
-from udl.plugins.apps.orch.agents import AgentRole
+from udl.plugins.apps.orch.agents import (
+    Agent,
+    AgentInfo,
+    AgentRole,
+    Agents,
+    DeleteAgentRequest,
+    GetAgentRequest,
+    GetSessionRequest,
+    ListAgentsRequest,
+    PauseAgentRequest,
+    ResumeAgentRequest,
+    SendRequest,
+    Sent,
+    SessionEventShape,
+    SessionInfo,
+    SessionState,
+    SetAgentRequest,
+    StopSessionRequest,
+    an_event,
+)
+from udl.plugins.apps.orch.agents import (
+    AgentSession as AgentSessionShape,
+)
 from udl.plugins.apps.orch.dispatcher import Dispatcher
 from udl.plugins.apps.orch.importer import (
     PLAN_KEY,
@@ -75,9 +97,11 @@ from udl.plugins.apps.orch.merge import after_close, after_merge, order
 from udl.plugins.apps.orch.models import (
     CANCELLED,
     DONE,
+    IN_PROGRESS,
     MERGED,
     MOVED,
     OPEN,
+    QUEUED,
     READY,
     SPEC_MAX,
     Action,
@@ -348,6 +372,8 @@ class _Key(BaseModel):
 
 
 _RUNNERS: tuple[str, ...] = ("orch", "runners")
+_AGENTS: Final = ("orch", "agents")
+_QUEUE: Final = ("orch", "queue")
 """The CLI words a harness's operations live under: `udl orch runners [install]`."""
 
 __all__ = ["Orch"]
@@ -445,13 +471,19 @@ class Orch(AppPlugin[OrchSettings]):
                 "assign",
                 title="Assign a task",
                 hints=OperationHints(idempotent=True),
+                cli=CLISpec(path=(*_QUEUE, "add"), arguments=("key",)),
             ),
             cls.operation(
                 "reorder_queue",
                 title="Reorder a queue",
                 hints=OperationHints(idempotent=True),
+                cli=CLISpec(path=(*_QUEUE, "set"), arguments=("agent",)),
             ),
-            cls.operation("unassign", title="Unassign a task"),
+            cls.operation(
+                "unassign",
+                title="Unassign a task",
+                cli=CLISpec(path=(*_QUEUE, "rm"), arguments=("key",)),
+            ),
             cls.operation(
                 "push",
                 title="Push a task's work",
@@ -466,16 +498,19 @@ class Orch(AppPlugin[OrchSettings]):
                 "get_queue",
                 title="An agent's queue",
                 hints=OperationHints(read_only=True),
+                cli=CLISpec(path=(*_QUEUE, "show"), arguments=("agent",)),
             ),
             cls.operation(
                 "my_task",
                 title="What an agent is on",
                 hints=OperationHints(read_only=True),
+                cli=CLISpec(path=(*_QUEUE, "mine"), arguments=("agent",)),
             ),
             cls.operation(
                 "suggest",
                 title="What to do next",
                 hints=OperationHints(read_only=True),
+                cli=CLISpec(path=("orch", "suggest")),
             ),
             cls.operation("set_action", title="Add a human action"),
             cls.operation(
@@ -710,7 +745,256 @@ class Orch(AppPlugin[OrchSettings]):
                 hints=OperationHints(admin=True, idempotent=True),
                 cli=CLISpec(path=("orch", "import"), arguments=("files",)),
             ),
+            cls.operation(
+                "list_agents",
+                title="List the agents",
+                hints=OperationHints(read_only=True),
+                cli=CLISpec(path=_AGENTS, options={"project": "--project"}),
+            ),
+            cls.operation(
+                "get_agent",
+                title="An agent, its queue and its session",
+                hints=OperationHints(read_only=True),
+                cli=CLISpec(path=(*_AGENTS, "show"), arguments=("name",)),
+            ),
+            cls.operation(
+                "set_agent",
+                title="Create or edit an agent",
+                hints=OperationHints(admin=True, idempotent=True),
+                cli=CLISpec(path=(*_AGENTS, "set")),
+            ),
+            cls.operation(
+                "delete_agent",
+                title="Delete an agent",
+                hints=OperationHints(admin=True, destructive=True, idempotent=True),
+                cli=CLISpec(path=(*_AGENTS, "rm"), arguments=("name",)),
+            ),
+            cls.operation(
+                "pause_agent",
+                title="Pause an agent",
+                hints=OperationHints(idempotent=True),
+                cli=CLISpec(path=(*_AGENTS, "pause"), arguments=("name",)),
+            ),
+            cls.operation(
+                "resume_agent",
+                title="Resume an agent",
+                hints=OperationHints(idempotent=True),
+                cli=CLISpec(path=(*_AGENTS, "resume"), arguments=("name",)),
+            ),
+            cls.operation(
+                "get_session",
+                title="A session and its transcript",
+                hints=OperationHints(read_only=True),
+                cli=CLISpec(path=(*_AGENTS, "session"), arguments=("session",)),
+            ),
+            cls.operation(
+                "stop_session",
+                title="Stop a session",
+                hints=OperationHints(destructive=True),
+                cli=CLISpec(path=(*_AGENTS, "stop"), arguments=("session",)),
+            ),
+            cls.operation(
+                "send",
+                title="Send a message into an agent's session",
+                hints=OperationHints(open_world=True),
+                cli=CLISpec(path=(*_AGENTS, "send"), arguments=("agent", "text")),
+            ),
         ]
+
+    # -- the agents and their sessions (27.9) ---------------------------------------------------
+
+    async def list_agents(self, request: ListAgentsRequest) -> Agents:
+        """Every agent, by name, with what it is doing, its queue and its session (the agents
+        that work `project`, or all of them)."""
+        found = await stored.AgentRecords(self.records).agents()
+        if request.project is not None:
+            found = [one for one in found if not one.projects or request.project in one.projects]
+        return Agents(
+            items=[await self._agent_info(one) for one in sorted(found, key=lambda one: one.name)]
+        )
+
+    async def get_agent(self, request: GetAgentRequest) -> AgentInfo:
+        """One agent, with its queue, its current session and the agents that report to it."""
+        return await self._agent_info(await self._require_agent(request.name))
+
+    async def set_agent(self, request: SetAgentRequest) -> Agent:
+        """Create or edit an agent, by its name: what is not given is kept, a new one needs a
+        title and a runner, and `manager: ""` makes it report to the humans (admin).
+
+        A manager must be another agent whose role is manager, and no chain of managers may
+        reach itself (what storing one checks)."""
+        agents = stored.AgentRecords(self.records)
+        found = await agents.agent(request.name)
+        given = request.model_dump(exclude={"name", "manager"}, exclude_none=True)
+        if found is None:
+            if request.title is None or request.runner is None:
+                raise NotAllowed(
+                    f"{request.name!r} is a new agent, so it needs a title and a runner",
+                    hint="Set both: a runner is what starts its sessions (e.g. claude-code).",
+                )
+            found = stored.Agent(name=request.name, **given)
+        else:
+            found = found.model_copy(update=given)
+        if request.manager is not None:
+            found = found.model_copy(update={"manager": request.manager or None})
+        return as_shape(Agent, await agents.save_agent(found))
+
+    async def delete_agent(self, request: DeleteAgentRequest) -> Deleted:
+        """Delete an agent, its sessions and its tokens (admin). Raises InUse while it manages
+        another agent, or while it has a task that is not finished."""
+        return Deleted(deleted=await stored.AgentRecords(self.records).delete_agent(request.name))
+
+    async def pause_agent(self, request: PauseAgentRequest) -> Agent:
+        """Pause an agent: nothing is dispatched to it until it is resumed, and its running
+        session is left to finish (stopping it is `orch_stop_session`)."""
+        return await self._set_paused(request.name, paused=True)
+
+    async def resume_agent(self, request: ResumeAgentRequest) -> Agent:
+        """Resume an agent: what it has queued is dispatched again."""
+        return await self._set_paused(request.name, paused=False)
+
+    async def get_session(self, request: GetSessionRequest) -> SessionInfo:
+        """A session and a page of its transcript, oldest first (`offset` and `limit` page it;
+        `total` is how many events it has)."""
+        found = await stored.SessionRecords(self.records).session(request.session)
+        if found is None:
+            raise DoesNotExist(
+                f"There is no session {request.session}",
+                hint="An agent's current session is in its `orch_get_agent` answer.",
+            )
+        return await self._session_info(found, offset=request.offset, limit=request.limit)
+
+    async def stop_session(self, request: StopSessionRequest) -> SessionInfo:
+        """Stop a session: its runner is told to stop it, and it is ended, so nothing more is
+        dispatched to it and its agent's next turn starts a new one."""
+        sessions = stored.SessionRecords(self.records)
+        found = await sessions.session(request.session)
+        if found is None:
+            raise DoesNotExist(
+                f"There is no session {request.session}",
+                hint="An agent's current session is in its `orch_get_agent` answer.",
+            )
+        if found.state is not SessionState.ENDED:
+            try:
+                runner = await self.harnesses.runner(found.ref.host, found.ref.runner)
+                await runner.stop(found.ref)
+            except UDLError:
+                # (A harness that is gone, or a session it no longer has: what is left to do is
+                # end it here, which is what keeps the dispatcher off it.)
+                pass
+            found = await sessions.save_session(
+                found.model_copy(update={"state": SessionState.ENDED})
+            )
+        return await self._session_info(found, limit=0)
+
+    async def send(self, request: SendRequest) -> Sent:
+        """A message typed into an agent's session (the owner's only): given as a turn of its
+        own, through the agent's runner, and kept in its transcript as it happens.
+
+        A session in a turn is not interrupted: `delivery: "steer"` would need a harness that
+        takes input mid-turn, and none of udl's do yet, so it is refused rather than pretended."""
+        who = _caller()
+        if who is not None and who.is_agent:
+            raise NotAllowed(
+                "a message into an agent's session is the owner's",
+                hint="An agent asks with `orch_ask` (28.1); what a person says reaches it there.",
+            )
+        agent = await self._require_agent(request.agent)
+        sessions = stored.SessionRecords(self.records)
+        found = await sessions.current(agent.name)
+        if found is None:
+            raise NotAllowed(
+                f"{agent.name!r} has no session to send to",
+                hint="Start one by assigning it a task: its dispatcher takes it from there.",
+            )
+        if request.delivery == "steer":
+            raise NotAllowed(
+                "a running turn takes no input yet",
+                hint="Send it as a turn: the agent reads it when its current one ends.",
+            )
+        if found.state in (SessionState.STARTING, SessionState.RUNNING):
+            raise NotAllowed(
+                f"{agent.name!r} is in a turn",
+                hint="Wait for it to answer, or stop the session and send again.",
+            )
+        runner = await self.harnesses.runner(found.ref.host, found.ref.runner)
+        turn = found.turns + 1
+        async for event in runner.send(found.ref, request.text):
+            await sessions.save_event(
+                stored.SessionEvent(
+                    agent=found.agent, session=found.id, turn=turn, event=an_event(event)
+                )
+            )
+        await sessions.save_session(
+            found.model_copy(update={"state": SessionState.IDLE, "turns": turn})
+        )
+        return Sent(session=found.id, turn=turn)
+
+    async def _set_paused(self, name: str, *, paused: bool) -> Agent:
+        """`name`'s agent, paused or resumed, as an operation answers with it."""
+        agents = stored.AgentRecords(self.records)
+        found = await self._require_agent(name)
+        return as_shape(Agent, await agents.save_agent(found.model_copy(update={"paused": paused})))
+
+    async def _require_agent(self, name: str) -> stored.Agent:
+        """The agent called `name`, or DoesNotExist."""
+        found = await stored.AgentRecords(self.records).agent(name)
+        if found is None:
+            raise DoesNotExist(
+                f"There is no agent {name!r}",
+                hint="List the agents to see their names, or add one with `orch_set_agent`.",
+            )
+        return found
+
+    async def _agent_info(self, agent: stored.Agent) -> AgentInfo:
+        """`agent`, as the operations answer with it: its status, its session, its queue (in
+        every project: a task's key is only unique within one) and its reports."""
+        sessions = stored.SessionRecords(self.records)
+        session = await sessions.current(agent.name)
+        assigned = await self.records.list(stored.Task, RecordQuery(where={"assignee": agent.name}))
+        queue = sorted(
+            (one for one in assigned if one.state in (QUEUED, IN_PROGRESS)),
+            key=lambda one: (one.position is None, one.position or 0, one.key),
+        )
+        return AgentInfo(
+            agent=as_shape(Agent, agent),
+            status=as_shape(Agent, agent).status(
+                None if session is None else as_shape(AgentSessionShape, session),
+                offline=agent.offline,
+            ),
+            session=None if session is None else await self._session_info(session, limit=0),
+            queue=[_entry(one) for one in queue],
+            reports=[
+                one.name for one in await stored.AgentRecords(self.records).reports(agent.name)
+            ],
+        )
+
+    async def _session_info(
+        self, session: stored.AgentSession, *, offset: int = 0, limit: int = 50
+    ) -> SessionInfo:
+        """`session`, with a page of its transcript (`limit` 0: none of it, only the count)."""
+        events = await stored.SessionRecords(self.records).transcript(session.id)
+        page = events[offset : offset + limit] if limit else []
+        return SessionInfo(
+            id=session.id,
+            agent=session.agent,
+            project=session.project,
+            task=session.task,
+            ref=session.ref,
+            state=session.state,
+            turns=session.turns,
+            nudges=session.nudges,
+            limited_until=session.limited_until,
+            tokens_in=session.tokens_in,
+            tokens_out=session.tokens_out,
+            cost=session.cost,
+            last_text=session.last_text,
+            created_at=session.created_at,
+            events=[
+                SessionEventShape(turn=one.turn, at=one.created_at, event=one.event) for one in page
+            ],
+            total=len(events),
+        )
 
     # -- the harnesses (25.11) -----------------------------------------------------------------
 

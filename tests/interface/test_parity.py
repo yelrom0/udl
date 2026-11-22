@@ -102,6 +102,9 @@ CLI_ONLY = {"serve", "mcp", "browser login", "chain wizard"}
 API_ONLY = {
     "GET /downloads/{id}/events": "download_events",
     "GET /events/stream": "events_stream",
+    # (One agent's session, as it happens, 27.9: a stream is not an operation, as the events'
+    # is not.)
+    "GET /orch/sessions/{session}/stream": "orch_session_stream",
 }
 
 

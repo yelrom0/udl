@@ -1459,6 +1459,16 @@ class AgentRecords:
         if reports:
             named = ", ".join(found.name for found in reports)
             raise InUse(f"The agent {name} is the manager of {named}: it cannot be deleted")
+        held = [
+            one.key
+            for one in await self._records.list(Task, RecordQuery(where={"assignee": name}))
+            if one.state in (QUEUED, IN_PROGRESS)
+        ]
+        if held:
+            raise InUse(
+                f"The agent {name} has {', '.join(sorted(held))} unfinished: it cannot be deleted",
+                hint="Unassign them, or finish them, and delete it after.",
+            )
         sessions = await self._records.list(AgentSession, RecordQuery(where={"agent": name}))
         for session in sessions:
             for event in await self._records.list(

@@ -24,7 +24,8 @@ holds them as records, with the same fields, so a stored agent is the same shape
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Final, Literal
+from uuid import UUID
 
 # Package Imports
 from pydantic import (
@@ -34,13 +35,15 @@ from pydantic import (
     Field,
     NonNegativeInt,
     PositiveInt,
+    TypeAdapter,
 )
 
 # Local Imports
 from udl.db.models import JsonObject, utcnow
 from udl.db.records import Name
-from udl.plugins.apps.orch.models import AgentRole, AgentStatus, HostName, Title
+from udl.plugins.apps.orch.models import AgentRole, AgentStatus, HostName, QueueEntry, Title
 from udl.plugins.runners.base import (
+    AgentEvent,
     RunnerFailed,
     RunnerLimited,
     SessionRef,
@@ -53,12 +56,26 @@ from udl.plugins.runners.base import (
 
 __all__ = [
     "Agent",
+    "AgentInfo",
     "AgentRole",
     "AgentSession",
     "AgentStatus",
+    "Agents",
     "AnAgentEvent",
+    "DeleteAgentRequest",
+    "GetAgentRequest",
+    "GetSessionRequest",
+    "ListAgentsRequest",
     "ManagerPowers",
+    "PauseAgentRequest",
+    "ResumeAgentRequest",
+    "SendRequest",
+    "Sent",
+    "SessionEventShape",
+    "SessionInfo",
     "SessionState",
+    "SetAgentRequest",
+    "StopSessionRequest",
 ]
 
 AnAgentEvent = Annotated[
@@ -66,6 +83,14 @@ AnAgentEvent = Annotated[
     Field(discriminator="kind"),
 ]
 """One thing that happened in a session, as its runner said it (the `kind` says which)."""
+
+_AN_EVENT: Final = TypeAdapter(AnAgentEvent)
+
+
+def an_event(event: AgentEvent) -> AnAgentEvent:
+    """`event` as the transcript holds it: the kinds are the same, so this reads it as one of
+    them (`kind` says which)."""
+    return _AN_EVENT.validate_python(event)
 
 
 class SessionState(StrEnum):
@@ -191,3 +216,191 @@ class AgentSession(_Model):
     """What it has cost, in USD, when its harness says (None: it does not charge per turn)."""
     last_text: str = ""
     """What it last said (the end of its last turn's answer)."""
+
+
+# ---------------------------------------------------------------------------------------------
+# Agents and their sessions (27.9)
+# ---------------------------------------------------------------------------------------------
+
+
+class SessionEventShape(_Model):
+    """One thing that happened in a session, as an operation answers it."""
+
+    turn: NonNegativeInt = 0
+    """The turn it happened in (0: before the first one)."""
+    at: AwareDatetime
+    """When it was stored."""
+    event: AnAgentEvent
+    """What happened (its `kind` says which of the runner's events it is)."""
+
+
+class SessionInfo(_Model):
+    """A session as an operation answers it: where it is, what it has used, and its transcript
+    (paged: `events` is the page, `total` is how many there are)."""
+
+    id: UUID
+    """Its id (what `orch_get_session` and `orch_stop_session` take)."""
+    agent: Name
+    """The agent whose session it is."""
+    project: str = ""
+    """The project its task is in (empty: its manager's standing session)."""
+    task: str = ""
+    """The task it works (empty: its manager's standing session)."""
+    ref: SessionRef
+    """The harness's session: the runner, its id, the folder and the host."""
+    state: SessionState
+    """Where it is."""
+    turns: NonNegativeInt = 0
+    """How many turns it has taken."""
+    nudges: NonNegativeInt = 0
+    """How many times it has been nudged."""
+    limited_until: AwareDatetime | None = None
+    """When its harness's quota is back, when it said."""
+    tokens_in: NonNegativeInt = 0
+    """The tokens it was given, over its turns."""
+    tokens_out: NonNegativeInt = 0
+    """The tokens it wrote, over its turns."""
+    cost: Decimal | None = None
+    """What it has cost, in USD, when its harness says."""
+    last_text: str = ""
+    """What it last said."""
+    created_at: AwareDatetime
+    """When it started."""
+    events: list[SessionEventShape] = Field(default_factory=list[SessionEventShape])
+    """The transcript's page (oldest first)."""
+    total: NonNegativeInt = 0
+    """How many events its transcript has."""
+
+
+class AgentInfo(_Model):
+    """An agent as an operation answers it: what it is, what it is doing, its session, its queue
+    and the agents that report to it."""
+
+    agent: Agent
+    """The agent."""
+    status: AgentStatus
+    """What it is doing now (derived: never stored)."""
+    session: SessionInfo | None = None
+    """Its current session, when it has one (its transcript's first page)."""
+    queue: list[QueueEntry] = Field(default_factory=list[QueueEntry])
+    """Its tasks, in the order it will work them."""
+    reports: list[Name] = Field(default_factory=list[Name])
+    """The agents that report to it."""
+
+
+class ListAgentsRequest(_Model):
+    """Listing the agents."""
+
+    project: Name | None = None
+    """Only the agents that work this project (None: all of them)."""
+
+
+class Agents(_Model):
+    """Every agent, each as `AgentInfo` answers one."""
+
+    items: list[AgentInfo] = Field(default_factory=list[AgentInfo])
+    """The agents, by name."""
+
+
+class GetAgentRequest(_Model):
+    """One agent, with its queue, its session and its reports."""
+
+    name: Name
+    """The agent's name."""
+
+
+class SetAgentRequest(_Model):
+    """Creating or editing an agent: what is not given is kept, and a new one needs a title and
+    a runner. `manager` set to `""` clears it (the agent reports to the humans)."""
+
+    name: Name
+    """The agent's name (unique)."""
+    title: Title | None = None
+    """How it is shown."""
+    runner: Name | None = None
+    """The runner plugin that starts its sessions (e.g. claude-code)."""
+    runner_options: JsonObject | None = None
+    """What its runner is given (its own options' fields; a secret is a reference)."""
+    model: str | None = None
+    """The model it runs (empty: its runner's default)."""
+    host: HostName | None = None
+    """The host it runs on."""
+    role: AgentRole | None = None
+    """What it does: implements, manages, or reviews."""
+    manager: str | None = None
+    """The agent it reports to, or `""` for the humans."""
+    manages: ManagerPowers | None = None
+    """What it may do for its reports, when it is a manager."""
+    projects: list[Name] | None = None
+    """The projects it works (empty: all of them)."""
+    brief: str | None = None
+    """What it is told of itself, as markdown."""
+    max_nudges: PositiveInt | None = None
+    """How many times it may be nudged before a person is asked."""
+    enabled: bool | None = None
+    """Whether udl starts sessions for it at all."""
+    paused: bool | None = None
+    """Whether a person paused it."""
+
+
+class DeleteAgentRequest(_Model):
+    """Deleting an agent: refused while it has reports or an unfinished task."""
+
+    name: Name
+    """The agent's name."""
+
+
+class PauseAgentRequest(_Model):
+    """Pausing an agent: nothing is dispatched to it until it is resumed."""
+
+    name: Name
+    """The agent's name."""
+
+
+class ResumeAgentRequest(_Model):
+    """Resuming an agent: what it has queued is dispatched again."""
+
+    name: Name
+    """The agent's name."""
+
+
+class GetSessionRequest(_Model):
+    """A session and a page of its transcript."""
+
+    session: UUID
+    """The session's id."""
+    offset: NonNegativeInt = 0
+    """How many of its events to skip (the transcript's order)."""
+    limit: PositiveInt = 50
+    """How many to return."""
+
+
+class StopSessionRequest(_Model):
+    """Stopping a session: it ends, and nothing it was doing goes on."""
+
+    session: UUID
+    """The session's id."""
+
+
+class SendRequest(_Model):
+    """A message typed into an agent's session (the owner's only).
+
+    `delivery: "turn"` sends it as its own turn (the session must not be running); `"steer"` is
+    for a session that is running: the message is kept as a live event of the session, and the
+    dispatcher gives it to the agent at its next turn, as what a person said mid-turn."""
+
+    agent: Name
+    """The agent whose session it is."""
+    text: str
+    """What is said (markdown)."""
+    delivery: Literal["turn", "steer"] = "turn"
+    """How it is given: as a turn of its own, or steered into the running one."""
+
+
+class Sent(_Model):
+    """What `orch_send` did: the session it went to, and the turn it was (None when steered)."""
+
+    session: UUID
+    """The session it went to."""
+    turn: int | None = None
+    """The turn it was (None: it was steered into the session, to be given at its next turn)."""
