@@ -10,8 +10,6 @@ group the caller already made.
 
 # System Imports
 import inspect
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 # Package Imports
@@ -23,8 +21,8 @@ from typer.testing import CliRunner
 
 # Local Imports
 from support.engine import settings
+from support.interfaces import Harness
 from support.operations import Things, every_thing, find
-from udl.config import Settings
 from udl.core.operations import CLISpec, Operation
 from udl.interfaces.adapters import add_commands
 from udl.interfaces.cli.common import Runtime, operation_of
@@ -109,18 +107,15 @@ async def watched(console: Console, service: object, request: Things) -> None:
     _watched.append(("watched", str(request.count)))
 
 
-@asynccontextmanager
-async def _no_service(settings: Settings) -> AsyncIterator[object]:
-    """A service that is nothing: the watcher is given it and the test's own one records."""
-    yield object()
-
-
 def test_a_command_that_follows_takes_watch_and_runs_its_watcher(tmp_path: Path) -> None:
     # (The flag is the CLI's own: it is not a field of the request, and the API and MCP never see
     # it — a command that follows is what a person reads, not what an agent calls.)
     app = typer.Typer()
     add_commands(app, [watching()], renderers={}, helps={})
-    runtime = Runtime(settings=settings(tmp_path), make_service=_no_service, verbosity=0)
+    # (The watcher is given a real service — the harness's — and records the request it was
+    # given; a watch is the CLI's own, so it never reaches the operation.)
+    harness = Harness(tmp_path)
+    runtime = Runtime(settings=settings(tmp_path), make_service=harness.service, verbosity=0)
 
     result = CliRunner().invoke(app, ["gizmo", "follow", "--watch"], obj=runtime)
 
