@@ -3210,3 +3210,58 @@ async def test_the_merger_s_task_is_in_the_project_it_merges(service: UDLService
     assert merging is not None, f"no standing merge task: {sorted(every)}"
     assert merging.project == "udl"
     assert merging.worktree, "a worktree to read the diff in"
+
+
+async def test_the_merger_is_told_the_next_one_it_may_act_on(service: UDLService) -> None:
+    """(The card: the next ready task that isn't stacked on the skipped one. The merger's own
+    pull is a person's, and what is stacked on it waits with it: the one it is told of is the
+    next that is neither.)"""
+    await a_merger_and_a_ready_pull(service, own=True)
+    records = AppRecords(service.db)
+    projects = ProjectRecords(records)
+    project = await projects.project("udl")
+    assert project is not None
+    await projects.save_project(project.model_copy(update={"review_bot": None}))
+    tasks = TaskRecords(records)
+    # (`F-1.2` is the harness's own queued task: it is stacked on the merger's own pull.)
+    second = await tasks.task("udl", "F-1.2")
+    assert second is not None
+    await tasks.save_all([second.model_copy(update={"needs": ["F-1.1"]})])
+    second = await tasks.task("udl", "F-1.2")
+    assert second is not None
+    await tasks.move(second, IN_PROGRESS, by=Principal(kind="system", role="start"))
+    second = await tasks.task("udl", "F-1.2")
+    assert second is not None
+    await tasks.move(second, READY, by=Principal(kind="system", role="ready"))
+    free = await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.3", title="It 3"))
+    await tasks.move(free, IN_PROGRESS, by=Principal(kind="system", role="start"))
+    free = await tasks.task("udl", "F-1.3")
+    assert free is not None
+    await LinkRecords(records).add(
+        project="udl",
+        owner_kind=OwnerKind.TASK,
+        owner="F-1.3",
+        kind="pull",
+        url="https://github.com/yelrom0/udl/pull/3",
+    )
+    await tasks.move(free, READY, by=Principal(kind="system", role="ready"))
+    SCRIPT["manager"] = _quiet
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(10):
+            if MERGER_PROMPT[0]:
+                break
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    said = MERGER_PROMPT[0]
+    assert "- F-1.3 (It 3)" in said, f"the next it may act on: {said}"
+    row = said.split("This one is ready:")[1].split("Its diff")[0]
+    assert "F-1.1" not in row, "the merger's own is a person's"
+    assert "F-1.2" not in row, "and what is stacked on it waits with it"

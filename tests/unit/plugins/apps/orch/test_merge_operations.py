@@ -553,6 +553,22 @@ async def test_a_merge_makes_what_waited_after_it_now(service: UDLService) -> No
     assert [one.when for one in actions.actions] == [ActionWhen.NOW]
 
 
+async def test_a_task_stacked_on_an_unmerged_one_cannot_be_merged_first(
+    service: UDLService,
+) -> None:
+    """(The card's order: nothing above a pull that is not merged. `needs` is 27.6's, so the
+    merge re-checks it rather than trusting the list it was read from.)"""
+    await add_task(service, "F-1.2", number=2, needs=["F-1.1"], state=READY)
+    app = await service.apps.get("github")
+    assert isinstance(app, FakeGitHub)
+    app.pull(2)
+
+    with pytest.raises(NotAllowed, match=r"it waits on F-1\.1"):
+        await merged(service, key="F-1.2", confirm="yelrom0/udl#2")
+
+    assert app.merged == []
+
+
 async def test_a_task_with_no_pull_cannot_be_merged(service: UDLService) -> None:
     tasks = TaskRecords(AppRecords(service.db))
     await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.8", title="No pull"))

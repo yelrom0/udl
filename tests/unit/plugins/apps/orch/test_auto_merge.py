@@ -244,11 +244,14 @@ async def add_task(
     *,
     number: int,
     state: str = IN_PROGRESS,
+    needs: list[str] | None = None,
 ) -> None:
     """A task of the project with a pull linked, moved to `state`."""
     records = AppRecords(service.db)
     tasks = TaskRecords(records)
-    await tasks.save_task(Task(project="udl", feature="F-1", key=key, title=f"Task {key}"))
+    await tasks.save_task(
+        Task(project="udl", feature="F-1", key=key, title=f"Task {key}", needs=needs or [])
+    )
     found = await tasks.task("udl", key)
     assert found is not None
     await tasks.move(found, IN_PROGRESS, by=Principal(kind="system", role="start"))
@@ -735,6 +738,75 @@ async def test_the_merger_s_own_task_is_marked_and_passed_over(service: UDLServi
     assert "waiting for a person: the merger's own task" in listed.ready[0].blockers
 
 
+async def test_a_row_stacked_on_the_merger_s_own_waits_with_it(service: UDLService) -> None:
+    # (The card: the next ready task that isn't stacked on the skipped one is the one it is on.
+    # The merger's own task is a person's, so what is stacked on it waits for that person.)
+    records = AppRecords(service.db)
+    tasks = TaskRecords(records)
+    found = await tasks.task("udl", "F-1.1")
+    assert found is not None
+    await tasks.save_all([found.model_copy(update={"assignee": "claude"})])
+    projects = ProjectRecords(records)
+    kept = await projects.project("udl")
+    assert kept is not None
+    await projects.save_project(kept.model_copy(update={"review_bot": None}))
+    await add_task(service, "F-1.2", number=2, state=READY, needs=["F-1.1"])
+    await add_task(service, "F-1.3", number=3, state=READY)
+    await service.call("orch_set_auto_merge", {"on": True, "merger": "claude"})
+
+    listed = await service.call("orch_merge_list", MergeListRequest())
+
+    assert isinstance(listed, MergeList)
+    assert [(one.task, one.merger) for one in listed.ready] == [
+        ("F-1.1", None),
+        ("F-1.2", None),
+        ("F-1.3", "reviewing"),
+    ]
+    assert "waiting for a person: the merger's own task" in listed.ready[0].blockers
+    assert any("waits on F-1.1" in why for why in listed.ready[1].blockers)
+
+
+async def test_a_row_stacked_on_a_changes_asked_one_waits_with_it(service: UDLService) -> None:
+    # (Sent back with changes, its stack waits for it: nothing above a pull that is not merged.)
+    await service.call("orch_set_auto_merge", {"on": True, "merger": "claude"})
+    caller = current_principal.set(as_caller("claude", "manager"))
+    try:
+        await service.call(
+            "orch_review_task",
+            {"key": "F-1.1", "verdict": "changes", "reasons": "Fix it.", "head": HEAD},
+        )
+    finally:
+        current_principal.reset(caller)
+    await add_task(service, "F-1.2", number=2, state=READY, needs=["F-1.1"])
+    await add_task(service, "F-1.3", number=3, state=READY)
+
+    listed = await service.call("orch_merge_list", MergeListRequest())
+
+    assert isinstance(listed, MergeList)
+    assert [(one.task, one.merger) for one in listed.ready] == [
+        ("F-1.2", None),
+        ("F-1.3", "reviewing"),
+    ]
+    assert any("waits on F-1.1" in why for why in listed.ready[0].blockers)
+
+
+async def test_a_row_with_a_blocker_is_not_the_one_it_is_on(service: UDLService) -> None:
+    # (Only what it can merge now is its to be on: a check still running is the agent's to fix.)
+    await add_task(service, "F-1.2", number=2, state=READY)
+    await service.call("orch_set_auto_merge", {"on": True, "merger": "claude"})
+    github = await service.apps.get("github")
+    assert isinstance(github, FakeGitHub)
+    github.pull(1, draft=True)
+
+    listed = await service.call("orch_merge_list", MergeListRequest())
+
+    assert isinstance(listed, MergeList)
+    assert [(one.task, one.merger) for one in listed.ready] == [
+        ("F-1.1", None),
+        ("F-1.2", "reviewing"),
+    ]
+
+
 async def test_another_manager_s_changes_leave_it_ready(service: UDLService) -> None:
     # (Only the merger's changes verdict sends a ready pull back: another manager's review is
     # 27.8's, and what it says is its note.)
@@ -760,10 +832,13 @@ async def test_another_manager_s_changes_leave_it_ready(service: UDLService) -> 
     moved = await tasks.task("udl", "F-1.1")
 
     assert moved is not None
-    assert moved.state == READY
+    assert moved.state == READY, "another manager's review is not the merger's to send back"
     listed = await service.call("orch_merge_list", MergeListRequest())
     assert isinstance(listed, MergeList)
-    assert [(one.task, one.merger) for one in listed.ready] == [("F-1.1", "reviewing")]
+    [row] = listed.ready
+    # (Its manager asked for changes: it is not the merger's to be on until that is answered.)
+    assert row.merger is None
+    assert "its manager claude asked for changes" in row.blockers
 
 
 async def test_a_row_whose_changes_were_asked_says_so(service: UDLService) -> None:

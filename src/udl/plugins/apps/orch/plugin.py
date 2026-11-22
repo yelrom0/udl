@@ -2236,28 +2236,31 @@ class Orch(AppPlugin[OrchSettings]):
                     and (by_key.get(one.task) is not None)
                     and by_key[one.task].assignee == found.merger
                 )
-                if one.merger is MergerState.CHANGES_ASKED:
-                    marked.append(one)
-                elif own:
+                # (Only what it can merge now is its to be on: a pull with a blocker of its own —
+                # a check still running, a pull stacked on one not merged — or the merger's own
+                # with no review bot, or one it asked changes of, waits where it is. A pull
+                # stacked on one of those is blocked by it, so it waits too, 28.7.)
+                if one.blockers or own or one.merger is MergerState.CHANGES_ASKED:
                     marked.append(
                         one.model_copy(
                             update={
-                                "blockers": [
-                                    *one.blockers,
-                                    "waiting for a person: the merger's own task",
-                                ]
+                                "blockers": (
+                                    [*one.blockers, "waiting for a person: the merger's own task"]
+                                    if own and not one.blockers
+                                    else list(one.blockers)
+                                )
                             }
                         )
                     )
-                else:
-                    marked.append(
-                        one.model_copy(
-                            update={
-                                "merger": MergerState.REVIEWING if on_it else MergerState.NEXT,
-                            }
-                        )
+                    continue
+                marked.append(
+                    one.model_copy(
+                        update={
+                            "merger": MergerState.REVIEWING if on_it else MergerState.NEXT,
+                        }
                     )
-                    on_it = False
+                )
+                on_it = False
             ready = marked
         return MergeList(
             auto_merge=found.auto_merge,
