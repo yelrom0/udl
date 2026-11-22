@@ -288,6 +288,10 @@ class Dispatcher:
         """The agents already told they have nothing to do (28.5), for this stretch of it."""
         self._idle_stretches: dict[str, int] = {}
         """How many idle stretches each agent has had: what makes each one's event its own."""
+        self._run = uuid4().hex[:8]
+        """This dispatcher's own id: an event's key is unique for good, so a stretch is named by
+        the run it happened in as well as by its number — else a restarted udl's first stretches
+        would look like ones it had already said."""
         self._tick = tick
         self._wakes: dict[str, asyncio.Event] = {}
         """One wake per agent: an event that may concern it, or its tick."""
@@ -451,7 +455,7 @@ class Dispatcher:
             await self._events.emit(
                 AGENT_IDLE.name,
                 AgentIdle(agent=agent.name, project=project),
-                dedupe_key=f"agent.idle:{agent.name}:{made}",
+                dedupe_key=f"agent.idle:{agent.name}:{self._run}:{made}",
             )
         except Exception:
             log.warning("The %s event could not be published", AGENT_IDLE.name, exc_info=True)

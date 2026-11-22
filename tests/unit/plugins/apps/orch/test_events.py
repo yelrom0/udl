@@ -19,14 +19,16 @@ from typing import Any, Final
 import pytest
 
 # Local Imports
-from udl.automations.events import EventRecord, EventType
+from udl.automations.events import EventRecord, EventType, EventTypeList
 from udl.core.service import UDLService
 from udl.db.records import RecordQuery
 from udl.plugins.apps.base import AppEvents, AppRecords
 from udl.plugins.apps.orch import actions, questions
+from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch.models import BLOCKED, MERGED, QUEUED, READY, ActionWhen, Principal
 from udl.plugins.apps.orch.plugin import Orch
 from udl.plugins.apps.orch.records import QuestionRecords, TaskRecords
+from udl.plugins.apps.orch.records import Task as Task
 
 UDL: Final = Principal(kind="system", name="")
 """udl itself, which may move any task (the dispatcher assigns, the watcher merges)."""
@@ -84,8 +86,6 @@ def test_every_type_has_a_schema_and_an_example(declared: EventType[Any]) -> Non
 
 async def test_the_listing_shows_them_with_their_schemas(service: UDLService) -> None:
     """(The card's Done-when: `udl events types` lists them with schemas.)"""
-    from udl.automations.events import EventTypeList
-
     listed = await service.call("list_event_types", {})
     assert isinstance(listed, EventTypeList)
     by_name = {one.name: one for one in listed.types}
@@ -239,3 +239,73 @@ async def test_a_person_s_action_says_it_is_needed(service: UDLService) -> None:
     assert published[0].data["action"] == made.key
     assert published[0].data["when"] == "now"
     assert published[0].data["assignee"] == "human:claude"
+
+
+async def test_the_queue_says_a_person_s_task_is_needed(service: UDLService) -> None:
+    """(A person's task is their action from the moment the queue gives it to them, and the
+    queue's own batch writes both — so it is never queued without saying so.)"""
+    records = records_of(service)
+    tasks = TaskRecords(records)
+    await tasks.save_task(
+        Task(
+            project="udl",
+            feature="26",
+            key="26.3",
+            title="Send the key",
+            spec="The one from 1Password.",
+            task_kind="human",
+        )
+    )
+
+    await queues.assign(
+        tasks, "26.3", "human:claude", project="udl", by=Principal(kind="system", role="assign")
+    )
+
+    published = await events_of(service, "orch.action.needed")
+    assert len(published) == 1
+    assert published[0].data["project"] == "udl"
+    assert published[0].data["task"] == "26.3"
+    assert published[0].data["assignee"] == "human:claude"
+    assert published[0].data["when"] == "now"
+
+
+# ---------------------------------------------------------------------------------------------
+# A question's move
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_a_blocking_question_s_move_is_published(service: UDLService) -> None:
+    """(The question writes the task's move itself, so it publishes it as any other move: the
+    card's `queued → blocked`, with what it waits on, and back on the answer.)"""
+    records = records_of(service)
+    questions_of = QuestionRecords(records)
+
+    asked = await questions.ask(
+        questions_of,
+        project="udl",
+        task="26.1",
+        title="Which file?",
+        text="The spec names two.",
+        blocking=True,
+        asked_by="deepseek-a",
+    )
+
+    moved = await events_of(service, "orch.task.changed")
+    assert [(one.data["from"], one.data["to"]) for one in moved] == [("open", "blocked")]
+    blocked = await events_of(service, "orch.task.blocked")
+    assert len(blocked) == 1
+    assert blocked[0].data == {"project": "udl", "task": "26.1", "on": asked.key}
+
+    await questions.answer(
+        questions_of,
+        project="udl",
+        key=asked.key,
+        answer="The first one.",
+        by=Principal(kind="human", name="human:claude"),
+    )
+
+    moved = await events_of(service, "orch.task.changed")
+    assert [(one.data["from"], one.data["to"]) for one in moved] == [
+        ("open", "blocked"),
+        ("blocked", "queued"),
+    ]

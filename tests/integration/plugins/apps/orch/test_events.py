@@ -113,6 +113,25 @@ async def test_an_agent_with_nothing_on_its_queue_says_it_is_idle_once(
     assert AGENT in published[0].subject
 
 
+async def test_a_restart_s_idle_is_news_again(service: UDLService) -> None:
+    """(The event's key is the stretch it is, not a number this process counts to: `(type,
+    dedupe_key)` is unique for good, so a counter would make the restarted udl's first stretch
+    look like one it had already said.)"""
+    for _ in range(2):  # (two dispatchers over one database: udl, restarted)
+        clock = FakeClock()
+        found = await dispatcher(service, clock=clock)
+        running = asyncio.ensure_future(found.run())
+        try:
+            await clock.advance(timedelta(seconds=31))
+        finally:
+            running.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await running
+
+    published = await idle_events(service)
+    assert len(published) == 2
+
+
 async def test_the_listing_of_events_reads_it_as_any_other(service: UDLService) -> None:
     """(A subscriber finds it through `list_events`, as `udl events types` lists it.)"""
     clock = FakeClock()
