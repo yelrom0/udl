@@ -33,6 +33,7 @@ from pydantic import (
 )
 
 # Local Imports
+from udl.automations.events import EventType
 from udl.db.models import JsonObject
 from udl.db.records import Name
 
@@ -52,6 +53,7 @@ __all__ = [
     "NOW",
     "OPEN",
     "POINTS",
+    "PROJECT_CHANGED",
     "QUEUED",
     "READY",
     "REF_MARKS",
@@ -114,6 +116,7 @@ __all__ = [
     "ListTasksRequest",
     "ManagerVerdict",
     "MergePolicy",
+    "MergerState",
     "Message",
     "ModelRow",
     "MoveTaskRequest",
@@ -511,6 +514,38 @@ class Project(_Model):
     """The review bot's login, whose verdict a ready PR waits on (e.g. claude[bot])."""
     rules: str = ""
     """The ground rules, as markdown, given to every agent on this project."""
+    auto_merge: bool = False
+    """Whether a merger merges this project's ready pulls by itself (28.7; set only by
+    `orch_set_auto_merge`)."""
+    merger: str | None = None
+    """The agent that merges them: a reviewer or a manager of this project (28.7)."""
+
+
+class ProjectChanged(BaseModel):
+    """What orch publishes when a project's auto merge changes (28.7): on or off, and whose."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
+
+    project: str
+    """The project, by name."""
+    auto_merge: bool
+    """Whether a merger now merges its ready pulls by itself."""
+    merger: str | None = None
+    """The agent that merges them."""
+
+
+PROJECT_CHANGED: Final = EventType(
+    name="orch.project.changed",
+    data=ProjectChanged,
+    summary="A project's auto merge was turned on or off",
+    example=ProjectChanged(project="udl", auto_merge=True, merger="claude"),
+    subject=lambda event: (
+        f"{event.project}: auto merge "
+        f"{'on, by ' + (event.merger or '?') if event.auto_merge else 'off'}"
+    ),
+    source="orch",
+)
+"""What orch publishes when a project's auto merge changes (28.7)."""
 
 
 class Repo(_Model):
@@ -1322,6 +1357,9 @@ class Reviewed(_Model):
     """What the manager says."""
     reasons: str = ""
     """Why."""
+    state: State | None = None
+    """Where the task is after it: `in_progress` when a merger asked changes of a ready pull
+    (28.7), otherwise where it was."""
     by: str = ""
     """The manager's name."""
     at: AwareDatetime
@@ -1363,6 +1401,18 @@ class ReadyRequest(_Model):
     """The project it is in (None: the only one, while udl has one)."""
 
 
+class MergerState(StrEnum):
+    """What a merger is doing with a row (28.7): the one it is reviewing, the ones next in its
+    queue, and one it asked changes of."""
+
+    REVIEWING = "reviewing"
+    """The first ready pull: the one the merger is on."""
+    NEXT = "next"
+    """Ready, and next in the merger's queue."""
+    CHANGES_ASKED = "changes asked"
+    """It reviewed this head and asked for changes: it waits on its agent, not on the merger."""
+
+
 class MergeRow(_Model):
     """One task in a merge list (28.3): its pull, where it is, and what it waits on."""
 
@@ -1384,6 +1434,8 @@ class MergeRow(_Model):
     """The commit at its pull's head."""
     state: State
     """Where the task is."""
+    merger: MergerState | None = None
+    """What the merger is doing with it (28.7; None while auto merge is off)."""
     needs: list[Key] = Field(default_factory=list[Key])
     """The tasks that must be merged first, by key."""
     blockers: list[str] = Field(default_factory=list[str])
@@ -1428,6 +1480,10 @@ class MergeList(_Model):
     """Held (built now, merged later), each with its hold as its blocker."""
     done: list[MergeRow] = Field(default_factory=list[MergeRow])
     """Merged in the last 14 days, with what followed each."""
+    auto_merge: bool = False
+    """Whether a merger merges this project's ready pulls by itself (28.7)."""
+    merger: str | None = None
+    """The agent that merges them (28.7)."""
 
 
 class AgentLine(_Model):
@@ -1480,6 +1536,10 @@ class Inbox(_Model):
     """The project it is of."""
     merge: MergeList
     """Ready to merge (28.3's own list: ready, coming, held, done)."""
+    auto_merge: bool = False
+    """Whether a merger merges the ready ones by itself (28.7)."""
+    merger: str | None = None
+    """The agent that merges them (28.7)."""
     questions: list[Question] = Field(default_factory=list[Question])
     """The open questions, the blocking ones first, each newest first."""
     actions: list[Action] = Field(default_factory=list[Action])
@@ -1632,6 +1692,23 @@ class SetProjectRequest(_Model):
     """The review bot's login, whose verdict a ready PR waits on (e.g. claude[bot])."""
     rules: str | None = None
     """The ground rules, as markdown, given to every agent on this project."""
+    auto_merge: bool | None = None
+    """Whether a merger merges this project's ready pulls (28.7): kept as it is, and a change is
+    refused — `orch_set_auto_merge` is its only writer."""
+    merger: str | None = None
+    """The agent that merges them (28.7): kept as it is, and a change is refused."""
+
+
+class SetAutoMergeRequest(_Model):
+    """Turning auto merge on or off, and naming its merger (28.7): the owner's alone."""
+
+    on: bool
+    """Whether it is on."""
+    merger: str | None = None
+    """The agent that merges the project's ready pulls: a reviewer or a manager of this project.
+    Needed to turn it on; turning it off keeps the one stored."""
+    project: Name | None = None
+    """The project (None: the only one, while udl has one)."""
 
 
 class DeleteProjectRequest(_Model):

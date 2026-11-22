@@ -118,6 +118,10 @@ class Project(Record):
     """The review bot's login (e.g. claude[bot]), whose verdict a ready PR waits on."""
     rules: str = ""
     """The ground rules, as markdown, given to every agent on this project."""
+    auto_merge: bool = False
+    """Whether a merger merges this project's ready pulls by itself (28.7)."""
+    merger: str | None = None
+    """The agent that merges them (28.7)."""
 
     @classmethod
     def example(cls) -> Self:

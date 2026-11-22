@@ -932,26 +932,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/orch/sessions/{session}/stream": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * One agent's session, as it happens.
-         * @description Server-sent events, from now on, of one session's own: `event` (an EventInfo) for each `orch.session.*` event it published — that it started, each thing its runner said, and that it failed or ended. A limit is `orch.agent.limited` (the agent's, not the session's), so it is not on this stream: the session's state and `limited_until` are. Live only: a client that reconnects reloads the transcript (`orch_get_session`) rather than resuming.
-         */
-        get: operations["orch_session_stream"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/plugins": {
         parameters: {
             query?: never;
@@ -1131,27 +1111,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/plugins/orch/delete_agent": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Delete an agent, its sessions and its tokens (admin). Raises InUse while it manages
-         * @description Delete an agent, its sessions and its tokens (admin). Raises InUse while it manages
-         *     another agent, or while it has a task that is not finished.
-         */
-        post: operations["orch_delete_agent"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/plugins/orch/delete_project": {
         parameters: {
             query?: never;
@@ -1297,26 +1256,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/plugins/orch/get_agent": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * One agent, with its queue, its current session and the agents that report to it.
-         * @description One agent, with its queue, its current session and the agents that report to it.
-         */
-        post: operations["orch_get_agent"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/plugins/orch/get_feature": {
         parameters: {
             query?: never;
@@ -1394,27 +1333,6 @@ export interface paths {
          *     A person's own list is asked for the same way, by `human:<name>`.
          */
         post: operations["orch_get_queue"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/plugins/orch/get_session": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * A session and a page of its transcript, oldest first (`offset` and `limit` page it;
-         * @description A session and a page of its transcript, oldest first (`offset` and `limit` page it;
-         *     `total` is how many events it has).
-         */
-        post: operations["orch_get_session"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1533,27 +1451,6 @@ export interface paths {
          * @description What is to be done, in the order it is due: now, then after, then later.
          */
         post: operations["orch_list_actions"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/plugins/orch/list_agents": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Every agent, by name, with what it is doing, its queue and its session (the agents
-         * @description Every agent, by name, with what it is doing, its queue and its session (the agents
-         *     that work `project`, or all of them).
-         */
-        post: operations["orch_list_agents"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1751,27 +1648,6 @@ export interface paths {
          *     told to go on.
          */
         post: operations["orch_my_task"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/plugins/orch/pause_agent": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Pause an agent: nothing is dispatched to it until it is resumed, and its running
-         * @description Pause an agent: nothing is dispatched to it until it is resumed, and its running
-         *     session is left to finish (stopping it is `orch_stop_session`).
-         */
-        post: operations["orch_pause_agent"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2003,26 +1879,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/plugins/orch/resume_agent": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Resume an agent: what it has queued is dispatched again.
-         * @description Resume an agent: what it has queued is dispatched again.
-         */
-        post: operations["orch_resume_agent"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/plugins/orch/review_task": {
         parameters: {
             query?: never;
@@ -2172,30 +2028,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/plugins/orch/send": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * A message typed into an agent's session (the owner's only): given as a turn of its
-         * @description A message typed into an agent's session (the owner's only): given as a turn of its
-         *     own, through the agent's runner, and kept in its transcript as it happens.
-         *
-         *     A session in a turn is not interrupted: `delivery: "steer"` would need a harness that
-         *     takes input mid-turn, and none of udl's do yet, so it is refused rather than pretended.
-         */
-        post: operations["orch_send"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/plugins/orch/set_action": {
         parameters: {
             query?: never;
@@ -2218,7 +2050,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/plugins/orch/set_agent": {
+    "/plugins/orch/set_auto_merge": {
         parameters: {
             query?: never;
             header?: never;
@@ -2228,14 +2060,15 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Create or edit an agent, by its name: what is not given is kept, a new one needs a
-         * @description Create or edit an agent, by its name: what is not given is kept, a new one needs a
-         *     title and a runner, and `manager: ""` makes it report to the humans (admin).
+         * Turn auto merge on or off, with its merger (28.7): the owner's alone, since a model
+         * @description Turn auto merge on or off, with its merger (28.7): the owner's alone, since a model
+         *     that could turn it on could give itself the merge.
          *
-         *     A manager must be another agent whose role is manager, and no chain of managers may
-         *     reach itself (what storing one checks).
+         *     Turning it on needs a merger — an agent of role `reviewer` or `manager` that works on this
+         *     project — and turning it off keeps the one stored, so on again is the same merger. It is
+         *     the only writer of both fields: `orch_set_project` and the importer refuse a change.
          */
-        post: operations["orch_set_agent"];
+        post: operations["orch_set_auto_merge"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2346,27 +2179,6 @@ export interface paths {
          *     lose (NotAllowed otherwise).
          */
         post: operations["orch_split_task"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/plugins/orch/stop_session": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Stop a session: its runner is told to stop it, and it is ended, so nothing more is
-         * @description Stop a session: its runner is told to stop it, and it is ended, so nothing more is
-         *     dispatched to it and its agent's next turn starts a new one.
-         */
-        post: operations["orch_stop_session"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3307,102 +3119,6 @@ export interface components {
             text: string;
         };
         /**
-         * Agent
-         * @description An agent: the harness it runs, where and how, its role and its place in the hierarchy.
-         *
-         *     It reports to the humans unless its `manager` is another agent, and its `projects` are the
-         *     ones it works (empty: all of them).
-         */
-        Agent: {
-            /**
-             * Brief
-             * @description What it is told of itself, as markdown, added to its instructions.
-             * @default
-             */
-            brief: string;
-            /**
-             * Enabled
-             * @description Whether udl starts sessions for it at all.
-             * @default true
-             */
-            enabled: boolean;
-            /**
-             * Host
-             * @description The host it runs on (udl.hosts; local is where udl runs).
-             * @default local
-             */
-            host: string;
-            /** @description The agent it reports to (None: the humans), whose role must be manager. */
-            manager?: components["schemas"]["Name"] | null;
-            /** @description What it may do for its reports, when it is a manager (O-D10). */
-            manages?: components["schemas"]["ManagerPowers"];
-            /**
-             * Max Nudges
-             * @description How many times it may be nudged towards finishing a task before a person is asked.
-             * @default 3
-             */
-            max_nudges: number;
-            /**
-             * Model
-             * @description The model it runs (empty: its runner's default).
-             * @default
-             */
-            model: string;
-            /** @description What it is called (unique; e.g. deepseek-b). */
-            name: components["schemas"]["Name"];
-            /**
-             * Paused
-             * @description Whether a person paused it: nothing is dispatched to it until it is resumed.
-             * @default false
-             */
-            paused: boolean;
-            /**
-             * Projects
-             * @description The projects it works (empty: all of them).
-             */
-            projects?: components["schemas"]["Name"][];
-            /**
-             * @description What it does: implements, manages, or reviews.
-             * @default implementer
-             */
-            role: components["schemas"]["AgentRole"];
-            /** @description The runner plugin that starts its sessions (e.g. claude-code). */
-            runner: components["schemas"]["Name"];
-            /** @description What its runner is given (its own options' fields; a secret is a reference). */
-            runner_options?: components["schemas"]["JsonObject"];
-            /**
-             * Title
-             * @description How it is shown (e.g. deepseek-b).
-             */
-            title: string;
-        };
-        /**
-         * AgentInfo
-         * @description An agent as an operation answers it: what it is, what it is doing, its session, its queue
-         *     and the agents that report to it.
-         */
-        AgentInfo: {
-            /** @description The agent. */
-            agent: components["schemas"]["Agent"];
-            /**
-             * Queue
-             * @description Its tasks, in the order it will work them.
-             */
-            queue?: components["schemas"]["QueueEntry"][];
-            /**
-             * Reports
-             * @description The agents that report to it.
-             */
-            reports?: components["schemas"]["Name"][];
-            /**
-             * @description Its current session, when it has one (the record: where it got to and what it cost, not
-             *     its transcript — `orch_get_session` reads that).
-             */
-            session?: components["schemas"]["AgentSession"] | null;
-            /** @description What it is doing now (derived: never stored). */
-            status: components["schemas"]["AgentStatus"];
-        };
-        /**
          * AgentLine
          * @description What an agent is doing, in a line (28.4's inbox strip): who it is, what it is, and what it
          *     is on — derived from its session, never stored.
@@ -3444,84 +3160,11 @@ export interface components {
          */
         AgentRole: "implementer" | "manager" | "reviewer";
         /**
-         * AgentSession
-         * @description A session an agent is in: the harness's own session (its ref), where it got to, what it
-         *     has used, and what it last said.
-         */
-        AgentSession: {
-            /** @description The agent whose session it is. */
-            agent: components["schemas"]["Name"];
-            /**
-             * Cost
-             * @description What it has cost, in USD, when its harness says (None: it does not charge per turn).
-             */
-            cost?: string | null;
-            /**
-             * Last Text
-             * @description What it last said (the end of its last turn's answer).
-             * @default
-             */
-            last_text: string;
-            /**
-             * Limited Until
-             * @description When its harness's quota is back, when it said (None: it did not say).
-             */
-            limited_until?: string | null;
-            /**
-             * Nudges
-             * @description How many times it has been nudged towards finishing.
-             * @default 0
-             */
-            nudges: number;
-            /** @description The harness's session: the runner, its id, the folder and the host. */
-            ref: components["schemas"]["SessionRef"];
-            /**
-             * @description Where it is.
-             * @default starting
-             */
-            state: components["schemas"]["SessionState"];
-            /**
-             * Task
-             * @description The task it works (a task's key; empty: its manager's standing session).
-             * @default
-             */
-            task: string;
-            /**
-             * Tokens In
-             * @description The tokens it was given, over its turns.
-             * @default 0
-             */
-            tokens_in: number;
-            /**
-             * Tokens Out
-             * @description The tokens it wrote, over its turns.
-             * @default 0
-             */
-            tokens_out: number;
-            /**
-             * Turns
-             * @description How many turns it has taken.
-             * @default 0
-             */
-            turns: number;
-        };
-        /**
          * AgentStatus
          * @description What an agent is doing now (derived from its session: never stored).
          * @enum {string}
          */
         AgentStatus: "idle" | "working" | "waiting" | "limited" | "offline" | "paused";
-        /**
-         * Agents
-         * @description Every agent, each as `AgentInfo` answers one.
-         */
-        Agents: {
-            /**
-             * Items
-             * @description The agents, by name.
-             */
-            items?: components["schemas"]["AgentInfo"][];
-        };
         /**
          * AllOf
          * @description Every one of its filters matches.
@@ -4308,14 +3951,6 @@ export interface components {
         DatabaseList: {
             /** Databases */
             databases: components["schemas"]["DatabaseInfo"][];
-        };
-        /**
-         * DeleteAgentRequest
-         * @description Deleting an agent: refused while it has reports or an unfinished task.
-         */
-        DeleteAgentRequest: {
-            /** @description The agent's name. */
-            name: components["schemas"]["Name"];
         };
         /**
          * DeleteProjectRequest
@@ -5470,14 +5105,6 @@ export interface components {
             seconds: number;
         };
         /**
-         * GetAgentRequest
-         * @description One agent, with its queue, its session and its reports.
-         */
-        GetAgentRequest: {
-            /** @description The agent's name. */
-            name: components["schemas"]["Name"];
-        };
-        /**
          * GetFeatureRequest
          * @description Asking for one feature: its tasks, its links and its notes.
          */
@@ -5510,30 +5137,6 @@ export interface components {
             key: string;
             /** @description The project it is in (None: the only one, while udl has one). */
             project?: components["schemas"]["Name"] | null;
-        };
-        /**
-         * GetSessionRequest
-         * @description A session and a page of its transcript.
-         */
-        GetSessionRequest: {
-            /**
-             * Limit
-             * @description How many to return.
-             * @default 50
-             */
-            limit: number;
-            /**
-             * Offset
-             * @description How many of its events to skip (the transcript's order).
-             * @default 0
-             */
-            offset: number;
-            /**
-             * Session
-             * Format: uuid
-             * @description The session's id.
-             */
-            session: string;
         };
         /**
          * GetTaskRequest
@@ -6015,8 +5618,19 @@ export interface components {
              * @description What every agent is doing, by name.
              */
             agents?: components["schemas"]["AgentLine"][];
+            /**
+             * Auto Merge
+             * @description Whether a merger merges the ready ones by itself (28.7).
+             * @default false
+             */
+            auto_merge: boolean;
             /** @description Ready to merge (28.3's own list: ready, coming, held, done). */
             merge: components["schemas"]["MergeList"];
+            /**
+             * Merger
+             * @description The agent that merges them (28.7).
+             */
+            merger?: string | null;
             /** @description The project it is of. */
             project: components["schemas"]["Name"];
             /**
@@ -6249,14 +5863,6 @@ export interface components {
             when?: components["schemas"]["ActionWhen"] | null;
         };
         /**
-         * ListAgentsRequest
-         * @description Listing the agents.
-         */
-        ListAgentsRequest: {
-            /** @description Only the agents that work this project (None: all of them). */
-            project?: components["schemas"]["Name"] | null;
-        };
-        /**
          * ListFeaturesRequest
          * @description Asking for a project's features (all of them, when none is named).
          */
@@ -6429,33 +6035,6 @@ export interface components {
              */
             runner: string;
         };
-        /**
-         * ManagerPowers
-         * @description What a manager may do for its reports (O-D10): each power is off until it is given, and
-         *     each switches on operations in its role's list, always within its own subtree (27.8).
-         */
-        ManagerPowers: {
-            /**
-             * Answer
-             * @default false
-             */
-            answer: boolean;
-            /**
-             * Assign
-             * @default false
-             */
-            assign: boolean;
-            /**
-             * Plan
-             * @default false
-             */
-            plan: boolean;
-            /**
-             * Review
-             * @default false
-             */
-            review: boolean;
-        };
         /** @enum {string} */
         ManagerVerdict: "approve" | "changes";
         /**
@@ -6488,6 +6067,12 @@ export interface components {
          */
         MergeList: {
             /**
+             * Auto Merge
+             * @description Whether a merger merges this project's ready pulls by itself (28.7).
+             * @default false
+             */
+            auto_merge: boolean;
+            /**
              * Coming
              * @description With an open pull that is not ready yet, each with its blockers.
              */
@@ -6502,6 +6087,11 @@ export interface components {
              * @description Held (built now, merged later), each with its hold as its blocker.
              */
             held?: components["schemas"]["MergeRow"][];
+            /**
+             * Merger
+             * @description The agent that merges them (28.7).
+             */
+            merger?: string | null;
             /**
              * Ready
              * @description Ready to merge, grouped by repo, each after what it needs.
@@ -6597,6 +6187,8 @@ export interface components {
              * @default false
              */
             hold: boolean;
+            /** @description What the merger is doing with it (28.7; None while auto merge is off). */
+            merger?: components["schemas"]["MergerState"] | null;
             /**
              * Needs
              * @description The tasks that must be merged first, by key.
@@ -6665,6 +6257,13 @@ export interface components {
              */
             url: string;
         };
+        /**
+         * MergerState
+         * @description What a merger is doing with a row (28.7): the one it is reviewing, the ones next in its
+         *     queue, and one it asked changes of.
+         * @enum {string}
+         */
+        MergerState: "reviewing" | "next" | "changes asked";
         /**
          * Message
          * @description One thing said on a question (28.1): the question's own text first, then follow-ups.
@@ -6922,14 +6521,6 @@ export interface components {
          * @enum {string}
          */
         PageFormat: "markdown" | "text" | "html" | "raw";
-        /**
-         * PauseAgentRequest
-         * @description Pausing an agent: nothing is dispatched to it until it is resumed.
-         */
-        PauseAgentRequest: {
-            /** @description The agent's name. */
-            name: components["schemas"]["Name"];
-        };
         /**
          * PersonMode
          * @description What the page fetcher does at an anti-bot check it cannot pass by itself.
@@ -7256,6 +6847,13 @@ export interface components {
          */
         Project: {
             /**
+             * Auto Merge
+             * @description Whether a merger merges this project's ready pulls by itself (28.7; set only by
+             *     `orch_set_auto_merge`).
+             * @default false
+             */
+            auto_merge: boolean;
+            /**
              * Description
              * @description What it is, in a line or two.
              * @default
@@ -7266,6 +6864,11 @@ export interface components {
              * @default human
              */
             merge: components["schemas"]["MergePolicy"];
+            /**
+             * Merger
+             * @description The agent that merges them: a reviewer or a manager of this project (28.7).
+             */
+            merger?: string | null;
             /** @description What the project is called (unique; e.g. udl). */
             name: components["schemas"]["Name"];
             /**
@@ -7756,13 +7359,6 @@ export interface components {
              */
             position?: number | null;
             /**
-             * Project
-             * @description The project it is in: a key is only unique within one, so a queue of every project's
-             *     tasks says which (empty: the queue of one project, which need not repeat it).
-             * @default
-             */
-            project: string;
-            /**
              * Repo
              * @description The repo it is done in, or None.
              */
@@ -8107,14 +7703,6 @@ export interface components {
              */
             vaults?: string[];
         };
-        /**
-         * ResumeAgentRequest
-         * @description Resuming an agent: what it has queued is dispatched again.
-         */
-        ResumeAgentRequest: {
-            /** @description The agent's name. */
-            name: components["schemas"]["Name"];
-        };
         /** RetryFetchRequestBody */
         RetryFetchRequestBody: {
             /**
@@ -8254,6 +7842,11 @@ export interface components {
              * @default
              */
             reasons: string;
+            /**
+             * @description Where the task is after it: `in_progress` when a merger asked changes of a ready pull
+             *     (28.7), otherwise where it was.
+             */
+            state?: components["schemas"]["State"] | null;
             /**
              * Task
              * @description The task whose pull it is about.
@@ -8469,23 +8062,6 @@ export interface components {
          */
         RunStatus: "queued" | "running" | "awaiting_approval" | "succeeded" | "failed" | "cancelled" | "skipped";
         /**
-         * RunnerFailed
-         * @description The harness failed: its message is what it said (or what udl could see), never a secret.
-         *     The turn's TurnEnded(reason=ERROR) follows it, last.
-         */
-        RunnerFailed: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "runner_failed";
-            /**
-             * Message
-             * @description What went wrong.
-             */
-            message: string;
-        };
-        /**
          * RunnerHealth
          * @description Whether a harness is there, and signed in: what `udl orch runners` says about it (25.11).
          */
@@ -8570,28 +8146,6 @@ export interface components {
              * @description The version it is now, when it says.
              */
             version?: string | null;
-        };
-        /**
-         * RunnerLimited
-         * @description The harness's account is out of quota: nothing runs again until `until` (when the harness
-         *     says; None: it did not say). The turn's TurnEnded(reason=LIMITED) follows it, last.
-         */
-        RunnerLimited: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "runner_limited";
-            /**
-             * Message
-             * @description What it said.
-             */
-            message: string;
-            /**
-             * Until
-             * @description When its quota is back, if it said.
-             */
-            until?: string | null;
         };
         /**
          * RunnerModel
@@ -9008,49 +8562,6 @@ export interface components {
             text: boolean;
         };
         /**
-         * SendRequest
-         * @description A message typed into an agent's session (the owner's only).
-         *
-         *     `delivery: "turn"` (the only one there is for now) sends it as a turn of its own through the
-         *     agent's runner: the session must be between turns, and the message reaches the agent when it
-         *     is. `"steer"` is refused with a reason — none of udl's harnesses takes input mid-turn, and a
-         *     message kept for the next turn would not be what a person said mid-turn, only a queued one
-         *     (27.11's chats need the same answer for permission prompts).
-         */
-        SendRequest: {
-            /** @description The agent whose session it is. */
-            agent: components["schemas"]["Name"];
-            /**
-             * Delivery
-             * @description How it is given: as a turn of its own, or steered into the running one.
-             * @default turn
-             * @enum {string}
-             */
-            delivery: "turn" | "steer";
-            /**
-             * Text
-             * @description What is said (markdown).
-             */
-            text: string;
-        };
-        /**
-         * Sent
-         * @description What `orch_send` did: the session it went to, and the turn it was.
-         */
-        Sent: {
-            /**
-             * Session
-             * Format: uuid
-             * @description The session it went to.
-             */
-            session: string;
-            /**
-             * Turn
-             * @description The turn it was (the session's count of turns before it: 0 is its first).
-             */
-            turn: number;
-        };
-        /**
          * SeriesPoint
          * @description One day of the burn-up: the scope's points at its end, and the points merged in it.
          */
@@ -9072,149 +8583,6 @@ export interface components {
              */
             points: number;
         };
-        /**
-         * SessionEventShape
-         * @description One thing that happened in a session, as an operation answers it.
-         */
-        SessionEventShape: {
-            /**
-             * At
-             * Format: date-time
-             * @description When it was stored.
-             */
-            at: string;
-            /**
-             * Event
-             * @description What happened (its `kind` says which of the runner's events it is).
-             */
-            event: components["schemas"]["TextDelta"] | components["schemas"]["ToolStarted"] | components["schemas"]["ToolFinished"] | components["schemas"]["Usage"] | components["schemas"]["TurnEnded"] | components["schemas"]["RunnerLimited"] | components["schemas"]["RunnerFailed"];
-            /**
-             * Turn
-             * @description The turn it happened in (0: before the first one).
-             * @default 0
-             */
-            turn: number;
-        };
-        /**
-         * SessionInfo
-         * @description A session as an operation answers it: where it is, what it has used, and its transcript
-         *     (paged: `events` is the page, `total` is how many there are).
-         */
-        SessionInfo: {
-            /** @description The agent whose session it is. */
-            agent: components["schemas"]["Name"];
-            /**
-             * Cost
-             * @description What it has cost, in USD, when its harness says.
-             */
-            cost?: string | null;
-            /**
-             * Created At
-             * Format: date-time
-             * @description When it started.
-             */
-            created_at: string;
-            /**
-             * Events
-             * @description The transcript's page (oldest first).
-             */
-            events?: components["schemas"]["SessionEventShape"][];
-            /**
-             * Id
-             * Format: uuid
-             * @description Its id (what `orch_get_session` and `orch_stop_session` take).
-             */
-            id: string;
-            /**
-             * Last Text
-             * @description What it last said.
-             * @default
-             */
-            last_text: string;
-            /**
-             * Limited Until
-             * @description When its harness's quota is back, when it said.
-             */
-            limited_until?: string | null;
-            /**
-             * Nudges
-             * @description How many times it has been nudged.
-             * @default 0
-             */
-            nudges: number;
-            /**
-             * Project
-             * @description The project its task is in (empty: its manager's standing session).
-             * @default
-             */
-            project: string;
-            /** @description The harness's session: the runner, its id, the folder and the host. */
-            ref: components["schemas"]["SessionRef"];
-            /** @description Where it is. */
-            state: components["schemas"]["SessionState"];
-            /**
-             * Task
-             * @description The task it works (empty: its manager's standing session).
-             * @default
-             */
-            task: string;
-            /**
-             * Tokens In
-             * @description The tokens it was given, over its turns.
-             * @default 0
-             */
-            tokens_in: number;
-            /**
-             * Tokens Out
-             * @description The tokens it wrote, over its turns.
-             * @default 0
-             */
-            tokens_out: number;
-            /**
-             * Total
-             * @description How many events its transcript has.
-             * @default 0
-             */
-            total: number;
-            /**
-             * Turns
-             * @description How many turns it has taken.
-             * @default 0
-             */
-            turns: number;
-        };
-        /**
-         * SessionRef
-         * @description A session that is running: the harness's own name for it, and where it runs.
-         */
-        SessionRef: {
-            /**
-             * Cwd
-             * @description The folder it works in.
-             */
-            cwd: string;
-            /**
-             * Host
-             * @description The host it runs on.
-             */
-            host: string;
-            /**
-             * Id
-             * @description The harness's session id (what it resumes with).
-             */
-            id: string;
-            /**
-             * Runner
-             * @description The runner that started it.
-             */
-            runner: string;
-        };
-        /**
-         * SessionState
-         * @description Where a session is: what its dispatcher last saw of it.
-         * @enum {string}
-         */
-        SessionState: "starting" | "running" | "idle" | "limited" | "failed" | "ended";
         /** SetAccountRequestBody */
         SetAccountRequestBody: {
             /**
@@ -9314,66 +8682,23 @@ export interface components {
             timeout: components["schemas"]["Duration-Input"];
         };
         /**
-         * SetAgentRequest
-         * @description Creating or editing an agent: what is not given is kept, and a new one needs a title and
-         *     a runner. `manager` set to `""` clears it (the agent reports to the humans).
+         * SetAutoMergeRequest
+         * @description Turning auto merge on or off, and naming its merger (28.7): the owner's alone.
          */
-        SetAgentRequest: {
+        SetAutoMergeRequest: {
             /**
-             * Brief
-             * @description What it is told of itself, as markdown.
+             * Merger
+             * @description The agent that merges the project's ready pulls: a reviewer or a manager of this project.
+             *     Needed to turn it on; turning it off keeps the one stored.
              */
-            brief?: string | null;
+            merger?: string | null;
             /**
-             * Enabled
-             * @description Whether udl starts sessions for it at all.
+             * On
+             * @description Whether it is on.
              */
-            enabled?: boolean | null;
-            /**
-             * Host
-             * @description The host it runs on.
-             */
-            host?: string | null;
-            /**
-             * Manager
-             * @description The agent it reports to, or `""` for the humans.
-             */
-            manager?: string | null;
-            /** @description What it may do for its reports, when it is a manager. */
-            manages?: components["schemas"]["ManagerPowers"] | null;
-            /**
-             * Max Nudges
-             * @description How many times it may be nudged before a person is asked.
-             */
-            max_nudges?: number | null;
-            /**
-             * Model
-             * @description The model it runs (empty: its runner's default).
-             */
-            model?: string | null;
-            /** @description The agent's name (unique). */
-            name: components["schemas"]["Name"];
-            /**
-             * Paused
-             * @description Whether a person paused it.
-             */
-            paused?: boolean | null;
-            /**
-             * Projects
-             * @description The projects it works (empty: all of them).
-             */
-            projects?: components["schemas"]["Name"][] | null;
-            /** @description What it does: implements, manages, or reviews. */
-            role?: components["schemas"]["AgentRole"] | null;
-            /** @description The runner plugin that starts its sessions (e.g. claude-code). */
-            runner?: components["schemas"]["Name"] | null;
-            /** @description What its runner is given (its own options' fields; a secret is a reference). */
-            runner_options?: components["schemas"]["JsonObject"] | null;
-            /**
-             * Title
-             * @description How it is shown.
-             */
-            title?: string | null;
+            on: boolean;
+            /** @description The project (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
         };
         /**
          * SetFeatureRequest
@@ -9428,12 +8753,23 @@ export interface components {
          */
         SetProjectRequest: {
             /**
+             * Auto Merge
+             * @description Whether a merger merges this project's ready pulls (28.7): kept as it is, and a change is
+             *     refused — `orch_set_auto_merge` is its only writer.
+             */
+            auto_merge?: boolean | null;
+            /**
              * Description
              * @description What it is, in a line or two.
              */
             description?: string | null;
             /** @description Who merges a ready PR (O-D3). */
             merge?: components["schemas"]["MergePolicy"] | null;
+            /**
+             * Merger
+             * @description The agent that merges them (28.7): kept as it is, and a change is refused.
+             */
+            merger?: string | null;
             /** @description The project's name (what it is found, and set, by). */
             name: components["schemas"]["Name"];
             /**
@@ -9977,18 +9313,6 @@ export interface components {
              * @description The step, in the shorthand.
              */
             step: string;
-        };
-        /**
-         * StopSessionRequest
-         * @description Stopping a session: it ends, and nothing it was doing goes on.
-         */
-        StopSessionRequest: {
-            /**
-             * Session
-             * Format: uuid
-             * @description The session's id.
-             */
-            session: string;
         };
         /**
          * Strategy
@@ -10577,22 +9901,6 @@ export interface components {
             tasks?: components["schemas"]["Task"][];
         };
         /**
-         * TextDelta
-         * @description What the model said, as it says it.
-         */
-        TextDelta: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "text_delta";
-            /**
-             * Text
-             * @description The text.
-             */
-            text: string;
-        };
-        /**
          * Throttle
          * @description At most `max_runs` runs `per` this long (also written `10 per 1h`).
          */
@@ -10617,48 +9925,6 @@ export interface components {
             max_runs: number;
             /** @description In how long, e.g. 1h. */
             per: components["schemas"]["Duration-Output"];
-        };
-        /**
-         * ToolFinished
-         * @description A tool it started ended.
-         */
-        ToolFinished: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "tool_finished";
-            /**
-             * Name
-             * @description The tool's name.
-             */
-            name: string;
-            /**
-             * Ok
-             * @description Whether it worked.
-             */
-            ok: boolean;
-        };
-        /**
-         * ToolStarted
-         * @description The model started a tool (a file it edits, a command it runs).
-         */
-        ToolStarted: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "tool_started";
-            /**
-             * Name
-             * @description The tool's name.
-             */
-            name: string;
-            /**
-             * Summary
-             * @description What it is doing, in a line (never a secret).
-             */
-            summary: string;
         };
         /**
          * ToolStatus
@@ -10712,31 +9978,6 @@ export interface components {
              */
             unsized: number;
         };
-        /**
-         * TurnEnded
-         * @description A turn ended.
-         */
-        TurnEnded: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "turn_ended";
-            /** @description How it ended. */
-            reason: components["schemas"]["TurnReason"];
-            /**
-             * Text
-             * @description Its answer, or why it ended (never a secret).
-             * @default
-             */
-            text: string;
-        };
-        /**
-         * TurnReason
-         * @description How a turn ended.
-         * @enum {string}
-         */
-        TurnReason: "done" | "stopped" | "error" | "limited";
         /**
          * UnassignTaskRequest
          * @description Taking a task out of its agent's queue, back to open.
@@ -10792,34 +10033,6 @@ export interface components {
              * @description When it fires next (without its jitter).
              */
             next_run_at: string;
-        };
-        /**
-         * Usage
-         * @description What a turn cost, as the harness reports it.
-         */
-        Usage: {
-            /**
-             * Cost
-             * @description What it cost, when the harness says (a subscription's turns cost nothing to count).
-             */
-            cost?: string | null;
-            /**
-             * Input Tokens
-             * @description Tokens it was given.
-             * @default 0
-             */
-            input_tokens: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "usage";
-            /**
-             * Output Tokens
-             * @description Tokens it wrote.
-             * @default 0
-             */
-            output_tokens: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -14401,37 +13614,6 @@ export interface operations {
             };
         };
     };
-    orch_session_stream: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/event-stream": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_plugins: {
         parameters: {
             query?: never;
@@ -14940,84 +14122,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Question"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-        };
-    };
-    orch_delete_agent: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DeleteAgentRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Deleted"];
                 };
             };
             /** @description Bad Request */
@@ -15622,84 +14726,6 @@ export interface operations {
             };
         };
     };
-    orch_get_agent: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GetAgentRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentInfo"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-        };
-    };
     orch_get_feature: {
         parameters: {
             query?: never;
@@ -15954,84 +14980,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskQueue"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-        };
-    };
-    orch_get_session: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GetSessionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionInfo"];
                 };
             };
             /** @description Bad Request */
@@ -16422,84 +15370,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Actions"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-        };
-    };
-    orch_list_agents: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ListAgentsRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Agents"];
                 };
             };
             /** @description Bad Request */
@@ -17189,84 +16059,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MyTaskResponse"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-        };
-    };
-    orch_pause_agent: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PauseAgentRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Agent"];
                 };
             };
             /** @description Bad Request */
@@ -18105,84 +16897,6 @@ export interface operations {
             };
         };
     };
-    orch_resume_agent: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResumeAgentRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Agent"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-        };
-    };
     orch_review_task: {
         parameters: {
             query?: never;
@@ -18729,84 +17443,6 @@ export interface operations {
             };
         };
     };
-    orch_send: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SendRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Sent"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-        };
-    };
     orch_set_action: {
         parameters: {
             query?: never;
@@ -18885,7 +17521,7 @@ export interface operations {
             };
         };
     };
-    orch_set_agent: {
+    orch_set_auto_merge: {
         parameters: {
             query?: never;
             header?: never;
@@ -18894,7 +17530,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SetAgentRequest"];
+                "application/json": components["schemas"]["SetAutoMergeRequest"];
             };
         };
         responses: {
@@ -18904,7 +17540,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Agent"];
+                    "application/json": components["schemas"]["Project"];
                 };
             };
             /** @description Bad Request */
@@ -19295,84 +17931,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Tasks"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorInfo"];
-                };
-            };
-        };
-    };
-    orch_stop_session: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["StopSessionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionInfo"];
                 };
             };
             /** @description Bad Request */

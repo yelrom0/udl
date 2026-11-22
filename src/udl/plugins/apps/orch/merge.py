@@ -103,6 +103,7 @@ async def after_merge(
     by: str,
     reviewed: bool,
     promoted: bool,
+    auto: bool = False,
     clock: Clock | None = None,
 ) -> list[Task]:
     """`key` merged: its task moves to `merged`, and to `done` at once when the merge was a
@@ -130,9 +131,10 @@ async def after_merge(
             owner=moved.id,
             note_kind=NoteKind.SYSTEM,
             text=(
-                f"Merged by {by}."
+                f"Merged by {by}{' (auto merge)' if auto else ''}."
                 if not done
-                else f"Merged by {by}, and done: nothing follows the base."
+                else f"Merged by {by}{' (auto merge)' if auto else ''}, and done: nothing "
+                "follows the base."
             ),
         )
     )

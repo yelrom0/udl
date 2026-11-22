@@ -754,151 +754,6 @@
         "title": "AddNoteRequest",
         "type": "object"
       },
-      "Agent": {
-        "additionalProperties": false,
-        "description": "An agent: the harness it runs, where and how, its role and its place in the hierarchy.\n\nIt reports to the humans unless its `manager` is another agent, and its `projects` are the\nones it works (empty: all of them).",
-        "properties": {
-          "brief": {
-            "default": "",
-            "description": "What it is told of itself, as markdown, added to its instructions.",
-            "title": "Brief",
-            "type": "string"
-          },
-          "enabled": {
-            "default": true,
-            "description": "Whether udl starts sessions for it at all.",
-            "title": "Enabled",
-            "type": "boolean"
-          },
-          "host": {
-            "default": "local",
-            "description": "The host it runs on (udl.hosts; local is where udl runs).",
-            "maxLength": 64,
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
-            "title": "Host",
-            "type": "string"
-          },
-          "manager": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Name"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The agent it reports to (None: the humans), whose role must be manager."
-          },
-          "manages": {
-            "$ref": "#/components/schemas/ManagerPowers",
-            "description": "What it may do for its reports, when it is a manager (O-D10)."
-          },
-          "max_nudges": {
-            "default": 3,
-            "description": "How many times it may be nudged towards finishing a task before a person is asked.",
-            "exclusiveMinimum": 0.0,
-            "title": "Max Nudges",
-            "type": "integer"
-          },
-          "model": {
-            "default": "",
-            "description": "The model it runs (empty: its runner's default).",
-            "title": "Model",
-            "type": "string"
-          },
-          "name": {
-            "$ref": "#/components/schemas/Name",
-            "description": "What it is called (unique; e.g. deepseek-b)."
-          },
-          "paused": {
-            "default": false,
-            "description": "Whether a person paused it: nothing is dispatched to it until it is resumed.",
-            "title": "Paused",
-            "type": "boolean"
-          },
-          "projects": {
-            "description": "The projects it works (empty: all of them).",
-            "items": {
-              "$ref": "#/components/schemas/Name"
-            },
-            "title": "Projects",
-            "type": "array"
-          },
-          "role": {
-            "$ref": "#/components/schemas/AgentRole",
-            "default": "implementer",
-            "description": "What it does: implements, manages, or reviews."
-          },
-          "runner": {
-            "$ref": "#/components/schemas/Name",
-            "description": "The runner plugin that starts its sessions (e.g. claude-code)."
-          },
-          "runner_options": {
-            "$ref": "#/components/schemas/JsonObject",
-            "description": "What its runner is given (its own options' fields; a secret is a reference)."
-          },
-          "title": {
-            "description": "How it is shown (e.g. deepseek-b).",
-            "minLength": 1,
-            "title": "Title",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "title",
-          "runner"
-        ],
-        "title": "Agent",
-        "type": "object"
-      },
-      "AgentInfo": {
-        "additionalProperties": false,
-        "description": "An agent as an operation answers it: what it is, what it is doing, its session, its queue\nand the agents that report to it.",
-        "properties": {
-          "agent": {
-            "$ref": "#/components/schemas/Agent",
-            "description": "The agent."
-          },
-          "queue": {
-            "description": "Its tasks, in the order it will work them.",
-            "items": {
-              "$ref": "#/components/schemas/QueueEntry"
-            },
-            "title": "Queue",
-            "type": "array"
-          },
-          "reports": {
-            "description": "The agents that report to it.",
-            "items": {
-              "$ref": "#/components/schemas/Name"
-            },
-            "title": "Reports",
-            "type": "array"
-          },
-          "session": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AgentSession"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Its current session, when it has one (the record: where it got to and what it cost, not\nits transcript \u2014 `orch_get_session` reads that)."
-          },
-          "status": {
-            "$ref": "#/components/schemas/AgentStatus",
-            "description": "What it is doing now (derived: never stored)."
-          }
-        },
-        "required": [
-          "agent",
-          "status"
-        ],
-        "title": "AgentInfo",
-        "type": "object"
-      },
       "AgentLine": {
         "additionalProperties": false,
         "description": "What an agent is doing, in a line (28.4's inbox strip): who it is, what it is, and what it\nis on \u2014 derived from its session, never stored.",
@@ -974,96 +829,6 @@
         "title": "AgentRole",
         "type": "string"
       },
-      "AgentSession": {
-        "additionalProperties": false,
-        "description": "A session an agent is in: the harness's own session (its ref), where it got to, what it\nhas used, and what it last said.",
-        "properties": {
-          "agent": {
-            "$ref": "#/components/schemas/Name",
-            "description": "The agent whose session it is."
-          },
-          "cost": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "What it has cost, in USD, when its harness says (None: it does not charge per turn).",
-            "title": "Cost"
-          },
-          "last_text": {
-            "default": "",
-            "description": "What it last said (the end of its last turn's answer).",
-            "title": "Last Text",
-            "type": "string"
-          },
-          "limited_until": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "When its harness's quota is back, when it said (None: it did not say).",
-            "title": "Limited Until"
-          },
-          "nudges": {
-            "default": 0,
-            "description": "How many times it has been nudged towards finishing.",
-            "minimum": 0.0,
-            "title": "Nudges",
-            "type": "integer"
-          },
-          "ref": {
-            "$ref": "#/components/schemas/SessionRef",
-            "description": "The harness's session: the runner, its id, the folder and the host."
-          },
-          "state": {
-            "$ref": "#/components/schemas/SessionState",
-            "default": "starting",
-            "description": "Where it is."
-          },
-          "task": {
-            "default": "",
-            "description": "The task it works (a task's key; empty: its manager's standing session).",
-            "title": "Task",
-            "type": "string"
-          },
-          "tokens_in": {
-            "default": 0,
-            "description": "The tokens it was given, over its turns.",
-            "minimum": 0.0,
-            "title": "Tokens In",
-            "type": "integer"
-          },
-          "tokens_out": {
-            "default": 0,
-            "description": "The tokens it wrote, over its turns.",
-            "minimum": 0.0,
-            "title": "Tokens Out",
-            "type": "integer"
-          },
-          "turns": {
-            "default": 0,
-            "description": "How many turns it has taken.",
-            "minimum": 0.0,
-            "title": "Turns",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "agent",
-          "ref"
-        ],
-        "title": "AgentSession",
-        "type": "object"
-      },
       "AgentStatus": {
         "description": "What an agent is doing now (derived from its session: never stored).",
         "enum": [
@@ -1076,22 +841,6 @@
         ],
         "title": "AgentStatus",
         "type": "string"
-      },
-      "Agents": {
-        "additionalProperties": false,
-        "description": "Every agent, each as `AgentInfo` answers one.",
-        "properties": {
-          "items": {
-            "description": "The agents, by name.",
-            "items": {
-              "$ref": "#/components/schemas/AgentInfo"
-            },
-            "title": "Items",
-            "type": "array"
-          }
-        },
-        "title": "Agents",
-        "type": "object"
       },
       "AllOf-Input": {
         "additionalProperties": false,
@@ -2513,21 +2262,6 @@
           "databases"
         ],
         "title": "DatabaseList",
-        "type": "object"
-      },
-      "DeleteAgentRequest": {
-        "additionalProperties": false,
-        "description": "Deleting an agent: refused while it has reports or an unfinished task.",
-        "properties": {
-          "name": {
-            "$ref": "#/components/schemas/Name",
-            "description": "The agent's name."
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "title": "DeleteAgentRequest",
         "type": "object"
       },
       "DeleteProjectRequest": {
@@ -4765,21 +4499,6 @@
         "title": "GateRun",
         "type": "object"
       },
-      "GetAgentRequest": {
-        "additionalProperties": false,
-        "description": "One agent, with its queue, its session and its reports.",
-        "properties": {
-          "name": {
-            "$ref": "#/components/schemas/Name",
-            "description": "The agent's name."
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "title": "GetAgentRequest",
-        "type": "object"
-      },
       "GetFeatureRequest": {
         "additionalProperties": false,
         "description": "Asking for one feature: its tasks, its links and its notes.",
@@ -4851,37 +4570,6 @@
           "key"
         ],
         "title": "GetQuestionRequest",
-        "type": "object"
-      },
-      "GetSessionRequest": {
-        "additionalProperties": false,
-        "description": "A session and a page of its transcript.",
-        "properties": {
-          "limit": {
-            "default": 50,
-            "description": "How many to return.",
-            "exclusiveMinimum": 0.0,
-            "title": "Limit",
-            "type": "integer"
-          },
-          "offset": {
-            "default": 0,
-            "description": "How many of its events to skip (the transcript's order).",
-            "minimum": 0.0,
-            "title": "Offset",
-            "type": "integer"
-          },
-          "session": {
-            "description": "The session's id.",
-            "format": "uuid",
-            "title": "Session",
-            "type": "string"
-          }
-        },
-        "required": [
-          "session"
-        ],
-        "title": "GetSessionRequest",
         "type": "object"
       },
       "GetTaskRequest": {
@@ -5717,9 +5405,27 @@
             "title": "Agents",
             "type": "array"
           },
+          "auto_merge": {
+            "default": false,
+            "description": "Whether a merger merges the ready ones by itself (28.7).",
+            "title": "Auto Merge",
+            "type": "boolean"
+          },
           "merge": {
             "$ref": "#/components/schemas/MergeList",
             "description": "Ready to merge (28.3's own list: ready, coming, held, done)."
+          },
+          "merger": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent that merges them (28.7).",
+            "title": "Merger"
           },
           "project": {
             "$ref": "#/components/schemas/Name",
@@ -6211,25 +5917,6 @@
         "title": "ListActionsRequest",
         "type": "object"
       },
-      "ListAgentsRequest": {
-        "additionalProperties": false,
-        "description": "Listing the agents.",
-        "properties": {
-          "project": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Name"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Only the agents that work this project (None: all of them)."
-          }
-        },
-        "title": "ListAgentsRequest",
-        "type": "object"
-      },
       "ListFeaturesRequest": {
         "additionalProperties": false,
         "description": "Asking for a project's features (all of them, when none is named).",
@@ -6549,34 +6236,6 @@
         "title": "LogoutRunnerRequest",
         "type": "object"
       },
-      "ManagerPowers": {
-        "additionalProperties": false,
-        "description": "What a manager may do for its reports (O-D10): each power is off until it is given, and\neach switches on operations in its role's list, always within its own subtree (27.8).",
-        "properties": {
-          "answer": {
-            "default": false,
-            "title": "Answer",
-            "type": "boolean"
-          },
-          "assign": {
-            "default": false,
-            "title": "Assign",
-            "type": "boolean"
-          },
-          "plan": {
-            "default": false,
-            "title": "Plan",
-            "type": "boolean"
-          },
-          "review": {
-            "default": false,
-            "title": "Review",
-            "type": "boolean"
-          }
-        },
-        "title": "ManagerPowers",
-        "type": "object"
-      },
       "ManagerVerdict": {
         "enum": [
           "approve",
@@ -6660,6 +6319,12 @@
         "additionalProperties": false,
         "description": "What there is to merge (28.3), as a person reads it: the ready ones in merge order (grouped\nby repo), the ones still coming (with what they wait on), the held ones, and what merged\nlately.",
         "properties": {
+          "auto_merge": {
+            "default": false,
+            "description": "Whether a merger merges this project's ready pulls by itself (28.7).",
+            "title": "Auto Merge",
+            "type": "boolean"
+          },
           "coming": {
             "description": "With an open pull that is not ready yet, each with its blockers.",
             "items": {
@@ -6683,6 +6348,18 @@
             },
             "title": "Held",
             "type": "array"
+          },
+          "merger": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent that merges them (28.7).",
+            "title": "Merger"
           },
           "ready": {
             "description": "Ready to merge, grouped by repo, each after what it needs.",
@@ -6836,6 +6513,17 @@
             "title": "Hold",
             "type": "boolean"
           },
+          "merger": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MergerState"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the merger is doing with it (28.7; None while auto merge is off)."
+          },
           "needs": {
             "description": "The tasks that must be merged first, by key.",
             "items": {
@@ -6949,6 +6637,16 @@
         ],
         "title": "Merged",
         "type": "object"
+      },
+      "MergerState": {
+        "description": "What a merger is doing with a row (28.7): the one it is reviewing, the ones next in its\nqueue, and one it asked changes of.",
+        "enum": [
+          "reviewing",
+          "next",
+          "changes asked"
+        ],
+        "title": "MergerState",
+        "type": "string"
       },
       "Message": {
         "additionalProperties": false,
@@ -7365,21 +7063,6 @@
         ],
         "title": "PageFormat",
         "type": "string"
-      },
-      "PauseAgentRequest": {
-        "additionalProperties": false,
-        "description": "Pausing an agent: nothing is dispatched to it until it is resumed.",
-        "properties": {
-          "name": {
-            "$ref": "#/components/schemas/Name",
-            "description": "The agent's name."
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "title": "PauseAgentRequest",
-        "type": "object"
       },
       "PersonMode": {
         "description": "What the page fetcher does at an anti-bot check it cannot pass by itself.",
@@ -7954,6 +7637,12 @@
         "additionalProperties": false,
         "description": "A body of work (udl, liively): its repos and its merge policy.\n\n`promotion` names the branches after the repo's base, in order (e.g. [\"rc\", \"main\"]); a\nproject whose base is its last branch (udl's `main`) has none, and its reviewer's merge is\nits review. `rules` is the markdown every agent on this project is given: the ground rules.",
         "properties": {
+          "auto_merge": {
+            "default": false,
+            "description": "Whether a merger merges this project's ready pulls by itself (28.7; set only by\n`orch_set_auto_merge`).",
+            "title": "Auto Merge",
+            "type": "boolean"
+          },
           "description": {
             "default": "",
             "description": "What it is, in a line or two.",
@@ -7964,6 +7653,18 @@
             "$ref": "#/components/schemas/MergePolicy",
             "default": "human",
             "description": "Who merges a ready PR (O-D3)."
+          },
+          "merger": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent that merges them: a reviewer or a manager of this project (28.7).",
+            "title": "Merger"
           },
           "name": {
             "$ref": "#/components/schemas/Name",
@@ -8755,12 +8456,6 @@
             "description": "Its place in its queue (0 is the next one).",
             "title": "Position"
           },
-          "project": {
-            "default": "",
-            "description": "The project it is in: a key is only unique within one, so a queue of every project's\ntasks says which (empty: the queue of one project, which need not repeat it).",
-            "title": "Project",
-            "type": "string"
-          },
           "repo": {
             "anyOf": [
               {
@@ -9379,21 +9074,6 @@
         "title": "ResolverStatus",
         "type": "object"
       },
-      "ResumeAgentRequest": {
-        "additionalProperties": false,
-        "description": "Resuming an agent: what it has queued is dispatched again.",
-        "properties": {
-          "name": {
-            "$ref": "#/components/schemas/Name",
-            "description": "The agent's name."
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "title": "ResumeAgentRequest",
-        "type": "object"
-      },
       "RetryFetchRequestBody": {
         "additionalProperties": false,
         "properties": {
@@ -9614,6 +9294,17 @@
             "description": "Why.",
             "title": "Reasons",
             "type": "string"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/State"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where the task is after it: `in_progress` when a merger asked changes of a ready pull\n(28.7), otherwise where it was."
           },
           "task": {
             "description": "The task whose pull it is about.",
@@ -10081,28 +9772,6 @@
         "title": "RunStatus",
         "type": "string"
       },
-      "RunnerFailed": {
-        "additionalProperties": false,
-        "description": "The harness failed: its message is what it said (or what udl could see), never a secret.\nThe turn's TurnEnded(reason=ERROR) follows it, last.",
-        "properties": {
-          "kind": {
-            "const": "runner_failed",
-            "default": "runner_failed",
-            "title": "Kind",
-            "type": "string"
-          },
-          "message": {
-            "description": "What went wrong.",
-            "title": "Message",
-            "type": "string"
-          }
-        },
-        "required": [
-          "message"
-        ],
-        "title": "RunnerFailed",
-        "type": "object"
-      },
       "RunnerHealth": {
         "additionalProperties": false,
         "description": "Whether a harness is there, and signed in: what `udl orch runners` says about it (25.11).",
@@ -10250,41 +9919,6 @@
           "runner"
         ],
         "title": "RunnerInstalled",
-        "type": "object"
-      },
-      "RunnerLimited": {
-        "additionalProperties": false,
-        "description": "The harness's account is out of quota: nothing runs again until `until` (when the harness\nsays; None: it did not say). The turn's TurnEnded(reason=LIMITED) follows it, last.",
-        "properties": {
-          "kind": {
-            "const": "runner_limited",
-            "default": "runner_limited",
-            "title": "Kind",
-            "type": "string"
-          },
-          "message": {
-            "description": "What it said.",
-            "title": "Message",
-            "type": "string"
-          },
-          "until": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "When its quota is back, if it said.",
-            "title": "Until"
-          }
-        },
-        "required": [
-          "message"
-        ],
-        "title": "RunnerLimited",
         "type": "object"
       },
       "RunnerModel": {
@@ -10995,60 +10629,6 @@
         "title": "SelectStep",
         "type": "object"
       },
-      "SendRequest": {
-        "additionalProperties": false,
-        "description": "A message typed into an agent's session (the owner's only).\n\n`delivery: \"turn\"` (the only one there is for now) sends it as a turn of its own through the\nagent's runner: the session must be between turns, and the message reaches the agent when it\nis. `\"steer\"` is refused with a reason \u2014 none of udl's harnesses takes input mid-turn, and a\nmessage kept for the next turn would not be what a person said mid-turn, only a queued one\n(27.11's chats need the same answer for permission prompts).",
-        "properties": {
-          "agent": {
-            "$ref": "#/components/schemas/Name",
-            "description": "The agent whose session it is."
-          },
-          "delivery": {
-            "default": "turn",
-            "description": "How it is given: as a turn of its own, or steered into the running one.",
-            "enum": [
-              "turn",
-              "steer"
-            ],
-            "title": "Delivery",
-            "type": "string"
-          },
-          "text": {
-            "description": "What is said (markdown).",
-            "title": "Text",
-            "type": "string"
-          }
-        },
-        "required": [
-          "agent",
-          "text"
-        ],
-        "title": "SendRequest",
-        "type": "object"
-      },
-      "Sent": {
-        "additionalProperties": false,
-        "description": "What `orch_send` did: the session it went to, and the turn it was.",
-        "properties": {
-          "session": {
-            "description": "The session it went to.",
-            "format": "uuid",
-            "title": "Session",
-            "type": "string"
-          },
-          "turn": {
-            "description": "The turn it was (the session's count of turns before it: 0 is its first).",
-            "title": "Turn",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "session",
-          "turn"
-        ],
-        "title": "Sent",
-        "type": "object"
-      },
       "SeriesPoint": {
         "additionalProperties": false,
         "description": "One day of the burn-up: the scope's points at its end, and the points merged in it.",
@@ -11077,242 +10657,6 @@
         ],
         "title": "SeriesPoint",
         "type": "object"
-      },
-      "SessionEventShape": {
-        "additionalProperties": false,
-        "description": "One thing that happened in a session, as an operation answers it.",
-        "properties": {
-          "at": {
-            "description": "When it was stored.",
-            "format": "date-time",
-            "title": "At",
-            "type": "string"
-          },
-          "event": {
-            "description": "What happened (its `kind` says which of the runner's events it is).",
-            "discriminator": {
-              "mapping": {
-                "runner_failed": "#/components/schemas/RunnerFailed",
-                "runner_limited": "#/components/schemas/RunnerLimited",
-                "text_delta": "#/components/schemas/TextDelta",
-                "tool_finished": "#/components/schemas/ToolFinished",
-                "tool_started": "#/components/schemas/ToolStarted",
-                "turn_ended": "#/components/schemas/TurnEnded",
-                "usage": "#/components/schemas/Usage"
-              },
-              "propertyName": "kind"
-            },
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/TextDelta"
-              },
-              {
-                "$ref": "#/components/schemas/ToolStarted"
-              },
-              {
-                "$ref": "#/components/schemas/ToolFinished"
-              },
-              {
-                "$ref": "#/components/schemas/Usage"
-              },
-              {
-                "$ref": "#/components/schemas/TurnEnded"
-              },
-              {
-                "$ref": "#/components/schemas/RunnerLimited"
-              },
-              {
-                "$ref": "#/components/schemas/RunnerFailed"
-              }
-            ],
-            "title": "Event"
-          },
-          "turn": {
-            "default": 0,
-            "description": "The turn it happened in (0: before the first one).",
-            "minimum": 0.0,
-            "title": "Turn",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "at",
-          "event"
-        ],
-        "title": "SessionEventShape",
-        "type": "object"
-      },
-      "SessionInfo": {
-        "additionalProperties": false,
-        "description": "A session as an operation answers it: where it is, what it has used, and its transcript\n(paged: `events` is the page, `total` is how many there are).",
-        "properties": {
-          "agent": {
-            "$ref": "#/components/schemas/Name",
-            "description": "The agent whose session it is."
-          },
-          "cost": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "What it has cost, in USD, when its harness says.",
-            "title": "Cost"
-          },
-          "created_at": {
-            "description": "When it started.",
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "events": {
-            "description": "The transcript's page (oldest first).",
-            "items": {
-              "$ref": "#/components/schemas/SessionEventShape"
-            },
-            "title": "Events",
-            "type": "array"
-          },
-          "id": {
-            "description": "Its id (what `orch_get_session` and `orch_stop_session` take).",
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "last_text": {
-            "default": "",
-            "description": "What it last said.",
-            "title": "Last Text",
-            "type": "string"
-          },
-          "limited_until": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "When its harness's quota is back, when it said.",
-            "title": "Limited Until"
-          },
-          "nudges": {
-            "default": 0,
-            "description": "How many times it has been nudged.",
-            "minimum": 0.0,
-            "title": "Nudges",
-            "type": "integer"
-          },
-          "project": {
-            "default": "",
-            "description": "The project its task is in (empty: its manager's standing session).",
-            "title": "Project",
-            "type": "string"
-          },
-          "ref": {
-            "$ref": "#/components/schemas/SessionRef",
-            "description": "The harness's session: the runner, its id, the folder and the host."
-          },
-          "state": {
-            "$ref": "#/components/schemas/SessionState",
-            "description": "Where it is."
-          },
-          "task": {
-            "default": "",
-            "description": "The task it works (empty: its manager's standing session).",
-            "title": "Task",
-            "type": "string"
-          },
-          "tokens_in": {
-            "default": 0,
-            "description": "The tokens it was given, over its turns.",
-            "minimum": 0.0,
-            "title": "Tokens In",
-            "type": "integer"
-          },
-          "tokens_out": {
-            "default": 0,
-            "description": "The tokens it wrote, over its turns.",
-            "minimum": 0.0,
-            "title": "Tokens Out",
-            "type": "integer"
-          },
-          "total": {
-            "default": 0,
-            "description": "How many events its transcript has.",
-            "minimum": 0.0,
-            "title": "Total",
-            "type": "integer"
-          },
-          "turns": {
-            "default": 0,
-            "description": "How many turns it has taken.",
-            "minimum": 0.0,
-            "title": "Turns",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "id",
-          "agent",
-          "ref",
-          "state",
-          "created_at"
-        ],
-        "title": "SessionInfo",
-        "type": "object"
-      },
-      "SessionRef": {
-        "additionalProperties": false,
-        "description": "A session that is running: the harness's own name for it, and where it runs.",
-        "properties": {
-          "cwd": {
-            "description": "The folder it works in.",
-            "title": "Cwd",
-            "type": "string"
-          },
-          "host": {
-            "description": "The host it runs on.",
-            "title": "Host",
-            "type": "string"
-          },
-          "id": {
-            "description": "The harness's session id (what it resumes with).",
-            "title": "Id",
-            "type": "string"
-          },
-          "runner": {
-            "description": "The runner that started it.",
-            "title": "Runner",
-            "type": "string"
-          }
-        },
-        "required": [
-          "runner",
-          "id",
-          "cwd",
-          "host"
-        ],
-        "title": "SessionRef",
-        "type": "object"
-      },
-      "SessionState": {
-        "description": "Where a session is: what its dispatcher last saw of it.",
-        "enum": [
-          "starting",
-          "running",
-          "idle",
-          "limited",
-          "failed",
-          "ended"
-        ],
-        "title": "SessionState",
-        "type": "string"
       },
       "SetAccountRequestBody": {
         "additionalProperties": false,
@@ -11475,11 +10819,11 @@
         "title": "SetActionRequestBody",
         "type": "object"
       },
-      "SetAgentRequest": {
+      "SetAutoMergeRequest": {
         "additionalProperties": false,
-        "description": "Creating or editing an agent: what is not given is kept, and a new one needs a title and\na runner. `manager` set to `\"\"` clears it (the agent reports to the humans).",
+        "description": "Turning auto merge on or off, and naming its merger (28.7): the owner's alone.",
         "properties": {
-          "brief": {
+          "merger": {
             "anyOf": [
               {
                 "type": "string"
@@ -11488,126 +10832,15 @@
                 "type": "null"
               }
             ],
-            "description": "What it is told of itself, as markdown.",
-            "title": "Brief"
+            "description": "The agent that merges the project's ready pulls: a reviewer or a manager of this project.\nNeeded to turn it on; turning it off keeps the one stored.",
+            "title": "Merger"
           },
-          "enabled": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Whether udl starts sessions for it at all.",
-            "title": "Enabled"
+          "on": {
+            "description": "Whether it is on.",
+            "title": "On",
+            "type": "boolean"
           },
-          "host": {
-            "anyOf": [
-              {
-                "maxLength": 64,
-                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The host it runs on.",
-            "title": "Host"
-          },
-          "manager": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The agent it reports to, or `\"\"` for the humans.",
-            "title": "Manager"
-          },
-          "manages": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ManagerPowers"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "What it may do for its reports, when it is a manager."
-          },
-          "max_nudges": {
-            "anyOf": [
-              {
-                "exclusiveMinimum": 0.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "How many times it may be nudged before a person is asked.",
-            "title": "Max Nudges"
-          },
-          "model": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The model it runs (empty: its runner's default).",
-            "title": "Model"
-          },
-          "name": {
-            "$ref": "#/components/schemas/Name",
-            "description": "The agent's name (unique)."
-          },
-          "paused": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Whether a person paused it.",
-            "title": "Paused"
-          },
-          "projects": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/Name"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The projects it works (empty: all of them).",
-            "title": "Projects"
-          },
-          "role": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AgentRole"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "What it does: implements, manages, or reviews."
-          },
-          "runner": {
+          "project": {
             "anyOf": [
               {
                 "$ref": "#/components/schemas/Name"
@@ -11616,37 +10849,13 @@
                 "type": "null"
               }
             ],
-            "description": "The runner plugin that starts its sessions (e.g. claude-code)."
-          },
-          "runner_options": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/JsonObject"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "What its runner is given (its own options' fields; a secret is a reference)."
-          },
-          "title": {
-            "anyOf": [
-              {
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "How it is shown.",
-            "title": "Title"
+            "description": "The project (None: the only one, while udl has one)."
           }
         },
         "required": [
-          "name"
+          "on"
         ],
-        "title": "SetAgentRequest",
+        "title": "SetAutoMergeRequest",
         "type": "object"
       },
       "SetFeatureRequest": {
@@ -11750,6 +10959,18 @@
         "additionalProperties": false,
         "description": "Creating or editing a project, by its name: what is not given is kept.\n\nA new project needs a title; the rest it has by default.",
         "properties": {
+          "auto_merge": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whether a merger merges this project's ready pulls (28.7): kept as it is, and a change is\nrefused \u2014 `orch_set_auto_merge` is its only writer.",
+            "title": "Auto Merge"
+          },
           "description": {
             "anyOf": [
               {
@@ -11772,6 +10993,18 @@
               }
             ],
             "description": "Who merges a ready PR (O-D3)."
+          },
+          "merger": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent that merges them (28.7): kept as it is, and a change is refused.",
+            "title": "Merger"
           },
           "name": {
             "$ref": "#/components/schemas/Name",
@@ -12892,23 +12125,6 @@
         "title": "StepTrace",
         "type": "object"
       },
-      "StopSessionRequest": {
-        "additionalProperties": false,
-        "description": "Stopping a session: it ends, and nothing it was doing goes on.",
-        "properties": {
-          "session": {
-            "description": "The session's id.",
-            "format": "uuid",
-            "title": "Session",
-            "type": "string"
-          }
-        },
-        "required": [
-          "session"
-        ],
-        "title": "StopSessionRequest",
-        "type": "object"
-      },
       "Strategy": {
         "description": "How to download from a site: a tool (downloader plugin) and its options.\n\nA site can have several, e.g. a different tool for one section of it (`url_pattern`).",
         "properties": {
@@ -13984,28 +13200,6 @@
         "title": "Tasks",
         "type": "object"
       },
-      "TextDelta": {
-        "additionalProperties": false,
-        "description": "What the model said, as it says it.",
-        "properties": {
-          "kind": {
-            "const": "text_delta",
-            "default": "text_delta",
-            "title": "Kind",
-            "type": "string"
-          },
-          "text": {
-            "description": "The text.",
-            "title": "Text",
-            "type": "string"
-          }
-        },
-        "required": [
-          "text"
-        ],
-        "title": "TextDelta",
-        "type": "object"
-      },
       "Throttle-Input": {
         "additionalProperties": false,
         "description": "At most `max_runs` runs `per` this long (also written `10 per 1h`).",
@@ -14048,62 +13242,6 @@
           "per"
         ],
         "title": "Throttle",
-        "type": "object"
-      },
-      "ToolFinished": {
-        "additionalProperties": false,
-        "description": "A tool it started ended.",
-        "properties": {
-          "kind": {
-            "const": "tool_finished",
-            "default": "tool_finished",
-            "title": "Kind",
-            "type": "string"
-          },
-          "name": {
-            "description": "The tool's name.",
-            "title": "Name",
-            "type": "string"
-          },
-          "ok": {
-            "description": "Whether it worked.",
-            "title": "Ok",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "name",
-          "ok"
-        ],
-        "title": "ToolFinished",
-        "type": "object"
-      },
-      "ToolStarted": {
-        "additionalProperties": false,
-        "description": "The model started a tool (a file it edits, a command it runs).",
-        "properties": {
-          "kind": {
-            "const": "tool_started",
-            "default": "tool_started",
-            "title": "Kind",
-            "type": "string"
-          },
-          "name": {
-            "description": "The tool's name.",
-            "title": "Name",
-            "type": "string"
-          },
-          "summary": {
-            "description": "What it is doing, in a line (never a secret).",
-            "title": "Summary",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "summary"
-        ],
-        "title": "ToolStarted",
         "type": "object"
       },
       "ToolStatus": {
@@ -14175,44 +13313,6 @@
         },
         "title": "Totals",
         "type": "object"
-      },
-      "TurnEnded": {
-        "additionalProperties": false,
-        "description": "A turn ended.",
-        "properties": {
-          "kind": {
-            "const": "turn_ended",
-            "default": "turn_ended",
-            "title": "Kind",
-            "type": "string"
-          },
-          "reason": {
-            "$ref": "#/components/schemas/TurnReason",
-            "description": "How it ended."
-          },
-          "text": {
-            "default": "",
-            "description": "Its answer, or why it ended (never a secret).",
-            "title": "Text",
-            "type": "string"
-          }
-        },
-        "required": [
-          "reason"
-        ],
-        "title": "TurnEnded",
-        "type": "object"
-      },
-      "TurnReason": {
-        "description": "How a turn ended.",
-        "enum": [
-          "done",
-          "stopped",
-          "error",
-          "limited"
-        ],
-        "title": "TurnReason",
-        "type": "string"
       },
       "UnassignTaskRequest": {
         "additionalProperties": false,
@@ -14302,46 +13402,6 @@
           "next_run_at"
         ],
         "title": "UpcomingSchedule",
-        "type": "object"
-      },
-      "Usage": {
-        "additionalProperties": false,
-        "description": "What a turn cost, as the harness reports it.",
-        "properties": {
-          "cost": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "What it cost, when the harness says (a subscription's turns cost nothing to count).",
-            "title": "Cost"
-          },
-          "input_tokens": {
-            "default": 0,
-            "description": "Tokens it was given.",
-            "minimum": 0.0,
-            "title": "Input Tokens",
-            "type": "integer"
-          },
-          "kind": {
-            "const": "usage",
-            "default": "usage",
-            "title": "Kind",
-            "type": "string"
-          },
-          "output_tokens": {
-            "default": 0,
-            "description": "Tokens it wrote.",
-            "minimum": 0.0,
-            "title": "Output Tokens",
-            "type": "integer"
-          }
-        },
-        "title": "Usage",
         "type": "object"
       },
       "ValidationError": {
@@ -19454,70 +18514,6 @@
         ]
       }
     },
-    "/orch/sessions/{session}/stream": {
-      "get": {
-        "description": "Server-sent events, from now on, of one session's own: `event` (an EventInfo) for each `orch.session.*` event it published \u2014 that it started, each thing its runner said, and that it failed or ended. A limit is `orch.agent.limited` (the agent's, not the session's), so it is not on this stream: the session's state and `limited_until` are. Live only: a client that reconnects reloads the transcript (`orch_get_session`) rather than resuming.",
-        "operationId": "orch_session_stream",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "session",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Session",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "text/event-stream": {
-                "itemSchema": {
-                  "properties": {
-                    "data": {
-                      "type": "string"
-                    },
-                    "event": {
-                      "type": "string"
-                    },
-                    "id": {
-                      "type": "string"
-                    },
-                    "retry": {
-                      "minimum": 0,
-                      "type": "integer"
-                    }
-                  },
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          }
-        ],
-        "summary": "One agent's session, as it happens.",
-        "tags": [
-          "events"
-        ]
-      }
-    },
     "/plugins": {
       "get": {
         "description": "List udl's plugins (database engines, downloaders, site plugins, secret stores, kinds\nof action and integrations: built in, installed, or local files in the plugin dirs),\nwhether each can run (with what to install for one that cannot), and the sites each site\nplugin handles. Plugins that failed to load are listed as problems.",
@@ -20224,103 +19220,6 @@
         ]
       }
     },
-    "/plugins/orch/delete_agent": {
-      "post": {
-        "description": "Delete an agent, its sessions and its tokens (admin). Raises InUse while it manages\nanother agent, or while it has a task that is not finished.",
-        "operationId": "orch_delete_agent",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DeleteAgentRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Deleted"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Service Unavailable"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          }
-        ],
-        "summary": "Delete an agent, its sessions and its tokens (admin). Raises InUse while it manages",
-        "tags": [
-          "orch"
-        ]
-      }
-    },
     "/plugins/orch/delete_project": {
       "post": {
         "description": "Delete a project, with its repos, its features, its tasks and their notes and links.",
@@ -21000,103 +19899,6 @@
         ]
       }
     },
-    "/plugins/orch/get_agent": {
-      "post": {
-        "description": "One agent, with its queue, its current session and the agents that report to it.",
-        "operationId": "orch_get_agent",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/GetAgentRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentInfo"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Service Unavailable"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          }
-        ],
-        "summary": "One agent, with its queue, its current session and the agents that report to it.",
-        "tags": [
-          "orch"
-        ]
-      }
-    },
     "/plugins/orch/get_feature": {
       "post": {
         "description": "A feature, with its tasks, its links and its notes.",
@@ -21480,103 +20282,6 @@
           }
         ],
         "summary": "What an agent's queue is: its tasks, in the order it will work them.",
-        "tags": [
-          "orch"
-        ]
-      }
-    },
-    "/plugins/orch/get_session": {
-      "post": {
-        "description": "A session and a page of its transcript, oldest first (`offset` and `limit` page it;\n`total` is how many events it has).",
-        "operationId": "orch_get_session",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/GetSessionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionInfo"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Service Unavailable"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          }
-        ],
-        "summary": "A session and a page of its transcript, oldest first (`offset` and `limit` page it;",
         "tags": [
           "orch"
         ]
@@ -22062,103 +20767,6 @@
           }
         ],
         "summary": "What is to be done, in the order it is due: now, then after, then later.",
-        "tags": [
-          "orch"
-        ]
-      }
-    },
-    "/plugins/orch/list_agents": {
-      "post": {
-        "description": "Every agent, by name, with what it is doing, its queue and its session (the agents\nthat work `project`, or all of them).",
-        "operationId": "orch_list_agents",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ListAgentsRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Agents"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Service Unavailable"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          }
-        ],
-        "summary": "Every agent, by name, with what it is doing, its queue and its session (the agents",
         "tags": [
           "orch"
         ]
@@ -23012,103 +21620,6 @@
           }
         ],
         "summary": "What an agent is to work next: the task it is in progress on, else the first on its",
-        "tags": [
-          "orch"
-        ]
-      }
-    },
-    "/plugins/orch/pause_agent": {
-      "post": {
-        "description": "Pause an agent: nothing is dispatched to it until it is resumed, and its running\nsession is left to finish (stopping it is `orch_stop_session`).",
-        "operationId": "orch_pause_agent",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PauseAgentRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Agent"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Service Unavailable"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          }
-        ],
-        "summary": "Pause an agent: nothing is dispatched to it until it is resumed, and its running",
         "tags": [
           "orch"
         ]
@@ -24084,103 +22595,6 @@
         ]
       }
     },
-    "/plugins/orch/resume_agent": {
-      "post": {
-        "description": "Resume an agent: what it has queued is dispatched again.",
-        "operationId": "orch_resume_agent",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ResumeAgentRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Agent"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Service Unavailable"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          }
-        ],
-        "summary": "Resume an agent: what it has queued is dispatched again.",
-        "tags": [
-          "orch"
-        ]
-      }
-    },
     "/plugins/orch/review_task": {
       "post": {
         "description": "A manager's verdict on a report's pull, for the head it read (27.8).\n\nIt is the `review` power's: the caller must have it, and the task must be one of its\nreports'. A review is per head, so a new push needs a new one; readiness asks for it when\nthe task's manager has the power. What it says is a `decision` note on the task with the\nmanager as author, in the same write.",
@@ -24860,103 +23274,6 @@
         ]
       }
     },
-    "/plugins/orch/send": {
-      "post": {
-        "description": "A message typed into an agent's session (the owner's only): given as a turn of its\nown, through the agent's runner, and kept in its transcript as it happens.\n\nA session in a turn is not interrupted: `delivery: \"steer\"` would need a harness that\ntakes input mid-turn, and none of udl's do yet, so it is refused rather than pretended.",
-        "operationId": "orch_send",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SendRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Sent"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Service Unavailable"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          }
-        ],
-        "summary": "A message typed into an agent's session (the owner's only): given as a turn of its",
-        "tags": [
-          "orch"
-        ]
-      }
-    },
     "/plugins/orch/set_action": {
       "post": {
         "description": "Add something only a person can do: now, after a task merges, or later.\n\nAn action `after` a task names it, and becomes `now` when that task merges (28.3).",
@@ -25054,15 +23371,15 @@
         ]
       }
     },
-    "/plugins/orch/set_agent": {
+    "/plugins/orch/set_auto_merge": {
       "post": {
-        "description": "Create or edit an agent, by its name: what is not given is kept, a new one needs a\ntitle and a runner, and `manager: \"\"` makes it report to the humans (admin).\n\nA manager must be another agent whose role is manager, and no chain of managers may\nreach itself (what storing one checks).",
-        "operationId": "orch_set_agent",
+        "description": "Turn auto merge on or off, with its merger (28.7): the owner's alone, since a model\nthat could turn it on could give itself the merge.\n\nTurning it on needs a merger \u2014 an agent of role `reviewer` or `manager` that works on this\nproject \u2014 and turning it off keeps the one stored, so on again is the same merger. It is\nthe only writer of both fields: `orch_set_project` and the importer refuse a change.",
+        "operationId": "orch_set_auto_merge",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SetAgentRequest"
+                "$ref": "#/components/schemas/SetAutoMergeRequest"
               }
             }
           },
@@ -25073,7 +23390,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Agent"
+                  "$ref": "#/components/schemas/Project"
                 }
               }
             },
@@ -25145,7 +23462,7 @@
             "APIKeyHeader": []
           }
         ],
-        "summary": "Create or edit an agent, by its name: what is not given is kept, a new one needs a",
+        "summary": "Turn auto merge on or off, with its merger (28.7): the owner's alone, since a model",
         "tags": [
           "orch"
         ]
@@ -25631,103 +23948,6 @@
           }
         ],
         "summary": "Split a task into several: the first keeps its key (so its links and its notes stay",
-        "tags": [
-          "orch"
-        ]
-      }
-    },
-    "/plugins/orch/stop_session": {
-      "post": {
-        "description": "Stop a session: its runner is told to stop it, and it is ended, so nothing more is\ndispatched to it and its agent's next turn starts a new one.",
-        "operationId": "orch_stop_session",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/StopSessionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionInfo"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorInfo"
-                }
-              }
-            },
-            "description": "Service Unavailable"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          }
-        ],
-        "summary": "Stop a session: its runner is told to stop it, and it is ended, so nothing more is",
         "tags": [
           "orch"
         ]
