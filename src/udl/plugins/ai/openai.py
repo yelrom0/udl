@@ -579,3 +579,45 @@ def as_money(given: JsonValue) -> Decimal | None:
     except InvalidOperation:
         return None
     return money if money.is_finite() else None
+
+
+# ---------------------------------------------------------------------------------------------
+# OpenAI itself
+# ---------------------------------------------------------------------------------------------
+
+OPENAI_URL: Final = "https://api.openai.com/v1"
+"""Where OpenAI's API is (its models, its chats)."""
+
+_REFUSED: Final = "OpenAI: the key was refused"
+"""What a 401 or a 403 is said as: OpenAI does not say why, only that the key is not its own."""
+
+
+class OpenAIProviderOptions(OpenAIOptions):
+    """OpenAI's options: an OpenAI-compatible provider's, whose url is OpenAI's unless it says
+    otherwise (a proxy, or a test's fake)."""
+
+    url: str = OPENAI_URL
+    """Where OpenAI's API is, unless a proxy or a test's fake says otherwise."""
+
+
+class OpenAIProvider(OpenAICompatibleProvider):
+    """OpenAI: its models, by the key udl keeps for it (O-D5: an `op://` reference works).
+
+    OpenAI's API is the compatible one, so this is that provider with its url filled in and its
+    refusals named as OpenAI's: a 401 or a 403 is the key being refused, a 429 is OpenAI
+    throttling (with its Retry-After), and there is no credit endpoint — `credit_left` is None."""
+
+    name = "openai"
+    title = "OpenAI"
+    summary = "OpenAI's models: the key udl keeps, and what each chat used."
+    options_model = OpenAIProviderOptions
+
+    def _error(self, response: httpx.Response) -> UDLError:
+        """What a response's status means: a refused key is OpenAI's own refusal, said as one."""
+        if response.status_code in (401, 403):
+            return NotAllowed(
+                f"{_REFUSED} ({_detail(response)})",
+                hint="Check the key udl keeps for OpenAI (`udl ai providers`, or the "
+                "op:// reference it was given).",
+            )
+        return super()._error(response)
