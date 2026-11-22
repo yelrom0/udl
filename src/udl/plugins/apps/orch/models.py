@@ -156,6 +156,7 @@ __all__ = [
     "Totals",
     "URLText",
     "UnassignTaskRequest",
+    "WaitKind",
     "as_shape",
     "branch_pattern_problem",
     "render_branch",
@@ -283,6 +284,10 @@ type TaskKind = Literal["build", "human", "review"]
 type ManagerVerdict = Literal["approve", "changes"]
 """A manager's verdict on a report's pull (27.8): `approve` is its OK for that head, `changes`
 is what the report must do before it may be ready."""
+
+type WaitKind = Literal["ci", "bot", "limit"]
+"""Why a task's agent held no turn (27.10): its PR's checks, the review bot, or its harness's
+quota (`limit`)."""
 
 type FeatureStatus = Literal["planned", "active", "done", "parked"]
 """Where a feature is: its own setting, or what its tasks make it (orch.records)."""

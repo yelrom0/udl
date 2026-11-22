@@ -30,7 +30,7 @@ sit over it, so nothing here knows about a database.
 import hashlib
 import logging
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Final, Self
 from uuid import UUID
@@ -59,7 +59,9 @@ from udl.plugins.apps.orch.agents import (
 from udl.plugins.apps.orch.models import (
     CANCELLED,
     DONE,
+    IN_PROGRESS,
     OPEN,
+    QUEUED,
     ActionState,
     ActionWhen,
     BranchName,
@@ -87,6 +89,7 @@ from udl.plugins.apps.orch.models import (
     Text,
     Title,
     URLText,
+    WaitKind,
 )
 from udl.plugins.runners.base import SessionRef, TextDelta
 
@@ -289,6 +292,72 @@ class Note(Record):
             note_kind=NoteKind.SYSTEM,
             text="Moved to deepseek-b's queue: ernie-c must stop working on it.",
             author="udl",
+        )
+
+
+class StateChange(Record):
+    """A task's move, kept as history (27.10): where it went, when, and by whom.
+
+    It is written in the same write as the move itself (26.3's `move()` and `save_all`), so a
+    task's history is complete — it is what a working time is made of. History, so db sync copies
+    it once it happened (`SyncRule.ENDED`). (`from_state` and `to_state`, because `from` is a
+    keyword.)"""
+
+    kind = "orch_state_change"
+    indexed = ("task", "at")
+    sync = SyncRule.ENDED
+
+    task: UUID
+    """The task it is of (its id, so a key's changes do not lose it)."""
+    from_state: State
+    """Where it was."""
+    to_state: State
+    """Where it went."""
+    at: AwareDatetime
+    """When it went there."""
+    by: str
+    """Who moved it: an agent's name, `human:<name>`, or `udl`."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            task=UUID("6f1c2f0e-9d4a-4a37-8c1e-0d2b7a5c9e11"),
+            from_state=QUEUED,
+            to_state=IN_PROGRESS,
+            at=datetime(2026, 11, 22, 9, 30, tzinfo=UTC),
+            by="deepseek-a",
+        )
+
+
+class Wait(Record):
+    """A stretch the agent of a task held no turn (27.10): its PR's checks or the review bot were
+    pending, or its harness was out of quota. A wait that has not ended is open (`end` is None),
+    and `timing` counts it to now."""
+
+    kind = "orch_wait"
+    indexed = ("task", "start")
+    sync = SyncRule.ENDED
+
+    task: UUID
+    """The task whose agent was waiting (its id)."""
+    wait_kind: WaitKind
+    """Why it waited (not `kind`: a record's `kind` is the name of its kind)."""
+    start: AwareDatetime
+    """When the wait began."""
+    end: AwareDatetime | None = None
+    """When it ended (None: still waiting)."""
+
+    def ended(self) -> bool:
+        """Whether it has ended: an open wait is this runtime's, not history."""
+        return self.end is not None
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            task=UUID("6f1c2f0e-9d4a-4a37-8c1e-0d2b7a5c9e11"),
+            wait_kind="ci",
+            start=datetime(2026, 11, 22, 10, 0, tzinfo=UTC),
+            end=datetime(2026, 11, 22, 10, 20, tzinfo=UTC),
         )
 
 
