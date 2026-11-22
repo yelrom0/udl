@@ -9,11 +9,12 @@ for the operations plugins add)
 """
 
 # System Imports
+import asyncio
 import enum
 import json
 from datetime import datetime
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Final, Self, cast
+from typing import TYPE_CHECKING, Any, Final, Protocol, Self, cast
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -78,8 +79,8 @@ from udl.core.models import (
     SiteList,
     SyncReport,
 )
-from udl.db.models import JobStatus, Strategy
-from udl.errors import ErrorInfo
+from udl.db.models import JobStatus, JsonObject, Strategy
+from udl.errors import ErrorInfo, UDLError
 from udl.fetch.cookies import ImportedCookies
 from udl.fetch.models import (
     ChallengeList,
@@ -107,7 +108,7 @@ from udl.plugins.registry import ACTIONS, DATABASES, DOWNLOADERS, INTEGRATIONS, 
 from udl.plugins.secrets.models import SecretsStatus
 
 if TYPE_CHECKING:
-    from udl.core.service import UDLService
+    pass
 
 _STATUS: Final[dict[JobStatus, tuple[str, str]]] = {
     JobStatus.QUEUED: ("…", "dim"),
@@ -1331,7 +1332,11 @@ def _merge_section(console: Console, listed: MergeList) -> None:
         )
     if listed.coming:
         console.print(f"[dim]Coming: {'  '.join(escape(row.task) for row in listed.coming)}[/]")
-    if not (listed.ready or listed.held or listed.coming):
+    if listed.done:
+        console.print(
+            f"[dim]Merged lately: {'  '.join(escape(row.task) for row in listed.done)}[/]"
+        )
+    if not (listed.ready or listed.held or listed.coming or listed.done):
         console.print("[dim]Nothing waits for a merge.[/]")
 
 
@@ -1367,21 +1372,67 @@ def _agent_section(console: Console, agents: list[AgentLine]) -> None:
         console.print("[dim]No agents.[/]")
 
 
-async def watch_inbox(console: Console, service: UDLService, request: InboxRequest) -> None:
+WATCH_POLL: Final = 2.0
+"""How often `--watch` looks for what changed, in seconds: a burst of events (a merge moves
+several tasks) is one draw, and the redraws do not run faster than the inbox can be read."""
+WATCH_REFRESH: Final = 30.0
+"""How long `--watch` goes without a redraw before drawing it anyway, in seconds: a change that
+publishes no event (an ask made over the API, or a task moved by hand) is still shown, and the
+pulls' state on GitHub is read again — often enough to be current, rarely enough to be kind."""
+_ORCH_EVENTS: Final = "orch.*"
+"""The events the inbox follows: the orchestrator's own."""
+
+
+class InboxSource(Protocol):
+    """What `--watch` reads the inbox through (a UDLService is one: it is its operations)."""
+
+    async def call(self, name: str, request: JsonObject) -> BaseModel:
+        """Run the operation called `name` with `request`."""
+        ...
+
+
+async def watch_inbox(console: Console, source: InboxSource, request: InboxRequest) -> None:
     """`udl orch inbox --watch`: the inbox again as things happen (28.4), until Ctrl-C.
 
-    It draws once, then redraws on each `orch.*` event the bus tells of (the orchestrator's own:
-    a session's, a task's move, a question, an action), so a person watching sees the inbox as it
-    changes without asking for it again."""
+    It draws once, then looks every couple of seconds at the newest stored `orch.*` event and
+    draws again when that is a new one. It reads the events udl *stored*, not the ones this
+    process hears: the dispatcher, the GitHub watcher and the API's asks all publish in
+    `udl serve`'s process, so a watch that only listened here would draw once and wait forever.
+
+    A burst is one draw, and an inbox it cannot read (GitHub down, say) says why and keeps
+    watching: a dashboard is no good if it stops."""
     given = request.model_dump(round_trip=True)
 
+    async def newest() -> UUID | None:
+        listed = EventList.model_validate(
+            await source.call("list_events", {"type": _ORCH_EVENTS, "limit": 1})
+        )
+        return listed.events[0].id if listed.events else None
+
     async def draw() -> None:
-        # (The service answers its own operation's model, which is this one's: validated, so a
-        # change to it is a test's failure and not a crash mid-draw.)
-        found = Inbox.model_validate(await service.call("orch_inbox", given))
         console.clear()
+        try:
+            found = Inbox.model_validate(await source.call("orch_inbox", given))
+        except UDLError as e:
+            console.print(f"[bold red]Error:[/] {escape(e.message)}")
+            if e.hint:
+                console.print(escape(e.hint), style="dim")
+            console.print("[dim]Watching: it draws again when something changes.[/]")
+            return
         inbox(console, found)
 
+    loop = asyncio.get_running_loop()
+    seen = await newest()
     await draw()
-    async for _ in service.bus.notices("orch.*"):
-        await draw()
+    drawn_at = loop.time()
+    while True:
+        await asyncio.sleep(WATCH_POLL)
+        try:
+            found = await newest()
+        except UDLError as e:  # (the events cannot be read: say so, and keep going)
+            console.print(f"[bold red]Error:[/] {escape(e.message)}")
+            found = seen
+        if found != seen or loop.time() - drawn_at >= WATCH_REFRESH:
+            seen = found
+            drawn_at = loop.time()
+            await draw()

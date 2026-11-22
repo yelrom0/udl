@@ -1443,18 +1443,22 @@ class AgentLine(_Model):
     """The task it is on, when it is on one (None: it has none, or its manager has no task)."""
     since: AwareDatetime | None = None
     """When its session last changed (when it started, or answered): None when it has none."""
+    line: str = ""
+    """It, in a line: `deepseek-a — implementing 27.10`, or `claude — idle` (what the inbox
+    strip shows; the app writes it, so the API and MCP answer it too)."""
 
-    @property
-    def line(self) -> str:
-        """It, in a line: `deepseek-a — implementing 27.10`, or `claude — idle`."""
-        what = {
-            AgentRole.IMPLEMENTER: "implementing",
-            AgentRole.REVIEWER: "reviewing",
-            AgentRole.MANAGER: "managing",
-        }
-        if self.task is not None and self.state is AgentStatus.WORKING:
-            return f"{self.name} — {what[self.role]} {self.task}"
-        return f"{self.name} — {self.state.value}"
+
+def agent_line(name: str, role: AgentRole, state: AgentStatus, task: str | None) -> str:
+    """An agent in a line (28.4's inbox strip): `deepseek-a — implementing 27.10`, or
+    `claude — idle`."""
+    what = {
+        AgentRole.IMPLEMENTER: "implementing",
+        AgentRole.REVIEWER: "reviewing",
+        AgentRole.MANAGER: "managing",
+    }
+    if task is not None and state is AgentStatus.WORKING:
+        return f"{name} — {what[role]} {task}"
+    return f"{name} — {state.value}"
 
 
 class InboxRequest(_Model):

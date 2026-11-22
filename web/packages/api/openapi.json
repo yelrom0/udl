@@ -758,6 +758,12 @@
         "additionalProperties": false,
         "description": "What an agent is doing, in a line (28.4's inbox strip): who it is, what it is, and what it\nis on \u2014 derived from its session, never stored.",
         "properties": {
+          "line": {
+            "default": "",
+            "description": "It, in a line: `deepseek-a \u2014 implementing 27.10`, or `claude \u2014 idle` (what the inbox\nstrip shows; the app writes it, so the API and MCP answer it too).",
+            "title": "Line",
+            "type": "string"
+          },
           "name": {
             "$ref": "#/components/schemas/Name",
             "description": "Its name."

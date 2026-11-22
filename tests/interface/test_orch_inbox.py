@@ -9,14 +9,17 @@ what only a person can do, and what every agent is doing) comes back from one ca
 """
 
 # System Imports
+import asyncio
+import io
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any, Final
 
 # Package Imports
 import pytest
 from mcp.types import TextContent
+from rich.console import Console
 
 # Local Imports
 from support.api import client_for as api_client_for
@@ -24,10 +27,18 @@ from support.cli import CLI
 from support.clock import FakeClock
 from support.interfaces import Harness
 from support.mcp import client_for as mcp_client_for
+from udl.interfaces.cli import render
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.models import AgentRole, Inbox, InboxRequest
 from udl.plugins.apps.orch.plugin import Orch
-from udl.plugins.apps.orch.records import Agent, AgentRecords
+from udl.plugins.apps.orch.records import (
+    Agent,
+    AgentRecords,
+    QuestionRecords,
+)
+from udl.plugins.apps.orch.records import (
+    Question as QuestionRecord,
+)
 from udl.plugins.registry import APPS
 
 SNAPSHOT: Final = Path(__file__).parent / "snapshots" / "orch_inbox.json"
@@ -123,6 +134,64 @@ async def test_an_agents_line_says_what_it_is_doing(with_things_to_do: Harness) 
         None,
     )
     assert line.line == "deepseek-a — idle"
+
+
+async def test_a_question_asked_of_a_manager_is_not_a_person_s(
+    with_things_to_do: Harness,
+) -> None:
+    """(The card's `for = humans`: a question a manager is asked waits on that agent, not on the
+    person reading the inbox — only the asks of the humans are theirs.)"""
+    async with with_things_to_do.service() as service:
+        await QuestionRecords(AppRecords(service.db)).save_question(
+            QuestionRecord(
+                key="Q-2",
+                project="udl",
+                asked_by="deepseek-a",
+                to="claude",
+                title="Which branch?",
+                task="26.4",
+            )
+        )
+        found = await service.call("orch_inbox", {})
+
+    assert isinstance(found, Inbox)
+    assert [one.title for one in found.questions] == ["Which theme?"]
+
+
+async def test_the_watch_shows_what_another_service_changed(
+    with_things_to_do: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(28.4's `--watch` reads what is *stored*, not what this process hears: the dispatcher,
+    the GitHub watcher and the API's asks all write in `udl serve`'s process, so a watch that
+    only listened to its own bus would draw once and wait forever. Here, two services over one
+    database: the other one changes something, and the watch draws it.)"""
+    monkeypatch.setattr(render, "WATCH_POLL", 0.01)
+    monkeypatch.setattr(render, "WATCH_REFRESH", 0.05)
+    output = io.StringIO()
+    console = Console(file=output, width=200, color_system=None)
+    async with with_things_to_do.service() as watching, with_things_to_do.service() as other:
+        task = asyncio.create_task(
+            render.watch_inbox(console, watching, InboxRequest(project="udl"))
+        )
+        try:
+            await _until(lambda: output.getvalue().count("Ready to merge") == 1)
+            await other.call("orch_set_action", {"title": "Merge 26.8", "when": "now"})
+            await _until(lambda: "Merge 26.8" in output.getvalue())
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    assert "Which theme?" in output.getvalue(), "and the rest of the inbox is still there"
+
+
+async def _until(done: Callable[[], bool]) -> None:
+    """Wait for `done` (a watch draws in its own task: the test moves on when it has)."""
+    for _ in range(500):
+        if done():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("the watch did not draw in time")
 
 
 def test_the_inbox_only_reads() -> None:

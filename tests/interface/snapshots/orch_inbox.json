@@ -45,7 +45,8 @@
       "role": "implementer",
       "state": "idle",
       "task": null,
-      "since": null
+      "since": null,
+      "line": "deepseek-a \u2014 idle"
     }
   ],
   "updated_at": "2026-01-02T03:04:05Z"

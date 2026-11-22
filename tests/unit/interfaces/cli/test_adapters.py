@@ -12,6 +12,9 @@ group the caller already made.
 import inspect
 from pathlib import Path
 
+# Local Imports
+import pytest
+
 # Package Imports
 import typer
 import typer.core
@@ -19,11 +22,11 @@ import typer.main
 from rich.console import Console
 from typer.testing import CliRunner
 
-# Local Imports
 from support.engine import settings
 from support.interfaces import Harness
 from support.operations import Things, every_thing, find
 from udl.core.operations import CLISpec, Operation
+from udl.core.service import UDLService
 from udl.interfaces.adapters import add_commands
 from udl.interfaces.cli.common import Runtime, operation_of
 
@@ -89,29 +92,32 @@ def test_a_group_the_caller_made_gets_its_commands_and_no_callback() -> None:
     assert operation_of(inspect.unwrap(things.commands["find"].callback or print)) == "find"
 
 
-def watching() -> Operation:
-    """The operation whose command follows it: `udl gizmo follow --watch`."""
+def following() -> Operation:
+    """The operation whose command the CLI lets a person follow: `udl gizmo follow`."""
     return Operation.of(
-        every_thing,
-        name="every_thing",
-        title="Every thing",
-        cli=CLISpec(path=("gizmo", "follow"), watch=watched),
+        every_thing, name="every_thing", title="Every thing", cli=CLISpec(path=("gizmo", "follow"))
     )
 
 
 _watched: list[tuple[str, str]] = []
 
 
-async def watched(console: Console, service: object, request: Things) -> None:
+async def watched(console: Console, service: UDLService, request: Things) -> None:
     """(What a command's watch does: the inbox redraws on events, so a test records the call.)"""
     _watched.append(("watched", str(request.count)))
+
+
+@pytest.fixture(autouse=True)
+def _nothing_watched() -> None:
+    """(The record of what a watch drew starts empty, whatever another test left.)"""
+    _watched.clear()
 
 
 def test_a_command_that_follows_takes_watch_and_runs_its_watcher(tmp_path: Path) -> None:
     # (The flag is the CLI's own: it is not a field of the request, and the API and MCP never see
     # it — a command that follows is what a person reads, not what an agent calls.)
     app = typer.Typer()
-    add_commands(app, [watching()], renderers={}, helps={})
+    add_commands(app, [following()], renderers={}, helps={}, watchers={"every_thing": watched})
     # (The watcher is given a real service — the harness's — and records the request it was
     # given; a watch is the CLI's own, so it never reaches the operation.)
     harness = Harness(tmp_path)

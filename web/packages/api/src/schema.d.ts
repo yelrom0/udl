@@ -3099,6 +3099,13 @@ export interface components {
          *     is on — derived from its session, never stored.
          */
         AgentLine: {
+            /**
+             * Line
+             * @description It, in a line: `deepseek-a — implementing 27.10`, or `claude — idle` (what the inbox
+             *     strip shows; the app writes it, so the API and MCP answer it too).
+             * @default
+             */
+            line: string;
             /** @description Its name. */
             name: components["schemas"]["Name"];
             /** @description What it does: implements, manages, or reviews. */

@@ -16,7 +16,7 @@ module does.
 import asyncio
 import contextlib
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Final, Protocol
 from uuid import UUID
@@ -176,6 +176,7 @@ from udl.plugins.apps.orch.models import (
     Tasks,
     Totals,
     UnassignTaskRequest,
+    agent_line,
     as_shape,
 )
 from udl.plugins.apps.orch.readiness import TASK_READY, Pull, TaskReady
@@ -216,8 +217,6 @@ from udl.plugins.runners.manage import (
 from udl.plugins.secrets.base import SecretField, SecretStore, load_secrets
 
 if TYPE_CHECKING:
-    from rich.console import Console
-
     from udl.core.service import UDLService
     from udl.interfaces.security import Principal as Caller
 
@@ -237,20 +236,6 @@ _LINKS: Final = ("orch", "links")
 """The CLI group the links' commands are under (`udl orch links`)."""
 _INBOX: Final = ("orch", "inbox")
 """The inbox's own command (`udl orch inbox`): the one thing a person reads first (28.4)."""
-
-
-def _inbox_shown() -> Callable[[Console, Inbox], None]:
-    """How the CLI shows the inbox: its three sections, each with what is in it (28.4)."""
-    from udl.interfaces.cli import render
-
-    return render.inbox
-
-
-def _inbox_watched() -> Callable[..., Awaitable[None]]:
-    """What `udl orch inbox --watch` does: the inbox again on each `orch.*` event (28.4)."""
-    from udl.interfaces.cli import render
-
-    return render.watch_inbox
 
 
 _UDL: Final = Principal(kind="system", role="ready")
@@ -601,12 +586,8 @@ class Orch(AppPlugin[OrchSettings]):
                 "inbox",
                 title="What waits on a person",
                 hints=OperationHints(read_only=True, open_world=True),
-                cli=CLISpec(
-                    path=_INBOX,
-                    # (Imported here, lazily: the CLI is what draws it, not the app.)
-                    render=_inbox_shown(),
-                    watch=_inbox_watched(),
-                ),
+                # (How the CLI draws it, and its `--watch`, are the CLI's own: udl.interfaces.cli)
+                cli=CLISpec(path=_INBOX),
             ),
             cls.operation(
                 "list_projects",
@@ -1867,11 +1848,12 @@ class Orch(AppPlugin[OrchSettings]):
         reads today in human-comms.md. It reads: nothing changes."""
         project = await self._project(request.project)
         merge = await self.merge_list(MergeListRequest(project=project), service=service)
-        # (Blocking first, then newest first: what blocks an agent today is what a person reads
-        # first, and the rest are the most recent asks. The records carry the times the shape
-        # does not, so the inbox reads them itself.)
+        # (Only what is asked of the humans: a question a manager is asked waits on that agent,
+        # not on a person. Blocking first, then newest first: what blocks an agent today is what
+        # a person reads first, and the rest are the most recent asks. The records carry the
+        # times the shape does not, so the inbox reads them itself.)
         open_questions = await stored.QuestionRecords(self.records).questions(
-            project, state=QuestionState.OPEN
+            project, state=QuestionState.OPEN, to="humans"
         )
         questions = [
             _question(one)
@@ -1910,7 +1892,11 @@ class Orch(AppPlugin[OrchSettings]):
                 task=current.task or None if current is not None else None,
                 since=current.updated_at if current is not None else None,
             )
-            lines.append(line)
+            lines.append(
+                line.model_copy(
+                    update={"line": agent_line(line.name, line.role, line.state, line.task)}
+                )
+            )
         return lines
 
     async def _merge_row(

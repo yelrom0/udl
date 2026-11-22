@@ -134,6 +134,7 @@ async def service(tmp_path: Path) -> AsyncIterator[UDLService]:
         tasks = TaskRecords(records)
         await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.1", title="One"))
         await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.2", title="Two"))
+        await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.3", title="Three"))
         found = await tasks.task("udl", "F-1.1")
         assert found is not None
         await tasks.move(found, "in_progress", by=Principal(kind="system", role="start"))
@@ -178,19 +179,23 @@ async def test_the_inbox_has_the_app_s_own_three_lists(service: UDLService) -> N
     assert [line.name for line in found.agents] == ["deepseek-a"]
 
 
-async def test_a_question_s_newest_comes_first_among_the_blocking_ones(
+async def test_the_blocking_questions_come_first_and_each_group_newest_first(
     service: UDLService,
 ) -> None:
+    """(What blocks an agent today is what a person reads first — and among those, and among the
+    rest, the most recent ask is the one that matters.)"""
+    await service.call("orch_ask", {"task": "F-1.3", "title": "A later block", "blocking": True})
     await service.call("orch_ask", {"task": "F-1.1", "title": "A second ask"})
 
     found = await service.call("orch_inbox", {})
 
     assert isinstance(found, Inbox)
-    assert [one.title for one in found.questions] == [
-        "Which theme?",
-        "A second ask",
-        "A later ask",
-    ], "the blocking one first, then the newest of the rest"
+    assert [(one.title, one.blocking) for one in found.questions] == [
+        ("A later block", True),
+        ("Which theme?", True),
+        ("A second ask", False),
+        ("A later ask", False),
+    ]
 
 
 async def test_the_inbox_is_of_one_project(service: UDLService) -> None:

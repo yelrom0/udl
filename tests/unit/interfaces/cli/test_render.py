@@ -11,18 +11,22 @@ is running (with its tries), progress bars on a terminal, and the rarer parts of
 import asyncio
 import io
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID
 
 # Package Imports
+import pytest
 from pydantic import BaseModel, SecretStr
 from rich.console import Console
 
 # Local Imports
+from udl.automations.events import EventStatus
 from udl.automations.models import (
     ActionInfo,
     EventInfo,
+    EventList,
     RunDetail,
     RunList,
     ScheduleInfo,
@@ -51,8 +55,8 @@ from udl.core.models import (
     SiteInfo,
     SiteList,
 )
-from udl.db.models import JobStatus, Site, Strategy, StrategySource
-from udl.errors import AuthRequired, ErrorCode, ErrorInfo, NoStrategyFound
+from udl.db.models import JobStatus, JsonObject, Site, Strategy, StrategySource
+from udl.errors import AuthRequired, ErrorCode, ErrorInfo, NoStrategyFound, PluginError
 from udl.integrations.models import AccountInfo
 from udl.integrations.watchers import WatcherState, WatcherStatus
 from udl.interfaces.cli import render
@@ -66,6 +70,7 @@ from udl.plugins.apps.orch.models import (
     MergeList,
     MergeRow,
     Question,
+    agent_line,
 )
 from udl.plugins.downloaders.base import (
     DownloadProgress,
@@ -757,6 +762,26 @@ def test_a_preview_of_a_time_gone_by_says_so() -> None:
 # ---------------------------------------------------------------------------------------------
 
 
+def _orch_event(one: UUID) -> EventInfo:
+    """An `orch.*` event, as `list_events` answers it."""
+    return EventInfo(
+        id=one,
+        type="orch.task.changed",
+        source="udl",
+        account_id=None,
+        occurred_at=NOW,
+        stored_at=NOW,
+        subject="26.4 ready",
+        data={},
+        dedupe_key=None,
+        caused_by=None,
+        depth=0,
+        status=EventStatus.DISPATCHED,
+        dispatched_at=NOW,
+        dropped_reason=None,
+    )
+
+
 def _inbox(**fields: object) -> Inbox:
     return Inbox.model_validate(
         {
@@ -837,9 +862,16 @@ def _inbox(**fields: object) -> Inbox:
                     role=AgentRole.IMPLEMENTER,
                     state=AgentStatus.WORKING,
                     task="28.4",
+                    line=agent_line(
+                        "deepseek-a", AgentRole.IMPLEMENTER, AgentStatus.WORKING, "28.4"
+                    ),
                 ),
                 AgentLine(
-                    name="claude", title="Claude", role=AgentRole.MANAGER, state=AgentStatus.IDLE
+                    name="claude",
+                    title="Claude",
+                    role=AgentRole.MANAGER,
+                    state=AgentStatus.IDLE,
+                    line=agent_line("claude", AgentRole.MANAGER, AgentStatus.IDLE, None),
                 ),
             ],
             "updated_at": NOW,
@@ -882,28 +914,100 @@ def test_an_inbox_with_nothing_in_it_says_so_everywhere() -> None:
     assert "Nothing is being asked." in said
 
 
-async def test_the_watch_draws_it_and_again_on_an_event() -> None:
-    """(28.4's `--watch`: one draw at once, then one for each `orch.*` event the bus tells of.)"""
+async def test_the_watch_draws_it_and_again_when_a_new_event_is_stored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(28.4's `--watch`: one draw at once, then one for each new `orch.*` event *stored* — the
+    events are in the database, so a watch in the CLI's own process hears what `udl serve`
+    published, which a listener in this process would never hear.)"""
     output = io.StringIO()
-    drawn: list[str] = []
+    events: list[UUID] = [uuid.uuid4()]  # (one already stored: the first look finds it)
+    calls: list[tuple[str, dict[str, object]]] = []
 
-    class _Bus:
-        async def notices(self, types: str) -> AsyncIterator[object]:
-            assert types == "orch.*"
-            yield object()  # (an event: the inbox is drawn again)
-            yield object()
+    class _Source:
+        looks = 0
 
-    class _Service:
-        bus = _Bus()
+        async def call(self, name: str, request: JsonObject) -> BaseModel:
+            calls.append((name, dict(request)))
+            if name != "list_events":
+                return _inbox()
+            self.looks += 1
+            if (
+                self.looks == 4
+            ):  # (three draws is the whole test: the watch then ends as Ctrl-C does)
+                raise asyncio.CancelledError
+            if self.looks in (2, 3):  # (a new event is stored between the looks)
+                events.append(uuid.uuid4())
+            return EventList(events=[_orch_event(events[-1])])
 
-        async def call(self, name: str, request: dict[str, object]) -> Inbox:
-            assert name == "orch_inbox"
-            drawn.append(str(request))
-            return _inbox()
-
+    monkeypatch.setattr(render, "WATCH_POLL", 0.0)
     console = Console(file=output, width=200, color_system=None)
 
-    await render.watch_inbox(console, _Service(), InboxRequest(project="udl"))  # type: ignore[arg-type]
+    with pytest.raises(asyncio.CancelledError):
+        await render.watch_inbox(console, _Source(), InboxRequest(project="udl"))
 
-    assert drawn == ["{'project': 'udl'}"] * 3, "once, then once for each event"
+    assert [name for name, _ in calls].count("orch_inbox") == 3, "once, then once per new event"
     assert output.getvalue().count("Ready to merge") == 3
+    assert calls[0] == ("list_events", {"type": "orch.*", "limit": 1})
+
+
+async def test_the_watch_says_why_and_keeps_going_when_the_inbox_cannot_be_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # (GitHub unreachable, say: a dashboard that stops is no use, so it says why, and draws on
+    # as soon as the next event gives it a reason to.)
+    output = io.StringIO()
+    drawn = 0
+
+    class _Source:
+        looks = 0
+
+        async def call(self, name: str, request: JsonObject) -> BaseModel:
+            nonlocal drawn
+            if name != "list_events":
+                drawn += 1
+                if drawn == 1:
+                    raise PluginError("GitHub did not answer")
+                return _inbox()
+            self.looks += 1
+            if self.looks == 3:  # (the second draw is the test's end)
+                raise asyncio.CancelledError
+            return EventList(events=[] if self.looks == 1 else [_orch_event(uuid.uuid4())])
+
+    monkeypatch.setattr(render, "WATCH_POLL", 0.0)
+    console = Console(file=output, width=200, color_system=None)
+
+    with pytest.raises(asyncio.CancelledError):
+        await render.watch_inbox(console, _Source(), InboxRequest(project="udl"))
+
+    assert "GitHub did not answer" in output.getvalue()
+    assert "Watching: it draws again when something changes." in output.getvalue()
+    assert "Ready to merge" in output.getvalue(), "and then it drew the inbox it could read"
+
+
+async def test_the_watch_draws_it_again_on_its_timer_when_no_event_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(Not every change publishes an event — an ask made over the API, a task moved by hand —
+    so the watch draws again when its refresh is up, whether or not anything was published.)"""
+    output = io.StringIO()
+    drawn = 0
+
+    class _Source:
+        async def call(self, name: str, request: JsonObject) -> BaseModel:
+            nonlocal drawn
+            if name == "list_events":
+                return EventList(events=[])  # (nothing was published at all)
+            drawn += 1
+            if drawn == 3:  # (two draws are the whole test)
+                raise asyncio.CancelledError
+            return _inbox()
+
+    monkeypatch.setattr(render, "WATCH_POLL", 0.0)
+    monkeypatch.setattr(render, "WATCH_REFRESH", 0.0)
+    console = Console(file=output, width=200, color_system=None)
+
+    with pytest.raises(asyncio.CancelledError):
+        await render.watch_inbox(console, _Source(), InboxRequest(project="udl"))
+
+    assert output.getvalue().count("Ready to merge") == 2

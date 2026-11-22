@@ -11,8 +11,9 @@ interfaces) and `udl browser login`. The operations plugins add are commands too
 
 # System Imports
 import importlib.metadata
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Final
 
 # Package Imports
 import typer
@@ -24,6 +25,7 @@ from udl.core.operations import OperationRegistry, operations, valid_name
 from udl.core.service import UDLService
 from udl.errors import ConfigError
 from udl.interfaces.adapters import add_commands, cli_groups
+from udl.interfaces.cli import render
 from udl.interfaces.cli.commands import (
     accounts,
     automations,
@@ -99,7 +101,9 @@ def _plugin_groups(ctx: Any) -> dict[str, TyperGroup]:
     settings and the services it runs with)."""
     root = ctx.find_root()
     if _PLUGIN_GROUPS not in root.meta:
-        root.meta[_PLUGIN_GROUPS] = cli_groups(_operations(root))
+        root.meta[_PLUGIN_GROUPS] = cli_groups(
+            _operations(root), renderers=PLUGIN_RENDERERS, watchers=PLUGIN_WATCHERS
+        )
     groups: dict[str, TyperGroup] = root.meta[_PLUGIN_GROUPS]
     return groups
 
@@ -116,6 +120,16 @@ def _operations(ctx: Any) -> OperationRegistry:
 
 
 _PLUGIN_GROUPS = "udl.plugin_groups"
+
+PLUGIN_RENDERERS: Final[Mapping[str, Callable[..., None]]] = {
+    "orch_inbox": render.inbox,
+}
+"""How the CLI draws the plugin operations whose own answer is not the default (`udl orch
+inbox`'s three sections, 28.4)."""
+PLUGIN_WATCHERS: Final[Mapping[str, Callable[..., Awaitable[None]]]] = {
+    "orch_inbox": render.watch_inbox,
+}
+"""The plugin operations a person can follow with `--watch` (`udl orch inbox --watch`)."""
 
 
 app = typer.Typer(
