@@ -948,7 +948,9 @@ async def test_the_watch_draws_it_and_again_when_a_new_event_is_stored(
 
     assert [name for name, _ in calls].count("orch_inbox") == 3, "once, then once per new event"
     assert output.getvalue().count("Ready to merge") == 3
-    assert calls[0] == ("list_events", {"type": "orch.*", "limit": 1})
+    name, asked = calls[0]
+    assert (name, asked["type"], asked["limit"]) == ("list_events", "orch.*", 1)
+    assert "since" in asked, "the poll reads what was stored while the watch has run"
 
 
 async def test_the_watch_says_why_and_keeps_going_when_the_inbox_cannot_be_read(
@@ -983,6 +985,35 @@ async def test_the_watch_says_why_and_keeps_going_when_the_inbox_cannot_be_read(
     assert "GitHub did not answer" in output.getvalue()
     assert "Watching: it draws again when something changes." in output.getvalue()
     assert "Ready to merge" in output.getvalue(), "and then it drew the inbox it could read"
+
+
+async def test_the_watch_says_an_outage_once_and_draws_anyway(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(The events cannot be read at all — the first look included: it says so once, draws the
+    inbox it can, and does not add a line every two seconds for as long as the outage lasts.)"""
+    output = io.StringIO()
+    drawn = 0
+
+    class _Source:
+        async def call(self, name: str, request: JsonObject) -> BaseModel:
+            nonlocal drawn
+            if name == "list_events":
+                raise PluginError("the events cannot be read")
+            drawn += 1
+            if drawn == 3:
+                raise asyncio.CancelledError
+            return _inbox()
+
+    monkeypatch.setattr(render, "WATCH_POLL", 0.0)
+    monkeypatch.setattr(render, "WATCH_REFRESH", 0.0)
+    console = Console(file=output, width=200, color_system=None)
+
+    with pytest.raises(asyncio.CancelledError):
+        await render.watch_inbox(console, _Source(), InboxRequest(project="udl"))
+
+    assert output.getvalue().count("the events cannot be read") == 1
+    assert output.getvalue().count("Ready to merge") == 2, "and it drew, twice"
 
 
 async def test_the_watch_draws_it_again_on_its_timer_when_no_event_says_so(

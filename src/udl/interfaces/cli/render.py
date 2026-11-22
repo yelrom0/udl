@@ -12,9 +12,9 @@ for the operations plugins add)
 import asyncio
 import enum
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Final, Protocol, Self, cast
+from typing import Any, Final, Protocol, Self, cast
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -106,9 +106,6 @@ from udl.plugins.downloaders.base import MediaCandidate, MediaKind
 from udl.plugins.integrations.base import AccountHealth, AccountStatus
 from udl.plugins.registry import ACTIONS, DATABASES, DOWNLOADERS, INTEGRATIONS, SECRETS, SITES
 from udl.plugins.secrets.models import SecretsStatus
-
-if TYPE_CHECKING:
-    pass
 
 _STATUS: Final[dict[JobStatus, tuple[str, str]]] = {
     JobStatus.QUEUED: ("…", "dim"),
@@ -1402,10 +1399,16 @@ async def watch_inbox(console: Console, source: InboxSource, request: InboxReque
     A burst is one draw, and an inbox it cannot read (GitHub down, say) says why and keeps
     watching: a dashboard is no good if it stops."""
     given = request.model_dump(round_trip=True)
+    started = datetime.now(UTC)  # (the poll's own window: nothing before the watch is its news)
 
     async def newest() -> UUID | None:
+        # (`type` is a glob, so the events are filtered here: `since` keeps the scan small — the
+        # events stored while the watch has been running, not the whole table.)
         listed = EventList.model_validate(
-            await source.call("list_events", {"type": _ORCH_EVENTS, "limit": 1})
+            await source.call(
+                "list_events",
+                {"type": _ORCH_EVENTS, "limit": 1, "since": started.isoformat()},
+            )
         )
         return listed.events[0].id if listed.events else None
 
@@ -1421,17 +1424,25 @@ async def watch_inbox(console: Console, source: InboxSource, request: InboxReque
             return
         inbox(console, found)
 
+    said: list[str] = []  # (what the last look could not read: an outage is one line, not thirty)
+
+    async def looked() -> UUID | None:
+        """What `newest` answers, or None when the events cannot be read."""
+        try:
+            return await newest()
+        except UDLError as e:
+            if not said or said[0] != e.message:
+                said[:] = [e.message]
+                console.print(f"[bold red]Error:[/] {escape(e.message)}")
+            return None
+
     loop = asyncio.get_running_loop()
-    seen = await newest()
+    seen = await looked()
     await draw()
     drawn_at = loop.time()
     while True:
         await asyncio.sleep(WATCH_POLL)
-        try:
-            found = await newest()
-        except UDLError as e:  # (the events cannot be read: say so, and keep going)
-            console.print(f"[bold red]Error:[/] {escape(e.message)}")
-            found = seen
+        found = await looked()
         if found != seen or loop.time() - drawn_at >= WATCH_REFRESH:
             seen = found
             drawn_at = loop.time()

@@ -12,16 +12,15 @@ group the caller already made.
 import inspect
 from pathlib import Path
 
-# Local Imports
-import pytest
-
 # Package Imports
+import pytest
 import typer
 import typer.core
 import typer.main
 from rich.console import Console
 from typer.testing import CliRunner
 
+# Local Imports
 from support.engine import settings
 from support.interfaces import Harness
 from support.operations import Things, every_thing, find
