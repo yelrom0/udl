@@ -28,6 +28,7 @@ from udl.core.service import UDLService
 from udl.errors import DoesNotExist
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.models import (
+    CANCELLED,
     IN_PROGRESS,
     MERGED,
     OPEN,
@@ -223,3 +224,61 @@ async def test_an_unsized_task_is_not_estimated(service: UDLService) -> None:
 async def test_a_task_that_is_not_there_is_refused(service: UDLService) -> None:
     with pytest.raises(DoesNotExist, match=r"26\.99"):
         await service.call("orch_estimate", {"project": "udl", "task": "26.99"})
+
+
+async def test_a_model_with_no_samples_uses_the_project_s_rate(service: UDLService) -> None:
+    # (27.10's review: a merged task whose assignee's model has no samples yet is the project's
+    # rate, not a key that is not there — and a merged task is in the recent list either way.)
+    records = AppRecords(service.db)
+    await AgentRecords(records).save_agent(
+        Agent(name="fresh", title="fresh", runner="fake", model="brand-new")
+    )
+    tasks = TaskRecords(records)
+    task = await tasks.save_task(
+        Task(project="udl", feature="26", key="26.21", title="By the new model", size="M")
+    )
+    await tasks.import_task(task.model_copy(update={"state": MERGED, "assignee": "fresh"}))
+
+    found = await service.call("orch_progress", {"project": "udl"})
+
+    assert isinstance(found, Progress)
+    # (Its three points at the project's two hours a point: the six of the five samples.)
+    recent = next(one for one in found.recent if one.key == "26.21")
+    assert recent.estimate == timedelta(hours=6)
+
+
+async def test_a_feature_s_points_leave_out_a_cancelled_task(service: UDLService) -> None:
+    records = AppRecords(service.db)
+    tasks = TaskRecords(records)
+    dropped = await tasks.save_task(
+        Task(project="udl", feature="26", key="26.22", title="Dropped", size="M")
+    )
+    await tasks.import_task(dropped.model_copy(update={"state": CANCELLED}))
+
+    found = await service.call("orch_progress", {"project": "udl"})
+
+    assert isinstance(found, Progress)
+    (feature,) = found.features
+    assert feature.points == 8, "the five merged and the queued three-point task, not the cancelled"
+    assert feature.merged == 5
+
+
+async def test_an_imported_merged_task_counts_as_merged(service: UDLService) -> None:
+    # (An import writes no move, so a plan's `[x]` has no `MERGED` change: it is merged all the
+    # same, and the feature's merged points say so.)
+    records = AppRecords(service.db)
+    await FeatureRecords(records).save_feature(
+        Feature(project="udl", key="27", title="Agents", order=27)
+    )
+    tasks = TaskRecords(records)
+    imported = await tasks.save_task(
+        Task(project="udl", feature="27", key="27.1", title="From the plan", size="M")
+    )
+    await tasks.import_task(imported.model_copy(update={"state": MERGED}))
+
+    found = await service.call("orch_progress", {"project": "udl"})
+
+    assert isinstance(found, Progress)
+    feature = next(one for one in found.features if one.key == "27")
+    assert (feature.points, feature.merged) == (3, 3)
+    assert feature.forecast is None, "nothing is left of it"

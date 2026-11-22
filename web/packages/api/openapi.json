@@ -8352,6 +8352,19 @@
             "title": "Pending",
             "type": "array"
           },
+          "pending_kinds": {
+            "description": "What those are, for a caller that acts on them rather than reads them (27.10's `Wait`:\n`checks` and `mergeable` are GitHub's, `bot` is the review bot's).",
+            "items": {
+              "enum": [
+                "checks",
+                "mergeable",
+                "bot"
+              ],
+              "type": "string"
+            },
+            "title": "Pending Kinds",
+            "type": "array"
+          },
           "ready": {
             "description": "Whether it may be merged now.",
             "title": "Ready",

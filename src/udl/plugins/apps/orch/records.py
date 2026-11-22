@@ -38,6 +38,8 @@ from uuid import UUID
 # Package Imports
 from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt
 
+from udl.clock import Clock
+
 # Local Imports
 from udl.db.models import JsonObject, utcnow
 from udl.db.records import Name, Record, RecordQuery, RecordScope, SyncRule
@@ -817,9 +819,16 @@ class ProjectRecords:
 class RepoRecords:
     """Where orch keeps a project's repos: looked up by project and name, and by GitHub."""
 
-    def __init__(self, records: AppRecords, projects: ProjectRecords | None = None) -> None:
+    def __init__(
+        self,
+        records: AppRecords,
+        projects: ProjectRecords | None = None,
+        *,
+        clock: Clock | None = None,
+    ) -> None:
         self._records = records
         self._projects = projects if projects is not None else ProjectRecords(records)
+        self._clock = clock
 
     async def save_repo(self, repo: Repo) -> Repo:
         """Store `repo` (by its id, so storing one again replaces it). Raises DoesNotExist when
@@ -1053,9 +1062,16 @@ class FeatureRecords:
 class TaskRecords:
     """Where orch keeps its tasks: looked up by project, feature, key, state and assignee."""
 
-    def __init__(self, records: AppRecords, projects: ProjectRecords | None = None) -> None:
+    def __init__(
+        self,
+        records: AppRecords,
+        projects: ProjectRecords | None = None,
+        *,
+        clock: Clock | None = None,
+    ) -> None:
         self._records = records
         self._projects = projects if projects is not None else ProjectRecords(records)
+        self._clock = clock
 
     @property
     def records(self) -> AppRecords:
@@ -1138,7 +1154,7 @@ class TaskRecords:
                         task=task.id,
                         from_state=stored.state,
                         to_state=task.state,
-                        at=utcnow(),
+                        at=self._now(),
                         by=task.updated_by or "udl",
                     )
                 )
@@ -1220,6 +1236,11 @@ class TaskRecords:
         This is `move()`'s own write. A path that plans several moves (a queue's reassign is two)
         builds the same note with `move_note()` and writes it in its own batch."""
         return await self.save_all([moved], also=[move_note(task, moved, by)])
+
+    def _now(self) -> datetime:
+        """When a history entry is written: the app's clock when it was given one (so a test's
+        history and its waits share one), else the wall clock."""
+        return self._clock.now() if self._clock is not None else utcnow()
 
     async def _store(self, task: Task) -> Task:
         """Store `task` as it is (a save's and a move's own path) and keep its feature's status

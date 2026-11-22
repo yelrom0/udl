@@ -78,10 +78,20 @@ def _spans(
 
 def _taken(start: datetime, end: datetime, waits: Sequence[Wait], now: datetime) -> timedelta:
     """How much of the stretch from `start` to `end` a wait covered: a wait that crosses either end
-    counts only the part inside."""
+    counts only the part inside, and two waits at once (its checks and the bot) are one wait's
+    time, not two."""
     taken = timedelta(0)
-    for wait in waits:
-        inside = min(end, wait.end or now) - max(start, wait.start)
-        if inside > timedelta(0):
-            taken += inside
+    covered: datetime | None = None
+    for wait in sorted(waits, key=lambda one: one.start):
+        inside_start = max(start, wait.start)
+        inside_end = min(end, wait.end or now)
+        if inside_end <= inside_start:
+            continue
+        if covered is not None and inside_start <= covered:
+            if inside_end > covered:
+                taken += inside_end - covered
+                covered = inside_end
+            continue
+        taken += inside_end - inside_start
+        covered = inside_end
     return taken

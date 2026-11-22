@@ -166,3 +166,16 @@ def test_a_since_counts_only_the_time_after_it() -> None:
 
     assert working_time(changes, [], now=_at(14), since=_at(11)) == timedelta(hours=2)
     assert by_agent(changes, [], now=_at(14), since=_at(11)) == {"deepseek-a": timedelta(hours=2)}
+
+
+def test_two_waits_at_once_are_taken_off_once() -> None:
+    # (Its checks and the bot can both be pending: two waits over the same hour are one hour
+    # of waiting, not two — a working time is never less than nothing.)
+    changes = [_change(_at(9), IN_PROGRESS), _change(_at(11), DONE)]
+    waits = [
+        Wait(task=TASK, wait_kind="ci", start=_at(9), end=_at(10)),
+        Wait(task=TASK, wait_kind="bot", start=_at(9, 30), end=_at(10, 30)),
+    ]
+
+    # (The two waits cover 9:00 to 10:30 between them: an hour and a half, not two hours.)
+    assert working_time(changes, waits, now=_at(12)) == timedelta(minutes=30)

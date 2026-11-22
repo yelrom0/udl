@@ -56,10 +56,10 @@ from udl.plugins.apps.orch.models import (
     QUEUED,
     READY,
     OwnerKind,
+    PendingKind,
     Principal,
     QuestionState,
     Readiness,
-    Role,
     WaitKind,
 )
 from udl.plugins.apps.orch.settings import OrchSettings
@@ -124,11 +124,11 @@ def instructions(project: stored.Project, agent: stored.Agent) -> str:
     return "\n\n".join(parts)
 
 
-def _waiting_kind(pending: Sequence[str]) -> WaitKind:
+def _waiting_kind(pending: Sequence[PendingKind]) -> WaitKind:
     """Which kind of wait a pull's pending blockers are (27.10): `ci` while its checks run (or
     GitHub has not worked out whether it merges), else `bot` — its checks gate the bot, so a
-    pull with both is waiting on the checks."""
-    return "ci" if any("check" in one or "merges yet" in one for one in pending) else "bot"
+    pull waiting on both is waiting on the checks."""
+    return "ci" if {"checks", "mergeable"} & set(pending) else "bot"
 
 
 def first_prompt(task: stored.Task, *, answers: str = "") -> str:
@@ -597,10 +597,12 @@ class Dispatcher:
         """`task` with its worktree made, and moved to `in_progress` if it was only queued."""
         if task.state != QUEUED:
             return task
-        tasks = stored.TaskRecords(self._records)
+        tasks = stored.TaskRecords(self._records, clock=self._clock)
         made = await self._prepare(task, agent)
         await tasks.save_task(made)
-        return await tasks.move(made, IN_PROGRESS, by=_system("start"))
+        # (The agent starts it, not udl: its history is what its model's rate is learned from
+        # — a stretch credited to `udl` would teach nobody anything, 27.10.)
+        return await tasks.move(made, IN_PROGRESS, by=_starting(agent))
 
     async def _prepared(self, task: stored.Task, agent: stored.Agent) -> stored.Task:
         """The task's worktree on its agent's host (27.5's `prepare()`), saved on the task."""
@@ -873,7 +875,7 @@ class Dispatcher:
                     ),
                     blocking=False,
                 )
-            return None, session, _waiting_kind(found.pending)
+            return None, session, _waiting_kind(found.pending_kinds)
         parts = [f"its pull is not ready ({'; '.join(found.blockers)})"]
         if found.open_items:
             items = "\n".join(
@@ -1193,6 +1195,9 @@ def _plain(value: object) -> JsonValue:
     return str(value)
 
 
-def _system(role: Role) -> Principal:
-    """udl's own principal for a move it makes (never a person's, never an agent's)."""
-    return Principal(kind="system", role=role)
+def _starting(agent: stored.Agent) -> Principal:
+    """The principal a dispatcher's start is: the agent's own (it is the one who starts working),
+    with the role the table calls it."""
+    return Principal(kind="agent", name=agent.name, role="start")
+
+

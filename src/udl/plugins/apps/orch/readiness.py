@@ -38,6 +38,7 @@ from udl.plugins.apps.orch.models import (
     MERGED,
     Assessment,
     ManagerVerdict,
+    PendingKind,
     Readiness,
     ReviewItem,
     ReviewStatus,
@@ -219,7 +220,7 @@ def readiness(
     head concluded `success`, `neutral` or `skipped`; when `bot` is set, its latest comment is
     for this head and clean; every task in `task.needs` merged or done; and `task` not held.
     `tasks` is each task's state by key (a need that is not in it is not merged)."""
-    blockers, pending = _blockers(
+    blockers, pending, kinds = _blockers(
         pull,
         bot=bot,
         needs=list(task.needs),
@@ -235,6 +236,7 @@ def readiness(
         held=held,
         blockers=blockers,
         pending=pending,
+        pending_kinds=kinds,
         open_items=_open_items(pull, bot=bot),
     )
 
@@ -247,17 +249,19 @@ def _blockers(
     tasks: Mapping[str, str],
     manager: str | None = None,
     approval: ManagerVerdict | None = None,
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], list[PendingKind]]:
     """Why `pull` may not be merged, in the order a person would look at them (before the
     hold, which is udl's own decision and not GitHub's), and which of them are only a matter of
     time (what `orch_pr_status`'s wait can change, 27.5)."""
     found: list[str] = []
     waiting: list[str] = []
+    kinds: list[PendingKind] = []
     if pull.draft:
         found.append("it is a draft")
     if pull.mergeable is None:
         found.append("GitHub has not worked out whether it merges yet")
         waiting.append(found[-1])
+        kinds.append("mergeable")
     elif not pull.mergeable:
         found.append(f"it does not merge cleanly ({pull.mergeable_state or 'dirty'})")
     elif pull.mergeable_state and pull.mergeable_state != "clean":
@@ -271,24 +275,29 @@ def _blockers(
     if running:
         found.append(f"its checks are still running: {', '.join(running)}")
         waiting.append(found[-1])
+        kinds.append("checks")
     if failed:
         found.append(f"its checks failed: {', '.join(failed)}")
     if bot is not None:
         theirs, later = _bot_blockers(pull, bot=bot)
         found += theirs
         waiting += later
+        kinds.extend("bot" for _ in later)
     if manager is not None:
         # (27.8: where the task's manager has the `review` power, its OK is needed for this head —
-        # and a review of the commit before it says nothing about this one.)
+        # and a review of the commit before it says nothing about this one. 27.10: it is the
+        # review's wait, so a session waiting on its manager waits as it does on the bot.)
         if approval is None:
             found.append(f"its manager {manager} has not reviewed this head")
+            waiting.append(found[-1])
+            kinds.append("bot")
         elif approval != "approve":
             found.append(f"its manager {manager} asked for changes")
     for key in needs:
         state = tasks.get(key)
         if state not in (MERGED, DONE):
             found.append(f"it waits on {key}, which is {state or 'not a task'}")
-    return found, waiting
+    return found, waiting, kinds
 
 
 def _bot_blockers(pull: Pull, *, bot: str) -> tuple[list[str], list[str]]:

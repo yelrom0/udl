@@ -107,7 +107,10 @@ def finishes(loads: Sequence[Load], *, now: datetime) -> Forecast:
         days = hours / load.hours_a_day if load.hours_a_day > 0 else 0.0
         return now + timedelta(days=days)
 
-    likely = max((end(one, 1.0) for one in loads), default=now)
-    early = max(min((end(one, one.low) for one in loads), default=now), now)
-    late = max(max((end(one, one.high) for one in loads), default=now), likely)
-    return Forecast(likely=max(likely, now), early=early, late=late)
+    likely = max(max((end(one, 1.0) for one in loads), default=now), now)
+    # (The work is done when the last agent is: `early` is the latest of the low ends, `late` the
+    # latest of the high ones. A spread whose low end is slower than the rate (its 25th percentile
+    # above 1) cannot finish before the rate, so the range always holds `likely`.)
+    early = max(max((end(one, one.low) for one in loads), default=now), now)
+    late = max(max((end(one, one.high) for one in loads), default=now), now)
+    return Forecast(likely=likely, early=min(early, likely), late=max(late, likely))

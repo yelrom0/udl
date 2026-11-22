@@ -36,7 +36,7 @@ from udl.config import APISettings
 from udl.core.models import PluginSettingsRequest, SetPluginSettingsRequest
 from udl.core.operations import OperationHints
 from udl.core.service import UDLService
-from udl.db.records import Record
+from udl.db.records import Record, RecordQuery
 from udl.errors import DatabaseError, DoesNotExist, NotAllowed, PluginError, PluginFailed
 from udl.hosts.shell import Host, HostShell
 from udl.interfaces.security import Principal as Caller
@@ -90,6 +90,7 @@ from udl.plugins.apps.orch.records import (
     ReviewRecords,
     SessionEvent,
     SessionRecords,
+    StateChange,
     Task,
     TaskRecords,
     WaitRecords,
@@ -510,6 +511,23 @@ async def test_two_queued_tasks_are_taken_to_ready_in_order(service: UDLService)
 # ---------------------------------------------------------------------------------------------
 # What a session is started with
 # ---------------------------------------------------------------------------------------------
+
+
+async def test_the_move_that_starts_a_task_is_the_agent_s_and_on_the_clock(
+    service: UDLService,
+) -> None:
+    """(27.10: a stretch credited to `udl` would teach no model anything, and its time is the
+    app's clock — not the wall clock, which a `FakeClock` test's history would mix with.)"""
+    await scripted(service, "F-1.1")
+    clock = FakeClock()
+
+    await ran(service, clock=clock, turns=1)
+
+    task = (await tasks_of(service))["F-1.1"]
+    moves = await AppRecords(service.db).list(StateChange, RecordQuery(where={"task": task.id}))
+    started = [one for one in moves if one.to_state == IN_PROGRESS]
+    assert [one.by for one in started] == [AGENT]
+    assert started[0].at < datetime.now(UTC), "the clock's time, not a made-up one"
 
 
 async def test_the_worktree_is_made_and_the_task_is_in_progress_before_the_turn(

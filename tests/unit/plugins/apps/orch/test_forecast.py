@@ -16,6 +16,10 @@ by zero, and never ends before now.
 # System Imports
 from datetime import UTC, date, datetime, timedelta
 
+# Package Imports
+from hypothesis import given
+from hypothesis import strategies as st
+
 # Local Imports
 from udl.plugins.apps.orch.progress import Card, Load, finishes, pace, series
 
@@ -86,6 +90,20 @@ def test_an_agent_finishes_after_its_hours_at_its_own_day() -> None:
     assert found.unsized == 0
 
 
+def test_the_early_day_is_the_last_agent_s_early_one() -> None:
+    # (Each agent's spread says when it could be done; the work is done when the last of them
+    # is, so `early` is the latest of the low ends, as `likely` is of the rates.)
+    loads = [
+        Load(agent="deepseek-a", hours=timedelta(hours=8), hours_a_day=8, low=0.25, high=1.0),
+        Load(agent="deepseek-b", hours=timedelta(hours=16), hours_a_day=8, low=0.75, high=1.0),
+    ]
+
+    found = finishes(loads, now=NOW)
+
+    assert found.early == NOW + timedelta(days=1, hours=12)  # (deepseek-b's, not a's 2 hours)
+    assert found.likely == NOW + timedelta(days=2)
+
+
 def test_the_last_agent_to_finish_is_the_likely_day() -> None:
     loads = [
         Load(agent="deepseek-a", hours=timedelta(hours=8), hours_a_day=8, low=1.0, high=1.0),
@@ -126,6 +144,26 @@ def test_no_work_at_all_is_done_now() -> None:
 def test_a_forecast_never_ends_before_now() -> None:
     loads = [Load(agent="a", hours=timedelta(hours=-5), hours_a_day=8, low=0.5, high=1.5)]
 
+    found = finishes(loads, now=NOW)
+
+    assert NOW <= found.early <= found.likely <= found.late
+
+
+@given(
+    loads=st.lists(
+        st.builds(
+            Load,
+            agent=st.text(min_size=1),
+            hours=st.timedeltas(min_value=timedelta(0), max_value=timedelta(days=30)),
+            hours_a_day=st.floats(min_value=0.1, max_value=12, allow_nan=False),
+            low=st.floats(min_value=0.0, max_value=2.0, allow_nan=False),
+            high=st.floats(min_value=1.0, max_value=5.0, allow_nan=False),
+        ),
+        max_size=5,
+    )
+)
+def test_a_forecast_never_ends_before_now_and_its_range_holds(loads: list[Load]) -> None:
+    """(The card's property: a forecast never ends before `now`, and `early ≤ likely ≤ late`.)"""
     found = finishes(loads, now=NOW)
 
     assert NOW <= found.early <= found.likely <= found.late

@@ -7257,6 +7257,12 @@ export interface components {
              */
             pending?: string[];
             /**
+             * Pending Kinds
+             * @description What those are, for a caller that acts on them rather than reads them (27.10's `Wait`:
+             *     `checks` and `mergeable` are GitHub's, `bot` is the review bot's).
+             */
+            pending_kinds?: ("checks" | "mergeable" | "bot")[];
+            /**
              * Ready
              * @description Whether it may be merged now.
              */

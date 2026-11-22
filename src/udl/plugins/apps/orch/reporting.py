@@ -13,15 +13,17 @@ day, each feature's points — and the answers are put together.
 
 # System Imports
 import statistics
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import Final
 from uuid import UUID
 
 # Local Imports
+from udl.db.records import RecordQuery
 from udl.errors import DoesNotExist
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.estimates import (
+    DEFAULT,
     Rate,
     Sample,
     estimate,
@@ -101,16 +103,20 @@ class Reporting:
         """The project's burn-up, pace, forecast, features, models and recent tasks."""
         await ProjectRecords(self._records).require(project)
         tasks = await TaskRecords(self._records).tasks(project)
-        changes = await self._changes()
-        waits = await self._waits()
+        history, rests = await self._histories(task.id for task in tasks)
         agents = {agent.name: agent for agent in await AgentRecords(self._records).agents()}
-        history = {task.id: changes.get(task.id, []) for task in tasks}
-        rests = {task.id: waits.get(task.id, []) for task in tasks}
         samples = self._samples(tasks, history, rests, agents)
-        rates = {model: hours_per_point(samples, model=model) for model in _models(samples)}
+        # (Every model an agent runs, so an agent with no samples is still a rate — its project's,
+        # or the default — rather than a key that is not there.)
+        every = _models(samples) | {agent.model or None for agent in agents.values()} | {None}
+        rates = {model: hours_per_point(samples, model=model) for model in every}
         spreads = {model: spread(_mine(samples, model), rate=rate) for model, rate in rates.items()}
-        hours_a_day = self._hours_a_day(changes, waits, agents)
-        merged = {task.id: _when(history[task.id], MERGED) for task in tasks}
+        hours_a_day = self._hours_a_day(history, rests, agents)
+        merged = {task.id: merged_at(task, history[task.id]) for task in tasks}
+        remaining = {
+            task.id: left_of(task, history[task.id], rests[task.id], rates, agents, self._now)
+            for task in tasks
+        }
         cards = [
             Card(
                 points=points_of(task.size) or 0,
@@ -129,9 +135,21 @@ class Reporting:
                 SeriesPoint(day=one.day, points=one.points, merged=one.merged) for one in points
             ],
             pace=pace(points),
-            forecast=_info(_forecast_of(tasks, rates, spreads, hours_a_day, agents, now=self._now)),
+            forecast=_info(
+                _forecast_of(
+                    tasks,
+                    rates,
+                    spreads,
+                    hours_a_day,
+                    agents,
+                    remaining=remaining,
+                    now=self._now,
+                )
+            ),
             features=[
-                self._feature(feature, tasks, history, rates, spreads, hours_a_day, agents)
+                self._feature(
+                    feature, tasks, history, rates, spreads, hours_a_day, agents, remaining
+                )
                 for feature in features
             ],
             models=self._model_rows(samples, rates, agents),
@@ -146,37 +164,35 @@ class Reporting:
         found = await tasks.task(project, key)
         if found is None:
             raise DoesNotExist(f"There is no task {key!r} in {project!r}")
-        changes = await self._changes()
-        waits = await self._waits()
+        everything = await tasks.tasks(project)
+        history, rests = await self._histories(one.id for one in everything)
         agents = {agent.name: agent for agent in await AgentRecords(self._records).agents()}
-        samples = self._samples(await tasks.tasks(project), changes, waits, agents)
-        mine = changes.get(found.id, [])
-        model = _model_of(found.assignee, agents) or _model_of(_last_worked(mine), agents)
+        samples = self._samples(everything, history, rests, agents)
+        mine = history.get(found.id, [])
+        model = _rate_model(found, history, agents)
         rate = hours_per_point(samples, model=model)
         return Estimate(
             task=as_shape(Shaped, found),
             size=found.size,
             estimate=estimate(points_of(found.size), rate),
-            worked=working_time(mine, waits.get(found.id, []), now=self._now),
+            worked=working_time(mine, rests.get(found.id, []), now=self._now),
         )
 
     # -- what the records say ------------------------------------------------------------------
 
-    async def _changes(self) -> dict[UUID, list[StateChange]]:
-        """Every task's moves, by its id, oldest first."""
-        found: dict[UUID, list[StateChange]] = {}
-        for one in await self._records.list(StateChange):
-            found.setdefault(one.task, []).append(one)
-        for moves in found.values():
+    async def _histories(
+        self, ids: Iterable[UUID]
+    ) -> tuple[dict[UUID, list[StateChange]], dict[UUID, list[Wait]]]:
+        """The moves and the waits of the tasks `ids`, by each task's id (only those: a page of
+        one project's work reads that project's history, not every project's)."""
+        history: dict[UUID, list[StateChange]] = {}
+        rests: dict[UUID, list[Wait]] = {}
+        for task in ids:
+            moves = await self._records.list(StateChange, RecordQuery(where={"task": task}))
             moves.sort(key=lambda one: one.at)
-        return found
-
-    async def _waits(self) -> dict[UUID, list[Wait]]:
-        """Every task's waits, by its id."""
-        found: dict[UUID, list[Wait]] = {}
-        for one in await self._records.list(Wait):
-            found.setdefault(one.task, []).append(one)
-        return found
+            history[task] = moves
+            rests[task] = await self._records.list(Wait, RecordQuery(where={"task": task}))
+        return history, rests
 
     def _samples(
         self,
@@ -190,7 +206,7 @@ class Reporting:
         found: list[Sample] = []
         for task in tasks:
             points = points_of(task.size)
-            merged = _when(history.get(task.id, []), MERGED)
+            merged = merged_at(task, history.get(task.id, []))
             if points is None or merged is None:
                 continue
             worked = by_agent(history.get(task.id, []), waits.get(task.id, []), now=self._now)
@@ -202,16 +218,16 @@ class Reporting:
 
     def _hours_a_day(
         self,
-        changes: Mapping[UUID, Sequence[StateChange]],
-        waits: Mapping[UUID, Sequence[Wait]],
+        history: Mapping[UUID, Sequence[StateChange]],
+        rests: Mapping[UUID, Sequence[Wait]],
         agents: Mapping[str, Agent],
     ) -> dict[str, float]:
         """Each agent's working hours a day over the last `DAYS` (0.0 when it has none)."""
         since = self._now - timedelta(days=DAYS)
         worked: dict[str, timedelta] = {}
-        for task, moves in changes.items():
+        for task, moves in history.items():
             for agent, hours in by_agent(
-                moves, waits.get(task, []), now=self._now, since=since
+                moves, rests.get(task, []), now=self._now, since=since
             ).items():
                 worked[agent] = worked.get(agent, timedelta(0)) + hours
         return {
@@ -227,9 +243,14 @@ class Reporting:
         spreads: Spreads,
         hours_a_day: Mapping[str, float],
         agents: Mapping[str, Agent],
+        remaining: Mapping[UUID, timedelta],
     ) -> FeatureProgress:
-        """A feature's points, its merged points, and when what is left of it is done."""
-        mine = [task for task in tasks if task.feature == feature.key]
+        """A feature's points, its merged points, and when what is left of it is done.
+
+        Its points are the series': a cancelled task is not part of what the feature is any more.
+        A task that is merged or done counts as merged, whatever its history says — an imported
+        plan's `[x]` writes no move (27.10's records say so), and it is merged all the same."""
+        mine = [task for task in tasks if task.feature == feature.key and task.state != CANCELLED]
         left = [task for task in mine if task.state not in CLOSED and points_of(task.size)]
         return FeatureProgress(
             key=feature.key,
@@ -238,9 +259,19 @@ class Reporting:
             merged=sum(
                 points_of(task.size) or 0
                 for task in mine
-                if _when(history.get(task.id, []), MERGED) is not None
+                if merged_at(task, history.get(task.id, [])) is not None
             ),
-            forecast=_info(_forecast_of(left, rates, spreads, hours_a_day, agents, now=self._now))
+            forecast=_info(
+                _forecast_of(
+                    left,
+                    rates,
+                    spreads,
+                    hours_a_day,
+                    agents,
+                    remaining=remaining,
+                    now=self._now,
+                )
+            )
             if left
             else None,
         )
@@ -260,7 +291,7 @@ class Reporting:
                     model=model or "unknown",
                     runner=_runner_of(model, agents),
                     tasks=len(mine),
-                    hours_per_point=_rate_info(rates[model]),
+                    hours_per_point=_rate_info(rate_in(rates, model)),
                     hours_per_size={
                         size: statistics.median(found) for size, found in hours.items()
                     },
@@ -278,7 +309,7 @@ class Reporting:
     ) -> list[RecentTask]:
         """The last `RECENT` merged, sized tasks: what each was estimated at, and what it took."""
         merged = [
-            (task, _when(history.get(task.id, []), MERGED))
+            (task, merged_at(task, history.get(task.id, [])))
             for task in tasks
             if points_of(task.size) is not None
         ]
@@ -286,14 +317,14 @@ class Reporting:
         merged.sort(key=lambda pair: pair[1] or self._now, reverse=True)
         found: list[RecentTask] = []
         for task, _ in merged[:RECENT]:
-            expected = estimate(
-                points_of(task.size) or 0, rates[_rate_model(task, history, agents)]
-            )
+            if task.size is None:  # (only sized tasks are merged here; it narrows the type)
+                continue
+            expected = estimate(points_of(task.size) or 0, _rate_for(task, history, rates, agents))
             found.append(
                 RecentTask(
                     key=task.key,
                     title=task.title,
-                    size=task.size,  # pyright: ignore[reportArgumentType]
+                    size=task.size,
                     estimate=expected or timedelta(0),
                     actual=working_time(
                         history.get(task.id, []), waits.get(task.id, []), now=self._now
@@ -326,6 +357,7 @@ def _forecast_of(
     hours_a_day: Mapping[str, float],
     agents: Mapping[str, Agent],
     *,
+    remaining: Mapping[UUID, timedelta],
     now: datetime,
 ) -> Forecast:
     """`finishes` over the work `tasks` are: each agent's own in queue order, and the tasks
@@ -345,12 +377,16 @@ def _forecast_of(
         elif task.assignee is None:
             unassigned.append(task)
         else:
-            loads.setdefault(task.assignee, []).append(_left(task, rates, agents))
+            loads.setdefault(task.assignee, []).append(
+                remaining.get(task.id) or _left(task, rates, agents)
+            )
     for index, task in enumerate(
         sorted(unassigned, key=lambda one: (one.position is None, one.position or 0, one.key))
     ):
         if enabled:
-            loads[enabled[index % len(enabled)].name].append(_left(task, rates, agents))
+            loads[enabled[index % len(enabled)].name].append(
+                remaining.get(task.id) or _left(task, rates, agents)
+            )
     found = [
         Load(
             agent=name,
@@ -369,9 +405,41 @@ def _forecast_of(
 
 
 def _left(task: Task, rates: Rates, agents: Mapping[str, Agent]) -> timedelta:
-    """A queued task's estimate, at its agent's model's rate."""
-    rate = rates.get(_model_of(task.assignee, agents), Rate(1.0, "default"))
+    """A queued task's estimate, at its agent's model's rate (the project's, or the default, when
+    that model has no samples yet)."""
+    rate = rate_in(rates, _model_of(task.assignee, agents))
     return estimate(points_of(task.size) or 0, rate) or timedelta(0)
+
+
+def left_of(
+    task: Task,
+    changes: Sequence[StateChange],
+    waits: Sequence[Wait],
+    rates: Rates,
+    agents: Mapping[str, Agent],
+    now: datetime,
+) -> timedelta:
+    """What is left of a task: its estimate, less the time already worked on it (its estimate
+    itself for a task nobody has started)."""
+    left = _left(task, rates, agents) - working_time(changes, waits, now=now)
+    return left if left > timedelta(0) else timedelta(0)
+
+
+def rate_in(rates: Rates, model: str | None) -> Rate:
+    """The rate for `model`: its own when it has one, else the project's (the rate of a model
+    nobody knows, which is `rates[None]`'s)."""
+    return rates.get(model) or rates.get(None) or Rate(DEFAULT, "default")
+
+
+def _rate_for(
+    task: Task,
+    history: Mapping[UUID, Sequence[StateChange]],
+    rates: Rates,
+    agents: Mapping[str, Agent],
+) -> Rate:
+    """The rate a task's estimate is at: its assignee's model's, else the one that last worked
+    it, else the project's."""
+    return rate_in(rates, _rate_model(task, history, agents))
 
 
 def _day_of(name: str, hours_a_day: Mapping[str, float], average: float) -> float:
@@ -437,6 +505,14 @@ def _rate_model(
     return _model_of(task.assignee, agents) or _model_of(
         _last_worked(history.get(task.id, [])), agents
     )
+
+
+def merged_at(task: Task, changes: Sequence[StateChange]) -> datetime | None:
+    """When a task merged: its move's time, or — for one a plan imported as merged or done — when
+    it was last written, since an import writes no move."""
+    if task.state in (MERGED, DONE):
+        return _when(changes, MERGED) or task.updated_at
+    return _when(changes, MERGED)
 
 
 def _when(changes: Sequence[StateChange], state: str) -> datetime | None:

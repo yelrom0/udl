@@ -1257,6 +1257,11 @@ class ReviewVerdict(_Model):
     """The commit it says it reviewed (a follow-up names one; a first review does not)."""
 
 
+PendingKind = Literal["checks", "mergeable", "bot"]
+"""What a readiness is only waiting on: GitHub's checks, GitHub working out whether the pull
+merges, or the review bot (27.10)."""
+
+
 class Readiness(_Model):
     """Whether a pull may be merged for a task (27.6): ready or not, why not, and what the
     review bot still lists."""
@@ -1276,6 +1281,9 @@ class Readiness(_Model):
     """The blockers that are only a matter of time (the checks still running, the review bot not
     done with this head, GitHub not knowing yet): what a wait can change, and the rest of
     `blockers` cannot (27.5)."""
+    pending_kinds: list[PendingKind] = Field(default_factory=list[PendingKind])
+    """What those are, for a caller that acts on them rather than reads them (27.10's `Wait`:
+    `checks` and `mergeable` are GitHub's, `bot` is the review bot's)."""
 
 
 class ReviewRequest(_Model):
