@@ -513,6 +513,61 @@ async def test_a_failure_is_a_runner_failed() -> None:
     assert "the model is not there" in events[-1].text
 
 
+async def test_a_turn_that_prints_a_plain_error_says_why_it_failed() -> None:
+    """The CLI's own failures are plain lines, not JSON: a turn that ends without `turn.completed`
+    says the last of them, rather than "it ended without saying how"."""
+    shell = FakeShell(
+        output=[
+            b"Reading config from /home/user/.codex/config.toml\n",
+            b"Error: Model provider `local` not found\n",
+        ]
+    )
+    given, _ = runner(shell)
+    started = await given.start(session())
+
+    events = await turn_of(given, started)
+
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.ERROR
+    assert "Model provider `local` not found" in (events[-1].text or "")
+
+
+async def test_the_last_of_the_plain_lines_is_the_one_kept() -> None:
+    """A turn that prints several: the last one is where it stopped."""
+    shell = FakeShell(
+        output=[
+            b"first line\n",
+            b"Not inside a trusted directory and --skip-git-repo-check was not specified.\n",
+            b"\n",
+        ]
+    )
+    given, _ = runner(shell)
+    started = await given.start(session())
+
+    events = await turn_of(given, started)
+
+    assert isinstance(events[-1], TurnEnded)
+    assert "trusted directory" in (events[-1].text or "")
+
+
+async def test_a_plain_line_does_not_hide_a_failed_turns_own_message() -> None:
+    """When the turn says how it failed (a `turn.failed`), that is the reason, not the last
+    line printed."""
+    shell = FakeShell(
+        output=[
+            *said(thread(), {"type": "turn.failed", "error": {"message": "the model is gone"}}),
+            b"some trailing noise\n",
+        ]
+    )
+    given, _ = runner(shell)
+    started = await given.start(session())
+
+    events = await turn_of(given, started)
+
+    assert isinstance(events[-1], TurnEnded)
+    assert "the model is gone" in (events[-1].text or "")
+
+
 async def test_a_turn_that_ends_without_saying_how_is_an_error() -> None:
     shell = FakeShell(output=said(thread()))
     given, _ = runner(shell)

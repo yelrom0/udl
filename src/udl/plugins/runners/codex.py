@@ -84,6 +84,8 @@ _LIMIT: Final = re.compile(
 """How a limit's message says when it lifts (an ISO time, or an epoch)."""
 _EPOCH: Final = re.compile(r"(\d{10})")
 """The other way it says it: an epoch second."""
+_PLAIN: Final = 5
+"""How many of a turn's non-JSON lines are kept (the last of them is what it stopped on)."""
 _METADATA: Final = "model metadata"
 """The warning a real turn's stream opens with (an `error` item that is only a warning)."""
 
@@ -298,10 +300,15 @@ class Codex(AgentRunner[CodexOptions]):
             return
         first = session.id not in self._sessions.sent
         ended: TurnEnded | None = None
+        plain: list[str] = []
+        """The last lines the CLI printed that are not JSON (its own failures read that way)."""
         try:
             async for chunk in self._chunks(session, prompt, spec, first=first):
                 for line in chunk.decode(errors="replace").splitlines():
                     if not line.strip():
+                        continue
+                    if not line.lstrip().startswith("{"):
+                        plain = [*plain, line.strip()][-_PLAIN:]  # (the last few, as said)
                         continue
                     for event in self._events(session, line):
                         if isinstance(event, TurnEnded):
@@ -313,7 +320,7 @@ class Codex(AgentRunner[CodexOptions]):
         if session.id in self._stopped:
             yield TurnEnded(reason=TurnReason.STOPPED, text="The session was stopped.")
             return
-        yield ended or TurnEnded(reason=TurnReason.ERROR, text="The turn ended without saying how.")
+        yield ended or TurnEnded(reason=TurnReason.ERROR, text=_unsaid(plain))
 
     async def _chunks(
         self, session: SessionRef, prompt: str, spec: SessionSpec, *, first: bool
@@ -532,6 +539,14 @@ def _ended(usage: _Usage | None, reason: TurnReason) -> list[AgentEvent]:
         )
     events.append(TurnEnded(reason=reason))
     return events
+
+
+def _unsaid(plain: Sequence[str]) -> str:
+    """Why a turn that never said how it ended failed: the last line it printed, when it printed
+    one (the CLI's own errors are plain lines, not JSON)."""
+    if plain:
+        return plain[-1]
+    return "The turn ended without saying how."
 
 
 def _is_limited(message: str) -> bool:
