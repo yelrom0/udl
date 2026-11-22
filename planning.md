@@ -120,7 +120,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 26.3 `Feature` and `Task` records, task states and their transitions
   - [x] 26.4 `Link` records: everything linked, both ways; GitHub links kept current by the watcher
   - [x] 26.5 `Note` records: what was done, decisions, findings, on a task or feature
-  - [x] 26.6 Operations (projects, repos, features, tasks, links, notes) via CLI, API and MCP
+  - [~] 26.6 Operations (projects, repos, features, tasks, links, notes) via CLI, API and MCP
   - [~] 26.7 Markdown import: a planning file's tracker, cards and spec sections become features and tasks
   - [x] 26.8 Task sizes: S, M, L, XL (1, 3, 5, 8 points), set by whoever plans the task; points per feature and project
 - [ ] **Phase 27: Agents, assignment and the dispatcher**
