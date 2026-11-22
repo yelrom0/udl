@@ -92,7 +92,7 @@ from udl.plugins.apps.orch.links import (
     pull_ref,
 )
 from udl.plugins.apps.orch.managers import in_subtree, managers_of
-from udl.plugins.apps.orch.merge import after_close, after_merge, order
+from udl.plugins.apps.orch.merge import TASK_MERGED, TaskMerged, after_close, after_merge, order
 from udl.plugins.apps.orch.models import (
     CANCELLED,
     DONE,
@@ -100,6 +100,7 @@ from udl.plugins.apps.orch.models import (
     MERGED,
     MOVED,
     OPEN,
+    PROJECT_CHANGED,
     QUEUED,
     READY,
     SPEC_MAX,
@@ -148,6 +149,7 @@ from udl.plugins.apps.orch.models import (
     MergePolicy,
     MergeRequest,
     MergeRow,
+    MergerState,
     Message,
     MoveTaskRequest,
     MyTaskNote,
@@ -160,6 +162,7 @@ from udl.plugins.apps.orch.models import (
     Progress,
     ProgressRequest,
     Project,
+    ProjectChanged,
     ProjectInfo,
     Projects,
     Promoted,
@@ -185,6 +188,7 @@ from udl.plugins.apps.orch.models import (
     Reviewed,
     ReviewRequest,
     SetActionRequest,
+    SetAutoMergeRequest,
     SetFeatureRequest,
     SetProjectRequest,
     SetRepoRequest,
@@ -435,7 +439,9 @@ class Orch(AppPlugin[OrchSettings]):
         """The events orch publishes: its links' changes (26.4), and its tasks' from 26.6 on."""
         return (
             LINK_CHANGED,
+            PROJECT_CHANGED,
             TASK_READY,
+            TASK_MERGED,
             SESSION_STARTED,
             SESSION_EVENT,
             SESSION_ENDED,
@@ -562,7 +568,10 @@ class Orch(AppPlugin[OrchSettings]):
             cls.operation(
                 "merge",
                 title="Merge a task's pull",
-                hints=OperationHints(destructive=True, open_world=True, admin=True),
+                # (28.7: not admin, because the project's merger may be a reviewer, and the role
+                # table cannot know which agent that is: the operation itself decides who may
+                # merge — a person, the assignee where `merge = agent`, or the project's merger.)
+                hints=OperationHints(destructive=True, open_world=True),
             ),
             cls.operation(
                 "promotion",
@@ -644,6 +653,12 @@ class Orch(AppPlugin[OrchSettings]):
                 title="Create or edit a project",
                 hints=OperationHints(admin=True),
                 cli=CLISpec(path=(*_PROJECTS, "set")),
+            ),
+            cls.operation(
+                "set_auto_merge",
+                title="Turn auto merge on or off, with its merger",
+                hints=OperationHints(admin=True, mcp=False),
+                cli=CLISpec(path=(*_PROJECTS, "auto-merge"), arguments=("project",)),
             ),
             cls.operation(
                 "delete_project",
@@ -1096,6 +1111,26 @@ class Orch(AppPlugin[OrchSettings]):
         projects = stored.ProjectRecords(self.records)
         found = await projects.project(request.name)
         given = request.model_dump(exclude={"name"}, exclude_none=True)
+        # (Auto merge and its merger have one writer, `orch_set_auto_merge`: otherwise a chat's
+        # owner-level token could turn it on through here, 28.7.)
+        for field, unset in (("auto_merge", False), ("merger", None)):
+            if field not in given:
+                continue
+            if found is None:
+                # (A new project starts with auto merge off: making one on is the switch's, too.)
+                if given[field] != unset:
+                    raise NotAllowed(
+                        f"{request.name!r} is a new project, and {field} is "
+                        "`orch_set_auto_merge`'s to set",
+                        hint="Make it, then turn auto merge on there: it is the owner's alone.",
+                    )
+                given.pop(field)
+            elif given[field] != getattr(found, field):
+                raise NotAllowed(
+                    f"{request.name!r}'s {field} is `orch_set_auto_merge`'s to change",
+                    hint="Turn auto merge on or off, and name its merger, there: it is the "
+                    "owner's alone.",
+                )
         if found is None:
             if request.title is None:
                 raise NotAllowed(
@@ -1106,6 +1141,70 @@ class Orch(AppPlugin[OrchSettings]):
         else:
             found = found.model_copy(update=given)
         return as_shape(Project, await projects.save_project(found))
+
+    async def set_auto_merge(self, request: SetAutoMergeRequest) -> Project:
+        """Turn auto merge on or off, with its merger (28.7): the owner's alone, since a model
+        that could turn it on could give itself the merge.
+
+        Turning it on needs a merger — an agent of role `reviewer` or `manager` that works on this
+        project — and turning it off keeps the one stored, so on again is the same merger. It is
+        the only writer of both fields: `orch_set_project` and the importer refuse a change."""
+        who = _caller()
+        if who is not None and who.is_agent:
+            raise NotAllowed(
+                "only a person turns auto merge on or off",
+                hint="A merger merges what it reviewed; who the merger is, is the owner's call.",
+            )
+        project = await self._project(request.project)
+        projects = stored.ProjectRecords(self.records)
+        found = await projects.project(project)
+        if found is None:
+            raise DoesNotExist(f"There is no project called {project!r}")
+        merger = request.merger or found.merger
+        if request.on:
+            if not merger:
+                raise NotAllowed(
+                    "auto merge needs a merger",
+                    hint="Name the agent that merges: a reviewer or a manager of this project.",
+                )
+            agent = await stored.AgentRecords(self.records).agent(merger)
+            if agent is None:
+                raise DoesNotExist(f"There is no agent called {merger!r}")
+            if agent.role not in (AgentRole.REVIEWER, AgentRole.MANAGER):
+                raise NotAllowed(
+                    f"{merger!r} is a merger only if it is a reviewer or a manager",
+                    hint=(
+                        "A merger reviews what it merges; an implementer merges only its own, "
+                        "which is `merge = agent`'s."
+                    ),
+                )
+            if agent.projects and project not in agent.projects:
+                raise NotAllowed(
+                    f"{merger!r} does not work on {project!r}",
+                    hint=f"Its projects are {', '.join(agent.projects)}: it cannot merge here.",
+                )
+        saved = await projects.save_project(
+            found.model_copy(update={"auto_merge": request.on, "merger": merger})
+        )
+        service = self.service
+        if service is None:
+            raise PluginError("The orch app is not running on a service")
+        events = AppEvents(service.bus, self.name, self.event_types())
+        await events.emit(
+            PROJECT_CHANGED.name,
+            ProjectChanged(
+                project=project,
+                auto_merge=saved.auto_merge,
+                merger=saved.merger,
+            ),
+            # (A second on, or off, with the same merger is news again: the time is the key, so
+            # the bus does not drop it as one it has seen.)
+            dedupe_key=(
+                f"{project}:auto_merge:{saved.auto_merge}:{saved.merger}:"
+                f"{saved.updated_at.isoformat()}"
+            ),
+        )
+        return as_shape(Project, saved)
 
     async def delete_project(self, request: DeleteProjectRequest) -> Deleted:
         """Delete a project, with its repos, its features, its tasks and their notes and links."""
@@ -2122,8 +2221,51 @@ class Orch(AppPlugin[OrchSettings]):
         read = await asyncio.gather(*(self._merge_row(service, found, one, tasks) for one in tasks))
         rows = [row for row in read if row is not None]
         since = self.clock.now() - timedelta(days=merged.DAYS)
+        ready = order([one for one in rows if one.state == READY and not one.hold])
+        if found.auto_merge:
+            # (The first ready pull the merger may act on is the one it is on; the rest are next
+            # in its queue. Its own task, where the project has no review bot, is nobody's but a
+            # person's — marked so, and passed over — and a `changes asked` row keeps its state.)
+            by_key = {one.key: one for one in tasks}
+            marked: list[MergeRow] = []
+            on_it = True
+            for one in ready:
+                own = (
+                    found.merger is not None
+                    and not found.review_bot
+                    and (by_key.get(one.task) is not None)
+                    and by_key[one.task].assignee == found.merger
+                )
+                # (Only what it can merge now is its to be on: a pull with a blocker of its own —
+                # a check still running, a pull stacked on one not merged — or the merger's own
+                # with no review bot, or one it asked changes of, waits where it is. A pull
+                # stacked on one of those is blocked by it, so it waits too, 28.7.)
+                if one.blockers or own or one.merger is MergerState.CHANGES_ASKED:
+                    marked.append(
+                        one.model_copy(
+                            update={
+                                "blockers": (
+                                    [*one.blockers, "waiting for a person: the merger's own task"]
+                                    if own and not one.blockers
+                                    else list(one.blockers)
+                                )
+                            }
+                        )
+                    )
+                    continue
+                marked.append(
+                    one.model_copy(
+                        update={
+                            "merger": MergerState.REVIEWING if on_it else MergerState.NEXT,
+                        }
+                    )
+                )
+                on_it = False
+            ready = marked
         return MergeList(
-            ready=order([one for one in rows if one.state == READY and not one.hold]),
+            auto_merge=found.auto_merge,
+            merger=found.merger,
+            ready=ready,
             coming=[one for one in rows if one.state not in (READY, MERGED, DONE) and not one.hold],
             held=[one for one in rows if one.hold],
             done=order(
@@ -2161,6 +2303,8 @@ class Orch(AppPlugin[OrchSettings]):
         return Inbox(
             project=project,
             merge=merge,
+            auto_merge=merge.auto_merge,
+            merger=merge.merger,
             questions=questions,
             actions=list(to_do.actions),
             agents=await self._agent_lines(),
@@ -2228,7 +2372,24 @@ class Orch(AppPlugin[OrchSettings]):
                 blockers = [f"its pull could not be read: {error}"]
         if task.hold is not None:
             blockers = [f"it is on hold: {task.hold}"]
+        # (The newest verdict on this pull: `changes asked` is the merger's, and a review of a
+        # head the pull has since moved past says nothing about this one.)
+        reviews = await stored.ReviewRecords(self.records).for_task(project.name, task.key)
+        asked = reviews[0] if reviews else None
+        if asked is not None and link.state.head_sha and asked.head != link.state.head_sha:
+            asked = None
         return MergeRow(
+            merger=(
+                MergerState.CHANGES_ASKED
+                if (
+                    project.auto_merge
+                    and project.merger is not None
+                    and asked is not None
+                    and asked.verdict == "changes"
+                    and asked.by == project.merger
+                )
+                else None
+            ),
             project=project.name,
             task=task.key,
             feature=task.feature,
@@ -2268,16 +2429,39 @@ class Orch(AppPlugin[OrchSettings]):
         from udl.interfaces.security import current_principal
 
         who = current_principal.get()
+        auto = (
+            found.auto_merge
+            and found.merger is not None
+            and who is not None
+            and who.is_agent
+            and who.name == found.merger
+        )
         if (
             who is not None
             and who.is_agent
-            and not (found.merge == MergePolicy.AGENT and task.assignee == who.name)
+            and not auto
+            and not (
+                not found.auto_merge
+                and found.merge == MergePolicy.AGENT
+                and task.assignee == who.name
+            )
         ):
             raise NotAllowed(
                 f"{request.key!r} is not {who.name}'s to merge",
                 hint=(
                     "A person merges a ready pull, unless the project's merge is `agent` and the "
-                    "caller is the task's own assignee."
+                    "caller is the task's own assignee, or it is the project's merger and auto "
+                    "merge is on."
+                ),
+            )
+        if auto and task.assignee == found.merger and not found.review_bot:
+            # (Nobody reviews the reviewer: with no bot to say whether its own pull is good, the
+            # merger's own task waits for a person, 28.7.)
+            raise NotAllowed(
+                f"{request.key!r} is waiting for a person: the merger's own task",
+                hint=(
+                    "A merger merges its own task only where the project has a review bot; "
+                    "without one, it is a person's to merge."
                 ),
             )
         if request.sha != pull.head_sha:
@@ -2310,8 +2494,11 @@ class Orch(AppPlugin[OrchSettings]):
             pull=pull,
             confirm=expected,
             by=who.name if who is not None else "udl",
-            reviewed=who is None or not who.is_agent,
+            # (An auto merge is a review — the merger approved this head — so a project with
+            # nothing after its base sees it done, as a person's merge does.)
+            reviewed=auto or who is None or not who.is_agent,
             promoted=bool(found.promotion),
+            auto=auto,
         )
 
     async def _merge_now(
@@ -2325,10 +2512,12 @@ class Orch(AppPlugin[OrchSettings]):
         by: str,
         reviewed: bool,
         promoted: bool,
+        auto: bool = False,
     ) -> Merged:
         """Merge `task`'s pull at `pull.head_sha` and do what a merge sets off: the one place a
         merge is made, whether a person asked for it or its own agent marked it ready."""
         link = await self._pull_url(project, task.key)
+        before = task.state
         ref = pull_ref(link)
         if ref is None:
             raise NotAllowed(f"{task.key!r} has no pull to merge")
@@ -2352,7 +2541,22 @@ class Orch(AppPlugin[OrchSettings]):
             by=by,
             reviewed=reviewed,
             promoted=promoted,
+            auto=auto,
         )
+        if moved.state != before:
+            events = AppEvents(service.bus, self.name, self.event_types())
+            await events.emit(
+                TASK_MERGED.name,
+                TaskMerged(
+                    project=project,
+                    task=task.key,
+                    pull=link,
+                    sha=pull.head_sha,
+                    by=by,
+                    auto=auto,
+                ),
+                dedupe_key=f"{project}:{task.key}:{pull.head_sha}",
+            )
         return Merged(task=task.key, url=link, sha=pull.head_sha, state=moved.state)
 
     async def promotion(self, request: PromotionRequest) -> PromotionList:
@@ -2425,6 +2629,7 @@ class Orch(AppPlugin[OrchSettings]):
         by: str,
         reviewed: bool,
         promoted: bool,
+        auto: bool = False,
     ) -> stored.Task:
         """What a merge sets off (28.3), however it happened: `merge.after_merge` (the task's
         state, the rebase notes, the actions waiting on it)."""
@@ -2435,6 +2640,7 @@ class Orch(AppPlugin[OrchSettings]):
             by=by,
             reviewed=reviewed,
             promoted=promoted,
+            auto=auto,
             clock=self.clock,
         )
         return changed[0]
@@ -2455,7 +2661,15 @@ class Orch(AppPlugin[OrchSettings]):
         if ref is None:
             return task, None, f"its pull link is not a pull ({found.url})"
         repo, number = ref
-        detail = await service.call("github_get_pull", {"repo": repo, "number": number})
+        # (udl reads GitHub on its own behalf: a merger may be a reviewer, which is not given
+        # GitHub's operations as tools, 28.7.)
+        from udl.interfaces.security import current_principal
+
+        calling = current_principal.set(None)
+        try:
+            detail = await service.call("github_get_pull", {"repo": repo, "number": number})
+        finally:
+            current_principal.reset(calling)
         return task, Pull.model_validate(detail.model_dump()), ""
 
     async def _pull_url(self, project: str, key: str) -> str:
@@ -2563,7 +2777,18 @@ class Orch(AppPlugin[OrchSettings]):
                 f"{request.key!r} is {who.name}'s own work",
                 hint="A review is someone else's: a manager reviews its reports' work (27.8).",
             )
-        if not task.assignee or not await in_subtree(agents, who.name, task.assignee):
+        # (A merger reviews what it merges, whether or not it is its report's: 28.7 widens 27.8's
+        # subtree rule for it, and for its project's ready tasks only.)
+        found_project = await stored.ProjectRecords(self.records).project(project)
+        merging = (
+            found_project is not None
+            and found_project.auto_merge
+            and found_project.merger == who.name
+            and task.state == READY
+        )
+        if not merging and (
+            not task.assignee or not await in_subtree(agents, who.name, task.assignee)
+        ):
             raise NotAllowed(
                 f"{request.key!r} is not one of {who.name}'s reports' tasks",
                 hint="A manager reviews its own reports' work (27.8).",
@@ -2592,7 +2817,19 @@ class Orch(AppPlugin[OrchSettings]):
             text=said,
             author=who.name,
         )
-        await self.records.save_all([review, note])
+        moved = None
+        if request.verdict == "changes" and task.state == READY and merging:
+            # (The merger's changes verdict sends a ready pull back to its agent: the reasons are
+            # the note above, which the dispatcher tells the agent of, 28.7.)
+            actor = Principal(kind="system", name=who.name, role="move")
+            moved = transitions.move(task, IN_PROGRESS, by=actor)
+            # (The verdict, its note and the move are one write: the pull goes back to work with
+            # the review that sent it.)
+            await stored.TaskRecords(self.records, clock=self.clock).save_all(
+                [moved], also=[review, note, stored.move_note(task, moved, actor)]
+            )
+        else:
+            await self.records.save_all([review, note])
         return Reviewed(
             project=project,
             task=task.key,
@@ -2601,6 +2838,7 @@ class Orch(AppPlugin[OrchSettings]):
             reasons=request.reasons,
             by=who.name,
             at=review.at,
+            state=moved.state if moved is not None else task.state,
         )
 
     # -- the queue (27.3) ----------------------------------------------------------------------

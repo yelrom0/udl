@@ -4,8 +4,12 @@
     "ready": [],
     "coming": [],
     "held": [],
-    "done": []
+    "done": [],
+    "auto_merge": false,
+    "merger": null
   },
+  "auto_merge": false,
+  "merger": null,
   "questions": [
     {
       "key": "Q-1",

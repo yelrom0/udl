@@ -196,7 +196,9 @@ def test_the_operations_and_their_hints() -> None:
     assert offered["merge_list"].hints == OperationHints(read_only=True, open_world=True)
     assert offered["merge_list"].request is MergeListRequest
     assert offered["merge_list"].response is MergeList
-    assert offered["merge"].hints == OperationHints(destructive=True, open_world=True, admin=True)
+    # (28.7: not admin — a project's merger may be a reviewer, and the role table cannot know
+    # which agent that is, so the operation's own checks decide who may merge.)
+    assert offered["merge"].hints == OperationHints(destructive=True, open_world=True)
     assert offered["merge"].request is MergeRequest
     assert offered["merge"].response is Merged
     assert offered["promotion"].hints == OperationHints(read_only=True)
@@ -549,6 +551,22 @@ async def test_a_merge_makes_what_waited_after_it_now(service: UDLService) -> No
     listed_actions = await service.call("orch_list_actions", {"project": "udl"})
     actions = Actions.model_validate(listed_actions.model_dump())
     assert [one.when for one in actions.actions] == [ActionWhen.NOW]
+
+
+async def test_a_task_stacked_on_an_unmerged_one_cannot_be_merged_first(
+    service: UDLService,
+) -> None:
+    """(The card's order: nothing above a pull that is not merged. `needs` is 27.6's, so the
+    merge re-checks it rather than trusting the list it was read from.)"""
+    await add_task(service, "F-1.2", number=2, needs=["F-1.1"], state=READY)
+    app = await service.apps.get("github")
+    assert isinstance(app, FakeGitHub)
+    app.pull(2)
+
+    with pytest.raises(NotAllowed, match=r"it waits on F-1\.1"):
+        await merged(service, key="F-1.2", confirm="yelrom0/udl#2")
+
+    assert app.merged == []
 
 
 async def test_a_task_with_no_pull_cannot_be_merged(service: UDLService) -> None:

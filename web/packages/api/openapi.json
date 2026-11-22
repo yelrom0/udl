@@ -5717,9 +5717,27 @@
             "title": "Agents",
             "type": "array"
           },
+          "auto_merge": {
+            "default": false,
+            "description": "Whether a merger merges the ready ones by itself (28.7).",
+            "title": "Auto Merge",
+            "type": "boolean"
+          },
           "merge": {
             "$ref": "#/components/schemas/MergeList",
             "description": "Ready to merge (28.3's own list: ready, coming, held, done)."
+          },
+          "merger": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent that merges them (28.7).",
+            "title": "Merger"
           },
           "project": {
             "$ref": "#/components/schemas/Name",
@@ -6660,6 +6678,12 @@
         "additionalProperties": false,
         "description": "What there is to merge (28.3), as a person reads it: the ready ones in merge order (grouped\nby repo), the ones still coming (with what they wait on), the held ones, and what merged\nlately.",
         "properties": {
+          "auto_merge": {
+            "default": false,
+            "description": "Whether a merger merges this project's ready pulls by itself (28.7).",
+            "title": "Auto Merge",
+            "type": "boolean"
+          },
           "coming": {
             "description": "With an open pull that is not ready yet, each with its blockers.",
             "items": {
@@ -6683,6 +6707,18 @@
             },
             "title": "Held",
             "type": "array"
+          },
+          "merger": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent that merges them (28.7).",
+            "title": "Merger"
           },
           "ready": {
             "description": "Ready to merge, grouped by repo, each after what it needs.",
@@ -6836,6 +6872,17 @@
             "title": "Hold",
             "type": "boolean"
           },
+          "merger": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MergerState"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the merger is doing with it (28.7; None while auto merge is off)."
+          },
           "needs": {
             "description": "The tasks that must be merged first, by key.",
             "items": {
@@ -6949,6 +6996,16 @@
         ],
         "title": "Merged",
         "type": "object"
+      },
+      "MergerState": {
+        "description": "What a merger is doing with a row (28.7): the one it is reviewing, the ones next in its\nqueue, and one it asked changes of.",
+        "enum": [
+          "reviewing",
+          "next",
+          "changes asked"
+        ],
+        "title": "MergerState",
+        "type": "string"
       },
       "Message": {
         "additionalProperties": false,
@@ -7954,6 +8011,12 @@
         "additionalProperties": false,
         "description": "A body of work (udl, liively): its repos and its merge policy.\n\n`promotion` names the branches after the repo's base, in order (e.g. [\"rc\", \"main\"]); a\nproject whose base is its last branch (udl's `main`) has none, and its reviewer's merge is\nits review. `rules` is the markdown every agent on this project is given: the ground rules.",
         "properties": {
+          "auto_merge": {
+            "default": false,
+            "description": "Whether a merger merges this project's ready pulls by itself (28.7; set only by\n`orch_set_auto_merge`).",
+            "title": "Auto Merge",
+            "type": "boolean"
+          },
           "description": {
             "default": "",
             "description": "What it is, in a line or two.",
@@ -7964,6 +8027,18 @@
             "$ref": "#/components/schemas/MergePolicy",
             "default": "human",
             "description": "Who merges a ready PR (O-D3)."
+          },
+          "merger": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent that merges them: a reviewer or a manager of this project (28.7).",
+            "title": "Merger"
           },
           "name": {
             "$ref": "#/components/schemas/Name",
@@ -9614,6 +9689,17 @@
             "description": "Why.",
             "title": "Reasons",
             "type": "string"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/State"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where the task is after it: `in_progress` when a merger asked changes of a ready pull\n(28.7), otherwise where it was."
           },
           "task": {
             "description": "The task whose pull it is about.",
@@ -11649,6 +11735,45 @@
         "title": "SetAgentRequest",
         "type": "object"
       },
+      "SetAutoMergeRequest": {
+        "additionalProperties": false,
+        "description": "Turning auto merge on or off, and naming its merger (28.7): the owner's alone.",
+        "properties": {
+          "merger": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent that merges the project's ready pulls: a reviewer or a manager of this project.\nNeeded to turn it on; turning it off keeps the one stored.",
+            "title": "Merger"
+          },
+          "on": {
+            "description": "Whether it is on.",
+            "title": "On",
+            "type": "boolean"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project (None: the only one, while udl has one)."
+          }
+        },
+        "required": [
+          "on"
+        ],
+        "title": "SetAutoMergeRequest",
+        "type": "object"
+      },
       "SetFeatureRequest": {
         "additionalProperties": false,
         "description": "Creating or editing a feature, by its key: what is not given is kept.\n\nA new feature needs a title.",
@@ -11750,6 +11875,18 @@
         "additionalProperties": false,
         "description": "Creating or editing a project, by its name: what is not given is kept.\n\nA new project needs a title; the rest it has by default.",
         "properties": {
+          "auto_merge": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whether a merger merges this project's ready pulls (28.7): kept as it is, and a change is\nrefused \u2014 `orch_set_auto_merge` is its only writer.",
+            "title": "Auto Merge"
+          },
           "description": {
             "anyOf": [
               {
@@ -11772,6 +11909,18 @@
               }
             ],
             "description": "Who merges a ready PR (O-D3)."
+          },
+          "merger": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent that merges them (28.7): kept as it is, and a change is refused.",
+            "title": "Merger"
           },
           "name": {
             "$ref": "#/components/schemas/Name",
@@ -13927,7 +14076,8 @@
         "enum": [
           "build",
           "human",
-          "review"
+          "review",
+          "merge"
         ],
         "type": "string"
       },
@@ -25146,6 +25296,103 @@
           }
         ],
         "summary": "Create or edit an agent, by its name: what is not given is kept, a new one needs a",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/set_auto_merge": {
+      "post": {
+        "description": "Turn auto merge on or off, with its merger (28.7): the owner's alone, since a model\nthat could turn it on could give itself the merge.\n\nTurning it on needs a merger \u2014 an agent of role `reviewer` or `manager` that works on this\nproject \u2014 and turning it off keeps the one stored, so on again is the same merger. It is\nthe only writer of both fields: `orch_set_project` and the importer refuse a change.",
+        "operationId": "orch_set_auto_merge",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetAutoMergeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Turn auto merge on or off, with its merger (28.7): the owner's alone, since a model",
         "tags": [
           "orch"
         ]

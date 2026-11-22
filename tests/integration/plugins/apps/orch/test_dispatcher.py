@@ -63,9 +63,12 @@ from udl.plugins.apps.orch.dispatcher import (
 )
 from udl.plugins.apps.orch.models import (
     BLOCKED,
+    DONE,
     IN_PROGRESS,
+    MERGED,
     QUEUED,
     READY,
+    MergeList,
     OwnerKind,
     Principal,
     PullState,
@@ -163,6 +166,24 @@ class GetPullRequest(BaseModel):
     number: int
 
 
+class MergePullRequest(BaseModel):
+    """`github_merge_pull`'s request, as the fake reads it."""
+
+    repo: str
+    number: int
+    sha: str
+    confirm: str
+    method: str = "squash"
+
+
+class MergeResult(BaseModel):
+    """`github_merge_pull`'s answer."""
+
+    merged: bool = True
+    sha: str = HEAD
+    message: str = "merged"
+
+
 class FakeGitHub(AppPlugin[AppSettings]):
     """A `github` app whose one operation answers a pull (what readiness calls)."""
 
@@ -176,13 +197,20 @@ class FakeGitHub(AppPlugin[AppSettings]):
         """How many pulls it was asked for (what a test counts a wake by)."""
         self.fails: Exception | None = None
         """What reading the pull raises, when a test wants one that cannot be read."""
+        self.merged: list[MergePullRequest] = []
+        """The merges it was asked for (28.7's merger merges through it)."""
 
     @classmethod
     def operations(cls) -> list[Any]:
         return [
             cls.operation(
                 "get_pull", title="One pull", hints=OperationHints(read_only=True, open_world=True)
-            )
+            ),
+            cls.operation(
+                "merge_pull",
+                title="Merge a pull",
+                hints=OperationHints(destructive=True, open_world=True, admin=True, mcp=False),
+            ),
         ]
 
     async def get_pull(self, request: GetPullRequest) -> FakePull:
@@ -191,6 +219,11 @@ class FakeGitHub(AppPlugin[AppSettings]):
         if self.fails is not None:
             raise self.fails
         return self.pull
+
+    async def merge_pull(self, request: MergePullRequest) -> MergeResult:
+        """Record the merge and answer it (28.7)."""
+        self.merged.append(request)
+        return MergeResult(sha=request.sha)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -233,6 +266,11 @@ class ScriptedRunner(FakeRunner):
         PROMPTS.append(prompt)
         if prompt in RAISES:
             return _raising(RAISES[prompt])
+        if prompt.startswith(MERGED_KEY):
+            # (28.7's merger: its prompt is the list, so a test scripts the merger's turn.)
+            MERGER_PROMPT[0] = prompt
+            if "manager" in SCRIPT:
+                return self._manager(session, SCRIPT["manager"])
         if prompt.startswith(MANAGER_KEY) and "manager" in SCRIPT:
             # (A turn's body runs when it is first iterated, after other sessions' prompts may
             # have been recorded: keep this one aside for it.)
@@ -385,6 +423,7 @@ def clean() -> Iterator[None]:
     SCRIPT.clear()
     RAISES.clear()
     PROMPTS.clear()
+    MERGER_PROMPT[0] = ""
     STORE.specs.clear()
     STORE.stopped.clear()
     STORE.gates.clear()
@@ -522,7 +561,13 @@ async def scripted(service: UDLService, key: str, *, prompt: str | None = None) 
 async def ask(name: str, request: dict[str, object]) -> object:
     """Call an operation of the test's service, as a scripted turn's tool call does."""
     assert SERVICE, "a turn ran with no service"
-    return await SERVICE[0].call(name, request)
+    try:
+        return await SERVICE[0].call(name, request)
+    except Exception as error:
+        import traceback
+
+        traceback.print_exc()
+        raise AssertionError(f"{name} failed: {error}") from error
 
 
 def ready_turn(key: str) -> Turn:
@@ -2706,3 +2751,517 @@ async def test_a_limited_turn_does_not_count_the_news_as_told(service: UDLServic
     told = await AgentRecords(AppRecords(service.db)).agent("ernie-c")
     assert told is not None
     assert told.last_news
+
+
+# ---------------------------------------------------------------------------------------------
+# 28.7: the merger's turn
+# ---------------------------------------------------------------------------------------------
+
+
+MERGED_KEY: str = "You are claude, udl's merger"
+SPEC: str = "It draws the thing, and says so when it cannot."
+"""The ready pull's task spec (28.7: the merger reviews the diff against it)."""
+"""How a merger's prompt starts (28.7)."""
+
+
+async def a_merger_and_a_ready_pull(service: UDLService, *, own: bool = False) -> None:
+    """`claude` as udl's merger, auto merge on, and `F-1.1` ready with its pull read at `HEAD`.
+
+    `own` makes the ready pull the merger's own task (what needs a review bot, or a person)."""
+    records = AppRecords(service.db)
+    agents = AgentRecords(records)
+    await agents.save_agent(
+        Agent(
+            name="claude",
+            title="Claude",
+            runner="fake",
+            host="local",
+            role=AgentRole.MANAGER,
+            manages=ManagerPowers(assign=True, answer=True, review=True, plan=True),
+            brief="Merge what is ready.",
+        )
+    )
+    tasks = TaskRecords(records)
+    found = await tasks.task("udl", "F-1.1")
+    assert found is not None
+    await tasks.save_all(
+        [
+            found.model_copy(
+                update={
+                    "assignee": "claude" if own else AGENT,
+                    "spec": SPEC,
+                    "state": IN_PROGRESS,
+                }
+            )
+        ]
+    )
+    found = await tasks.task("udl", "F-1.1")
+    assert found is not None
+    await tasks.move(found, READY, by=Principal(kind="system", role="ready"))
+    links = LinkRecords(records)
+    for one in await links.for_owner("udl", OwnerKind.TASK, "F-1.1"):
+        if one.link_kind == "pull":
+            await links.records.save(one.model_copy(update={"state": PullState(head_sha=HEAD)}))
+    projects = ProjectRecords(records)
+    project = await projects.project("udl")
+    assert project is not None
+    await projects.save_project(project.model_copy(update={"auto_merge": True, "merger": "claude"}))
+
+
+def the_merger_s_turn() -> Turn:
+    """The merger's turn (28.7): it reviews each pull its prompt lists, then merges it."""
+
+    async def turn(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
+        token = current_principal.set(
+            Caller(kind=PrincipalKind.AGENT, name="claude", role="manager")
+        )
+        try:
+            said = MERGER_PROMPT[0]
+            for line in said.splitlines():
+                found = _A_NUMBERED_PULL.match(line)
+                if found is None:
+                    continue
+                key, number, sha = found.groups()
+                await ask(
+                    "orch_review_task",
+                    {
+                        "project": "udl",
+                        "key": key,
+                        "verdict": "approve",
+                        "reasons": "It does what its card says.",
+                        "head": sha,
+                    },
+                )
+                await ask(
+                    "orch_merge",
+                    {
+                        "project": "udl",
+                        "key": key,
+                        "confirm": f"yelrom0/udl#{number}",
+                        "sha": sha,
+                    },
+                )
+            yield TextDelta(text="merged what was ready")
+        finally:
+            current_principal.reset(token)
+
+    return turn
+
+
+_A_NUMBERED_PULL = re.compile(r"^- ([A-Z][A-Z0-9_]*-[0-9.]+) \(.*?\) — .*/pull/(\d+) at (\w+)")
+"""A line of the merger's prompt: the task, its pull's number and the sha it is at."""
+MERGER_PROMPT: list[str] = [""]
+"""The prompt the merger's running turn was given (a turn's body starts after `send`)."""
+
+
+async def test_the_merger_s_turn_merges_a_ready_pull(service: UDLService) -> None:
+    """(28.7's done-when: with auto merge on, the merger's turn is given the row's data — the
+    task, its title, its pull's URL and head sha, its feature — it reviews the pull for that head
+    and merges it, and the merge carries its name.)"""
+    await a_merger_and_a_ready_pull(service)
+    SCRIPT["manager"] = the_merger_s_turn()
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(40):
+            one = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
+            assert one is not None
+            if one.state in (MERGED, DONE):
+                break
+            await clock.advance(timedelta(seconds=31))
+        else:
+            now = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
+            raise AssertionError(f"never merged: {now} sent: {PROMPTS[-4:]}")
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    said = MERGER_PROMPT[0]
+    assert said.startswith(MERGED_KEY)
+    assert "F-1.1 (It 1)" in said
+    assert f"{PULL} at {HEAD}" in said
+    assert "feature F-1" in said
+    assert f"Its spec: {SPEC}" in said
+    assert "git -C /work/merging." in said, "the diff is read in the merger's own worktree"
+    assert f"confirm=yelrom0/udl#7, sha={HEAD}" in said, "the call it is told to make is exact"
+    one = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
+    assert one is not None
+    # (Its review is the merger's, so a project with nothing after its base sees it done.)
+    assert one.state == DONE
+    notes = await NoteRecords(AppRecords(service.db)).for_owner(OwnerKind.TASK, one.id)
+    assert any("Merged by claude (auto merge)" in note.text for note in notes)
+
+
+async def _quiet(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
+    """A turn that does nothing, and ends done (a merger's, when it acts on nothing)."""
+    yield TextDelta(text="nothing to merge")
+    yield TurnEnded(reason=TurnReason.DONE, text="nothing to merge")
+
+
+async def test_the_merger_is_not_told_the_same_list_twice(service: UDLService) -> None:
+    """(A list the merger did nothing with is not sent again on every tick.)"""
+    await a_merger_and_a_ready_pull(service)
+    SCRIPT["manager"] = _quiet
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(10):
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert len([one for one in PROMPTS if one.startswith(MERGED_KEY)]) == 1
+
+
+async def test_a_merger_s_own_task_with_no_review_bot_is_skipped(service: UDLService) -> None:
+    """(Nobody reviews the reviewer: with no review bot, the merger's own ready pull is left to a
+    person, and the list says so rather than asking it to review itself.)"""
+    await a_merger_and_a_ready_pull(service, own=True)
+    records = AppRecords(service.db)
+    projects = ProjectRecords(records)
+    project = await projects.project("udl")
+    assert project is not None
+    await projects.save_project(project.model_copy(update={"review_bot": None}))
+    SCRIPT["manager"] = _quiet
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(10):
+            if MERGER_PROMPT[0]:
+                break
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert MERGER_PROMPT[0] == "", "nothing to act on is no turn"
+    listed = await service.call("orch_merge_list", {"project": "udl"})
+    assert isinstance(listed, MergeList)
+    assert "waiting for a person: the merger's own task" in listed.ready[0].blockers
+    one = await TaskRecords(records).task("udl", "F-1.1")
+    assert one is not None
+    assert one.state == READY, "a person's to merge, not the merger's"
+
+
+async def _the_merger_merges_the_first(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
+    """One pull per turn: the first its prompt lists (28.7's queue moves on, one at a time)."""
+    token = current_principal.set(Caller(kind=PrincipalKind.AGENT, name="claude", role="manager"))
+    try:
+        for line in MERGER_PROMPT[0].splitlines():
+            found = _A_NUMBERED_PULL.match(line)
+            if found is None:
+                continue
+            key, number, sha = found.groups()
+            await ask(
+                "orch_review_task",
+                {
+                    "project": "udl",
+                    "key": key,
+                    "verdict": "approve",
+                    "reasons": "Fine.",
+                    "head": sha,
+                },
+            )
+            await ask(
+                "orch_merge",
+                {"project": "udl", "key": key, "confirm": f"yelrom0/udl#{number}", "sha": sha},
+            )
+            break
+        yield TextDelta(text="merged one")
+    finally:
+        current_principal.reset(token)
+
+
+async def a_stack_of_three(service: UDLService) -> None:
+    """`claude` as udl's merger, auto merge on, and three ready pulls, each stacked on the one
+    before it (28.7's done when)."""
+    records = AppRecords(service.db)
+    await AgentRecords(records).save_agent(
+        Agent(
+            name="claude",
+            title="Claude",
+            runner="fake",
+            host="local",
+            role=AgentRole.MANAGER,
+            manages=ManagerPowers(assign=True, answer=True, review=True, plan=True),
+            brief="Merge what is ready.",
+        )
+    )
+    tasks = TaskRecords(records)
+    links = LinkRecords(records)
+    for key, need in (("F-1.1", None), ("F-1.2", "F-1.1"), ("F-1.3", "F-1.2")):
+        found = await tasks.task("udl", key)
+        if found is None:
+            await tasks.save_task(
+                Task(
+                    project="udl",
+                    feature="F-1",
+                    key=key,
+                    title=f"It {key[-1]}",
+                    assignee=AGENT,
+                    needs=[need] if need else [],
+                )
+            )
+            found = await tasks.task("udl", key)
+            assert found is not None
+            await links.add(
+                project="udl", owner_kind=OwnerKind.TASK, owner=key, kind="pull", url=PULL
+            )
+        await tasks.save_all([found.model_copy(update={"assignee": AGENT, "state": IN_PROGRESS})])
+        found = await tasks.task("udl", key)
+        assert found is not None
+        for one in await links.for_owner("udl", OwnerKind.TASK, key):
+            if one.link_kind == "pull":
+                await links.records.save(one.model_copy(update={"state": PullState(head_sha=HEAD)}))
+        await tasks.move(found, READY, by=Principal(kind="system", role="ready"))
+    projects = ProjectRecords(records)
+    project = await projects.project("udl")
+    assert project is not None
+    await projects.save_project(project.model_copy(update={"auto_merge": True, "merger": "claude"}))
+
+
+async def test_the_merger_takes_a_stack_of_three_by_itself(service: UDLService) -> None:
+    """(28.7's done when: on the fakes, a reviewer merger takes a stack of three pulls from Ready
+    to merge to merged, bottom first, with nobody else acting.)"""
+    await a_stack_of_three(service)
+    SCRIPT["manager"] = _the_merger_merges_the_first
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(80):
+            every = await tasks_of(service)
+            if all(every[key].state in (MERGED, DONE) for key in ("F-1.1", "F-1.2", "F-1.3")):
+                break
+            await clock.advance(timedelta(seconds=31))
+        else:
+            every = await tasks_of(service)
+            raise AssertionError(f"never all merged: {every} said: {PROMPTS[-3:]}")
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    every = await tasks_of(service)
+    assert all(every[key].state in (MERGED, DONE) for key in ("F-1.1", "F-1.2", "F-1.3"))
+    # (Bottom first, one at a time: each prompt is the one pull the merger is on, and the first
+    # is the stack's bottom.)
+    said = [one for one in PROMPTS if one.startswith(MERGED_KEY)]
+    assert [one.group(1) for one in map(_A_NUMBERED_PULL.match, said[0].splitlines()) if one] == [
+        "F-1.1"
+    ], f"the stack's bottom is first: {said[0]}"
+    assert "- F-1.2 (It 2)" in said[1], f"then the next: {said[1]}"
+    assert "- F-1.3 (It 3)" in said[2], f"then the last: {said[2]}"
+    app = await service.apps.get("github")
+    assert isinstance(app, FakeGitHub)
+    assert len(app.merged) == 3
+
+
+async def test_nothing_is_merged_with_auto_merge_off(service: UDLService) -> None:
+    """(Auto merge off: no merger's turn, and the pull stays where it is for a person.)"""
+    await a_merger_and_a_ready_pull(service)
+    records = AppRecords(service.db)
+    projects = ProjectRecords(records)
+    project = await projects.project("udl")
+    assert project is not None
+    await projects.save_project(project.model_copy(update={"auto_merge": False}))
+    SCRIPT["manager"] = the_merger_s_turn()
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(10):
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert not [one for one in PROMPTS if one.startswith(MERGED_KEY)]
+    one = await TaskRecords(records).task("udl", "F-1.1")
+    assert one is not None
+    assert one.state == READY
+
+
+async def _changes_then_merge(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
+    """Changes on the first pull it is told of, a merge of the next one (28.7's queue moves on)."""
+    token = current_principal.set(Caller(kind=PrincipalKind.AGENT, name="claude", role="manager"))
+    try:
+        for line in MERGER_PROMPT[0].splitlines():
+            found = _A_NUMBERED_PULL.match(line)
+            if found is None:
+                continue
+            key, number, sha = found.groups()
+            if key == "F-1.1":
+                await ask(
+                    "orch_review_task",
+                    {
+                        "project": "udl",
+                        "key": key,
+                        "verdict": "changes",
+                        "reasons": "Its tests do not cover the empty case.",
+                        "head": sha,
+                    },
+                )
+                continue
+            await ask(
+                "orch_review_task",
+                {
+                    "project": "udl",
+                    "key": key,
+                    "verdict": "approve",
+                    "reasons": "Fine.",
+                    "head": sha,
+                },
+            )
+            await ask(
+                "orch_merge",
+                {"project": "udl", "key": key, "confirm": f"yelrom0/udl#{number}", "sha": sha},
+            )
+            break
+        yield TextDelta(text="asked changes, merged the next")
+    finally:
+        current_principal.reset(token)
+
+
+async def test_the_merger_moves_on_after_asking_changes(service: UDLService) -> None:
+    """(A `changes` verdict takes the task out of Ready, so the next one not stacked on it is
+    prompted at once: the queue always moves on.)"""
+    await a_merger_and_a_ready_pull(service)
+    records = AppRecords(service.db)
+    tasks = TaskRecords(records)
+    later = await tasks.task("udl", "F-1.2")
+    assert later is not None
+    await tasks.save_all([later.model_copy(update={"assignee": AGENT, "state": IN_PROGRESS})])
+    later = await tasks.task("udl", "F-1.2")
+    assert later is not None
+    links = LinkRecords(records)
+    for one in await links.for_owner("udl", OwnerKind.TASK, "F-1.2"):
+        if one.link_kind == "pull":
+            await links.records.save(one.model_copy(update={"state": PullState(head_sha=HEAD)}))
+    await tasks.move(later, READY, by=Principal(kind="system", role="ready"))
+    SCRIPT["manager"] = _changes_then_merge
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(40):
+            every = await tasks_of(service)
+            if every["F-1.2"].state in (MERGED, DONE):
+                break
+            await clock.advance(timedelta(seconds=31))
+        else:
+            every = await tasks_of(service)
+            raise AssertionError(f"never merged the next: {every} said: {PROMPTS[-3:]}")
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    every = await tasks_of(service)
+    # (The verdict sent it back to its agent, 28.7; the dispatcher then gave that agent a turn,
+    # and a turn that says nothing blocks the task on a question — so it is no longer ready.)
+    assert every["F-1.1"].state in (IN_PROGRESS, BLOCKED)
+    assert every["F-1.2"].state in (MERGED, DONE)
+
+
+async def test_the_merger_s_task_is_in_the_project_it_merges(service: UDLService) -> None:
+    """(A merger may work on more than one project: its standing task is in the one it is
+    merging, not whichever of its projects came first.)"""
+    await a_merger_and_a_ready_pull(service)
+    records = AppRecords(service.db)
+    projects = ProjectRecords(records)
+    await projects.save_project(Project(name="aaa", title="Another"))
+    agents = AgentRecords(records)
+    claude = await agents.agent("claude")
+    assert claude is not None
+    await agents.save_agent(claude.model_copy(update={"projects": ["aaa", "udl"]}))
+    SCRIPT["manager"] = the_merger_s_turn()
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(20):
+            every = await tasks_of(service)
+            if "merging.1" in every:
+                break
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    every = await tasks_of(service)
+    merging = every.get("merging.1")
+    assert merging is not None, f"no standing merge task: {sorted(every)}"
+    assert merging.project == "udl"
+    assert merging.worktree, "a worktree to read the diff in"
+
+
+async def test_the_merger_is_told_the_next_one_it_may_act_on(service: UDLService) -> None:
+    """(The card: the next ready task that isn't stacked on the skipped one. The merger's own
+    pull is a person's, and what is stacked on it waits with it: the one it is told of is the
+    next that is neither.)"""
+    await a_merger_and_a_ready_pull(service, own=True)
+    records = AppRecords(service.db)
+    projects = ProjectRecords(records)
+    project = await projects.project("udl")
+    assert project is not None
+    await projects.save_project(project.model_copy(update={"review_bot": None}))
+    tasks = TaskRecords(records)
+    # (`F-1.2` is the harness's own queued task: it is stacked on the merger's own pull.)
+    second = await tasks.task("udl", "F-1.2")
+    assert second is not None
+    await tasks.save_all([second.model_copy(update={"needs": ["F-1.1"]})])
+    second = await tasks.task("udl", "F-1.2")
+    assert second is not None
+    await tasks.move(second, IN_PROGRESS, by=Principal(kind="system", role="start"))
+    second = await tasks.task("udl", "F-1.2")
+    assert second is not None
+    await tasks.move(second, READY, by=Principal(kind="system", role="ready"))
+    free = await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.3", title="It 3"))
+    await tasks.move(free, IN_PROGRESS, by=Principal(kind="system", role="start"))
+    free = await tasks.task("udl", "F-1.3")
+    assert free is not None
+    await LinkRecords(records).add(
+        project="udl",
+        owner_kind=OwnerKind.TASK,
+        owner="F-1.3",
+        kind="pull",
+        url="https://github.com/yelrom0/udl/pull/3",
+    )
+    await tasks.move(free, READY, by=Principal(kind="system", role="ready"))
+    SCRIPT["manager"] = _quiet
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(10):
+            if MERGER_PROMPT[0]:
+                break
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    said = MERGER_PROMPT[0]
+    assert "- F-1.3 (It 3)" in said, f"the next it may act on: {said}"
+    row = said.split("This one is ready:")[1].split("Its diff")[0]
+    assert "F-1.1" not in row, "the merger's own is a person's"
+    assert "F-1.2" not in row, "and what is stacked on it waits with it"

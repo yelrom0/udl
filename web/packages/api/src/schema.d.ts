@@ -2242,6 +2242,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/set_auto_merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Turn auto merge on or off, with its merger (28.7): the owner's alone, since a model
+         * @description Turn auto merge on or off, with its merger (28.7): the owner's alone, since a model
+         *     that could turn it on could give itself the merge.
+         *
+         *     Turning it on needs a merger — an agent of role `reviewer` or `manager` that works on this
+         *     project — and turning it off keeps the one stored, so on again is the same merger. It is
+         *     the only writer of both fields: `orch_set_project` and the importer refuse a change.
+         */
+        post: operations["orch_set_auto_merge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/orch/set_feature": {
         parameters: {
             query?: never;
@@ -6015,8 +6040,19 @@ export interface components {
              * @description What every agent is doing, by name.
              */
             agents?: components["schemas"]["AgentLine"][];
+            /**
+             * Auto Merge
+             * @description Whether a merger merges the ready ones by itself (28.7).
+             * @default false
+             */
+            auto_merge: boolean;
             /** @description Ready to merge (28.3's own list: ready, coming, held, done). */
             merge: components["schemas"]["MergeList"];
+            /**
+             * Merger
+             * @description The agent that merges them (28.7).
+             */
+            merger?: string | null;
             /** @description The project it is of. */
             project: components["schemas"]["Name"];
             /**
@@ -6488,6 +6524,12 @@ export interface components {
          */
         MergeList: {
             /**
+             * Auto Merge
+             * @description Whether a merger merges this project's ready pulls by itself (28.7).
+             * @default false
+             */
+            auto_merge: boolean;
+            /**
              * Coming
              * @description With an open pull that is not ready yet, each with its blockers.
              */
@@ -6502,6 +6544,11 @@ export interface components {
              * @description Held (built now, merged later), each with its hold as its blocker.
              */
             held?: components["schemas"]["MergeRow"][];
+            /**
+             * Merger
+             * @description The agent that merges them (28.7).
+             */
+            merger?: string | null;
             /**
              * Ready
              * @description Ready to merge, grouped by repo, each after what it needs.
@@ -6597,6 +6644,8 @@ export interface components {
              * @default false
              */
             hold: boolean;
+            /** @description What the merger is doing with it (28.7; None while auto merge is off). */
+            merger?: components["schemas"]["MergerState"] | null;
             /**
              * Needs
              * @description The tasks that must be merged first, by key.
@@ -6665,6 +6714,13 @@ export interface components {
              */
             url: string;
         };
+        /**
+         * MergerState
+         * @description What a merger is doing with a row (28.7): the one it is reviewing, the ones next in its
+         *     queue, and one it asked changes of.
+         * @enum {string}
+         */
+        MergerState: "reviewing" | "next" | "changes asked";
         /**
          * Message
          * @description One thing said on a question (28.1): the question's own text first, then follow-ups.
@@ -7256,6 +7312,13 @@ export interface components {
          */
         Project: {
             /**
+             * Auto Merge
+             * @description Whether a merger merges this project's ready pulls by itself (28.7; set only by
+             *     `orch_set_auto_merge`).
+             * @default false
+             */
+            auto_merge: boolean;
+            /**
              * Description
              * @description What it is, in a line or two.
              * @default
@@ -7266,6 +7329,11 @@ export interface components {
              * @default human
              */
             merge: components["schemas"]["MergePolicy"];
+            /**
+             * Merger
+             * @description The agent that merges them: a reviewer or a manager of this project (28.7).
+             */
+            merger?: string | null;
             /** @description What the project is called (unique; e.g. udl). */
             name: components["schemas"]["Name"];
             /**
@@ -8254,6 +8322,11 @@ export interface components {
              * @default
              */
             reasons: string;
+            /**
+             * @description Where the task is after it: `in_progress` when a merger asked changes of a ready pull
+             *     (28.7), otherwise where it was.
+             */
+            state?: components["schemas"]["State"] | null;
             /**
              * Task
              * @description The task whose pull it is about.
@@ -9376,6 +9449,25 @@ export interface components {
             title?: string | null;
         };
         /**
+         * SetAutoMergeRequest
+         * @description Turning auto merge on or off, and naming its merger (28.7): the owner's alone.
+         */
+        SetAutoMergeRequest: {
+            /**
+             * Merger
+             * @description The agent that merges the project's ready pulls: a reviewer or a manager of this project.
+             *     Needed to turn it on; turning it off keeps the one stored.
+             */
+            merger?: string | null;
+            /**
+             * On
+             * @description Whether it is on.
+             */
+            on: boolean;
+            /** @description The project (None: the only one, while udl has one). */
+            project?: components["schemas"]["Name"] | null;
+        };
+        /**
          * SetFeatureRequest
          * @description Creating or editing a feature, by its key: what is not given is kept.
          *
@@ -9428,12 +9520,23 @@ export interface components {
          */
         SetProjectRequest: {
             /**
+             * Auto Merge
+             * @description Whether a merger merges this project's ready pulls (28.7): kept as it is, and a change is
+             *     refused — `orch_set_auto_merge` is its only writer.
+             */
+            auto_merge?: boolean | null;
+            /**
              * Description
              * @description What it is, in a line or two.
              */
             description?: string | null;
             /** @description Who merges a ready PR (O-D3). */
             merge?: components["schemas"]["MergePolicy"] | null;
+            /**
+             * Merger
+             * @description The agent that merges them (28.7): kept as it is, and a change is refused.
+             */
+            merger?: string | null;
             /** @description The project's name (what it is found, and set, by). */
             name: components["schemas"]["Name"];
             /**
@@ -10541,7 +10644,7 @@ export interface components {
             task: components["schemas"]["Task"];
         };
         /** @enum {string} */
-        TaskKind: "build" | "human" | "review";
+        TaskKind: "build" | "human" | "review" | "merge";
         /**
          * TaskQueue
          * @description One agent's queue: the tasks it is on, in the order it works them.
@@ -18905,6 +19008,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Agent"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_set_auto_merge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetAutoMergeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
                 };
             };
             /** @description Bad Request */

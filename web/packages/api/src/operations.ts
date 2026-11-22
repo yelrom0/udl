@@ -119,6 +119,7 @@ export const operations = {
 	orch_session_stream: { method: "get", path: "/orch/sessions/{session}/stream" },
 	orch_set_action: { method: "post", path: "/plugins/orch/set_action" },
 	orch_set_agent: { method: "post", path: "/plugins/orch/set_agent" },
+	orch_set_auto_merge: { method: "post", path: "/plugins/orch/set_auto_merge" },
 	orch_set_feature: { method: "post", path: "/plugins/orch/set_feature" },
 	orch_set_project: { method: "post", path: "/plugins/orch/set_project" },
 	orch_set_repo: { method: "post", path: "/plugins/orch/set_repo" },

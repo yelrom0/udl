@@ -118,6 +118,10 @@ class Project(Record):
     """The review bot's login (e.g. claude[bot]), whose verdict a ready PR waits on."""
     rules: str = ""
     """The ground rules, as markdown, given to every agent on this project."""
+    auto_merge: bool = False
+    """Whether a merger merges this project's ready pulls by itself (28.7)."""
+    merger: str | None = None
+    """The agent that merges them (28.7)."""
 
     @classmethod
     def example(cls) -> Self:
@@ -590,6 +594,9 @@ class Agent(Record):
     started there until it answers again (27.7)."""
     last_news: str = ""
     """What a manager was last told about its reports (27.8): the same news again is no turn."""
+    last_merge_news: str = ""
+    """What a merger was last told about its ready pulls (28.7): the same list again is no turn
+    (kept apart from `last_news`, so a manager's quiet tick does not wipe it)."""
 
     @classmethod
     def example(cls) -> Self:
