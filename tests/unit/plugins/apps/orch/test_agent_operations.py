@@ -17,6 +17,7 @@ import asyncio
 import gc
 import weakref
 from collections.abc import AsyncIterator
+from datetime import timedelta
 from pathlib import Path
 from typing import ClassVar
 from uuid import UUID, uuid4
@@ -25,6 +26,7 @@ from uuid import UUID, uuid4
 import pytest
 
 # Local Imports
+from support.clock import FakeClock
 from support.engine import registry, settings
 from support.runners import SharedRunner
 from udl.core.models import Deleted
@@ -32,7 +34,7 @@ from udl.core.operations import OperationHints
 from udl.core.service import UDLService
 from udl.errors import DoesNotExist, InUse, NotAllowed, PluginFailed
 from udl.interfaces.security import Principal, PrincipalKind, current_principal
-from udl.plugins.apps.base import AppRecords
+from udl.plugins.apps.base import AppEvents, AppRecords
 from udl.plugins.apps.orch import dispatcher
 from udl.plugins.apps.orch.agents import (
     Agent as AgentShape,
@@ -91,12 +93,23 @@ class WaitingRunner(SharedRunner):
     """Set when a turn is in it (the test waits for that, not for a sleep)."""
     go_on: ClassVar[asyncio.Event] = asyncio.Event()
     """Set when the test lets the turn finish."""
+    sends: ClassVar[int] = 0
+    """How many turns it was asked for (a turn that waits for the lease never got here)."""
 
     async def send(self, session: SessionRef, prompt: str) -> AsyncIterator[AgentEvent]:
+        WaitingRunner.sends += 1
         WaitingRunner.started.set()
         yield ToolStarted(name="udl.wait", summary="Waiting for udl")
         await WaitingRunner.go_on.wait()
         yield TurnEnded(reason=TurnReason.DONE, text="Done.")
+
+
+def reset_waiting() -> None:
+    """Fresh events for this test's loop, and no turns counted yet (an `Event` belongs to the
+    loop that first awaited it, and a test runs in a loop of its own)."""
+    WaitingRunner.started = asyncio.Event()
+    WaitingRunner.go_on = asyncio.Event()
+    WaitingRunner.sends = 0
 
 
 class BrokenStopRunner(SharedRunner):
@@ -539,6 +552,160 @@ async def test_the_turn_locks_do_not_outlive_their_turns(
     assert gone() is None
 
 
+async def test_a_turn_waits_for_the_other_process_s_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two `Turns` of one session, each its own holder (as two processes' are): the second waits
+    for the first's lease, and runs when it is given back (27.9).
+
+    The in-process lock is a fresh one per turn here, as another process's would be: only the
+    lease can keep the two apart."""
+    plugins = registry()
+    plugins.register(APPS, Orch)
+    plugins.register(RUNNERS, WaitingRunner)
+    clock = FakeClock()
+    async with UDLService(settings(tmp_path), registry=plugins, clock=clock) as service:
+        await AgentRecords(AppRecords(service.db)).save_agent(
+            Agent(name="ernie-c", title="ernie-c", runner="fake")
+        )
+        found = await a_session(service, state=SessionState.IDLE)
+        agent = await AgentRecords(AppRecords(service.db)).agent("ernie-c")
+        assert agent is not None
+        first = await a_turns(service)
+        second = await a_turns(service)
+
+        def another_process_s_lock(session: UUID) -> asyncio.Lock:
+            """A lock of its own per turn, as another process's would be."""
+            return asyncio.Lock()
+
+        monkeypatch.setattr(dispatcher, "turn_lock", another_process_s_lock)
+        reset_waiting()
+
+        one = asyncio.create_task(first.one(agent, found, "Go on"))
+        async with asyncio.timeout(10):
+            await WaitingRunner.started.wait()
+            two = asyncio.create_task(second.one(agent, found, "And again"))
+            for _ in range(20):
+                await asyncio.sleep(0)
+            assert WaitingRunner.sends == 1  # (the second is waiting for the lease)
+            assert not two.done()
+            WaitingRunner.go_on.set()
+            ran = await one
+            # (The second turn's retry is a pause on the clock: moving it on is what lets it in.)
+            await clock.advance(dispatcher.TurnLease.RETRY + timedelta(seconds=1))
+            again = await two
+
+        assert ran is not None
+        assert ran.outcome is dispatcher.Outcome.DONE
+        assert again is not None
+        assert again.outcome is dispatcher.Outcome.DONE
+        assert WaitingRunner.sends == 2
+
+
+async def test_a_long_turn_keeps_its_lease(tmp_path: Path) -> None:
+    """A turn longer than the lease's ttl keeps it, renewed while it runs: a second holder cannot
+    take a turn that is still going (27.9)."""
+    plugins = registry()
+    plugins.register(APPS, Orch)
+    plugins.register(RUNNERS, WaitingRunner)
+    clock = FakeClock()
+    async with UDLService(settings(tmp_path), registry=plugins, clock=clock) as service:
+        await AgentRecords(AppRecords(service.db)).save_agent(
+            Agent(name="ernie-c", title="ernie-c", runner="fake")
+        )
+        found = await a_session(service, state=SessionState.IDLE)
+        agent = await AgentRecords(AppRecords(service.db)).agent("ernie-c")
+        assert agent is not None
+        turns = await a_turns(service)
+        reset_waiting()
+        other = dispatcher.TurnLease(
+            service.db, session=found.id, holder="another-host:4242:abcd", clock=clock
+        )
+
+        one = asyncio.create_task(turns.one(agent, found, "Go on"))
+        async with asyncio.timeout(10):
+            await WaitingRunner.started.wait()
+            await clock.advance(dispatcher.TURN_TTL * 2)
+            assert not await other.claim()
+            WaitingRunner.go_on.set()
+            ran = await one
+
+        assert ran is not None
+        assert ran.outcome is dispatcher.Outcome.DONE
+        # (Given back when the turn ends.)
+        assert await other.claim()
+
+
+async def test_a_turn_that_is_cancelled_ends_and_gives_its_lease_back(
+    tmp_path: Path,
+) -> None:
+    """A turn whose loop is cancelled (udl stopping) ends, and its session's lease goes with it:
+    nothing is left waiting on a turn that will never finish (27.9)."""
+    plugins = registry()
+    plugins.register(APPS, Orch)
+    plugins.register(RUNNERS, WaitingRunner)
+    clock = FakeClock()
+    async with UDLService(settings(tmp_path), registry=plugins, clock=clock) as service:
+        await AgentRecords(AppRecords(service.db)).save_agent(
+            Agent(name="ernie-c", title="ernie-c", runner="fake")
+        )
+        found = await a_session(service, state=SessionState.IDLE)
+        agent = await AgentRecords(AppRecords(service.db)).agent("ernie-c")
+        assert agent is not None
+        turns = await a_turns(service)
+        reset_waiting()
+
+        one = asyncio.create_task(turns.one(agent, found, "Go on"))
+        async with asyncio.timeout(10):
+            await WaitingRunner.started.wait()
+            one.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await one
+            WaitingRunner.go_on.set()
+
+        # (The lease is back: the next turn takes it without waiting for anything.)
+        sent = await turns.one(agent, found, "And again")
+
+    assert sent is not None
+    assert sent.outcome is dispatcher.Outcome.DONE
+
+
+async def test_a_message_is_refused_while_another_process_turns_the_session(
+    service: UDLService,
+) -> None:
+    """`orch_send` takes the turn's lease without waiting: another process in a turn of that
+    session is a refusal, as its stored state is (27.9)."""
+    found = await a_session(service)
+    await service.db.claim_lease(
+        f"orch-turn:{found.id}", "another-host:4242:abcd", timedelta(minutes=5)
+    )
+
+    with pytest.raises(NotAllowed, match="is in a turn"):
+        await service.call("orch_send", {"agent": "ernie-c", "text": "Go on"})
+
+
+async def test_a_turn_whose_process_died_is_taken_over(tmp_path: Path) -> None:
+    """A lease whose holder died mid-turn expires, and the next turn takes it: a restart's turn
+    still starts (27.9)."""
+    plugins = registry()
+    plugins.register(APPS, Orch)
+    plugins.register(RUNNERS, SharedRunner)
+    clock = FakeClock()
+    async with UDLService(settings(tmp_path), registry=plugins, clock=clock) as service:
+        await AgentRecords(AppRecords(service.db)).save_agent(
+            Agent(name="ernie-c", title="ernie-c", runner="fake")
+        )
+        found = await a_session(service)
+        await service.db.claim_lease(
+            f"orch-turn:{found.id}", "another-host:4242:abcd", timedelta(minutes=1)
+        )
+        await clock.advance(timedelta(minutes=2))
+
+        sent = await service.call("orch_send", {"agent": "ernie-c", "text": "Go on"})
+
+    assert isinstance(sent, Sent)
+
+
 async def test_a_session_stopped_mid_turn_stays_ended(tmp_path: Path) -> None:
     plugins = registry()
     plugins.register(APPS, Orch)
@@ -556,8 +723,7 @@ async def test_a_session_stopped_mid_turn_stays_ended(tmp_path: Path) -> None:
         found = await a_session(service, state=SessionState.IDLE)
 
         sessions = SessionRecords(records)
-        WaitingRunner.started.clear()
-        WaitingRunner.go_on.clear()
+        reset_waiting()
         sending = asyncio.create_task(
             service.call("orch_send", {"agent": "ernie-c", "text": "Go on"})
         )
@@ -605,6 +771,22 @@ async def a_session(
             stored_event(found, turn=turn, event=TextDelta(text=f"turn {turn}"))
         )
     return found
+
+
+async def a_turns(service: UDLService) -> dispatcher.Turns:
+    """A `Turns` of the test's own, over the service's database: a second holder, as another
+    process's would be (its in-process lock is not this process's, which the lease must not
+    rely on)."""
+    app = await service.apps.get("orch")
+    assert isinstance(app, Orch)
+    return dispatcher.Turns(
+        records=AppRecords(service.db),
+        events=AppEvents(service.bus, "orch", app.event_types()),
+        harnesses=app.harnesses,
+        clock=service.clock,
+        settings=app.settings,
+        database=service.db,
+    )
 
 
 async def queue_task(service: UDLService, key: str, agent: str, *, project: str = "udl") -> None:

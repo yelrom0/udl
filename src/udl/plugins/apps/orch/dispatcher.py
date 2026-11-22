@@ -26,21 +26,25 @@ gives it a FakeClock).
 import asyncio
 import contextlib
 import logging
+import os
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+import socket
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Final
-from uuid import UUID
+from uuid import UUID, uuid4
 from weakref import WeakValueDictionary
 
 # Package Imports
 from pydantic import JsonValue, SecretStr
 
 # Local Imports
-from udl.clock import Clock
+from udl.clock import Clock, pause
+from udl.db.manager import DBManager
 from udl.db.models import JsonObject
 from udl.errors import DoesNotExist, PluginError, UDLError
 from udl.hosts.models import HostRequest
@@ -229,6 +233,7 @@ class Dispatcher:
             clock=ctx.clock,
             settings=self._settings,
             place=self._turns,
+            database=ctx.service.db,
         )
         self._prepare = prepare if prepare is not None else self._prepared
         self._tick = tick
@@ -984,8 +989,12 @@ class Dispatcher:
         await self._ask(name, task, title=title, text=text, blocking=blocking)
 
     async def _turn(self, agent: stored.Agent, session: stored.AgentSession, prompt: str) -> Ran:
-        """Send one turn: `Turns.one`, the same turn `orch_send` makes (27.9)."""
-        return await self._turns_made.one(agent, session, prompt)
+        """Send one turn: `Turns.one`, the same turn `orch_send` makes (27.9), waiting for the
+        session's lease (the loop has a turn to make, so it waits rather than skip it)."""
+        ran = await self._turns_made.one(agent, session, prompt)
+        if ran is None:  # (another holder had the session's turn for longer than `TURN_WAIT`)
+            return Ran(Outcome.RETRY, False, session.turns)
+        return ran
 
     async def _retried(self, agent: stored.Agent, session: stored.AgentSession, why: str) -> bool:
         """A turn that failed: retried after a backoff, and after `FAILURES` tries the session is
@@ -1097,6 +1106,104 @@ def turn_lock(session: UUID) -> asyncio.Lock:
     return _LOCKS.setdefault((id(asyncio.get_running_loop()), session), asyncio.Lock())
 
 
+TURN_TTL: Final = timedelta(minutes=5)
+"""How long a turn's lease holds without a renewal (a turn renews it while it runs)."""
+
+TURN_WAIT: Final = timedelta(minutes=10)
+"""How long a turn waits for another holder's before it gives up: a turn may be long, but the
+loop comes back to it, and a wait with no end is a hang."""
+
+
+class TurnLease:
+    """One session's turn, held across processes (27.9): a `Lease` named `orch-turn:<session>`,
+    the way a gate's lane is `orch-gate:<host>` (27.5), so a person's typed turn (in the CLI's
+    process) and the loop's (in `udl serve`) never run one session at once.
+
+    `held()` takes it — waiting for it, or not — and gives it back however the turn ends, renewing
+    it while the turn runs: a process that dies mid-turn lets the next one in when its lease
+    expires, so a restart's turn still starts."""
+
+    RETRY: Final = timedelta(seconds=2)
+    """How long to wait before asking for the turn again (a turn is minutes long: twice a second
+    would be noise on the database)."""
+
+    def __init__(
+        self,
+        database: DBManager,
+        *,
+        session: UUID,
+        holder: str,
+        clock: Clock,
+        ttl: timedelta = TURN_TTL,
+    ) -> None:
+        self._db = database
+        self._name = f"orch-turn:{session}"
+        self._holder = holder
+        self._clock = clock
+        self._ttl = ttl
+
+    @property
+    def name(self) -> str:
+        """The lease it takes (what a session's turn is, when it is looked for)."""
+        return self._name
+
+    async def claim(self) -> bool:
+        """Take the lease if nobody else holds it (or the holder's lease has expired)."""
+        return await self._db.claim_lease(self._name, self._holder, self._ttl) is not None
+
+    async def take(self, *, within: timedelta = TURN_WAIT) -> bool:
+        """Wait up to `within` for the lease, and say whether it is this holder's (a turn that
+        gives up is one the loop comes back to, not one that hangs)."""
+        deadline = self._clock.now() + within
+        while not await self.claim():
+            if self._clock.now() >= deadline:
+                return False
+            await pause(self._clock, self.RETRY)
+        return True
+
+    async def release(self) -> None:
+        """Give the lease back (nothing when it is not the holder's any more)."""
+        await self._db.release_lease(self._name, self._holder)
+
+    async def _renew(self) -> None:
+        """Keep the lease while the turn runs: a turn may take longer than its ttl, and a lease
+        that ran out is one another turn can take.
+
+        Its own end is not the turn's: it is cancelled when the turn is done, and it says so
+        itself rather than leaving a `CancelledError` for the turn to swallow (which would swallow
+        the turn's own cancellation too)."""
+        every = self._ttl / 3
+        try:
+            while True:
+                await pause(self._clock, every)
+                await self.claim()
+        except asyncio.CancelledError:
+            return
+
+    @asynccontextmanager
+    async def held(self, *, wait: bool = True) -> AsyncGenerator[bool]:
+        """The lease, for as long as the block runs: yielded False when another holder has it and
+        this turn will not wait for it."""
+        if wait:
+            if not await self.take():
+                yield False
+                return
+        elif not await self.claim():
+            yield False
+            return
+        keeping = asyncio.create_task(self._renew())
+        try:
+            yield True
+        finally:
+            keeping.cancel()
+            try:
+                # (`return_exceptions`, so a renewal cancelled before it ever ran is not this
+                # turn's `CancelledError` — while this turn's own cancellation still is.)
+                await asyncio.gather(keeping, return_exceptions=True)
+            finally:
+                await self.release()
+
+
 @dataclass(frozen=True, slots=True)
 class Ran:
     """What a turn did: how it ended, whether it said anything at all, and the turn it ran as
@@ -1123,6 +1230,7 @@ class Turns:
         clock: Clock,
         settings: OrchSettings,
         place: asyncio.Semaphore | None = None,
+        database: DBManager | None = None,
     ) -> None:
         self._records = records
         self._events = events
@@ -1131,17 +1239,45 @@ class Turns:
         self._settings = settings
         self._place = place
         """The dispatcher's `max_agents_running` places; None for a turn nobody queued."""
+        self._database = database
+        """Where a turn's cross-process lease is kept (None for a `Turns` of tests that do not
+        need one: a turn in one process only)."""
+        self._holder = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:8]}"
+        """Who holds this `Turns`' turns: unique to the process and to it, so a second `Turns` in
+        one process is a second holder — as another process's is — and the lease tells them
+        apart."""
 
-    async def one(self, agent: stored.Agent, session: stored.AgentSession, prompt: str) -> Ran:
+    async def one(
+        self, agent: stored.Agent, session: stored.AgentSession, prompt: str, *, wait: bool = True
+    ) -> Ran | None:
         """Send one turn and stream it: its events into the transcript and the live events, and
         what its end says into the session — and whether it said anything at all (a turn that
-        never started said nothing)."""
-        lock = turn_lock(session.id)
-        async with lock:
-            if self._place is None:
-                return await self._one_turn(agent, session, prompt)
-            async with self._place:  # (at most `max_agents_running` turns at once)
-                return await self._one_turn(agent, session, prompt)
+        never started said nothing).
+
+        The session's turn is held twice over: by this process's lock, and by a lease across
+        processes (27.9), so the loop's turn and a person's typed one never run one session at
+        once. A turn that does not wait (`orch_send`) is None when another holder has it."""
+        async with self._leased(session.id, wait=wait) as held:
+            if not held:
+                return None
+            # (The lease first: a turn that will not wait is refused before it queues on this
+            # process's own lock, where the holder may be a turn in this very process.)
+            async with turn_lock(session.id):
+                if self._place is None:
+                    return await self._one_turn(agent, session, prompt)
+                async with self._place:  # (at most `max_agents_running` turns at once)
+                    return await self._one_turn(agent, session, prompt)
+
+    @asynccontextmanager
+    async def _leased(self, session: UUID, *, wait: bool) -> AsyncGenerator[bool]:
+        """The session's turn, held across processes for as long as the block runs (yielded False
+        when another holder has it and this turn will not wait)."""
+        if self._database is None:
+            yield True
+            return
+        lease = TurnLease(self._database, session=session, holder=self._holder, clock=self._clock)
+        async with lease.held(wait=wait) as held:
+            yield held
 
     async def _one_turn(
         self, agent: stored.Agent, session: stored.AgentSession, prompt: str
@@ -1157,9 +1293,10 @@ class Turns:
             return Ran(Outcome.STOPPED, False, session.turns)  # (gone: nothing to say into)
         if current.state is SessionState.ENDED:
             return Ran(Outcome.STOPPED, False, current.turns)
-        # (The lock is what says a turn is already in it, in this process; the stored state says
-        # it to anything else — `orch_send` refuses a RUNNING session. A record that still says
-        # RUNNING after a restart is a turn that never ended, and this one takes it over.)
+        # (The lock and the lease are what say a turn is already in it, in this process and in
+        # another; the stored state says it too — `orch_send` refuses a RUNNING session. A record
+        # that still says RUNNING after a restart is a turn that never ended, and this one takes
+        # it over.)
         session = await sessions.save_session(
             current.model_copy(update={"state": SessionState.RUNNING})
         )

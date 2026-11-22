@@ -927,8 +927,14 @@ class Orch(AppPlugin[OrchSettings]):
             harnesses=self.harnesses,
             clock=self.clock,
             settings=self.settings,
+            database=service.db,
         )
-        ran = await turns.one(agent, found, request.text)
+        ran = await turns.one(agent, found, request.text, wait=False)
+        if ran is None:
+            raise NotAllowed(
+                f"{agent.name!r} is in a turn",
+                hint="Wait for it to answer, or stop the session and send again.",
+            )
         if ran.outcome is Outcome.STOPPED:
             raise NotAllowed(
                 f"{agent.name!r}'s session ended while the message was sent",

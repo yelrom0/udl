@@ -320,6 +320,31 @@ async def fake_prepare(task: Task, agent: Agent) -> Task:
     )
 
 
+async def until_there(
+    service: UDLService,
+    what: Callable[[], Awaitable[bool]],
+    *,
+    steps: int = 40,
+) -> None:
+    """Run a dispatcher of the test's own on a fake clock until `what` says so (or fail).
+
+    How many turns one tick runs is the dispatcher's to decide: a test that waits for what it
+    wants, rather than for a count of turns, is not racing the loop's own speed."""
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(steps):
+            if await what():
+                return
+            await clock.advance(timedelta(seconds=31))
+        raise AssertionError("the dispatcher never got there")
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+
 async def until(what: Callable[[], Awaitable[bool]], *, steps: int = 50) -> None:
     """Let the dispatcher work until `what` says so (or fail the test)."""
     for _ in range(steps):
@@ -1017,9 +1042,13 @@ async def test_an_answer_reaches_the_agent_s_next_session(service: UDLService) -
     agents = AgentRecords(AppRecords(service.db))
     working = await agents.agent(AGENT)
     assert working is not None
-    # (A tick runs a session's turns back to back, so the count has to be far above one tick's.)
-    await agents.save_agent(working.model_copy(update={"max_nudges": 1000}))
-    await ran(service, clock=FakeClock(), turns=5)
+    # (The agent stalls after two turns with nothing to show, which is what asks the question.)
+    await agents.save_agent(working.model_copy(update={"max_nudges": 2}))
+
+    async def asked() -> bool:
+        return bool(await questions_of(service))
+
+    await until_there(service, asked)
     asked_of = await questions_of(service)
     assert len(asked_of) == 1
     token = current_principal.set(Caller(kind=PrincipalKind.OWNER, name="owner"))
