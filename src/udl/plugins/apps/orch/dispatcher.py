@@ -397,9 +397,12 @@ class Dispatcher:
         finally:
             for task in waiting:
                 task.cancel()
-            for task in waiting:
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+            await asyncio.gather(*waiting, return_exceptions=True)
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                # (A stop that landed on one of the two waits is not one to swallow in ending
+                # them: the loop must end here, not rest again on a clock nobody moves.)
+                raise asyncio.CancelledError
 
     # -- one step ------------------------------------------------------------------------------
 

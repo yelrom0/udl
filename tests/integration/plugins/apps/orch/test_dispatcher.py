@@ -2953,6 +2953,22 @@ async def test_a_merger_s_own_task_with_no_review_bot_is_skipped(service: UDLSer
     assert one.state == READY, "a person's to merge, not the merger's"
 
 
+async def test_a_stop_that_lands_while_the_loop_rests_ends_it(service: UDLService) -> None:
+    """(Between turns a loop rests on its tick and on its wake, and ending both of those must
+    not end the stop with them: a stop that landed there once left the loop resting again, on a
+    clock nobody moves, and the dispatcher never came back.)"""
+    SCRIPT["manager"] = _quiet
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    for _ in range(5):  # (let every loop take its first step, and come to rest)
+        await asyncio.sleep(0)
+    running.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(running, timeout=5)
+
+
 async def _the_merger_merges_the_first(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
     """One pull per turn: the first its prompt lists (28.7's queue moves on, one at a time)."""
     token = current_principal.set(Caller(kind=PrincipalKind.AGENT, name="claude", role="manager"))
