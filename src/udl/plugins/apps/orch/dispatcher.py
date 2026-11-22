@@ -56,10 +56,12 @@ from udl.plugins.apps.orch.models import (
     QUEUED,
     READY,
     OwnerKind,
+    PendingKind,
     Principal,
     QuestionState,
     Readiness,
     Role,
+    WaitKind,
 )
 from udl.plugins.apps.orch.settings import OrchSettings
 from udl.plugins.apps.orch.tokens import issue_token, secret_ref
@@ -121,6 +123,13 @@ def instructions(project: stored.Project, agent: stored.Agent) -> str:
     if agent.brief.strip():
         parts.append(f"# Your brief ({agent.name})\n\n{agent.brief.strip()}")
     return "\n\n".join(parts)
+
+
+def _waiting_kind(pending: Sequence[PendingKind]) -> WaitKind:
+    """Which kind of wait a pull's pending blockers are (27.10): `ci` while its checks run (or
+    GitHub has not worked out whether it merges), else `bot` — its checks gate the bot, so a
+    pull waiting on both is waiting on the checks."""
+    return "ci" if {"checks", "mergeable"} & set(pending) else "bot"
 
 
 def first_prompt(task: stored.Task, *, answers: str = "") -> str:
@@ -525,7 +534,17 @@ class Dispatcher:
         not back waits, and a `failed` one waits for a person (the card's 6)."""
         if session.state is SessionState.LIMITED:
             if session.limited_until is None or session.limited_until > self._clock.now():
+                task = await self._task_of(session)
+                if task is not None:
+                    # (its harness is out of quota: a `limit` wait, so the time it spent waiting
+                    # for the quota is not counted as its work, 27.10.)
+                    await stored.WaitRecords(self._records).opening(
+                        task.id, "limit", at=self._clock.now()
+                    )
                 return None
+            task = await self._task_of(session)
+            if task is not None:
+                await stored.WaitRecords(self._records).closing(task.id, at=self._clock.now())
             self._harnesses.limited(await self._host_of(session), session.ref.runner, None)
             return await stored.SessionRecords(self._records).save_session(
                 session.model_copy(update={"state": SessionState.IDLE, "limited_until": None})
@@ -579,10 +598,12 @@ class Dispatcher:
         """`task` with its worktree made, and moved to `in_progress` if it was only queued."""
         if task.state != QUEUED:
             return task
-        tasks = stored.TaskRecords(self._records)
+        tasks = stored.TaskRecords(self._records, clock=self._clock)
         made = await self._prepare(task, agent)
         await tasks.save_task(made)
-        return await tasks.move(made, IN_PROGRESS, by=_system("start"))
+        # (The agent starts it, not udl: its history is what its model's rate is learned from
+        # — a stretch credited to `udl` would teach nobody anything, 27.10.)
+        return await tasks.move(made, IN_PROGRESS, by=_starting(agent))
 
     async def _prepared(self, task: stored.Task, agent: stored.Agent) -> stored.Task:
         """The task's worktree on its agent's host (27.5's `prepare()`), saved on the task."""
@@ -733,11 +754,17 @@ class Dispatcher:
         elif session.turns == 0:
             prompt = first_prompt(task, answers=await self._answers(task, session))
         else:
-            next_prompt, session, kind = await self._next_prompt(task, session)
+            next_prompt, session, kind, waiting = await self._next_prompt(task, session)
             if next_prompt is None:
-                return True  # (its pull is only waiting on time: the event wakes it)
+                # (its pull is only waiting on time: the event wakes it, and how long it waited
+                # is a `Wait` — 27.10's, so a checks' hour is not the agent's work.)
+                await stored.WaitRecords(self._records).opening(
+                    task.id, waiting or "ci", at=self._clock.now()
+                )
+                return True
             prompt = next_prompt
         while True:
+            await stored.WaitRecords(self._records).closing(task.id, at=self._clock.now())
             outcome, spoke = await self._turn(agent, session, prompt)
             session = await sessions.session(session.id) or session
             if outcome in (Outcome.LIMITED, Outcome.FAILED):
@@ -758,9 +785,13 @@ class Dispatcher:
             if nudges >= agent.max_nudges:
                 await self._stalled(agent, now, session)
                 return spoke
-            next_prompt, session, kind = await self._next_prompt(now, session)
+            next_prompt, session, kind, waiting = await self._next_prompt(now, session)
             if next_prompt is None:
-                return spoke  # (only time stands in the way: no turn until the pull changes)
+                # (only time stands in the way: no turn until the pull changes)
+                await stored.WaitRecords(self._records).opening(
+                    now.id, waiting or "ci", at=self._clock.now()
+                )
+                return spoke
             prompt = next_prompt
 
     async def _answers(self, task: stored.Task, session: stored.AgentSession) -> str:
@@ -780,7 +811,7 @@ class Dispatcher:
 
     async def _next_prompt(
         self, task: stored.Task, session: stored.AgentSession
-    ) -> tuple[str | None, stored.AgentSession, str]:
+    ) -> tuple[str | None, stored.AgentSession, str, WaitKind | None]:
         """What a session still on its task is told — what changed since the last turn (its pull's
         checks, the review bot's open items), or with nothing new a nudge (the card's 3) — the
         session, remembering what it was told so that the same news is not told twice, and which
@@ -796,37 +827,39 @@ class Dispatcher:
         elif said:
             what = said
         if waiting and not said:
-            return None, session, "waiting"
+            return None, session, "waiting", waiting
         if what is None or what == session.last_text:
-            return nudge(task), session, "nudge"
+            return nudge(task), session, "nudge", None
         session = await stored.SessionRecords(self._records).save_session(
             session.model_copy(update={"last_text": what})
         )
-        return changed(task, what), session, "changed"
+        return changed(task, what), session, "changed", None
 
     async def _what_changed(
         self, task: stored.Task, session: stored.AgentSession
-    ) -> tuple[str | None, stored.AgentSession, bool]:
+    ) -> tuple[str | None, stored.AgentSession, WaitKind | None]:
         """What is new about `task`'s pull, as a line a session can act on (its checks and the
-        bot's open items, or that it may be merged), the session, and whether it is only time that
-        stands in the way."""
+        bot's open items, or that it may be merged), the session, and — when it is only time that
+        stands in the way — which kind of wait that is (27.10's `Wait`: `ci` while its checks
+        run, `bot` while the review bot has not answered this head)."""
         links = await stored.LinkRecords(self._records).for_owner(
             task.project, OwnerKind.TASK, task.key
         )
         if not any(one.link_kind == "pull" for one in links):
-            return "it has no pull yet", session, False
+            return "it has no pull yet", session, None
         try:
             found = await self._service.call("orch_readiness", {"key": task.key})
         except (PluginError, UDLError) as error:
-            return f"its pull could not be read:\n{fenced('udl', str(error))}", session, False
+            return f"its pull could not be read:\n{fenced('udl', str(error))}", session, None
         if not isinstance(found, Readiness):
-            return None, session, False
+            return None, session, None
         if found.ready:
-            return "its pull is ready to merge: say so with `orch_ready`", session, False
+            return "its pull is ready to merge: say so with `orch_ready`", session, None
         if found.blockers and all(one.startswith("its manager ") for one in found.blockers):
             # (Its manager has not reviewed this head: nothing the session can do about it, so it
-            # holds no turn, as it does while only time stands in the way, 27.8.)
-            return None, session, True
+            # holds no turn, as it does while only time stands in the way, 27.8 — and the wait is
+            # the review's, which is the bot's, 27.10.)
+            return None, session, "bot"
         if found.pending and set(found.pending) == set(found.blockers):
             # (Only time stands in the way, and the rerun that would hurry it needs an operation
             # udl lacks: the session holds no turn, and 28.1's question asks how long to wait.)
@@ -843,14 +876,14 @@ class Dispatcher:
                     ),
                     blocking=False,
                 )
-            return None, session, True
+            return None, session, _waiting_kind(found.pending_kinds)
         parts = [f"its pull is not ready ({'; '.join(found.blockers)})"]
         if found.open_items:
             items = "\n".join(
                 f"{one.text} ({one.status})" if one.status else one.text for one in found.open_items
             )
             parts.append(f"the review bot still lists:\n\n{fenced('review-bot', items)}")
-        return ". ".join(parts), session, False
+        return ". ".join(parts), session, None
 
     async def _stalled(
         self, agent: stored.Agent, task: stored.Task, session: stored.AgentSession
@@ -885,6 +918,7 @@ class Dispatcher:
                 text=text,
                 blocking=blocking,
                 asked_by=name,
+                clock=self._clock,
             )
         except UDLError:
             # (A blocking question is the task's state: dropping it would leave the task running
@@ -920,6 +954,7 @@ class Dispatcher:
                     question=open_ones[0],
                     asked_by=name,
                     why=title,
+                    clock=self._clock,
                 )
                 return
             if task.state == BLOCKED:
@@ -1164,5 +1199,13 @@ def _plain(value: object) -> JsonValue:
 
 
 def _system(role: Role) -> Principal:
-    """udl's own principal for a move it makes (never a person's, never an agent's)."""
+    """udl's own principal for a move it makes on its own account (never a person's, never an
+    agent's: assigning a queued task to the agent that takes it is the queue's bookkeeping, while
+    the start of the work is the agent's, `_starting`)."""
     return Principal(kind="system", role=role)
+
+
+def _starting(agent: stored.Agent) -> Principal:
+    """The principal a dispatcher's start is: the agent's own (it is the one who starts working),
+    with the role the table calls it."""
+    return Principal(kind="agent", name=agent.name, role="start")

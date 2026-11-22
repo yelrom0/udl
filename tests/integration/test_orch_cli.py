@@ -12,6 +12,7 @@ another (its own, over the same database file), as it does for a person.
 import asyncio
 import json
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 # Package Imports
@@ -21,6 +22,8 @@ from typer.testing import CliRunner
 from udl.config import Settings
 from udl.core.service import UDLService
 from udl.interfaces.cli.app import app
+from udl.plugins.apps.base import AppRecords
+from udl.plugins.apps.orch.records import StateChange, TaskRecords
 from udl.plugins.registry import PluginRegistry
 
 PULL = "https://github.com/yelrom0/udl/pull/57"
@@ -140,3 +143,70 @@ async def test_the_cli_sizes_a_task_and_shows_the_totals(tmp_path: Path) -> None
         "points_ready": 0,
         "unsized": 0,
     }
+
+
+async def test_the_cli_prints_a_project_s_progress(tmp_path: Path) -> None:
+    # (27.10's done when: the burn-up's numbers, the forecast and the hours per point, on a
+    # history: one task merged after two hours' work, and one three-point task still open.)
+    settings = Settings.load(config(tmp_path))
+    plugins = PluginRegistry.discover(builtin_only=True)
+    async with UDLService(settings, registry=plugins) as service:
+        await service.call("orch_set_project", {"name": "udl", "title": "udl"})
+        await service.call("orch_set_feature", {"key": "26", "title": "Work tracking"})
+        await service.call(
+            "orch_set_task",
+            {"key": "26.1", "feature": "26", "title": "Merged one", "size": "S"},
+        )
+        await service.call(
+            "orch_set_task",
+            {"key": "26.2", "feature": "26", "title": "Still open", "size": "M"},
+        )
+        records = AppRecords(service.db)
+        merged = await TaskRecords(records).task("udl", "26.1")
+        assert merged is not None
+        await TaskRecords(records).import_task(merged.model_copy(update={"state": "merged"}))
+        start = datetime(2026, 11, 21, 9, tzinfo=UTC)
+        await records.save_all(
+            [
+                StateChange(
+                    task=merged.id,
+                    from_state="open",
+                    to_state="in_progress",
+                    at=start,
+                    by="deepseek-a",
+                ),
+                StateChange(
+                    task=merged.id,
+                    from_state="in_progress",
+                    to_state="merged",
+                    at=start + timedelta(hours=2),
+                    by="deepseek-a",
+                ),
+            ]
+        )
+
+    runner = CliRunner(env={"COLUMNS": "200"})
+    shown = await asyncio.to_thread(
+        runner.invoke,
+        app,
+        ["--config", str(config(tmp_path)), "orch", "progress", "udl"],
+    )
+    answered = await asyncio.to_thread(
+        runner.invoke,
+        app,
+        ["--config", str(config(tmp_path)), "orch", "progress", "udl", "--json"],
+    )
+
+    assert shown.exit_code == 0, shown.output
+    assert "26" in shown.stdout  # (the feature's own line)
+    assert "forecast" in shown.stdout.lower()
+    assert "hours" in shown.stdout.lower()
+    assert answered.exit_code == 0, answered.output
+    progress = json.loads(answered.stdout)
+    assert progress["series"][-1]["points"] == 4  # (one point merged, three still open)
+    assert progress["series"][-1]["merged"] == 0
+    # (One sample is fewer than a rate needs, so it is an hour a point: what nothing learned
+    # answers, and it says so.)
+    assert progress["models"][0]["hours_per_point"] == {"hours": 1.0, "source": "default"}
+    assert progress["recent"][0]["actual"] == "PT2H"
+    assert progress["recent"][0]["estimate"] == "PT1H"  # (one point at that rate)

@@ -592,8 +592,11 @@ async def test_an_unassign_writes_only_the_tasks_whose_place_changed(
         patch.setattr(tasks.records, "save_all", counted)
         await unassign(tasks, project="udl", key="F-1.3", by=ME)
 
-    # (The task that left, and its note — no other task: 0 and 1 keep 0 and 1.)
-    assert writes == [["F-1.3", "?"]]
+    # (The task that left — no other task: 0 and 1 keep 0 and 1 — with its note and the history
+    # entry its move writes, which have no key.)
+    (batch,) = writes
+    assert [one for one in batch if one != "?"] == ["F-1.3"]
+    assert batch.count("?") == 2
 
 
 async def test_a_queue_change_that_fails_leaves_the_queue_as_it_was(

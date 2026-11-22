@@ -1282,6 +1282,32 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
 
   `test_progress_operations.py` goes through the service.
 - Done when: `udl orch progress udl` prints the burn-up's numbers, the forecast and the hours per point, on a fixture history.
+- **Built (`deepseek-a`, 21 Nov 2026, PR to follow):** the two records — `StateChange` (a task's
+  move, written in the same write as the move itself by `TaskRecords.save_all`, so a task's
+  history is complete) and `Wait` (`ci`, `bot` or `limit`, one open at a time per task, opened by
+  the dispatcher where it already knew the agent held no turn: its pull's checks or the bot
+  pending, or its harness out of quota, and closed when a turn starts). (`from_state`/`to_state`
+  and `wait_kind`: `from` is a keyword and `kind` is a record's own name.) `timing.py` is
+  `working_time` and `by_agent` (a task handed on is split between the agents that worked it),
+  with a `since` so a week's hours are a week's; `estimates.py` is the median of a model's hours
+  a point over its last 30 merged sized tasks, the project's rate below five samples, then an
+  hour a point — and the `Rate` says which — plus `estimate(points, rate)` and `spread` (the
+  25th/75th of actual ÷ estimated, which is what makes a forecast a range). `progress.py` is the
+  series, the pace and `finishes` (an agent's hours at its own day, the project's average below
+  1 h a day, then 8 h; never before now). `reporting.py` reads the records into them, and
+  `orch_progress`/`orch_estimate` (read-only, `udl orch progress <project>` and
+  `udl orch estimate <project> <task>`) answer `Progress` and `Estimate`. Unassigned work is
+  spread over the enabled implementers in name order (27.4's suggestion order is not used yet).
+  Tests: `test_timing.py` (12), `test_estimates.py` (9), `test_forecast.py` (10),
+  `test_history.py` (7), `test_progress_operations.py` (11, through the service on a fixture
+  history), the CLI's `udl orch progress udl` (the human output and its `--json`), and the
+  dispatcher's checks and quota tests now assert their `Wait`. `Readiness.pending_kinds`
+  (`checks`, `mergeable`, `bot`) is the typed reason the dispatcher's wait kind is read from;
+  a manager who has not reviewed the head counts as a `bot` one, so `orch_pr_status --wait` waits
+  on the manager as it does on the bot. Only a feature's merged points read an imported `[x]` as a
+  merge (an import writes no move, so its hours are unknown and it is in no series, recent list
+  or rate). The merge path and the plugin's own moves write their `StateChange`s on the app's
+  clock.
 
 **27.11 Chat sessions** · needs 27.2, 27.9, 25.8, and 25.12 for its Codex half only (25.12 is optional, Q-9: the Claude Code half doesn't wait for it) · size XL (O-D15, O-C15)
 - Build: `orch/chat.py`, the sessions behind the chat sidebar (29.12).

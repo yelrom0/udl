@@ -15,7 +15,7 @@ it is given are the project's own text.
 # System Imports
 import string
 from collections.abc import Iterable, Mapping
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from enum import StrEnum
 from typing import Annotated, Final, Literal, Protocol, Self, get_args
 
@@ -76,12 +76,16 @@ __all__ = [
     "DeleteRepoRequest",
     "DropActionRequest",
     "EscalateRequest",
+    "Estimate",
+    "EstimateRequest",
     "Feature",
     "FeatureInfo",
+    "FeatureProgress",
     "FeatureStatus",
     "Features",
     "FindLinksRequest",
     "FinishActionRequest",
+    "ForecastInfo",
     "Gate",
     "GateArg",
     "GateRun",
@@ -106,6 +110,7 @@ __all__ = [
     "ManagerVerdict",
     "MergePolicy",
     "Message",
+    "ModelRow",
     "MoveTaskRequest",
     "MyTaskNote",
     "MyTaskRequest",
@@ -115,6 +120,8 @@ __all__ = [
     "OwnerKind",
     "PrStatusRequest",
     "Principal",
+    "Progress",
+    "ProgressRequest",
     "Project",
     "ProjectInfo",
     "Projects",
@@ -127,12 +134,15 @@ __all__ = [
     "Questions",
     "QueueEntry",
     "QueueRequest",
+    "RateInfo",
+    "RecentTask",
     "RemoveLinkRequest",
     "ReorderQueueRequest",
     "ReplyRequest",
     "Repo",
     "ReviewVerdict",
     "Role",
+    "SeriesPoint",
     "SetActionRequest",
     "SetFeatureRequest",
     "SetProjectRequest",
@@ -156,6 +166,7 @@ __all__ = [
     "Totals",
     "URLText",
     "UnassignTaskRequest",
+    "WaitKind",
     "as_shape",
     "branch_pattern_problem",
     "render_branch",
@@ -283,6 +294,10 @@ type TaskKind = Literal["build", "human", "review"]
 type ManagerVerdict = Literal["approve", "changes"]
 """A manager's verdict on a report's pull (27.8): `approve` is its OK for that head, `changes`
 is what the report must do before it may be ready."""
+
+type WaitKind = Literal["ci", "bot", "limit"]
+"""Why a task's agent held no turn (27.10): its PR's checks, the review bot, or its harness's
+quota (`limit`)."""
 
 type FeatureStatus = Literal["planned", "active", "done", "parked"]
 """Where a feature is: its own setting, or what its tasks make it (orch.records)."""
@@ -1242,6 +1257,11 @@ class ReviewVerdict(_Model):
     """The commit it says it reviewed (a follow-up names one; a first review does not)."""
 
 
+PendingKind = Literal["checks", "mergeable", "bot"]
+"""What a readiness is only waiting on: GitHub's checks, GitHub working out whether the pull
+merges, or the review bot (27.10)."""
+
+
 class Readiness(_Model):
     """Whether a pull may be merged for a task (27.6): ready or not, why not, and what the
     review bot still lists."""
@@ -1261,6 +1281,9 @@ class Readiness(_Model):
     """The blockers that are only a matter of time (the checks still running, the review bot not
     done with this head, GitHub not knowing yet): what a wait can change, and the rest of
     `blockers` cannot (27.5)."""
+    pending_kinds: list[PendingKind] = Field(default_factory=list[PendingKind])
+    """What those are, for a caller that acts on them rather than reads them (27.10's `Wait`:
+    `checks` and `mergeable` are GitHub's, `bot` is the review bot's)."""
 
 
 class ReviewRequest(_Model):
@@ -1646,6 +1669,139 @@ class Tasks(_Model):
     """The project they are of."""
     tasks: list[Task] = Field(default_factory=list[Task])
     """The tasks themselves."""
+
+
+class RateInfo(_Model):
+    """What a point costs in hours, and which rate said so: the model's own, its project's, or
+    an hour a point (nothing has been learned yet)."""
+
+    hours: float
+    """The hours a point."""
+    source: Literal["model", "project", "default"]
+    """Which rate answered."""
+
+
+class ModelRow(_Model):
+    """One model's work, as the progress page shows it."""
+
+    model: str
+    """The model (an agent's, as its runner was given it)."""
+    runner: str
+    """The runner that runs it (an agent's own, the first of them)."""
+    tasks: int
+    """How many merged, sized tasks it is learned from."""
+    hours_per_point: RateInfo
+    """What a point costs it."""
+    hours_per_size: dict[str, float] = Field(default_factory=dict[str, float])
+    """What each size came to, in hours (the median of the tasks of that size)."""
+
+
+class SeriesPoint(_Model):
+    """One day of the burn-up: the scope's points at its end, and the points merged in it."""
+
+    day: date
+    """The day."""
+    points: int
+    """The scope's points (the tasks made by then and not cancelled by then, at their size now)."""
+    merged: int
+    """The points merged in it."""
+
+
+class ForecastInfo(_Model):
+    """When the work is done: the last agent's own day, and the spread's range around it."""
+
+    likely: AwareDatetime
+    """When the last agent finishes, at its own rate."""
+    early: AwareDatetime
+    """The earliest the work could be done (the spread's 25th percentile)."""
+    late: AwareDatetime
+    """The latest (its 75th)."""
+    unsized: NonNegativeInt = 0
+    """The tasks left out of it because nobody sized them."""
+
+
+class FeatureProgress(_Model):
+    """One feature's points, and when it is forecast to be done."""
+
+    key: Key
+    """The feature's key."""
+    title: Title
+    """What it is called."""
+    points: int
+    """Its points, merged and not."""
+    merged: int
+    """The points merged."""
+    forecast: ForecastInfo | None = None
+    """When what is left of it is done (None: nothing sized is left)."""
+
+
+class RecentTask(_Model):
+    """A merged, sized task: what it was estimated at, and what it took."""
+
+    key: Key
+    """Its key."""
+    title: Title
+    """What it is called."""
+    size: Size
+    """How big it was."""
+    estimate: timedelta
+    """What its size was expected to take, at the rate it is learned at."""
+    actual: timedelta
+    """How long it really took (its working time)."""
+
+
+class Progress(_Model):
+    """A project's progress (27.10): its burn-up, its pace, its forecast, its features, its
+    models and the tasks merged lately."""
+
+    project: Name
+    """The project it is of."""
+    series: list[SeriesPoint] = Field(default_factory=list[SeriesPoint])
+    """The burn-up, a day at a time."""
+    pace: float = 0.0
+    """The points merged a day over the last seven."""
+    forecast: ForecastInfo
+    """When the open, sized work is done."""
+    features: list[FeatureProgress] = Field(default_factory=list[FeatureProgress])
+    """Each feature's points and its own forecast."""
+    models: list[ModelRow] = Field(default_factory=list[ModelRow])
+    """What a point costs each model."""
+    recent: list[RecentTask] = Field(default_factory=list[RecentTask])
+    """The last 20 merged, sized tasks."""
+    estimate_ratio: float = 0.0
+    """The median of actual ÷ estimated over them (how far the estimates are off)."""
+
+
+class ProgressRequest(_Model):
+    """Asking for a project's progress."""
+
+    project: Name
+    """The project."""
+    since: AwareDatetime | None = None
+    """The day the series starts (None: thirty days before now)."""
+
+
+class Estimate(_Model):
+    """One task's estimate (27.10): its size, what that is expected to take, and the time worked
+    on it so far."""
+
+    task: Task
+    """The task."""
+    size: Size | None = None
+    """How big it is (None: not sized, so not estimated)."""
+    estimate: timedelta | None = None
+    """What its size is expected to take, at its model's rate (None: unsized)."""
+    worked: timedelta
+    """The time worked on it so far (its history, less its waits)."""
+
+
+class EstimateRequest(_Model):
+    """Asking for one task's estimate."""
+
+    project: Name
+    """The task's project."""
+    task: Key
+    """The task's key."""
 
 
 class GetTaskRequest(_Model):

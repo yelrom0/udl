@@ -94,6 +94,8 @@ from udl.plugins.apps.orch.models import (
     DeleteRepoRequest,
     DropActionRequest,
     EscalateRequest,
+    Estimate,
+    EstimateRequest,
     Feature,
     FeatureInfo,
     Features,
@@ -128,6 +130,8 @@ from udl.plugins.apps.orch.models import (
     NoteKind,
     OwnerKind,
     Principal,
+    Progress,
+    ProgressRequest,
     Project,
     ProjectInfo,
     Projects,
@@ -172,6 +176,7 @@ from udl.plugins.apps.orch.models import (
 from udl.plugins.apps.orch.readiness import TASK_READY, Pull, TaskReady
 from udl.plugins.apps.orch.readiness import readiness as assess
 from udl.plugins.apps.orch.records import scan_links
+from udl.plugins.apps.orch.reporting import Reporting
 from udl.plugins.apps.orch.sessions import (
     AGENT_LIMITED,
     SESSION_ENDED,
@@ -623,6 +628,18 @@ class Orch(AppPlugin[OrchSettings]):
                 cli=CLISpec(path=(*_FEATURES, "set")),
             ),
             cls.operation(
+                "progress",
+                title="A project's progress: its burn-up, pace and forecast",
+                hints=OperationHints(read_only=True),
+                cli=CLISpec(path=("orch", "progress"), arguments=("project",)),
+            ),
+            cls.operation(
+                "estimate",
+                title="A task's size, its estimate and the time worked on it",
+                hints=OperationHints(read_only=True),
+                cli=CLISpec(path=("orch", "estimate"), arguments=("project", "task")),
+            ),
+            cls.operation(
                 "list_tasks",
                 title="List a project's tasks",
                 hints=OperationHints(read_only=True),
@@ -854,6 +871,20 @@ class Orch(AppPlugin[OrchSettings]):
             found = found.model_copy(update=given)
         return as_shape(Feature, await features.save_feature(found))
 
+    async def progress(self, request: ProgressRequest) -> Progress:
+        """A project's progress (27.10): its burn-up, its pace, its forecast, each feature's
+        points, what a point costs each model, and the tasks merged lately."""
+        return await Reporting(self.records, now=self.clock.now()).progress(
+            request.project, since=request.since
+        )
+
+    async def estimate(self, request: EstimateRequest) -> Estimate:
+        """One task's size, what it is expected to take at its model's rate, and the time worked
+        on it so far (its history, less its waits)."""
+        return await Reporting(self.records, now=self.clock.now()).estimate(
+            request.project, request.task
+        )
+
     async def list_tasks(self, request: ListTasksRequest) -> Tasks:
         """A project's tasks, by key, narrowed by feature, state, assignee and text."""
         project = await self._project(request.project)
@@ -948,7 +979,7 @@ class Orch(AppPlugin[OrchSettings]):
         """Move a task to another state, through the table (orch.transitions): what it waits on
         is its note while it is blocked, and the move writes the system note that says so."""
         project = await self._project(request.project)
-        tasks = stored.TaskRecords(self.records)
+        tasks = stored.TaskRecords(self.records, clock=self.clock)
         found = await self._require_task(project, request.key)
         from udl.core.service import principal  # (the caller's, as each interface set it)
 
@@ -1402,6 +1433,7 @@ class Orch(AppPlugin[OrchSettings]):
                     project=found.project,
                     key=task.key,
                     why=await self._closing_comment(service, url),
+                    clock=self.clock,
                 )
 
     async def _closing_comment(self, service: UDLService, url: str) -> str:
@@ -1513,6 +1545,7 @@ class Orch(AppPlugin[OrchSettings]):
             tasks=request.tasks,
             features=request.features,
             asked_by=await self._asker(request.task, project=project),
+            clock=self.clock,
         )
         return _question(found)
 
@@ -1525,6 +1558,7 @@ class Orch(AppPlugin[OrchSettings]):
             task=request.task,
             reason=request.reason,
             asked_by=await self._asker(request.task, project=project),
+            clock=self.clock,
         )
         return _question(found)
 
@@ -1551,6 +1585,7 @@ class Orch(AppPlugin[OrchSettings]):
             key=request.key,
             answer=request.answer,
             by=_principal(),
+            clock=self.clock,
         )
         return _question(found)
 
@@ -1731,7 +1766,9 @@ class Orch(AppPlugin[OrchSettings]):
             text=request.note or f"Ready to merge: {pull.head_sha[:7]}.",
             author="udl",
         )
-        await stored.TaskRecords(self.records).save_all(
+        # (The app's clock: this move ends a working stretch, and a stretch's hours are what
+        # 27.10 learns a model's rate from.)
+        await stored.TaskRecords(self.records, clock=self.clock).save_all(
             [moved], also=[note, stored.move_note(task, moved, _UDL)]
         )
         events = AppEvents(service.bus, self.name, self.event_types())
@@ -2010,7 +2047,13 @@ class Orch(AppPlugin[OrchSettings]):
         """What a merge sets off (28.3), however it happened: `merge.after_merge` (the task's
         state, the rebase notes, the actions waiting on it)."""
         changed = await after_merge(
-            self.records, project=project, key=key, by=by, reviewed=reviewed, promoted=promoted
+            self.records,
+            project=project,
+            key=key,
+            by=by,
+            reviewed=reviewed,
+            promoted=promoted,
+            clock=self.clock,
         )
         return changed[0]
 

@@ -30,13 +30,15 @@ sit over it, so nothing here knows about a database.
 import hashlib
 import logging
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Final, Self
 from uuid import UUID
 
 # Package Imports
 from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt
+
+from udl.clock import Clock
 
 # Local Imports
 from udl.db.models import JsonObject, utcnow
@@ -59,7 +61,9 @@ from udl.plugins.apps.orch.agents import (
 from udl.plugins.apps.orch.models import (
     CANCELLED,
     DONE,
+    IN_PROGRESS,
     OPEN,
+    QUEUED,
     ActionState,
     ActionWhen,
     BranchName,
@@ -87,6 +91,7 @@ from udl.plugins.apps.orch.models import (
     Text,
     Title,
     URLText,
+    WaitKind,
 )
 from udl.plugins.runners.base import SessionRef, TextDelta
 
@@ -289,6 +294,72 @@ class Note(Record):
             note_kind=NoteKind.SYSTEM,
             text="Moved to deepseek-b's queue: ernie-c must stop working on it.",
             author="udl",
+        )
+
+
+class StateChange(Record):
+    """A task's move, kept as history (27.10): where it went, when, and by whom.
+
+    It is written in the same write as the move itself (26.3's `move()` and `save_all`), so a
+    task's history is complete — it is what a working time is made of. History, so db sync copies
+    it once it happened (`SyncRule.ENDED`). (`from_state` and `to_state`, because `from` is a
+    keyword.)"""
+
+    kind = "orch_state_change"
+    indexed = ("task", "at")
+    sync = SyncRule.ENDED
+
+    task: UUID
+    """The task it is of (its id, so a key's changes do not lose it)."""
+    from_state: State
+    """Where it was."""
+    to_state: State
+    """Where it went."""
+    at: AwareDatetime
+    """When it went there."""
+    by: str
+    """Who moved it: an agent's name, `human:<name>`, or `udl`."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            task=UUID("6f1c2f0e-9d4a-4a37-8c1e-0d2b7a5c9e11"),
+            from_state=QUEUED,
+            to_state=IN_PROGRESS,
+            at=datetime(2026, 11, 22, 9, 30, tzinfo=UTC),
+            by="deepseek-a",
+        )
+
+
+class Wait(Record):
+    """A stretch the agent of a task held no turn (27.10): its PR's checks or the review bot were
+    pending, or its harness was out of quota. A wait that has not ended is open (`end` is None),
+    and `timing` counts it to now."""
+
+    kind = "orch_wait"
+    indexed = ("task", "start")
+    sync = SyncRule.ENDED
+
+    task: UUID
+    """The task whose agent was waiting (its id)."""
+    wait_kind: WaitKind
+    """Why it waited (not `kind`: a record's `kind` is the name of its kind)."""
+    start: AwareDatetime
+    """When the wait began."""
+    end: AwareDatetime | None = None
+    """When it ended (None: still waiting)."""
+
+    def ended(self) -> bool:
+        """Whether it has ended: an open wait is this runtime's, not history."""
+        return self.end is not None
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            task=UUID("6f1c2f0e-9d4a-4a37-8c1e-0d2b7a5c9e11"),
+            wait_kind="ci",
+            start=datetime(2026, 11, 22, 10, 0, tzinfo=UTC),
+            end=datetime(2026, 11, 22, 10, 20, tzinfo=UTC),
         )
 
 
@@ -984,9 +1055,16 @@ class FeatureRecords:
 class TaskRecords:
     """Where orch keeps its tasks: looked up by project, feature, key, state and assignee."""
 
-    def __init__(self, records: AppRecords, projects: ProjectRecords | None = None) -> None:
+    def __init__(
+        self,
+        records: AppRecords,
+        projects: ProjectRecords | None = None,
+        *,
+        clock: Clock | None = None,
+    ) -> None:
         self._records = records
         self._projects = projects if projects is not None else ProjectRecords(records)
+        self._clock = clock
 
     @property
     def records(self) -> AppRecords:
@@ -1043,21 +1121,39 @@ class TaskRecords:
         What `save_task` checks of a new task is checked for every task: its project and its
         feature are there. Its state is not checked: a batch is a queue's own write, and the
         states in it are the ones `orch.transitions.move()` planned (the table), which
-        `save_task`'s guard cannot see. Returns the stored tasks, in order."""
+        `save_task`'s guard cannot see. Returns the stored tasks, in order.
+
+        A task whose state the batch changes is also its history (27.10): one `StateChange`, in
+        the same write, from the state it was stored in to the one it is in now, by whoever
+        `updated_by` names — so no move lands without it (a save that leaves the state alone
+        writes none, and an import is not a move: it goes through `import_all`, or `import_task`
+        for one task)."""
         if not tasks and not also:
             return []
         features = FeatureRecords(self._records, self._projects)
+        changes: list[StateChange] = []
         for task in tasks:
             await self._projects.require(task.project)
             if await features.feature(task.project, task.feature) is None:
                 raise DoesNotExist(f"There is no feature {task.feature!r} in {task.project!r}")
-            if await self._records.get(Task, task.id) is None and task.state != OPEN:
+            stored = await self._records.get(Task, task.id)
+            if stored is None and task.state != OPEN:
                 raise NotAllowed(
                     f"a new task cannot start in {task.state!r}",
                     hint="A task is saved open, and then moved.",
                 )
+            if stored is not None and stored.state != task.state:
+                changes.append(
+                    StateChange(
+                        task=task.id,
+                        from_state=stored.state,
+                        to_state=task.state,
+                        at=self._now(),
+                        by=task.updated_by or "udl",
+                    )
+                )
         followed = await self._follow_all(tasks)
-        batch: list[Record] = [*tasks, *followed, *also]
+        batch: list[Record] = [*tasks, *followed, *changes, *also]
         saved = await self._records.save_all(batch)
         return [one for one in saved[: len(tasks)] if isinstance(one, Task)]
 
@@ -1134,6 +1230,11 @@ class TaskRecords:
         This is `move()`'s own write. A path that plans several moves (a queue's reassign is two)
         builds the same note with `move_note()` and writes it in its own batch."""
         return await self.save_all([moved], also=[move_note(task, moved, by)])
+
+    def _now(self) -> datetime:
+        """When a history entry is written: the app's clock when it was given one (so a test's
+        history and its waits share one), else the wall clock."""
+        return self._clock.now() if self._clock is not None else utcnow()
 
     async def _store(self, task: Task) -> Task:
         """Store `task` as it is (a save's and a move's own path) and keep its feature's status
@@ -1485,6 +1586,36 @@ class ReviewRecords:
             if one.head == head:
                 return one
         return None
+
+
+class WaitRecords:
+    """Where a task's waits are kept (27.10): opened while its agent holds no turn, and closed
+    when it gets one again. One wait of a kind at a time — a tick that finds the wait already
+    open leaves it as it is, so a long wait is one record, not one a tick."""
+
+    def __init__(self, records: AppRecords) -> None:
+        self._records = records
+
+    async def open_for(self, task: UUID) -> list[Wait]:
+        """The waits of `task` that have not ended."""
+        found = await self._records.list(Wait, RecordQuery(where={"task": task}))
+        return [one for one in found if one.end is None]
+
+    async def opening(self, task: UUID, kind: WaitKind, *, at: datetime) -> Wait:
+        """The wait of `kind` `task` is in, opened at `at` when it has none: what the dispatcher
+        calls each tick while the agent holds no turn."""
+        for wait in await self.open_for(task):
+            if wait.wait_kind == kind:
+                return wait
+        return await self._records.save(Wait(task=task, wait_kind=kind, start=at))
+
+    async def closing(self, task: UUID, *, at: datetime) -> list[Wait]:
+        """Every wait of `task` that is still open, closed at `at`: what the dispatcher calls
+        when the agent has a turn again."""
+        open_ones = await self.open_for(task)
+        return list(
+            await self._records.save_all([one.model_copy(update={"end": at}) for one in open_ones])
+        )
 
 
 class NoteRecords:

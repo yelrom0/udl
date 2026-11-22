@@ -15,6 +15,8 @@ is the app's `orch_merge_list` and `orch_merge`; what a merge sets off, however 
 from collections.abc import Sequence
 from typing import Final
 
+from udl.clock import Clock
+
 # Local Imports
 from udl.errors import DoesNotExist
 from udl.plugins.apps.base import AppRecords
@@ -101,6 +103,7 @@ async def after_merge(
     by: str,
     reviewed: bool,
     promoted: bool,
+    clock: Clock | None = None,
 ) -> list[Task]:
     """`key` merged: its task moves to `merged`, and to `done` at once when the merge was a
     review (`reviewed`) and nothing follows the base (`promoted` is False).
@@ -108,7 +111,7 @@ async def after_merge(
     Every task stacked on it is told, in a `system` note, to rebase onto the base and push again,
     and every action waiting `after` it is `now`. Answers with the tasks that changed: the merged
     one first, then each stacked one."""
-    tasks = TaskRecords(records)
+    tasks = TaskRecords(records, clock=clock)
     found = await tasks.task(project, key)
     if found is None:
         raise DoesNotExist(f"There is no task called {key!r} in {project!r}")
@@ -151,11 +154,13 @@ async def after_merge(
     return changed
 
 
-async def after_close(records: AppRecords, *, project: str, key: Key, why: str) -> Task | None:
+async def after_close(
+    records: AppRecords, *, project: str, key: Key, why: str, clock: Clock | None = None
+) -> Task | None:
     """The pull of `key` was closed without merging: its task goes back to `in_progress`, with
     `why` (the closing comment, as data) in a `system` note. Answers with the task, or None when
     there is none to move."""
-    tasks = TaskRecords(records)
+    tasks = TaskRecords(records, clock=clock)
     found = await tasks.task(project, key)
     if found is None or found.state in (MERGED, DONE, CANCELLED, OPEN):
         return None
