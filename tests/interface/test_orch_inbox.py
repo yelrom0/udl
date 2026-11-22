@@ -20,8 +20,8 @@ from mcp.types import TextContent
 
 # Local Imports
 from support.api import client_for as api_client_for
-from support.clock import FakeClock
 from support.cli import CLI
+from support.clock import FakeClock
 from support.interfaces import Harness
 from support.mcp import client_for as mcp_client_for
 from udl.plugins.apps.base import AppRecords
@@ -102,9 +102,7 @@ async def test_the_inbox_says_what_waits_on_a_person(with_things_to_do: Harness)
         found = await service.call("orch_inbox", {})
 
     assert isinstance(found, Inbox)
-    assert [(one.key, one.blocking, one.task) for one in found.questions] == [
-        ("Q-1", True, "26.4")
-    ]
+    assert [(one.key, one.blocking, one.task) for one in found.questions] == [("Q-1", True, "26.4")]
     assert [(one.key, one.title, one.when.value) for one in found.actions] == [
         ("A-1", "Merge 27.10", "now")
     ]

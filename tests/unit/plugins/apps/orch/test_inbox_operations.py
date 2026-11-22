@@ -149,9 +149,7 @@ async def service(tmp_path: Path) -> AsyncIterator[UDLService]:
         await tasks.move(found, READY, by=Principal(kind="system", role="ready"))
         # (A blocking question moves its task to `blocked`, so it is asked in the task without a
         # pull: the ready one stays ready for the merge list.)
-        await running.call(
-            "orch_ask", {"task": "F-1.2", "title": "Which theme?", "blocking": True}
-        )
+        await running.call("orch_ask", {"task": "F-1.2", "title": "Which theme?", "blocking": True})
         await running.call("orch_ask", {"task": "F-1.1", "title": "A later ask"})
         await running.call("orch_set_action", {"title": "Merge it", "when": "now"})
         await AgentRecords(records).save_agent(
