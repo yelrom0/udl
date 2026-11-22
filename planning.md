@@ -134,7 +134,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 27.7 The dispatcher: start, prompt, nudge, resume and stop agent sessions; limits and crashes
   - [~] 27.8 Managers: a manager agent's duties over its reports, each one switchable
   - [ ] 27.9 Operations (agents, queues, sessions, suggestions) via CLI, API and MCP
-  - [ ] 27.10 Working time, hours per point learned per model, forecasts: `orch_progress`
+  - [~] 27.10 Working time, hours per point learned per model, forecasts: `orch_progress`
   - [ ] 27.11 Chat sessions: Claude Code or Codex as the user, its permission prompts relayed to the web UI, a token per chat
 - [ ] **Phase 28: Human comms: Q&A, Ready to merge, To action**
   - [~] 28.1 `Question` records and their thread; an answer reaches the agent and is written into the tasks it concerns
