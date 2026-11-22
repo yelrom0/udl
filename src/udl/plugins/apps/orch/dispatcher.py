@@ -28,11 +28,13 @@ import contextlib
 import logging
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Final
 from uuid import UUID
+from weakref import WeakValueDictionary
 
 # Package Imports
 from pydantic import JsonValue, SecretStr
@@ -745,7 +747,9 @@ class Dispatcher:
                 for one in await managers.reports(stored.AgentRecords(self._records), agent.name)
             ]
             items = await self._needs(agent, reports)
-            outcome, _ = await self._turn(agent, session, manager_prompt(agent, reports, items))
+            outcome = (
+                await self._turn(agent, session, manager_prompt(agent, reports, items))
+            ).outcome
             session = await sessions.session(session.id) or session
             if outcome is Outcome.STOPPED:
                 return False  # (a person stopped it: its news was not told)
@@ -773,7 +777,8 @@ class Dispatcher:
             prompt = next_prompt
         while True:
             await stored.WaitRecords(self._records).closing(task.id, at=self._clock.now())
-            outcome, spoke = await self._turn(agent, session, prompt)
+            ran = await self._turn(agent, session, prompt)
+            outcome, spoke = ran.outcome, ran.spoke
             session = await sessions.session(session.id) or session
             if outcome is Outcome.STOPPED:
                 return spoke  # (a person stopped it: it stays ended)
@@ -978,9 +983,7 @@ class Dispatcher:
                 return
         await self._ask(name, task, title=title, text=text, blocking=blocking)
 
-    async def _turn(
-        self, agent: stored.Agent, session: stored.AgentSession, prompt: str
-    ) -> tuple[Outcome, bool]:
+    async def _turn(self, agent: stored.Agent, session: stored.AgentSession, prompt: str) -> Ran:
         """Send one turn: `Turns.one`, the same turn `orch_send` makes (27.9)."""
         return await self._turns_made.one(agent, session, prompt)
 
@@ -1074,10 +1077,34 @@ class Dispatcher:
 # One turn (the loop's, and a person's typed one)
 # ---------------------------------------------------------------------------------------------
 
-_LOCKS: Final[dict[tuple[int, UUID], asyncio.Lock]] = {}
+_LOCKS: Final[WeakValueDictionary[tuple[int, UUID], asyncio.Lock]] = WeakValueDictionary()
 """Each session's turn lock, per event loop (a lock belongs to the loop that first awaited it,
 and a process may run more than one): the dispatcher's loop and a person's typed turn
-(`orch_send`, 27.9) take the same one, so two turns are never in one session at once."""
+(`orch_send`, 27.9) take the same one, so two turns are never in one session at once.
+
+It is weak: a turn holds its lock while it runs (and a turn waiting for it holds it too), so two
+turns of one session always meet on one lock, and a session nobody is turning leaves none behind
+— the table does not grow with every session the process has ever sent a turn to."""
+
+
+def turn_lock(session: UUID) -> asyncio.Lock:
+    """The lock a session's turns share in this process, one per event loop (a lock belongs to
+    the loop that first awaited it, and a process may run more than one).
+
+    It is weak: a turn holds its lock while it runs, and a turn waiting for it holds it too, so
+    two turns of one session always meet on one lock, while a session nobody is turning leaves
+    none behind — the table does not grow with every session the process has ever turned."""
+    return _LOCKS.setdefault((id(asyncio.get_running_loop()), session), asyncio.Lock())
+
+
+@dataclass(frozen=True, slots=True)
+class Ran:
+    """What a turn did: how it ended, whether it said anything at all, and the turn it ran as
+    (read under the lock, not from the caller's snapshot)."""
+
+    outcome: Outcome
+    spoke: bool
+    turn: int
 
 
 class Turns:
@@ -1105,13 +1132,11 @@ class Turns:
         self._place = place
         """The dispatcher's `max_agents_running` places; None for a turn nobody queued."""
 
-    async def one(
-        self, agent: stored.Agent, session: stored.AgentSession, prompt: str
-    ) -> tuple[Outcome, bool]:
+    async def one(self, agent: stored.Agent, session: stored.AgentSession, prompt: str) -> Ran:
         """Send one turn and stream it: its events into the transcript and the live events, and
         what its end says into the session — and whether it said anything at all (a turn that
         never started said nothing)."""
-        lock = _LOCKS.setdefault((id(asyncio.get_running_loop()), session.id), asyncio.Lock())
+        lock = turn_lock(session.id)
         async with lock:
             if self._place is None:
                 return await self._one_turn(agent, session, prompt)
@@ -1120,12 +1145,18 @@ class Turns:
 
     async def _one_turn(
         self, agent: stored.Agent, session: stored.AgentSession, prompt: str
-    ) -> tuple[Outcome, bool]:
-        """One turn, streamed (what `one` does once it has the session and its place)."""
+    ) -> Ran:
+        """One turn, streamed (what `one` does once it has the session and its place).
+
+        The session is read again here, under the lock: a turn that ended it (or a person who
+        stopped it) while this one waited leaves it `ENDED`, and this turn does not start — and
+        the number it runs as is the one it read, not the caller's snapshot."""
         sessions = stored.SessionRecords(self._records)
         current = await sessions.session(session.id)
         if current is None:
-            return Outcome.STOPPED, False  # (it is gone: nothing to say into)
+            return Ran(Outcome.STOPPED, False, session.turns)  # (gone: nothing to say into)
+        if current.state is SessionState.ENDED:
+            return Ran(Outcome.STOPPED, False, current.turns)
         # (The lock is what says a turn is already in it, in this process; the stored state says
         # it to anything else — `orch_send` refuses a RUNNING session. A record that still says
         # RUNNING after a restart is a turn that never ended, and this one takes it over.)
@@ -1152,7 +1183,8 @@ class Turns:
         except (PluginError, UDLError) as error:
             failed = RunnerFailed(message=str(error))
             ended = TurnEnded(reason=TurnReason.ERROR, text=str(error))
-        return await self._ended(agent, session, ended, limited=limited, failed=failed), spoke
+        outcome = await self._ended(agent, session, ended, limited=limited, failed=failed)
+        return Ran(outcome, spoke, session.turns)
 
     async def _saved(
         self, session: stored.AgentSession, **changes: object

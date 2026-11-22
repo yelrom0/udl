@@ -280,7 +280,7 @@ class AgentInfo(_Model):
     """The agent."""
     status: AgentStatus
     """What it is doing now (derived: never stored)."""
-    session: SessionInfo | None = None
+    session: AgentSession | None = None
     """Its current session, when it has one (its transcript's first page)."""
     queue: list[QueueEntry] = Field(default_factory=list[QueueEntry])
     """Its tasks, in the order it will work them."""

@@ -14,10 +14,12 @@ check of `orch_send` is what a person typing into it gets — a turn of its own,
 
 # System Imports
 import asyncio
+import gc
+import weakref
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import ClassVar
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 # Package Imports
 import pytest
@@ -31,6 +33,7 @@ from udl.core.service import UDLService
 from udl.errors import DoesNotExist, InUse, NotAllowed, PluginFailed
 from udl.interfaces.security import Principal, PrincipalKind, current_principal
 from udl.plugins.apps.base import AppRecords
+from udl.plugins.apps.orch import dispatcher
 from udl.plugins.apps.orch.agents import (
     Agent as AgentShape,
 )
@@ -365,6 +368,24 @@ async def test_the_agents_of_one_project_are_the_only_ones_listed(service: UDLSe
     assert [one.agent.name for one in listed.items] == ["deepseek-b"]
 
 
+async def test_listing_the_agents_reads_no_transcript(
+    service: UDLService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A list of agents is polled (the UI does): it reads each agent's session, never its whole
+    transcript — only `orch_get_session` reads that."""
+    await a_session(service)
+
+    async def refuse(self: SessionRecords, session: UUID) -> list[SessionEvent]:
+        raise AssertionError("the transcript was read")
+
+    monkeypatch.setattr(SessionRecords, "transcript", refuse)
+
+    found = await service.call("orch_list_agents", {})
+
+    assert isinstance(found, Agents)
+    assert [one.session.turns for one in found.items if one.session is not None] == [3]
+
+
 async def test_a_queue_of_two_projects_says_which(service: UDLService) -> None:
     """A key is only unique within a project, so a queue that spans them says which task is
     whose (two tasks `F-1.1`, one in each project)."""
@@ -450,6 +471,60 @@ async def test_a_harness_that_cannot_stop_it_still_ends_the_session(tmp_path: Pa
         assert stored is not None
         assert stored.state is SessionState.ENDED
         assert stored.last_error.startswith("stopping it:")
+
+
+async def test_a_message_does_not_bring_an_ended_session_back(service: UDLService) -> None:
+    """A message that waits on the turn lock reads the session again once it has it: a session a
+    turn ended (or a person stopped) while it waited stays ended, and nothing is sent into it."""
+    found = await a_session(service)
+    sessions = SessionRecords(AppRecords(service.db))
+    lock = dispatcher.turn_lock(found.id)
+    await lock.acquire()
+    sending = asyncio.create_task(service.call("orch_send", {"agent": "ernie-c", "text": "Go on"}))
+    try:
+        await asyncio.sleep(0.05)  # (it reaches the lock, and waits there)
+        await sessions.save_session(found.model_copy(update={"state": SessionState.ENDED}))
+    finally:
+        lock.release()
+
+    with pytest.raises(NotAllowed, match="ended while the message"):
+        await sending
+    stored = await sessions.session(found.id)
+    assert stored is not None
+    assert stored.state is SessionState.ENDED
+    assert stored.turns == found.turns
+
+
+async def test_a_message_numbers_the_turn_it_runs(service: UDLService) -> None:
+    """The turn a message runs as is read once it has the lock, not from the snapshot it took
+    before it (a turn that ended while it waited is not the one it follows)."""
+    found = await a_session(service)
+    sessions = SessionRecords(AppRecords(service.db))
+    lock = dispatcher.turn_lock(found.id)
+    await lock.acquire()
+    sending = asyncio.create_task(service.call("orch_send", {"agent": "ernie-c", "text": "Go on"}))
+    try:
+        await asyncio.sleep(0.05)
+        await sessions.save_session(found.model_copy(update={"turns": found.turns + 1}))
+    finally:
+        lock.release()
+
+    sent = await sending
+    assert isinstance(sent, Sent)
+    assert sent.turn == found.turns + 1
+
+
+async def test_the_turn_locks_do_not_outlive_their_turns(service: UDLService) -> None:
+    """One lock per session, while a turn is in it: the table does not grow with every session
+    the process has ever sent a turn to."""
+    found = await a_session(service)
+    before = weakref.ref(dispatcher.turn_lock(found.id))
+
+    await service.call("orch_send", {"agent": "ernie-c", "text": "Go on"})
+
+    gc.collect()
+    # (The table holds it weakly: nothing held it once the turn was done, so it is gone.)
+    assert before() is None
 
 
 async def test_a_session_stopped_mid_turn_stays_ended(tmp_path: Path) -> None:

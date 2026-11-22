@@ -3395,7 +3395,7 @@ export interface components {
              */
             reports?: components["schemas"]["Name"][];
             /** @description Its current session, when it has one (its transcript's first page). */
-            session?: components["schemas"]["SessionInfo"] | null;
+            session?: components["schemas"]["AgentSession"] | null;
             /** @description What it is doing now (derived: never stored). */
             status: components["schemas"]["AgentStatus"];
         };
@@ -3440,6 +3440,68 @@ export interface components {
          * @enum {string}
          */
         AgentRole: "implementer" | "manager" | "reviewer";
+        /**
+         * AgentSession
+         * @description A session an agent is in: the harness's own session (its ref), where it got to, what it
+         *     has used, and what it last said.
+         */
+        AgentSession: {
+            /** @description The agent whose session it is. */
+            agent: components["schemas"]["Name"];
+            /**
+             * Cost
+             * @description What it has cost, in USD, when its harness says (None: it does not charge per turn).
+             */
+            cost?: string | null;
+            /**
+             * Last Text
+             * @description What it last said (the end of its last turn's answer).
+             * @default
+             */
+            last_text: string;
+            /**
+             * Limited Until
+             * @description When its harness's quota is back, when it said (None: it did not say).
+             */
+            limited_until?: string | null;
+            /**
+             * Nudges
+             * @description How many times it has been nudged towards finishing.
+             * @default 0
+             */
+            nudges: number;
+            /** @description The harness's session: the runner, its id, the folder and the host. */
+            ref: components["schemas"]["SessionRef"];
+            /**
+             * @description Where it is.
+             * @default starting
+             */
+            state: components["schemas"]["SessionState"];
+            /**
+             * Task
+             * @description The task it works (a task's key; empty: its manager's standing session).
+             * @default
+             */
+            task: string;
+            /**
+             * Tokens In
+             * @description The tokens it was given, over its turns.
+             * @default 0
+             */
+            tokens_in: number;
+            /**
+             * Tokens Out
+             * @description The tokens it wrote, over its turns.
+             * @default 0
+             */
+            tokens_out: number;
+            /**
+             * Turns
+             * @description How many turns it has taken.
+             * @default 0
+             */
+            turns: number;
+        };
         /**
          * AgentStatus
          * @description What an agent is doing now (derived from its session: never stored).

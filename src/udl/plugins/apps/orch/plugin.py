@@ -370,8 +370,12 @@ class _Key(BaseModel):
     """The key, or where udl's secret store has it."""
 
 
-_AGENTS: Final = ("orch", "agents")
-_QUEUE: Final = ("orch", "queue")
+_AGENTS: tuple[str, ...] = ("orch", "agents")
+"""The CLI words the agents' operations live under: `udl orch agents [list|show|set|…]`."""
+
+_QUEUE: tuple[str, ...] = ("orch", "queue")
+"""The CLI words the queue's operations live under: `udl orch queue [show|mine|add|set|rm]`."""
+
 _RUNNERS: tuple[str, ...] = ("orch", "runners")
 """The CLI words a harness's operations live under: `udl orch runners [install]`."""
 
@@ -924,13 +928,13 @@ class Orch(AppPlugin[OrchSettings]):
             clock=self.clock,
             settings=self.settings,
         )
-        outcome, _ = await turns.one(agent, found, request.text)
-        if outcome is Outcome.STOPPED:
+        ran = await turns.one(agent, found, request.text)
+        if ran.outcome is Outcome.STOPPED:
             raise NotAllowed(
                 f"{agent.name!r}'s session ended while the message was sent",
                 hint="Its next turn starts a new session; send it again after that.",
             )
-        return Sent(session=found.id, turn=found.turns)
+        return Sent(session=found.id, turn=ran.turn)
 
     async def _set_paused(self, name: str, *, paused: bool) -> Agent:
         """`name`'s agent, paused or resumed, as an operation answers with it."""
@@ -964,7 +968,7 @@ class Orch(AppPlugin[OrchSettings]):
                 None if session is None else as_shape(AgentSessionShape, session),
                 offline=agent.offline,
             ),
-            session=None if session is None else await self._session_info(session, limit=0),
+            session=None if session is None else as_shape(AgentSessionShape, session),
             queue=[_entry(one) for one in queue],
             reports=[
                 one.name for one in await stored.AgentRecords(self.records).reports(agent.name)

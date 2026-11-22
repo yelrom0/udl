@@ -879,7 +879,7 @@
           "session": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/SessionInfo"
+                "$ref": "#/components/schemas/AgentSession"
               },
               {
                 "type": "null"
@@ -973,6 +973,96 @@
         ],
         "title": "AgentRole",
         "type": "string"
+      },
+      "AgentSession": {
+        "additionalProperties": false,
+        "description": "A session an agent is in: the harness's own session (its ref), where it got to, what it\nhas used, and what it last said.",
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The agent whose session it is."
+          },
+          "cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What it has cost, in USD, when its harness says (None: it does not charge per turn).",
+            "title": "Cost"
+          },
+          "last_text": {
+            "default": "",
+            "description": "What it last said (the end of its last turn's answer).",
+            "title": "Last Text",
+            "type": "string"
+          },
+          "limited_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When its harness's quota is back, when it said (None: it did not say).",
+            "title": "Limited Until"
+          },
+          "nudges": {
+            "default": 0,
+            "description": "How many times it has been nudged towards finishing.",
+            "minimum": 0.0,
+            "title": "Nudges",
+            "type": "integer"
+          },
+          "ref": {
+            "$ref": "#/components/schemas/SessionRef",
+            "description": "The harness's session: the runner, its id, the folder and the host."
+          },
+          "state": {
+            "$ref": "#/components/schemas/SessionState",
+            "default": "starting",
+            "description": "Where it is."
+          },
+          "task": {
+            "default": "",
+            "description": "The task it works (a task's key; empty: its manager's standing session).",
+            "title": "Task",
+            "type": "string"
+          },
+          "tokens_in": {
+            "default": 0,
+            "description": "The tokens it was given, over its turns.",
+            "minimum": 0.0,
+            "title": "Tokens In",
+            "type": "integer"
+          },
+          "tokens_out": {
+            "default": 0,
+            "description": "The tokens it wrote, over its turns.",
+            "minimum": 0.0,
+            "title": "Tokens Out",
+            "type": "integer"
+          },
+          "turns": {
+            "default": 0,
+            "description": "How many turns it has taken.",
+            "minimum": 0.0,
+            "title": "Turns",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "agent",
+          "ref"
+        ],
+        "title": "AgentSession",
+        "type": "object"
       },
       "AgentStatus": {
         "description": "What an agent is doing now (derived from its session: never stored).",
