@@ -1,7 +1,7 @@
 """
----------------
+--------------------
 - test_checkout.py -
----------------
+--------------------
 
 28.8: after a merge, each host's checkout follows `main`.
 
@@ -66,8 +66,8 @@ def repo(tmp_path: Path) -> Path:
     git(origin, "init", "--bare", "-b", "main")
     checkout = tmp_path / "checkout"
     git(tmp_path, "clone", str(origin), "checkout")
-    git(checkout, "-c", "user.email=t@e", "-c", "user.name=t", "config", "user.email", "t@e")
-    git(checkout, "-c", "user.email=t@e", "-c", "user.name=t", "config", "user.name", "t")
+    git(checkout, "config", "user.email", "t@e")
+    git(checkout, "config", "user.name", "t")
     at(checkout / "one.txt")
     commit(checkout, "one")
     git(checkout, "push", "origin", "main")
@@ -96,7 +96,7 @@ async def service(tmp_path: Path, repo: Path) -> AsyncIterator[UDLService]:
         yield running
 
 
-async def bring(service: UDLService, repo: Path, *, ahead: int = 1) -> None:
+def bring(repo: Path, *, ahead: int = 1) -> None:
     """`origin/main` moved on (as a merge would): `ahead` commits past the checkout."""
     seed = repo.parent / "seed"
     git(repo.parent, "clone", str(repo.parent / "origin.git"), "seed")
@@ -107,14 +107,14 @@ async def bring(service: UDLService, repo: Path, *, ahead: int = 1) -> None:
 
 
 async def test_a_clean_checkout_follows_the_merge(service: UDLService, repo: Path) -> None:
-    await bring(service, repo)
+    bring(repo)
     before = git(repo, "rev-parse", "HEAD")
 
     behind = await follow(
         AppRecords(service.db),
         project="udl",
         key="F-1.1",
-        base="main",
+        repo="yelrom0/udl",
         shells=service.hosts,
     )
 
@@ -124,14 +124,14 @@ async def test_a_clean_checkout_follows_the_merge(service: UDLService, repo: Pat
 
 
 async def test_a_dirty_checkout_is_left_and_noted(service: UDLService, repo: Path) -> None:
-    await bring(service, repo)
+    bring(repo)
     at(repo / "dirty.txt", "work\n")
 
     behind = await follow(
         AppRecords(service.db),
         project="udl",
         key="F-1.1",
-        base="main",
+        repo="yelrom0/udl",
         shells=service.hosts,
     )
 
@@ -147,14 +147,14 @@ async def test_a_dirty_checkout_is_left_and_noted(service: UDLService, repo: Pat
 async def test_a_checkout_on_another_branch_is_left_and_noted(
     service: UDLService, repo: Path
 ) -> None:
-    await bring(service, repo)
+    bring(repo)
     git(repo, "checkout", "-b", "feat/x")
 
     behind = await follow(
         AppRecords(service.db),
         project="udl",
         key="F-1.1",
-        base="main",
+        repo="yelrom0/udl",
         shells=service.hosts,
     )
 
@@ -166,14 +166,14 @@ async def test_a_checkout_on_another_branch_is_left_and_noted(
 async def test_a_diverged_checkout_is_left_and_noted(service: UDLService, repo: Path) -> None:
     at(repo / "mine.txt", "mine\n")
     commit(repo, "mine")
-    await bring(service, repo)
+    bring(repo)
     # (The checkout has its own commit and origin/main moved on: the two have diverged.)
 
     behind = await follow(
         AppRecords(service.db),
         project="udl",
         key="F-1.1",
-        base="main",
+        repo="yelrom0/udl",
         shells=service.hosts,
     )
 
@@ -185,24 +185,66 @@ async def test_a_diverged_checkout_is_left_and_noted(service: UDLService, repo: 
 
 
 async def test_an_unreachable_host_is_noted_not_raised(service: UDLService, repo: Path) -> None:
+    nowhere = repo.parent / "nowhere"
+    nowhere.mkdir()
     found = await RepoRecords(AppRecords(service.db)).repo("udl", "udl")
     assert found is not None
     await RepoRecords(AppRecords(service.db)).save_repo(
-        found.model_copy(update={"checkouts": {"local": str(repo), "elsewhere": "/nonexistent"}})
+        found.model_copy(update={"checkouts": {"local": str(repo), "elsewhere": str(nowhere)}})
     )
-    await bring(service, repo)
+    bring(repo)
 
     behind = await follow(
         AppRecords(service.db),
         project="udl",
         key="F-1.1",
-        base="main",
+        repo="yelrom0/udl",
         shells=service.hosts,
     )
 
-    assert any(host == "elsewhere" for host in (one.host for one in behind))
+    lost = next(one for one in behind if one.host == "elsewhere")
+    assert "could not be reached" in lost.why
     # (The reachable one still followed: one bad host never stops the others.)
     assert git(repo, "rev-parse", "HEAD") == git(repo, "rev-parse", "origin/main")
+
+
+async def test_a_timeout_is_noted_not_raised(service: UDLService, repo: Path) -> None:
+    class _Shell:
+        async def run(self, args: list[str], within: object = None) -> object:
+            raise TimeoutError("git fetch timed out")
+
+    class _Hosts:
+        async def shell(self, name: str) -> object:
+            return _Shell()
+
+    behind = await follow(
+        AppRecords(service.db),
+        project="udl",
+        key="F-1.1",
+        repo="yelrom0/udl",
+        shells=_Hosts(),  # type: ignore[arg-type]
+    )
+
+    assert len(behind) == 1
+    assert "timed out" in behind[0].why
+
+
+async def test_the_event_follows_a_checkout_left_behind(service: UDLService, repo: Path) -> None:
+    """An `orch.checkout.behind` event names a checkout that could not follow."""
+    bring(repo)
+    at(repo / "dirty.txt", "work\n")
+
+    behind = await follow(
+        AppRecords(service.db),
+        project="udl",
+        key="F-1.1",
+        repo="yelrom0/udl",
+        shells=service.hosts,
+    )
+
+    assert [one.host for one in behind] == ["local"]
+    assert CHECKOUT_BEHIND.name == "orch.checkout.behind"
+    assert CHECKOUT_BEHIND.data is CheckoutBehind
 
 
 def test_the_event_is_offered() -> None:

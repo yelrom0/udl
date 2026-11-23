@@ -75,39 +75,53 @@ async def follow(
     *,
     project: str,
     key: Key,
-    base: str,
+    repo: str,
     shells: Hosts,
     clock: Clock | None = None,
 ) -> list[CheckoutBehind]:
-    """After `key` merged: bring every checkout of the project's repo to `origin/<base>`, and
-    answer the ones that did not move (each with why). Never raises: a checkout that cannot be
-    read is a note, not a failed merge."""
-    repos = await RepoRecords(records).repos(project)
+    """After `key` merged: bring every checkout of the repo `repo` (`owner/name`) to its own
+    base, and answer the ones that did not move (each with why). Never raises: a checkout that
+    cannot be read is a note, not a failed merge."""
+    found = await RepoRecords(records).repos_for(repo)
+    repo_record = next((one for one in found if one.project == project), None)
+    if repo_record is None:
+        return []
+    base = repo_record.base_branch
     tasks = TaskRecords(records, clock=clock)
-    found = await tasks.task(project, key)
+    task = await tasks.task(project, key)
     notes = NoteRecords(records)
     behind: list[CheckoutBehind] = []
-    for repo in repos:
-        for host, checkout in repo.checkouts.items():
-            why = await _bring_up_to_date(shells, host, checkout, base)
-            if why is None:
-                continue
-            said = CheckoutBehind(project=project, host=host, checkout=checkout, why=why)
-            behind.append(said)
-            if found is not None:
-                await notes.add(
-                    Note(
-                        owner_kind=OwnerKind.TASK,
-                        owner=found.id,
-                        note_kind=NoteKind.SYSTEM,
-                        text=(
-                            f"{host}'s checkout ({checkout}) did not follow `{base}` after this "
-                            f"merge: {why}. Bring it up with `git -C {checkout} merge --ff-only "
-                            f"origin/{base}` when you can."
-                        ),
-                    )
+    for host, checkout in repo_record.checkouts.items():
+        why = await _bring_up_to_date(shells, host, checkout, base)
+        if why is None:
+            continue
+        said = CheckoutBehind(project=project, host=host, checkout=checkout, why=why)
+        behind.append(said)
+        if task is not None:
+            await notes.add(
+                Note(
+                    owner_kind=OwnerKind.TASK,
+                    owner=task.id,
+                    note_kind=NoteKind.SYSTEM,
+                    text=(
+                        f"{host}'s checkout ({checkout}) did not follow `{base}` after this "
+                        f"merge: {why}. {advice(why, checkout, base)}"
+                    ),
                 )
+            )
     return behind
+
+
+def advice(why: str, checkout: str, base: str) -> str:
+    """What to do about a checkout that did not follow: only the fix that can help."""
+    if why.startswith("it is on another branch") or why == "it has uncommitted changes":
+        return (
+            f"Bring it over yourself (`git -C {checkout} checkout {base}` and commit or stash "
+            f"its work), then `git -C {checkout} merge --ff-only origin/{base}`."
+        )
+    if why.startswith("it diverged"):
+        return f"Bring it over yourself: `git -C {checkout} pull --rebase origin {base}`."
+    return f"It is at {checkout}; check the host and the path."
 
 
 async def _bring_up_to_date(shells: Hosts, host: HostName, checkout: str, base: str) -> str | None:
@@ -116,10 +130,14 @@ async def _bring_up_to_date(shells: Hosts, host: HostName, checkout: str, base: 
         shell = await shells.shell(host)
         await shell.run(["git", "-C", checkout, "fetch", "origin", base], within=GIT)
     except (DoesNotExist, PluginFailed, ToolUnavailable) as error:
-        return f"its host could not be reached ({error})"
+        return f"it could not be reached on {host} ({error})"
+    except TimeoutError:
+        return f"its fetch timed out after {int(GIT.total_seconds() // 60)} minutes"
     on = await _says(shell, ["git", "-C", checkout, "rev-parse", "--abbrev-ref", "HEAD"])
     if on is None:
         return "its branch could not be read"
+    if on == "HEAD":
+        return "it has no branch checked out (a detached HEAD)"
     if on != base:
         return f"it is on another branch ({on})"
     state = await _says(shell, ["git", "-C", checkout, "status", "--porcelain"])
@@ -133,18 +151,18 @@ async def _bring_up_to_date(shells: Hosts, host: HostName, checkout: str, base: 
 
 
 async def _says(shell: HostShell, args: list[str]) -> str | None:
-    """What `git <args>` printed, or None when it failed."""
+    """What `git <args>` printed, or None when it failed (or the host did not answer in time)."""
     try:
         done = await shell.run(args, within=GIT)
-    except PluginFailed:
+    except PluginFailed, ToolUnavailable, TimeoutError:
         return None
     return done.stdout.strip()
 
 
 async def _succeeds(shell: HostShell, args: list[str]) -> bool:
-    """Whether `git <args>` succeeded."""
+    """Whether `git <args>` succeeded (or the host did not answer in time)."""
     try:
         await shell.run(args, within=GIT)
-    except PluginFailed:
+    except PluginFailed, ToolUnavailable, TimeoutError:
         return False
     return True
