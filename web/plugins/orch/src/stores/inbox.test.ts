@@ -127,6 +127,18 @@ describe("the inbox store", () => {
 		stop();
 	});
 
+	it("reads again when a page asks it to, after an answer no event was published for", async () => {
+		const fake = fakeCtx(() => INBOX);
+		const { store, refresh, stop } = inboxStore(fake.ctx);
+		await settle();
+
+		await refresh();
+
+		expect(fake.calls.map((one) => one.name)).toEqual(["orch_inbox", "orch_inbox"]);
+		expect(store.getState().inbox).not.toBeNull();
+		stop();
+	});
+
 	it("ignores events that are not orch's", async () => {
 		const fake = fakeCtx(() => INBOX);
 		const { stop } = inboxStore(fake.ctx);

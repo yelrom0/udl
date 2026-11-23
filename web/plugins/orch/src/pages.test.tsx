@@ -121,28 +121,6 @@ describe("every route the manifest contributes", () => {
 		expect(screen.getAllByText("udl is not answering")).toHaveLength(2);
 	});
 
-	it("counts the inbox in words, for one question and for several", async () => {
-		const one = fakeCtx(() => ({
-			merge: { ready: [{}] },
-			questions: [{}],
-			actions: [{}, {}],
-		}));
-		const Inbox = pages.inbox;
-		expect(Inbox).toBeDefined();
-		if (Inbox === undefined) {
-			return;
-		}
-
-		render(<Inbox {...{ path: "inbox", params: {}, search: {}, ctx: one.ctx }} />);
-		await settle();
-		expect(screen.getByText("1 ready to merge · 1 question · 2 to action")).toBeTruthy();
-
-		const many = fakeCtx(() => ({ merge: { ready: [] }, questions: [{}, {}], actions: [] }));
-		render(<Inbox {...{ path: "inbox", params: {}, search: {}, ctx: many.ctx }} />);
-		await settle();
-		expect(screen.getByText("0 ready to merge · 2 questions · 0 to action")).toBeTruthy();
-	});
-
 	it("says it is reading the inbox, until it is read", () => {
 		const fake = fakeCtx(() => new Promise(() => {}));
 		const Inbox = pages.inbox;

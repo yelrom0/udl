@@ -72,6 +72,7 @@ export function boardStore(ctx: UIContext): Loaded<BoardState> {
 	void reads.ask();
 	return {
 		store,
+		refresh: () => reads.ask(),
 		stop: () => {
 			stopped = true;
 			reads.stop();

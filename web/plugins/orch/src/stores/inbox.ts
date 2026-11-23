@@ -13,6 +13,8 @@ export interface InboxState {
 /** A store, and what stops it listening. */
 export interface Loaded<T> {
 	readonly store: StoreApi<T>;
+	/** Read again now: what a page asks after it changed something with no event of its own. */
+	refresh(): Promise<void>;
 	stop(): void;
 }
 
@@ -60,6 +62,7 @@ export function inboxStore(ctx: UIContext): Loaded<InboxState> {
 	void reads.ask();
 	return {
 		store,
+		refresh: () => reads.ask(),
 		stop: () => {
 			stopped = true;
 			reads.stop();

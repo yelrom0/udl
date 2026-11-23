@@ -51,19 +51,25 @@ export interface MergeList {
 /** A question an agent asked (28.1). */
 export interface Question {
 	readonly key: string;
+	readonly title: string;
 	readonly text: string;
+	readonly asked_by: string;
 	readonly to: string;
 	readonly state: string;
 	readonly task: string | null;
 	readonly options: readonly string[];
+	readonly blocking: boolean;
 }
 
 /** What only a person can do (28.2). */
 export interface Action {
 	readonly key: string;
 	readonly title: string;
+	readonly text: string;
 	readonly when: string;
 	readonly after: string | null;
+	readonly task: string | null;
+	readonly assignee: string;
 }
 
 /** What an agent is doing, in a line (28.4's inbox strip). */
@@ -174,11 +180,14 @@ function questionOf(value: JsonValue): Question {
 	const one = asObject(value);
 	return {
 		key: asText(one.key),
+		title: asText(one.title),
 		text: asText(one.text),
+		asked_by: asText(one.asked_by),
 		to: asText(one.to),
 		state: asText(one.state),
 		task: typeof one.task === "string" ? one.task : null,
 		options: asArray(one.options).map((option) => asText(option)),
+		blocking: asFlag(one.blocking),
 	};
 }
 
@@ -188,8 +197,11 @@ function actionOf(value: JsonValue): Action {
 	return {
 		key: asText(one.key),
 		title: asText(one.title),
+		text: asText(one.text),
 		when: asText(one.when),
 		after: typeof one.after === "string" ? one.after : null,
+		task: typeof one.task === "string" ? one.task : null,
+		assignee: asText(one.assignee),
 	};
 }
 
