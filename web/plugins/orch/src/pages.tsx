@@ -1,27 +1,15 @@
 import type { RouteProps } from "@udl/ui-sdk";
 import type { Component } from "@udl/ui-sdk/react";
 import { BoardPage } from "./board/board";
+import { FeaturePage } from "./feature/feature";
 import { InboxPage } from "./inbox/inbox";
 import { Page, Said } from "./page";
+import { TaskPage } from "./task/task";
 
 /** Progress (29.11's page): what is merged, the burn-up and the forecast (27.10). */
 const ProgressPage: Component<RouteProps> = () => (
 	<Page title="Progress">
 		<Said>Points merged, the burn-up, and when each feature is likely done.</Said>
-	</Page>
-);
-
-/** A feature (29.5's page): its spec, its tasks and its progress. */
-const FeaturePage: Component<RouteProps> = ({ params }) => (
-	<Page title={`Feature ${params.key ?? ""}`}>
-		<Said>Its spec, its tasks in order, its links and its progress.</Said>
-	</Page>
-);
-
-/** A task (29.5's page): its spec, where it is, its pull and its notes. */
-const TaskPage: Component<RouteProps> = ({ params }) => (
-	<Page title={`Task ${params.key ?? ""}`}>
-		<Said>Its spec, its state, what it waits on, its pull and its notes.</Said>
 	</Page>
 );
 

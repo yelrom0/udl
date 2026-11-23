@@ -82,3 +82,13 @@ export function coalesced(run: () => Promise<void>, failed?: (error: unknown) =>
 export function on(ctx: UIContext, patterns: readonly string[], heard: () => void): (() => void)[] {
 	return patterns.map((pattern) => ctx.events.subscribe(pattern, heard));
 }
+
+/** What `read` answers, or `undefined` when it refused: a read beside a page's own must not
+ * take the page down with it. */
+export async function orNone<T>(read: Promise<T>): Promise<T | undefined> {
+	try {
+		return await read;
+	} catch {
+		return undefined;
+	}
+}
