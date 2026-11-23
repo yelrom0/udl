@@ -1271,6 +1271,39 @@
         "title": "AppStatus",
         "type": "object"
       },
+      "AskPermissionRequest": {
+        "additionalProperties": false,
+        "description": "What a harness asks udl, through udl's MCP server, before it acts in a chat (27.11): the\ntool it wants and what it wants to use it on.",
+        "properties": {
+          "chat": {
+            "description": "The chat it is asking in (what its token names).",
+            "format": "uuid",
+            "title": "Chat",
+            "type": "string"
+          },
+          "input": {
+            "$ref": "#/components/schemas/JsonObject",
+            "description": "What it wants to use it on."
+          },
+          "message": {
+            "default": "",
+            "description": "What it says it is doing, in a line.",
+            "title": "Message",
+            "type": "string"
+          },
+          "tool": {
+            "description": "The tool it wants to use.",
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chat",
+          "tool"
+        ],
+        "title": "AskPermissionRequest",
+        "type": "object"
+      },
       "AskRequest": {
         "additionalProperties": false,
         "description": "Asking something only the manager or a person can answer (28.1).",
@@ -1903,6 +1936,285 @@
         "title": "ChallengeList",
         "type": "object"
       },
+      "ChatDecision": {
+        "description": "What a person decided about what a chat's harness asked.",
+        "enum": [
+          "allow_once",
+          "allow_chat",
+          "deny"
+        ],
+        "title": "ChatDecision",
+        "type": "string"
+      },
+      "ChatInfo": {
+        "additionalProperties": false,
+        "description": "A chat as an operation answers it: whose it is, where it got to, what it has cost, what it\nlast said, and what its harness is waiting on.",
+        "properties": {
+          "cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What its turns cost, when its harness says.",
+            "title": "Cost"
+          },
+          "created_at": {
+            "description": "When it was started.",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "directory": {
+            "default": "",
+            "description": "The folder it works in.",
+            "title": "Directory",
+            "type": "string"
+          },
+          "events": {
+            "description": "Its transcript (paged: the newest page of it, oldest first).",
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "runner_failed": "#/components/schemas/RunnerFailed",
+                  "runner_limited": "#/components/schemas/RunnerLimited",
+                  "text_delta": "#/components/schemas/TextDelta",
+                  "tool_finished": "#/components/schemas/ToolFinished",
+                  "tool_started": "#/components/schemas/ToolStarted",
+                  "turn_ended": "#/components/schemas/TurnEnded",
+                  "usage": "#/components/schemas/Usage"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/TextDelta"
+                },
+                {
+                  "$ref": "#/components/schemas/ToolStarted"
+                },
+                {
+                  "$ref": "#/components/schemas/ToolFinished"
+                },
+                {
+                  "$ref": "#/components/schemas/Usage"
+                },
+                {
+                  "$ref": "#/components/schemas/TurnEnded"
+                },
+                {
+                  "$ref": "#/components/schemas/RunnerLimited"
+                },
+                {
+                  "$ref": "#/components/schemas/RunnerFailed"
+                }
+              ]
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "host": {
+            "default": "local",
+            "description": "The host its harness runs on.",
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Host",
+            "type": "string"
+          },
+          "id": {
+            "description": "Its id (what every other chat operation takes).",
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_error": {
+            "default": "",
+            "description": "Why its last turn failed, as its harness said.",
+            "title": "Last Error",
+            "type": "string"
+          },
+          "last_text": {
+            "default": "",
+            "description": "What its harness last said.",
+            "title": "Last Text",
+            "type": "string"
+          },
+          "model": {
+            "default": "",
+            "description": "The model it was asked for (empty: the harness's own default).",
+            "title": "Model",
+            "type": "string"
+          },
+          "owner": {
+            "description": "Whose it is (`human:<name>`).",
+            "title": "Owner",
+            "type": "string"
+          },
+          "pending": {
+            "default": 0,
+            "description": "How many things the person said are queued for the next turns.",
+            "minimum": 0.0,
+            "title": "Pending",
+            "type": "integer"
+          },
+          "permission": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChatPermissionInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What its harness is waiting on, if it is waiting on one."
+          },
+          "permission_mode": {
+            "default": "manual",
+            "description": "The harness's permission mode.",
+            "title": "Permission Mode",
+            "type": "string"
+          },
+          "runner": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The harness it is in."
+          },
+          "state": {
+            "$ref": "#/components/schemas/SessionState",
+            "description": "Where it is: starting, running, idle, failed or ended."
+          },
+          "title": {
+            "default": "A chat",
+            "description": "What it is about, in a line.",
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "tokens_in": {
+            "default": 0,
+            "description": "The tokens it was given, over its turns.",
+            "minimum": 0.0,
+            "title": "Tokens In",
+            "type": "integer"
+          },
+          "tokens_out": {
+            "default": 0,
+            "description": "The tokens it wrote, over its turns.",
+            "minimum": 0.0,
+            "title": "Tokens Out",
+            "type": "integer"
+          },
+          "total": {
+            "default": 0,
+            "description": "How many events its transcript has.",
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "turns": {
+            "default": 0,
+            "description": "How many turns it has had.",
+            "minimum": 0.0,
+            "title": "Turns",
+            "type": "integer"
+          },
+          "updated_at": {
+            "description": "When it was last spoken in.",
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "owner",
+          "runner",
+          "state",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ChatInfo",
+        "type": "object"
+      },
+      "ChatList": {
+        "additionalProperties": false,
+        "description": "Every chat of a person, each as `ChatInfo` answers one (without its transcript).",
+        "properties": {
+          "items": {
+            "description": "The chats, the most recently spoken in first.",
+            "items": {
+              "$ref": "#/components/schemas/ChatInfo"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "ChatList",
+        "type": "object"
+      },
+      "ChatPermissionInfo": {
+        "additionalProperties": false,
+        "description": "A permission a chat's harness asked for, as an operation answers it.",
+        "properties": {
+          "allowed_for_chat": {
+            "default": false,
+            "description": "Whether the person allowed this tool for the rest of the chat.",
+            "title": "Allowed For Chat",
+            "type": "boolean"
+          },
+          "asked_at": {
+            "description": "When it was asked.",
+            "format": "date-time",
+            "title": "Asked At",
+            "type": "string"
+          },
+          "id": {
+            "description": "Its id (what `orch_chat_answer_permission` takes).",
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "input": {
+            "$ref": "#/components/schemas/JsonObject",
+            "description": "What it wants to use it on, as the harness asked."
+          },
+          "message": {
+            "default": "",
+            "description": "Why it was denied, when the person said why.",
+            "title": "Message",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ChatPermissionState",
+            "default": "pending",
+            "description": "Where it is: waiting for the person, allowed, or denied."
+          },
+          "tool": {
+            "description": "The tool it wants to use (`Bash`, `Edit`, \u2026).",
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tool",
+          "asked_at"
+        ],
+        "title": "ChatPermissionInfo",
+        "type": "object"
+      },
+      "ChatPermissionState": {
+        "description": "Where a chat's permission is: waiting for the person, allowed, or denied.",
+        "enum": [
+          "pending",
+          "allowed",
+          "denied"
+        ],
+        "title": "ChatPermissionState",
+        "type": "string"
+      },
       "CheckInfo": {
         "additionalProperties": false,
         "description": "One of a commit's checks.",
@@ -2528,6 +2840,23 @@
           "name"
         ],
         "title": "DeleteAgentRequest",
+        "type": "object"
+      },
+      "DeleteChatRequest": {
+        "additionalProperties": false,
+        "description": "Forgetting a chat, with its transcript, what its harness asked and the token it was\ngiven.",
+        "properties": {
+          "chat": {
+            "description": "The chat.",
+            "format": "uuid",
+            "title": "Chat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chat"
+        ],
+        "title": "DeleteChatRequest",
         "type": "object"
       },
       "DeleteProjectRequest": {
@@ -4780,6 +5109,30 @@
         "title": "GetAgentRequest",
         "type": "object"
       },
+      "GetChatRequest": {
+        "additionalProperties": false,
+        "description": "One chat, with its transcript (a page of it) and what it is waiting on.",
+        "properties": {
+          "chat": {
+            "description": "The chat.",
+            "format": "uuid",
+            "title": "Chat",
+            "type": "string"
+          },
+          "limit": {
+            "default": 200,
+            "description": "How many of its latest events to answer (its newest page).",
+            "exclusiveMinimum": 0.0,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "chat"
+        ],
+        "title": "GetChatRequest",
+        "type": "object"
+      },
       "GetFeatureRequest": {
         "additionalProperties": false,
         "description": "Asking for one feature: its tasks, its links and its notes.",
@@ -6248,6 +6601,20 @@
         "title": "ListAgentsRequest",
         "type": "object"
       },
+      "ListChatsRequest": {
+        "additionalProperties": false,
+        "description": "The caller's chats.",
+        "properties": {
+          "all": {
+            "default": false,
+            "description": "Whether to answer every chat (only udl's owner may: a chat's token sees its own).",
+            "title": "All",
+            "type": "boolean"
+          }
+        },
+        "title": "ListChatsRequest",
+        "type": "object"
+      },
       "ListFeaturesRequest": {
         "additionalProperties": false,
         "description": "Asking for a project's features (all of them, when none is named).",
@@ -7436,6 +7803,63 @@
           "name"
         ],
         "title": "PauseAgentRequest",
+        "type": "object"
+      },
+      "PermissionAnswer": {
+        "additionalProperties": false,
+        "description": "What the harness is told: whether it may act, and why not.",
+        "properties": {
+          "allow": {
+            "description": "Whether it may act.",
+            "title": "Allow",
+            "type": "boolean"
+          },
+          "message": {
+            "default": "",
+            "description": "Why not, when it may not.",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "allow"
+        ],
+        "title": "PermissionAnswer",
+        "type": "object"
+      },
+      "PermissionRequest": {
+        "additionalProperties": false,
+        "description": "The person's answer to what a chat's harness asked (27.11's `orch_chat_permission`).",
+        "properties": {
+          "chat": {
+            "description": "The chat.",
+            "format": "uuid",
+            "title": "Chat",
+            "type": "string"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/ChatDecision",
+            "default": "deny",
+            "description": "What the person decided."
+          },
+          "message": {
+            "default": "",
+            "description": "Why, when it is denied (the harness is told).",
+            "title": "Message",
+            "type": "string"
+          },
+          "request": {
+            "description": "What was asked (its id).",
+            "format": "uuid",
+            "title": "Request",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chat",
+          "request"
+        ],
+        "title": "PermissionRequest",
         "type": "object"
       },
       "PersonMode": {
@@ -11081,6 +11505,36 @@
         "title": "SelectStep",
         "type": "object"
       },
+      "SendChatRequest": {
+        "additionalProperties": false,
+        "description": "Saying something to a chat, which is one turn of its harness.",
+        "properties": {
+          "chat": {
+            "description": "The chat.",
+            "format": "uuid",
+            "title": "Chat",
+            "type": "string"
+          },
+          "text": {
+            "description": "What to say (the turn's prompt).",
+            "maxLength": 2000,
+            "title": "Text",
+            "type": "string"
+          },
+          "wait": {
+            "default": true,
+            "description": "Whether to wait for the turn to end (a client that streams sets this False and reads the\nchat's events).",
+            "title": "Wait",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "chat",
+          "text"
+        ],
+        "title": "SendChatRequest",
+        "type": "object"
+      },
       "SendRequest": {
         "additionalProperties": false,
         "description": "A message typed into an agent's session (the owner's only).\n\n`delivery: \"turn\"` (the only one there is for now) sends it as a turn of its own through the\nagent's runner: the session must be between turns, and the message reaches the agent when it\nis. `\"steer\"` is refused with a reason \u2014 none of udl's harnesses takes input mid-turn, and a\nmessage kept for the next turn would not be what a person said mid-turn, only a queued one\n(27.11's chats need the same answer for permission prompts).",
@@ -12937,6 +13391,62 @@
         "title": "SplitTaskRequest",
         "type": "object"
       },
+      "StartChatRequest": {
+        "additionalProperties": false,
+        "description": "Starting a chat with the caller's own harness (27.11): their runner, their folder, their\nmodel \u2014 and `manual` permissions, so the harness may ask before it acts.",
+        "properties": {
+          "directory": {
+            "default": "",
+            "description": "The folder it works in (empty: the folder udl runs in).",
+            "maxLength": 2000,
+            "title": "Directory",
+            "type": "string"
+          },
+          "host": {
+            "default": "local",
+            "description": "The host it runs on.",
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Host",
+            "type": "string"
+          },
+          "model": {
+            "default": "",
+            "description": "The model (empty: the harness's own default).",
+            "title": "Model",
+            "type": "string"
+          },
+          "permission_mode": {
+            "default": "manual",
+            "description": "What the harness's permission mode is recorded as (`manual`: it asks before it acts). udl\ndoes not pass it: a chat runs as the person would, so their own settings decide.",
+            "title": "Permission Mode",
+            "type": "string"
+          },
+          "runner": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The harness (`claude-code`)."
+          },
+          "text": {
+            "default": "",
+            "description": "What to say first (empty: the chat waits for its first message).",
+            "maxLength": 2000,
+            "title": "Text",
+            "type": "string"
+          },
+          "title": {
+            "default": "A chat",
+            "description": "What it is about, in a line (the default: what the person says first).",
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runner"
+        ],
+        "title": "StartChatRequest",
+        "type": "object"
+      },
       "StartLoginRequest": {
         "additionalProperties": false,
         "description": "Sign a harness in.",
@@ -13039,6 +13549,23 @@
           "step"
         ],
         "title": "StepTrace",
+        "type": "object"
+      },
+      "StopChatRequest": {
+        "additionalProperties": false,
+        "description": "Ending a chat: its harness's session ends, and nothing it was doing goes on.",
+        "properties": {
+          "chat": {
+            "description": "The chat.",
+            "format": "uuid",
+            "title": "Chat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chat"
+        ],
+        "title": "StopChatRequest",
         "type": "object"
       },
       "StopSessionRequest": {
@@ -19604,6 +20131,70 @@
         ]
       }
     },
+    "/orch/chats/{chat}/stream": {
+      "get": {
+        "description": "Server-sent events, from now on, of one chat's own: `event` (an EventInfo) for each `orch.chat.*` event it published \u2014 that it started, each thing its harness said, what it asked to do, and that it answered, failed or ended. Live only: a client that reconnects reloads the chat (`orch_chat_get`) rather than resuming.",
+        "operationId": "orch_chat_stream",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Chat",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "itemSchema": {
+                  "properties": {
+                    "data": {
+                      "type": "string"
+                    },
+                    "event": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "retry": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "One chat, as it happens.",
+        "tags": [
+          "events"
+        ]
+      }
+    },
     "/orch/sessions/{session}/stream": {
       "get": {
         "description": "Server-sent events, from now on, of one session's own: `event` (an EventInfo) for each `orch.session.*` event it published \u2014 that it started, each thing its runner said, and that it failed or ended. A limit is `orch.agent.limited` (the agent's, not the session's), so it is not on this stream: the session's state and `limited_until` are. Live only: a client that reconnects reloads the transcript (`orch_get_session`) rather than resuming.",
@@ -20272,6 +20863,782 @@
           }
         ],
         "summary": "Say that only a person can do this (28.1): `orch_ask`, blocking.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/chat_ask_permission": {
+      "post": {
+        "description": "What a chat's harness asks udl before it acts (27.11's `--permission-prompt-tool`):\nthe person answers, and the harness is told \u2014 allowed, or denied with why.\n\nIt is the one chat operation a chat's own token may call, and the chat is its own: a\ntoken never says which chat it is asking for.",
+        "operationId": "orch_chat_ask_permission",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskPermissionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PermissionAnswer"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "What a chat's harness asks udl before it acts (27.11's `--permission-prompt-tool`):",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/chat_delete": {
+      "post": {
+        "description": "Forget a chat, with its transcript, what its harness asked and the token it was\ngiven.",
+        "operationId": "orch_chat_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Forget a chat, with its transcript, what its harness asked and the token it was",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/chat_get": {
+      "post": {
+        "description": "One chat, with the newest page of its transcript and what its harness is waiting\non.",
+        "operationId": "orch_chat_get",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GetChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "One chat, with the newest page of its transcript and what its harness is waiting",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/chat_list": {
+      "post": {
+        "description": "Your chats (only udl's owner asks for every chat: a chat's token sees its own).",
+        "operationId": "orch_chat_list",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListChatsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Your chats (only udl's owner asks for every chat: a chat's token sees its own).",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/chat_permission": {
+      "post": {
+        "description": "The person's answer to what a chat's harness asked: allow it once, allow the same\nrequest for the rest of the chat, or deny it and say why.",
+        "operationId": "orch_chat_permission",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PermissionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "The person's answer to what a chat's harness asked: allow it once, allow the same",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/chat_send": {
+      "post": {
+        "description": "Say something to a chat: one turn of its harness, streamed into the chat's events.",
+        "operationId": "orch_chat_send",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Say something to a chat: one turn of its harness, streamed into the chat's events.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/chat_start": {
+      "post": {
+        "description": "Start a chat with your own harness (27.11): your runner, your folder, your model, and\n`manual` permissions so it asks udl before it acts. Only udl's owner starts chats.",
+        "operationId": "orch_chat_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Start a chat with your own harness (27.11): your runner, your folder, your model, and",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/chat_stop": {
+      "post": {
+        "description": "End a chat: its harness's session ends, and a turn it was in is ended with it.",
+        "operationId": "orch_chat_stop",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StopChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "End a chat: its harness's session ends, and a turn it was in is ended with it.",
         "tags": [
           "orch"
         ]

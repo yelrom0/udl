@@ -19,6 +19,7 @@ from collections.abc import Mapping
 from contextvars import ContextVar
 from enum import StrEnum
 from typing import Final, Protocol, runtime_checkable
+from uuid import UUID
 
 # Local Imports
 from pydantic import BaseModel, ConfigDict
@@ -58,12 +59,16 @@ def _header(headers: Mapping[str, str], name: str) -> str:
 AGENT_PREFIX: Final = "udl_agent_"
 """What an agent's token starts with, so a key of udl's own is never taken for one."""
 
+CHAT_PREFIX: Final = "udl_chat_"
+"""What a chat's own token starts with (27.11): it reaches one chat, and nothing else."""
+
 
 class PrincipalKind(StrEnum):
     """What kind of caller udl is answering."""
 
     OWNER = "owner"  # (the person: the API key, or a request on localhost with no key set)
     AGENT = "agent"  # (an agent with its own token)
+    CHAT = "chat"  # (a chat's own token: one chat, and nothing else)
 
 
 class Principal(BaseModel):
@@ -78,11 +83,23 @@ class Principal(BaseModel):
     name: str
     role: str | None = None
     """The agent's role (implementer, manager or reviewer); an owner has none."""
+    chat: UUID | None = None
+    """The chat a chat's token is for (None for an owner and for an agent)."""
+
+    @property
+    def is_owner(self) -> bool:
+        """Whether this is udl's owner (the person, with the server's API key)."""
+        return self.kind is PrincipalKind.OWNER
 
     @property
     def is_agent(self) -> bool:
         """Whether this is an agent rather than udl's owner."""
         return self.kind is PrincipalKind.AGENT
+
+    @property
+    def is_chat(self) -> bool:
+        """Whether this is a chat's own token rather than a person or an agent."""
+        return self.kind is PrincipalKind.CHAT
 
 
 OWNER: Final = Principal(kind=PrincipalKind.OWNER, name="owner")
@@ -109,14 +126,20 @@ async def authenticate(
 
     Raises Unauthorized for a key that is not the server's, and for a token udl does not know
     (one it rotated, or never issued)."""
-    if given is not None and given.startswith(AGENT_PREFIX):
+    if given is not None and given.startswith((AGENT_PREFIX, CHAT_PREFIX)):
         if tokens is None:
             raise Unauthorized(
-                "That is an agent token, and this udl keeps none",
+                "That is a token udl issues, and this udl keeps none",
                 hint="An owner issues one with `udl orch issue-token <agent>`.",
             )
         found = await tokens.principal_for(given)
         if found is None:
+            # (Which kind it was, from its prefix: a person reading it can tell what to do.)
+            if given.startswith(CHAT_PREFIX):
+                raise Unauthorized(
+                    "This udl does not know that chat token",
+                    hint="Its chat may have been stopped or deleted: start it again.",
+                )
             raise Unauthorized(
                 "This udl does not know that agent token",
                 hint="It may have been rotated: ask for a new one.",

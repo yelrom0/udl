@@ -25,11 +25,23 @@ from udl.automations.events import EventType
 
 __all__ = [
     "AGENT_LIMITED",
+    "CHAT_ANSWERED",
+    "CHAT_ENDED",
+    "CHAT_EVENT",
+    "CHAT_FAILED",
+    "CHAT_PERMISSION",
+    "CHAT_STARTED",
     "SESSION_ENDED",
     "SESSION_EVENT",
     "SESSION_FAILED",
     "SESSION_STARTED",
     "AgentLimited",
+    "ChatAnswered",
+    "ChatEnded",
+    "ChatEvent",
+    "ChatFailed",
+    "ChatPermission",
+    "ChatStarted",
     "SessionEnded",
     "SessionFailed",
     "SessionSaid",
@@ -160,3 +172,122 @@ AGENT_LIMITED: Final = EventType(
     source="orch",
 )
 """What orch publishes when an agent's harness is out of quota (27.7)."""
+
+
+class ChatStarted(_Model):
+    """A chat a person started with their own harness (27.11)."""
+
+    chat: str
+    """The chat (its id)."""
+    runner: str = ""
+    """The harness it is in."""
+
+
+class ChatEvent(_Model):
+    """One thing a chat's harness said, as it said it (27.11): its stream, as a session's is."""
+
+    chat: str
+    """The chat (its id)."""
+    owner: str = ""
+    """Whose it is (`human:<name>`)."""
+    turn: int = 0
+    """The turn it happened in."""
+    kind: str = ""
+    """Which of the runner's events it is (`text_delta`, `tool_started`, …)."""
+
+
+class ChatAnswered(_Model):
+    """A chat whose harness answered a turn (27.11)."""
+
+    chat: str
+    """The chat (its id)."""
+    turn: int = 0
+    """The turn it answered."""
+
+
+class ChatFailed(_Model):
+    """A chat whose harness failed (27.11): it says why, and takes no more turns."""
+
+    chat: str
+    """The chat (its id)."""
+    why: str = ""
+    """What went wrong, as udl could see it (never a secret)."""
+
+
+class ChatEnded(_Model):
+    """A chat that ended: its person stopped it (27.11)."""
+
+    chat: str
+    """The chat (its id)."""
+
+
+class ChatPermission(_Model):
+    """What a chat's harness asked before it acted (27.11): a person answers it."""
+
+    chat: str
+    """The chat (its id)."""
+    permission: str = ""
+    """What it asked (its id)."""
+    tool: str = ""
+    """The tool it wants to use."""
+
+
+CHAT_STARTED: Final = EventType(
+    name="orch.chat.started",
+    data=ChatStarted,
+    summary="A person's chat with their own harness started",
+    example=ChatStarted(chat="0b9a1f8e", runner="claude-code"),
+    subject=lambda event: f"a chat started ({event.runner})",
+    source="orch",
+)
+"""What orch publishes when a chat starts (27.11)."""
+
+CHAT_EVENT: Final = EventType(
+    name="orch.chat.event",
+    data=ChatEvent,
+    summary="One thing a chat's harness said, as it said it",
+    example=ChatEvent(chat="0b9a1f8e", owner="human:claude", turn=1, kind="text_delta"),
+    subject=lambda event: f"{event.owner}'s chat: {event.kind}",
+    source="orch",
+)
+"""What orch publishes for each thing a chat's harness says (27.11's live stream)."""
+
+CHAT_ANSWERED: Final = EventType(
+    name="orch.chat.answered",
+    data=ChatAnswered,
+    summary="A chat's harness answered a turn",
+    example=ChatAnswered(chat="0b9a1f8e", turn=1),
+    subject=lambda event: f"a chat answered (turn {event.turn})",
+    source="orch",
+)
+"""What orch publishes when a chat answers (27.11)."""
+
+CHAT_FAILED: Final = EventType(
+    name="orch.chat.failed",
+    data=ChatFailed,
+    summary="A chat's harness failed, and it takes no more turns",
+    example=ChatFailed(chat="0b9a1f8e", why="its harness"),
+    subject=lambda event: f"a chat failed: {event.why}",
+    source="orch",
+)
+"""What orch publishes when a chat's harness failed (27.11)."""
+
+CHAT_ENDED: Final = EventType(
+    name="orch.chat.ended",
+    data=ChatEnded,
+    summary="A chat ended",
+    example=ChatEnded(chat="0b9a1f8e"),
+    subject=lambda event: f"a chat ended ({event.chat})",
+    source="orch",
+)
+"""What orch publishes when a chat ends (27.11)."""
+
+CHAT_PERMISSION: Final = EventType(
+    name="orch.chat.permission",
+    data=ChatPermission,
+    summary="A chat's harness asked whether it may use a tool",
+    example=ChatPermission(chat="0b9a1f8e", permission="7c1e", tool="Bash"),
+    subject=lambda event: f"a chat asks to use {event.tool}",
+    source="orch",
+)
+"""What orch publishes when a chat's harness asks a permission (27.11)."""

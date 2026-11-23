@@ -74,6 +74,13 @@ CATALOGUE: Final[dict[str, tuple[str, ...]]] = {
     "orch_reorder_queue": ("orch", "queue", "set"),
     "orch_unassign": ("orch", "queue", "rm"),
     "orch_suggest": ("orch", "suggest"),
+    "orch_chat_start": ("orch", "chats", "start"),
+    "orch_chat_send": ("orch", "chats", "send"),
+    "orch_chat_list": ("orch", "chats"),
+    "orch_chat_get": ("orch", "chats", "show"),
+    "orch_chat_stop": ("orch", "chats", "stop"),
+    "orch_chat_delete": ("orch", "chats", "rm"),
+    "orch_chat_permission": ("orch", "chats", "allow"),
 }
 """The card's CLI command for each of the catalogue's operations (26.6)."""
 

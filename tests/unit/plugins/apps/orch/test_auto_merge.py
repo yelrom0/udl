@@ -17,6 +17,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 # Package Imports
 import pytest
@@ -382,6 +383,37 @@ async def test_an_agent_cannot_turn_it_on(service: UDLService) -> None:
 
     found = await project(service)
     assert found.auto_merge is False
+
+
+async def test_a_chat_s_token_cannot_turn_it_on(service: UDLService) -> None:
+    """(A chat is the person's own harness, and it may do what they can — except the switches
+    that hand a model the merge: its token is refused here as an agent's is, 27.11.)"""
+    caller = current_principal.set(
+        Caller(kind=PrincipalKind.CHAT, name="human:owner", chat=uuid4())
+    )
+    try:
+        with pytest.raises(NotAllowed, match="not one of the operations"):
+            await service.call("orch_set_auto_merge", {"on": True, "merger": "claude"})
+    finally:
+        current_principal.reset(caller)
+
+    found = await project(service)
+    assert found.auto_merge is False
+
+
+async def test_the_switch_itself_refuses_a_chat_s_token_too(service: UDLService) -> None:
+    """(Not only the gate over every operation: the switch's own check refuses anything that is
+    not the owner, so a chat token reaching it another way still cannot give a model the merge.)"""
+    app = await service.apps.get("orch")
+    assert isinstance(app, Orch)
+    caller = current_principal.set(
+        Caller(kind=PrincipalKind.CHAT, name="human:owner", chat=uuid4())
+    )
+    try:
+        with pytest.raises(NotAllowed, match="only a person turns auto merge"):
+            await app.set_auto_merge(SetAutoMergeRequest(on=True, merger="claude"))
+    finally:
+        current_principal.reset(caller)
 
 
 async def test_turning_it_off_keeps_the_merger(service: UDLService) -> None:

@@ -124,6 +124,14 @@ class SessionSpec(_Model):
     """udl's MCP server, when the session is given one."""
     deny: list[str] = Field(default_factory=list)
     """Commands the harness must refuse (`git push`, `gh pr merge`, …)."""
+    permission_mode: str | None = None
+    """The permission mode this session runs in (None: the runner's own, from its settings)."""
+    own_settings: bool = False
+    """It runs as the person would (27.11's chat): their own settings decide, so udl passes no
+    settings file, no permission mode and no strict MCP config."""
+    permission_tool: str | None = None
+    """The MCP tool the harness asks before it acts, when it may ask (27.11: a person's chat
+    points this at udl, so its own permission prompt is udl's)."""
     env: dict[str, str] = Field(default_factory=dict)
     """Its environment, over the host's own."""
     secret_env: dict[str, SecretStr] = Field(default_factory=dict)

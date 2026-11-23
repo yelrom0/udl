@@ -76,6 +76,20 @@ from udl.plugins.apps.orch.agents import (
 from udl.plugins.apps.orch.agents import (
     AgentSession as AgentSessionShape,
 )
+from udl.plugins.apps.orch.chat import (
+    AskPermissionRequest,
+    ChatInfo,
+    ChatList,
+    Chats,
+    DeleteChatRequest,
+    GetChatRequest,
+    ListChatsRequest,
+    PermissionAnswer,
+    PermissionRequest,
+    SendChatRequest,
+    StartChatRequest,
+    StopChatRequest,
+)
 from udl.plugins.apps.orch.dispatcher import Dispatcher, Outcome, Turns
 from udl.plugins.apps.orch.events import (
     ACTION_NEEDED,
@@ -221,6 +235,12 @@ from udl.plugins.apps.orch.records import scan_links
 from udl.plugins.apps.orch.reporting import Reporting
 from udl.plugins.apps.orch.sessions import (
     AGENT_LIMITED,
+    CHAT_ANSWERED,
+    CHAT_ENDED,
+    CHAT_EVENT,
+    CHAT_FAILED,
+    CHAT_PERMISSION,
+    CHAT_STARTED,
     SESSION_ENDED,
     SESSION_EVENT,
     SESSION_FAILED,
@@ -387,6 +407,7 @@ _AGENTS: tuple[str, ...] = ("orch", "agents")
 """The CLI words the agents' operations live under: `udl orch agents [list|show|set|…]`."""
 
 _QUEUE: tuple[str, ...] = ("orch", "queue")
+_CHATS: tuple[str, ...] = ("orch", "chats")
 """The CLI words the queue's operations live under: `udl orch queue [show|mine|add|set|rm]`."""
 
 _RUNNERS: tuple[str, ...] = ("orch", "runners")
@@ -422,7 +443,8 @@ class Orch(AppPlugin[OrchSettings]):
         counter their keys come from (26.2-26.5), a link (26.4), an agent, its session and the
         events of it (27.1), the tokens its agents call udl with (27.2), something only a person
         can do (28.2), a question with its thread (28.1), and a manager's review of a report's
-        pull (27.8)."""
+        pull (27.8), and a person's chat with their own harness, what it asked to do and the
+        token it was given (27.11)."""
         return (
             stored.Project,
             stored.Repo,
@@ -435,6 +457,9 @@ class Orch(AppPlugin[OrchSettings]):
             stored.AgentSession,
             stored.SessionEvent,
             stored.AgentToken,
+            stored.Chat,
+            stored.ChatPermission,
+            stored.ChatToken,
             stored.HumanAction,
             stored.Question,
             stored.Message,
@@ -473,6 +498,12 @@ class Orch(AppPlugin[OrchSettings]):
             SESSION_EVENT,
             SESSION_ENDED,
             SESSION_FAILED,
+            CHAT_STARTED,
+            CHAT_EVENT,
+            CHAT_ANSWERED,
+            CHAT_FAILED,
+            CHAT_ENDED,
+            CHAT_PERMISSION,
         )
 
     def __init__(
@@ -480,6 +511,7 @@ class Orch(AppPlugin[OrchSettings]):
     ) -> None:
         super().__init__(settings, clock=clock, records=records)
         self._harnesses: Harnesses | None = None
+        self._chats: Chats | None = None
 
     @property
     def harnesses(self) -> Harnesses:
@@ -843,7 +875,174 @@ class Orch(AppPlugin[OrchSettings]):
                 hints=OperationHints(open_world=True),
                 cli=CLISpec(path=(*_AGENTS, "send"), arguments=("agent", "text")),
             ),
+            # -- a person's chat with their own harness (27.11) ---------------------------------
+            cls.operation(
+                "chat_start",
+                title="Start a chat with your own harness",
+                hints=OperationHints(open_world=True),
+                cli=CLISpec(
+                    path=(*_CHATS, "start"),
+                    options={
+                        "runner": "--runner",
+                        "directory": "--in",
+                        "model": "--model",
+                        "host": "--host",
+                        "permission_mode": "--permissions",
+                        "title": "--title",
+                    },
+                ),
+            ),
+            cls.operation(
+                "chat_send",
+                title="Say something to a chat",
+                hints=OperationHints(open_world=True),
+                cli=CLISpec(path=(*_CHATS, "send"), arguments=("chat", "text")),
+            ),
+            cls.operation(
+                "chat_list",
+                title="Your chats",
+                hints=OperationHints(read_only=True),
+                cli=CLISpec(path=_CHATS, options={"all": "--all"}),
+            ),
+            cls.operation(
+                "chat_get",
+                title="A chat, and what it said",
+                hints=OperationHints(read_only=True),
+                cli=CLISpec(
+                    path=(*_CHATS, "show"), arguments=("chat",), options={"limit": "--limit"}
+                ),
+            ),
+            cls.operation(
+                "chat_stop",
+                title="End a chat",
+                hints=OperationHints(destructive=True),
+                cli=CLISpec(path=(*_CHATS, "stop"), arguments=("chat",)),
+            ),
+            cls.operation(
+                "chat_delete",
+                title="Forget a chat",
+                hints=OperationHints(destructive=True, idempotent=True),
+                cli=CLISpec(path=(*_CHATS, "rm"), arguments=("chat",)),
+            ),
+            cls.operation(
+                "chat_ask_permission",
+                title="Ask whether the harness may use a tool",
+                hints=OperationHints(open_world=True),
+            ),
+            cls.operation(
+                "chat_permission",
+                title="Answer what a chat's harness asked",
+                hints=OperationHints(idempotent=True),
+                cli=CLISpec(path=(*_CHATS, "allow"), arguments=("chat", "request")),
+            ),
         ]
+
+    # -- a person's chat with their own harness (27.11) -----------------------------------------
+
+    @property
+    def chats(self) -> Chats:
+        """People's chats (27.11): the turns their harnesses run, and what they ask before they
+        act. One per app, so a chat's turn outlives the call that started it."""
+        if self._chats is None:
+            service = self.service
+            if service is None:
+                raise PluginError("The orch app is not running on a service")
+            self._chats = Chats(
+                service=service,
+                records=self.records,
+                events=AppEvents(service.bus, "orch", self.event_types()),
+                harnesses=self.harnesses,
+                clock=self.clock,
+                permission_minutes=self.settings.chat_permission_minutes,
+            )
+        return self._chats
+
+    async def chat_start(self, request: StartChatRequest) -> ChatInfo:
+        """Start a chat with your own harness (27.11): your runner, your folder, your model, and
+        `manual` permissions so it asks udl before it acts. Only udl's owner starts chats."""
+        who = _caller()
+        if who is not None and not who.is_owner:
+            raise NotAllowed(
+                "Only udl's owner starts a chat",
+                hint="A chat is a person's own harness; its token reaches that one chat.",
+            )
+        return await self.chats.start(request, owner=f"human:{_name_of(who)}")
+
+    async def chat_send(self, request: SendChatRequest) -> ChatInfo:
+        """Say something to a chat: one turn of its harness, streamed into the chat's events."""
+        chat = await self._chat(request.chat)
+        return await self.chats.send(chat, request.text)
+
+    async def chat_list(self, request: ListChatsRequest) -> ChatList:
+        """Your chats (only udl's owner asks for every chat: a chat's token sees its own)."""
+        who = _caller()
+        if request.all and who is not None and not who.is_owner:
+            raise NotAllowed(
+                "Only udl's owner lists every chat",
+                hint="A chat's token reads that one chat.",
+            )
+        owner = None if request.all and (who is None or who.is_owner) else f"human:{_name_of(who)}"
+        found = (
+            await self.records.list(stored.Chat, RecordQuery())
+            if owner is None
+            else await stored.ChatRecords(self.records).of(owner)
+        )
+        items = [
+            await self.chats.info(chat, limit=0)
+            for chat in sorted(found, key=lambda one: one.updated_at, reverse=True)
+        ]
+        return ChatList(items=items)
+
+    async def chat_get(self, request: GetChatRequest) -> ChatInfo:
+        """One chat, with the newest page of its transcript and what its harness is waiting
+        on."""
+        return await self.chats.info(await self._chat(request.chat), limit=request.limit)
+
+    async def chat_stop(self, request: StopChatRequest) -> ChatInfo:
+        """End a chat: its harness's session ends, and a turn it was in is ended with it."""
+        return await self.chats.stop(await self._chat(request.chat))
+
+    async def chat_delete(self, request: DeleteChatRequest) -> ChatInfo:
+        """Forget a chat, with its transcript, what its harness asked and the token it was
+        given."""
+        chat = await self._chat(request.chat)
+        info = await self.chats.info(chat, limit=0)
+        await self.chats.delete(chat)
+        return info
+
+    async def chat_ask_permission(self, request: AskPermissionRequest) -> PermissionAnswer:
+        """What a chat's harness asks udl before it acts (27.11's `--permission-prompt-tool`):
+        the person answers, and the harness is told — allowed, or denied with why.
+
+        It is the one chat operation a chat's own token may call, and the chat is its own: a
+        token never says which chat it is asking for."""
+        who = _caller()
+        wanted = request.chat
+        if who is not None and who.is_chat and who.chat is not None:
+            wanted = who.chat  # (a chat's token asks for its own chat, never another)
+        chat = await self._chat(wanted)
+        if await self.chats.allowed(chat, request.tool, request.input):
+            return PermissionAnswer(allow=True, message="Allowed for the rest of this chat.")
+        return await self.chats.ask(chat, request)
+
+    async def chat_permission(self, request: PermissionRequest) -> ChatInfo:
+        """The person's answer to what a chat's harness asked: allow it once, allow the same
+        request for the rest of the chat, or deny it and say why."""
+        return await self.chats.answer(await self._chat(request.chat), request)
+
+    async def _chat(self, chat: UUID) -> stored.Chat:
+        """The chat called `chat`, if the caller may touch it (its own token touches its own,
+        and nobody else's; udl's owner touches any)."""
+        found = await stored.ChatRecords(self.records).by_id(chat)
+        if found is None:
+            raise DoesNotExist(f"There is no chat {chat}", hint="It may have been deleted.")
+        who = _caller()
+        if who is not None and who.is_chat and who.chat != found.id:
+            raise NotAllowed(
+                "That is not your chat",
+                hint="A chat's token reaches that one chat.",
+            )
+        return found
 
     # -- the agents and their sessions (27.9) ---------------------------------------------------
 
@@ -1176,7 +1375,9 @@ class Orch(AppPlugin[OrchSettings]):
         project — and turning it off keeps the one stored, so on again is the same merger. It is
         the only writer of both fields: `orch_set_project` and the importer refuse a change."""
         who = _caller()
-        if who is not None and who.is_agent:
+        if who is not None and not who.is_owner:
+            # (A chat's token is the person's, but it is a harness's to spend: it is refused
+            # here as an agent's is, 27.11's rule for what a chat may not do.)
             raise NotAllowed(
                 "only a person turns auto merge on or off",
                 hint="A merger merges what it reviewed; who the merger is, is the owner's call.",
@@ -3119,6 +3320,13 @@ def _caller() -> Caller | None:
     from udl.core.service import principal  # (the caller's, as each interface set it)
 
     return principal()
+
+
+def _name_of(who: Caller | None) -> str:
+    """What `who` is called, as a person's name in a chat: udl's owner, or the agent's name."""
+    if who is None or who.is_owner:
+        return "owner"
+    return who.name
 
 
 def _principal() -> Principal | None:

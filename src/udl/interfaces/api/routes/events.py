@@ -8,6 +8,9 @@ that wants to follow events and runs live
 
 /orch/sessions/{session}/stream: one agent session, as it happens (27.9): the same notices, kept
 to the session's own, so a client watching a turn does not sift every event udl has.
+
+/orch/chats/{chat}/stream: one of a person's chats, as it happens (27.11): the same, kept to the
+chat's own.
 """
 
 # System Imports
@@ -67,6 +70,24 @@ async def orch_session_stream(service: ServiceDep, session: UUID) -> AsyncIterab
     async with aclosing(service.bus.notices(types="orch.session.*", runs=False)) as notices:
         async for notice in notices:
             if notice.event is None or notice.event.data.get("session") != str(session):
+                continue
+            yield _sent(notice)
+
+
+@router.get(
+    "/orch/chats/{chat}/stream",
+    response_class=EventSourceResponse,
+    operation_id="orch_chat_stream",
+    summary="One chat, as it happens.",
+    description="Server-sent events, from now on, of one chat's own: `event` (an EventInfo) for "
+    "each `orch.chat.*` event it published — that it started, each thing its harness said, what "
+    "it asked to do, and that it answered, failed or ended. Live only: a client that reconnects "
+    "reloads the chat (`orch_chat_get`) rather than resuming.",
+)
+async def orch_chat_stream(service: ServiceDep, chat: UUID) -> AsyncIterable[ServerSentEvent]:
+    async with aclosing(service.bus.notices(types="orch.chat.*", runs=False)) as notices:
+        async for notice in notices:
+            if notice.event is None or notice.event.data.get("chat") != str(chat):
                 continue
             yield _sent(notice)
 

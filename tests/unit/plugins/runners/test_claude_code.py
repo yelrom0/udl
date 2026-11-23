@@ -247,6 +247,34 @@ async def test_a_first_turn_is_one_claude_process_with_its_session_id(spec: Sess
     assert stdin == b"hello"
 
 
+async def test_a_chat_s_turn_runs_as_the_person_s_own(spec: SessionSpec) -> None:
+    """A chat's turn (27.11) is the person's own harness: none of udl's settings file, no strict
+    MCP config and no permission mode, and never a flag that skips permissions."""
+    shell = FakeShell(_stream(_result()))
+    runner = _runner(shell)
+    theirs = spec.model_copy(
+        update={
+            "own_settings": True,
+            "permission_mode": "manual",
+            "permission_tool": "mcp__udl__orch_chat_ask_permission",
+        }
+    )
+    session = await runner.start(theirs)
+
+    await _turn(runner, session, "hello")
+
+    [(argv, _, _)] = shell.streams
+    assert "--settings" not in argv
+    assert "--strict-mcp-config" not in argv
+    assert "--permission-mode" not in argv
+    assert "--dangerously-skip-permissions" not in argv
+    assert argv[argv.index("--permission-prompt-tool") :][:2] == [
+        "--permission-prompt-tool",
+        "mcp__udl__orch_chat_ask_permission",
+    ]
+    assert "--mcp-config" in argv, "udl's server is added beside the person's own"
+
+
 async def test_a_later_turn_resumes_the_session(spec: SessionSpec) -> None:
     shell = FakeShell(_stream(_result()))
     runner = _runner(shell)

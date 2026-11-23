@@ -140,7 +140,8 @@ AGENT_OPERATIONS: list[str] = [
 def test_orch_offers_the_agents_operations() -> None:
     offered = {op.name: op for op in Orch.operations()}
 
-    assert list(offered)[-len(AGENT_OPERATIONS) :] == AGENT_OPERATIONS
+    # (In the order they are offered, with whatever came after them — 27.11's chats are last.)
+    assert [name for name in offered if name in AGENT_OPERATIONS] == AGENT_OPERATIONS
     # (Reading is reading; setting an agent and deleting one are the owner's, and a pause is
     # idempotent: pausing a paused agent is not an error.)
     assert offered["list_agents"].hints == OperationHints(read_only=True)
@@ -163,7 +164,10 @@ async def test_the_operations_are_offered_as_orch_s(tmp_path: Path) -> None:
     async with UDLService(settings(tmp_path), registry=orch_registry()) as service:
         names = [op.name for op in service.operations.in_namespace("orch")]
 
-    assert names[-len(AGENT_OPERATIONS) :] == [f"orch_{name}" for name in AGENT_OPERATIONS]
+    wanted = {f"orch_{name}" for name in AGENT_OPERATIONS}
+    assert [name for name in names if name in wanted] == [
+        f"orch_{name}" for name in AGENT_OPERATIONS
+    ]
 
 
 # ---------------------------------------------------------------------------------------------
