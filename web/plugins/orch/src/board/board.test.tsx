@@ -398,6 +398,19 @@ describe("the board's other paths (29.4)", () => {
 		expect(fake.calls.some((one) => one.name === "orch_assign")).toBe(false);
 	});
 
+	it("writes the text when the box is left, and not when it was not changed", async () => {
+		const fake = drawn({ state: "", text: "inbox" });
+		await read();
+
+		const box = screen.getByRole("searchbox", { name: /text/i });
+		fireEvent.blur(box);
+		expect(fake.navigations).toEqual([]);
+
+		fireEvent.change(box, { target: { value: "pages" } });
+		fireEvent.blur(box);
+		expect(fake.navigations).toEqual(["/ui/p/orch/board?text=pages"]);
+	});
+
 	it("writes the state filter into the URL too", async () => {
 		const fake = drawn({ state: "", text: "" });
 		await read();
@@ -478,6 +491,19 @@ describe("the board's quiet edges (29.4)", () => {
 		});
 		const [first] = within(queue).getAllByRole("listitem");
 		fireEvent.drop(first as HTMLElement);
+		await settle();
+
+		expect(writes(fake)).toEqual([]);
+	});
+
+	it("forgets what a cancelled suggestion drag carried", async () => {
+		const fake = drawn();
+		await read();
+
+		const card = screen.getByRole("article", { name: "Suggested: 29.5 Pages" });
+		fireEvent.dragStart(card);
+		fireEvent.dragEnd(card);
+		fireEvent.drop(screen.getByRole("region", { name: "deepseek-a" }));
 		await settle();
 
 		expect(writes(fake)).toEqual([]);

@@ -14,6 +14,9 @@ function Card({
 			aria-label={`Suggested: ${suggestion.task} ${suggestion.title}`}
 			className="flex flex-col gap-1 rounded-lg border border-base-content/20 p-2"
 			draggable
+			onDragEnd={() => {
+				carry(null);
+			}}
 			onDragStart={() => {
 				carry({ kind: "suggestion", suggestion });
 			}}
