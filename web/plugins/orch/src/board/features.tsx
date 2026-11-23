@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { LinkChip } from "../linkChip";
-import type { Feature, MergeList, Progress, Task } from "../model";
+import type { Agent, Feature, MergeList, Progress, Task } from "../model";
 import { SizeChip } from "../sizeChip";
+import { carry } from "./drops";
 
 /** Where a task's own page is (`29.5` draws it). */
 function pageOf(key: string): string {
@@ -17,13 +19,73 @@ function pullOf(merge: MergeList, task: string): string | null {
 	return null;
 }
 
+/** "Assign to…", for a keyboard and a pointer alike: the same call a drop makes. */
+function AssignMenu({
+	agents,
+	onAssign,
+}: {
+	readonly agents: readonly Agent[];
+	readonly onAssign: ((agent: string) => void) | undefined;
+}) {
+	const [open, setOpen] = useState(false);
+	return (
+		<div className="relative">
+			<button
+				aria-expanded={open}
+				aria-haspopup="menu"
+				className="btn btn-ghost btn-xs"
+				onClick={() => {
+					setOpen((was) => !was);
+				}}
+				type="button"
+			>
+				Assign to…
+			</button>
+			{open && (
+				<div
+					className="menu menu-sm absolute right-0 z-10 rounded-box bg-base-100 shadow"
+					role="menu"
+				>
+					{agents.map((agent) => (
+						<button
+							key={agent.name}
+							onClick={() => {
+								setOpen(false);
+								onAssign?.(agent.name);
+							}}
+							role="menuitem"
+							type="button"
+						>
+							{agent.name}
+						</button>
+					))}
+				</div>
+			)}
+		</div>
+	);
+}
+
 /** One task, as the features pane draws it: its key, what it is, where it is, its size, its PR. */
-function TaskCard({ task, merge }: { readonly task: Task; readonly merge: MergeList }) {
+function TaskCard({
+	task,
+	merge,
+	agents,
+	onAssign,
+}: {
+	readonly task: Task;
+	readonly merge: MergeList;
+	readonly agents: readonly Agent[];
+	readonly onAssign: ((task: string, agent: string) => void) | undefined;
+}) {
 	const pull = pullOf(merge, task.key);
 	return (
 		<article
 			aria-label={`${task.key} ${task.title}`}
 			className="flex flex-wrap items-center gap-2 rounded-lg border border-base-content/20 bg-base-100 p-2"
+			draggable
+			onDragStart={() => {
+				carry({ kind: "task", key: task.key });
+			}}
 		>
 			<a className="font-mono text-sm link link-hover" href={pageOf(task.key)}>
 				{task.key}
@@ -32,6 +94,12 @@ function TaskCard({ task, merge }: { readonly task: Task; readonly merge: MergeL
 			<SizeChip size={task.size} />
 			<span className="badge badge-sm badge-ghost">{task.state}</span>
 			{pull !== null && <LinkChip kind="pull" url={pull} />}
+			<AssignMenu
+				agents={agents}
+				onAssign={(agent) => {
+					onAssign?.(task.key, agent);
+				}}
+			/>
 		</article>
 	);
 }
@@ -42,11 +110,15 @@ function FeatureBlock({
 	tasks,
 	merge,
 	progress,
+	agents,
+	onAssign,
 }: {
 	readonly feature: Feature;
 	readonly tasks: readonly Task[];
 	readonly merge: MergeList;
 	readonly progress: Progress;
+	readonly agents: readonly Agent[];
+	readonly onAssign: ((task: string, agent: string) => void) | undefined;
 }) {
 	const points = progress.features.find((one) => one.key === feature.key);
 	const merged = points?.merged ?? 0;
@@ -76,7 +148,15 @@ function FeatureBlock({
 					{mine.length === 0 ? (
 						<p className="text-xs opacity-60">No tasks match.</p>
 					) : (
-						mine.map((task) => <TaskCard key={task.key} merge={merge} task={task} />)
+						mine.map((task) => (
+							<TaskCard
+								agents={agents}
+								key={task.key}
+								merge={merge}
+								onAssign={onAssign}
+								task={task}
+							/>
+						))
 					)}
 				</div>
 			</details>
@@ -90,19 +170,37 @@ export function FeaturesPane({
 	tasks,
 	merge,
 	progress,
+	agents,
+	onAssign,
+	onDrop,
 }: {
 	readonly features: readonly Feature[];
 	readonly tasks: readonly Task[];
 	readonly merge: MergeList;
 	readonly progress: Progress;
+	readonly agents: readonly Agent[];
+	readonly onAssign: ((task: string, agent: string) => void) | undefined;
+	readonly onDrop: () => void;
 }) {
 	return (
-		<section aria-label="Features" className="flex flex-col gap-3">
+		<section
+			aria-label="Features"
+			className="flex flex-col gap-3"
+			onDragOver={(event) => {
+				event.preventDefault();
+			}}
+			onDrop={(event) => {
+				event.preventDefault();
+				onDrop();
+			}}
+		>
 			{features.map((feature) => (
 				<FeatureBlock
+					agents={agents}
 					feature={feature}
 					key={feature.key}
 					merge={merge}
+					onAssign={onAssign}
 					progress={progress}
 					tasks={tasks}
 				/>

@@ -288,4 +288,147 @@ describe("the board (29.4)", () => {
 
 		expect(fake.navigations).toEqual(["/ui/p/orch/board?state=queued"]);
 	});
+
+	it("assigns the task carried onto an agent's column, then reads the board again", async () => {
+		const fake = drawn();
+		await waitFor(() => {
+			expect(screen.getByRole("region", { name: /deepseek-a/ })).toBeTruthy();
+		});
+
+		const features = within(screen.getByRole("region", { name: "Features" }));
+		const card = features.getByRole("article", { name: /29\.5/ });
+		fireEvent.dragStart(card);
+		fireEvent.drop(screen.getByRole("region", { name: /deepseek-a/ }));
+
+		await waitFor(() => {
+			expect(fake.calls.filter((one) => one.name === "orch_assign")).toHaveLength(1);
+		});
+		expect(fake.calls.find((one) => one.name === "orch_assign")?.request).toEqual({
+			key: "29.5",
+			agent: "deepseek-a",
+		});
+		// (The board is read again, so what it drew is what udl now says.)
+		await waitFor(() => {
+			expect(fake.calls.filter((one) => one.name === "orch_list_features")).toHaveLength(2);
+		});
+		expect(fake.toasts).toEqual([]);
+	});
+
+	it("asks before stacking a suggestion on the task it needs, and does nothing when told no", async () => {
+		const fake = drawn();
+		fake.yes = false;
+		await waitFor(() => {
+			expect(screen.getByRole("region", { name: /suggested/i })).toBeTruthy();
+		});
+
+		const suggested = within(screen.getByRole("region", { name: "Suggested" }));
+		fireEvent.dragStart(suggested.getByRole("article", { name: /29\.5/ }));
+		fireEvent.drop(screen.getByRole("region", { name: /deepseek-a/ }));
+
+		await waitFor(() => {
+			expect(fake.asked).toEqual(["Stack on #29.3?"]);
+		});
+		expect(fake.calls.filter((one) => one.name === "orch_assign")).toEqual([]);
+	});
+
+	it("stacks it when told yes, carrying the suggestion's task", async () => {
+		const fake = drawn();
+		await waitFor(() => {
+			expect(screen.getByRole("region", { name: /suggested/i })).toBeTruthy();
+		});
+
+		const suggested = within(screen.getByRole("region", { name: "Suggested" }));
+		fireEvent.dragStart(suggested.getByRole("article", { name: /29\.5/ }));
+		fireEvent.drop(screen.getByRole("region", { name: /deepseek-a/ }));
+
+		await waitFor(() => {
+			expect(fake.calls.filter((one) => one.name === "orch_assign")).toHaveLength(1);
+		});
+		expect(fake.calls.find((one) => one.name === "orch_assign")?.request).toEqual({
+			key: "29.5",
+			agent: "deepseek-a",
+		});
+	});
+
+	it("says why a drop was refused, and reads the board again", async () => {
+		const fake = fakeCtx((name) => {
+			if (name === "orch_assign") {
+				throw new Error("29.5 is a person's task");
+			}
+			return ANSWERS[name] as never;
+		});
+		render(<BoardPage path="board" params={{}} search={{}} ctx={fake.ctx} />);
+		await waitFor(() => {
+			expect(screen.getByRole("region", { name: /deepseek-a/ })).toBeTruthy();
+		});
+
+		const features = within(screen.getByRole("region", { name: "Features" }));
+		fireEvent.dragStart(features.getByRole("article", { name: /29\.5/ }));
+		fireEvent.drop(screen.getByRole("region", { name: /deepseek-a/ }));
+
+		await waitFor(() => {
+			expect(fake.toasts).toEqual([{ message: "29.5 is a person's task", kind: "error" }]);
+		});
+		await waitFor(() => {
+			expect(fake.calls.filter((one) => one.name === "orch_list_features")).toHaveLength(2);
+		});
+	});
+
+	it("takes a task back out of its queue when it is dropped on the features pane", async () => {
+		const fake = drawn();
+		await waitFor(() => {
+			expect(screen.getByRole("region", { name: /deepseek-a/ })).toBeTruthy();
+		});
+
+		const column = within(screen.getByRole("region", { name: "deepseek-a" }));
+		fireEvent.dragStart(column.getByRole("listitem", { name: /29\.3/ }));
+		fireEvent.drop(screen.getByRole("region", { name: "Features" }));
+
+		await waitFor(() => {
+			expect(fake.calls.filter((one) => one.name === "orch_unassign")).toHaveLength(1);
+		});
+		expect(fake.calls.find((one) => one.name === "orch_unassign")?.request).toEqual({
+			key: "29.3",
+		});
+	});
+
+	it("sets a queue to the order a task was dropped at", async () => {
+		const fake = drawn();
+		await waitFor(() => {
+			expect(screen.getByRole("region", { name: /deepseek-a/ })).toBeTruthy();
+		});
+
+		const column = within(screen.getByRole("region", { name: "deepseek-a" }));
+		fireEvent.dragStart(column.getByRole("listitem", { name: /29\.3/ }));
+		fireEvent.drop(column.getByRole("listitem", { name: /29\.2/ }));
+
+		await waitFor(() => {
+			expect(fake.calls.filter((one) => one.name === "orch_reorder_queue")).toHaveLength(1);
+		});
+		// (Dropped on the top one: it goes above it.)
+		expect(fake.calls.find((one) => one.name === "orch_reorder_queue")?.request).toEqual({
+			agent: "deepseek-a",
+			keys: ["29.3", "29.2"],
+		});
+	});
+
+	it("assigns the same way from the menu, for a keyboard and a pointer alike", async () => {
+		const fake = drawn();
+		await waitFor(() => {
+			expect(screen.getByRole("region", { name: "Features" })).toBeTruthy();
+		});
+
+		const features = within(screen.getByRole("region", { name: "Features" }));
+		const card = features.getByRole("article", { name: /29\.5/ });
+		fireEvent.click(within(card).getByRole("button", { name: /assign to/i }));
+		fireEvent.click(screen.getByRole("menuitem", { name: "deepseek-a" }));
+
+		await waitFor(() => {
+			expect(fake.calls.filter((one) => one.name === "orch_assign")).toHaveLength(1);
+		});
+		expect(fake.calls.find((one) => one.name === "orch_assign")?.request).toEqual({
+			key: "29.5",
+			agent: "deepseek-a",
+		});
+	});
 });

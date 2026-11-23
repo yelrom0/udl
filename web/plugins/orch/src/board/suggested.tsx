@@ -1,4 +1,5 @@
 import type { Suggestion } from "../model";
+import { carry } from "./drops";
 
 /** One suggestion: what it is, why it was made, the agent it suits, and Queue it. */
 function Card({
@@ -12,6 +13,10 @@ function Card({
 		<article
 			aria-label={`${suggestion.task} ${suggestion.title}`}
 			className="flex flex-col gap-1 rounded-lg border border-base-content/20 p-2"
+			draggable
+			onDragStart={() => {
+				carry({ kind: "suggestion", suggestion });
+			}}
 		>
 			<div className="flex items-baseline gap-2">
 				<span className="font-mono text-xs">{suggestion.task}</span>

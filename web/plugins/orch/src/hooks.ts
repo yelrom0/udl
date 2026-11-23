@@ -4,6 +4,9 @@ import { mergeListOf, progressOf } from "./model";
 import { type BoardState, boardStore } from "./stores/board";
 import { type InboxState, inboxStore, type Loaded } from "./stores/inbox";
 
+/** What a page that can change what it read is given: the state, and a way to read it again. */
+export type Refreshable<T> = T & { refresh(): Promise<void> };
+
 /** The inbox before it is read: nothing yet, and nothing failed. */
 const NO_INBOX: InboxState = { inbox: null, error: null };
 
