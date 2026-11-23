@@ -20,7 +20,7 @@ default), it answers only requests for localhost: a web page that points its own
 import importlib.metadata
 import ipaddress
 import logging
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Annotated, Final
 from urllib.parse import urlsplit
@@ -46,6 +46,7 @@ from udl.interfaces.mcp.server import create_server
 from udl.interfaces.security import (
     API_KEY_HEADER,
     AgentTokens,
+    api_key_of,
     current_principal,
 )
 from udl.interfaces.security import (
@@ -112,20 +113,6 @@ async def require_api_key(request: Request, key: Annotated[str | None, Security(
         given=key if key is not None else api_key_of(request.headers),
         tokens=tokens_for(service),
     )
-
-
-def api_key_of(headers: Mapping[str, str]) -> str | None:
-    """The API key a request sends: `X-API-Key`, or `Authorization: Bearer …`.
-
-    The bearer form is what an MCP client that can only send one header uses (Codex's
-    `bearer_token_env_var`); it is the same key, so the same rules hold."""
-    given = headers.get(API_KEY_HEADER)
-    if given:
-        return given
-    scheme, _, token = headers.get("authorization", "").partition(" ")
-    if scheme.lower() == "bearer" and token.strip():
-        return token.strip()
-    return None
 
 
 def create_app(settings: Settings, *, make_service: ServiceFactory = UDLService) -> FastAPI:
