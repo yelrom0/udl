@@ -2594,14 +2594,19 @@ class Orch(AppPlugin[OrchSettings]):
 
         It never fails a merge: the pull is merged whatever became of the checkout, so anything
         that stops a removal (a repo it cannot find, a host udl cannot reach, a checkout that is
-        already gone) is written on the task's notes and the task comes back as it was. Nor does
-        it take away the worktree of the agent that made the merge itself: that agent's session
-        is in the folder, so it stays until the session ends (28.8's checkout takes it away)."""
+        already gone) is written on the task's notes and the task comes back as it was.
+
+        Nor does it take away the worktree of the agent that made the merge itself — with
+        `merge = agent`, `orch_ready` merges from inside that worktree, and its own session is
+        running in the folder a removal would take away. That worktree stays, with a note saying
+        so, until a person takes it away (`git worktree remove` and `git branch -D` in the repo's
+        checkout); nothing in udl does it when the session ends (left out of 28.6, as its card
+        says)."""
         if not task.worktree or not task.branch:
             return task
         if by == task.assignee:
             return await self._left(
-                task, "its worktree stays until the session that merged it has ended"
+                task, "its worktree stays until a person takes it away: its session is in it"
             )
         try:
             agent = await stored.AgentRecords(self.records).agent(task.assignee or "")

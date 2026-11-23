@@ -54,6 +54,7 @@ from udl.plugins.apps.orch.models import (
     PromoteRequest,
     PromotionList,
     PromotionRequest,
+    ReadyRequest,
     SetActionRequest,
 )
 from udl.plugins.apps.orch.plugin import Orch
@@ -898,11 +899,12 @@ async def test_a_task_whose_agent_is_gone_keeps_its_worktree(working: UDLService
     assert after.worktree is not None
 
 
-async def test_an_agent_s_own_merge_leaves_the_worktree_its_session_is_in(
+async def test_an_agent_s_own_ready_leaves_the_worktree_its_session_is_in(
     working: UDLService,
 ) -> None:
-    """(With `merge = agent` the agent merges from the worktree itself: taking it away mid-call
-    would take away the folder its own session is running in.)"""
+    """(Where `merge = agent`, `orch_ready` is how the agent merges its own task — from inside
+    that worktree, so taking it away in the call would take away the folder its session runs in.
+    It stays, with a note, until a person takes it away.)"""
     await set_project(working, merge=MergePolicy.AGENT)
     task = await the_task(working)
     assert task.worktree is not None
@@ -911,12 +913,10 @@ async def test_an_agent_s_own_merge_leaves_the_worktree_its_session_is_in(
         Caller(kind=PrincipalKind.AGENT, name="deepseek-b", role="implementer")
     )
     try:
-        found = await merged(working, key="F-1.1", confirm="yelrom0/udl#1")
+        await working.call("orch_ready", ReadyRequest(key="F-1.1", note="done"))
     finally:
         current_principal.reset(caller)
 
-    assert found.state == MERGED
+    assert (await the_task(working)).state == MERGED
     assert await asyncio.to_thread(path.exists)
-    assert any(
-        "until the session that merged it has ended" in one for one in await notes_of(working)
-    )
+    assert any("until a person takes it away" in one for one in await notes_of(working))
