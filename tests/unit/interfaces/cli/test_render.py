@@ -10,6 +10,7 @@ is running (with its tries), progress bars on a terminal, and the rarer parts of
 # System Imports
 import asyncio
 import io
+import json
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -60,11 +61,13 @@ from udl.errors import AuthRequired, ErrorCode, ErrorInfo, NoStrategyFound, Plug
 from udl.integrations.models import AccountInfo
 from udl.integrations.watchers import WatcherState, WatcherStatus
 from udl.interfaces.cli import render
+from udl.interfaces.cli.common import show
 from udl.plugins.apps.orch.models import (
     Action,
     AgentLine,
     AgentRole,
     AgentStatus,
+    FeatureInfo,
     Inbox,
     InboxRequest,
     MergeList,
@@ -91,6 +94,13 @@ def shown[M](render_it: Callable[[Console, M], None], model: M) -> str:
     """What `render_it` shows of `model`."""
     output = io.StringIO()
     render_it(Console(file=output, width=200, color_system=None), model)
+    return output.getvalue()
+
+
+def shown_at_80[M](render_it: Callable[[Console, M], None], model: M) -> str:
+    """What `render_it` shows of `model` at 80 columns (a terminal's own width)."""
+    output = io.StringIO()
+    render_it(Console(file=output, width=80, color_system=None), model)
     return output.getvalue()
 
 
@@ -1097,3 +1107,186 @@ async def test_the_watch_draws_it_again_on_its_timer_when_no_event_says_so(
         await render.watch_inbox(console, _Source(), InboxRequest(project="udl"))
 
     assert output.getvalue().count("Ready to merge") == 2
+
+
+# ---------------------------------------------------------------------------------------------
+# A feature at 80 columns (26.6)
+# ---------------------------------------------------------------------------------------------
+
+
+def _feature_info(**fields: object) -> FeatureInfo:
+    """A feature with two tasks, as `orch_get_feature` answers with it."""
+    return FeatureInfo.model_validate(
+        {
+            "feature": {
+                "project": "udl",
+                "key": "26",
+                "title": "Work tracking",
+                "spec": "The phase's own words.",
+                "status": "active",
+                "order": 26,
+            },
+            "totals": {"points": 5, "points_merged": 2, "points_ready": 1, "unsized": 1},
+            "tasks": [
+                {
+                    "project": "udl",
+                    "feature": "26",
+                    "key": "26.1",
+                    "title": "Projects and repos, with a long title that will not fit in a column",
+                    "spec": "The card's first bullet.\nThe card's second bullet.",
+                    "state": "merged",
+                    "size": "M",
+                    "assignee": "deepseek-a",
+                },
+                {
+                    "project": "udl",
+                    "feature": "26",
+                    "key": "26.2",
+                    "title": "Features and tasks",
+                    "spec": "Its own spec.",
+                    "state": "in_progress",
+                    "size": "S",
+                },
+            ],
+            **fields,
+        }
+    )
+
+
+def test_a_feature_shows_its_tasks_in_five_columns() -> None:
+    """At 80 columns a task's row is key, state, title, size and assignee — not all seventeen
+    fields, where every cell is `…`. The row itself is checked, not the whole output."""
+    said = shown_at_80(render.feature, _feature_info())
+
+    row = next(line for line in said.splitlines() if "26.1" in line)
+    assert "26.1" in row
+    assert "merged" in row
+    assert "deepseek-a" in row
+    assert "…" not in row
+    # (The second task is in progress: its state is not cut to a `…` either.)
+    other = next(line for line in said.splitlines() if "26.2" in line)
+    assert "in_progress" in other
+    assert "…" not in other
+
+
+def test_a_feature_shows_every_task_s_spec_below_the_table() -> None:
+    """Each task's spec is printed under its own key, so `features show` still prints every spec
+    (Phase 26's done-when)."""
+    said = shown_at_80(render.feature, _feature_info())
+
+    table, _, below = said.partition("26.2")
+    assert "The card's first bullet." in below
+    assert "The card's second bullet." in below
+    assert "Its own spec." in below
+    # (The table itself carries no spec: it is the five columns.)
+    assert "The card's first bullet." not in table
+
+
+def test_a_feature_as_json_is_the_operations_own_answer(capsys: pytest.CaptureFixture[str]) -> None:
+    """`--json` prints the operation's own answer — every field — not the narrow view."""
+    show(_feature_info(), True, render.feature)
+
+    said = json.loads(capsys.readouterr().out)
+    assert said["tasks"][0]["spec"].startswith("The card's first bullet.")
+    assert set(said["tasks"][0]) >= {"key", "title", "spec", "state", "size", "assignee", "needs"}
+
+
+def test_a_feature_with_no_tasks_says_so() -> None:
+    said = shown_at_80(render.feature, _feature_info(tasks=[]))
+
+    assert "No tasks." in said
+    assert "Work tracking" in said
+
+
+def test_the_phase_s_own_words_are_shown_under_its_title() -> None:
+    said = shown_at_80(render.feature, _feature_info())
+
+    assert "The phase's own words." in said
+
+
+def test_a_feature_s_links_and_notes_are_shown() -> None:
+    """`features show` used to print every `FeatureInfo` field: its links (pulls, issues) and its
+    notes are part of what a person reads, so the narrow view keeps them."""
+    said = shown_at_80(
+        render.feature,
+        _feature_info(
+            links=[
+                {
+                    "owner_kind": "feature",
+                    "owner": "26",
+                    "link_kind": "pull",
+                    "url": "https://github.com/yelrom0/udl/pull/72",
+                    "title": "Progress",
+                }
+            ],
+            notes=[
+                {
+                    "note_kind": "decision",
+                    "text": "We do it this way.",
+                    "author": "claude",
+                    "at": NOW.isoformat(),
+                }
+            ],
+        ),
+    )
+
+    assert "Links" in said
+    assert "https://github.com/yelrom0/udl/pull/72" in said
+    assert "Progress" in said
+    assert "Notes" in said
+    assert "We do it this way." in said
+    assert "claude" in said
+
+
+def test_a_feature_without_links_or_notes_says_nothing_of_them() -> None:
+    said = shown_at_80(render.feature, _feature_info())
+
+    assert "Links" not in said
+    assert "Notes" not in said
+
+
+def test_a_feature_with_no_totals_says_only_the_points() -> None:
+    """A feature whose tasks have no sizes: `points: 0`, and none of the zero parts."""
+    said = shown_at_80(render.feature, _feature_info(totals={}))
+
+    first = said.splitlines()[0]
+    assert "points: 0" in first
+    assert "merged" not in first
+    assert "ready" not in first
+    assert "unsized" not in first
+
+
+def test_an_unsized_task_shows_a_dash_and_a_spec_less_one_prints_nothing() -> None:
+    """The size cell is `-` when a task has no size, and a task with no spec gets no block."""
+    said = shown_at_80(
+        render.feature,
+        _feature_info(
+            tasks=[
+                {
+                    "project": "udl",
+                    "feature": "26",
+                    "key": "26.3",
+                    "title": "Unsized",
+                    "state": "open",
+                }
+            ]
+        ),
+    )
+
+    row = next(line for line in said.splitlines() if "26.3" in line)
+    cells = [cell.strip() for cell in row.strip("│").split("│")]
+    assert cells[3] == "-"  # (its size)
+    assert cells[4] == "-"  # (nobody's)
+    assert said.count("26.3") == 1  # (its row only: no empty spec block)
+
+
+def test_a_feature_s_points_are_on_its_own_line() -> None:
+    """What its tasks come to (26.8): the points are read beside the feature's title, so a
+    `features show` still says what a feature is worth without reading every row."""
+    said = shown_at_80(render.feature, _feature_info())
+
+    first = said.splitlines()[0]
+    assert "points: 5" in first
+    assert "2 merged" in first
+    assert "1 ready" in first
+    assert "1 unsized" in first
