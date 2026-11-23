@@ -64,6 +64,25 @@ describe("the inbox store", () => {
 		stop();
 	});
 
+	it.each([
+		["orch.question.asked", { question: "Q-8" }],
+		["orch.question.answered", { question: "Q-8" }],
+		["orch.action.needed", { action: "A-2" }],
+		["orch.agent.idle", { agent: "claude" }],
+	])("reads it again when %s arrives (28.5)", async (event, payload) => {
+		// (A blocking question an agent asks, and a to-action a person must do, reach the inbox
+		// because they are published — not because something else happened to make it read.)
+		const fake = fakeCtx(() => INBOX);
+		const { stop } = inboxStore(fake.ctx);
+		await settle();
+
+		fake.emit(event, payload);
+		await settle();
+
+		expect(fake.calls.map((one) => one.name)).toEqual(["orch_inbox", "orch_inbox"]);
+		stop();
+	});
+
 	it("does not read again for every line a runner streams", async () => {
 		// (`orch_inbox` reads GitHub: a line of a session's transcript is not what waits on a
 		// person, and twenty of them are not twenty reads.)
@@ -124,6 +143,18 @@ describe("the inbox store", () => {
 		await settle();
 
 		expect(fake.calls.map((one) => one.name)).toEqual(["orch_inbox", "orch_inbox"]);
+		stop();
+	});
+
+	it("reads again when a page asks it to, so an answer's button comes back at once", async () => {
+		const fake = fakeCtx(() => INBOX);
+		const { store, refresh, stop } = inboxStore(fake.ctx);
+		await settle();
+
+		await refresh();
+
+		expect(fake.calls.map((one) => one.name)).toEqual(["orch_inbox", "orch_inbox"]);
+		expect(store.getState().inbox).not.toBeNull();
 		stop();
 	});
 

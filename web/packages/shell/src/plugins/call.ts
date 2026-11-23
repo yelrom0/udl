@@ -81,7 +81,10 @@ export async function callOperation(
 		throw new Error(`${name} ${said}`);
 	}
 	const method = route.method.toUpperCase();
-	const body = sends(method) && Object.keys(filled.rest).length > 0 ? filled.rest : undefined;
+	// (A write's request is its JSON body, even when it has no fields: udl's routes take their
+	// request as the body, and FastAPI answers 422 for a body that is not there — `orch_inbox`
+	// and the rest whose fields are all optional are asked with `{}`.)
+	const body = sends(method) ? filled.rest : undefined;
 	const headers: Record<string, string> = {};
 	if (writes(method)) {
 		headers["X-UDL-CSRF"] = "1";

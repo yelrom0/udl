@@ -45,6 +45,21 @@ describe("calling an operation by name", () => {
 		expect(new Headers(first?.init?.headers).get("Content-Type")).toBe("application/json");
 	});
 
+	it("sends an empty body for a write whose request has no fields", async () => {
+		// (udl's routes take their request as the body, and FastAPI says a body is missing when
+		// there is none: an operation whose request is all-optional — `orch_inbox` — is asked
+		// with `{}`, not with nothing.)
+		const { fetch, asked } = answering({ project: "udl" });
+
+		await callOperation("orch_inbox", {}, fetch);
+
+		const [first] = asked;
+		expect(first?.url).toBe("/plugins/orch/inbox");
+		expect(first?.init?.method).toBe("POST");
+		expect(first?.init?.body).toBe("{}");
+		expect(new Headers(first?.init?.headers).get("Content-Type")).toBe("application/json");
+	});
+
 	it("takes no body for a write that has none", async () => {
 		const { fetch, asked } = answering(undefined, 204);
 
