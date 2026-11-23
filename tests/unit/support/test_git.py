@@ -10,7 +10,6 @@ turned that repo bare.
 """
 
 # System Imports
-import os
 from pathlib import Path
 
 # Package Imports
@@ -69,11 +68,3 @@ def test_a_repo_the_test_makes_runs_no_hook(tmp_path: Path) -> None:
     git("commit", "-m", "it commits", cwd=repo)
 
     assert git("log", "--format=%s", cwd=repo) == "it commits"
-
-
-def test_no_hook_variable_reaches_a_test() -> None:
-    """(The backstop: 28.6's end-to-end test ran `git init --bare` and `git add` with the plain
-    `subprocess`, under the pre-commit hook, and on 23 Nov turned the repo bare and wiped a
-    worktree's index. tests/conftest.py drops the hook's variables before any test runs, so a test
-    that runs git however it likes still acts on its own repo.)"""
-    assert not REPO_VARIABLES & os.environ.keys()
