@@ -231,7 +231,7 @@ def decided(typed: str) -> tuple[ChatDecision, str]:
     not one of the words that allow denies it, and is passed on as the reason — a word matched
     whole, so "actually, don't" denies and never allows)."""
     words = typed.strip().lower().split()
-    word = words[0] if words else ""
+    word = words[0] if len(words) == 1 else ""  # (only the word alone allows: a sentence denies)
     if word in _ONCE:
         return ChatDecision.ALLOW_ONCE, ""
     if word in _CHAT:

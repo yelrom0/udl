@@ -126,6 +126,11 @@ def test_the_first_look_shows_nothing_that_was_already_there() -> None:
         ("absolutely not", ChatDecision.DENY),
         ("cancel that", ChatDecision.DENY),
         ("can you explain first?", ChatDecision.DENY),
+        # (And only the word alone allows: a sentence that starts with one denies.)
+        ("chat about it first", ChatDecision.DENY),
+        ("allow nothing yet", ChatDecision.DENY),
+        ("once you explain why, maybe", ChatDecision.DENY),
+        ("a moment please", ChatDecision.DENY),
     ],
 )
 def test_a_persons_answer_is_a_decision(typed: str, decision: ChatDecision) -> None:
