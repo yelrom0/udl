@@ -407,6 +407,8 @@ _AGENTS: tuple[str, ...] = ("orch", "agents")
 """The CLI words the agents' operations live under: `udl orch agents [list|show|set|…]`."""
 
 _QUEUE: tuple[str, ...] = ("orch", "queue")
+"""The CLI words the queue's operations live under: `udl orch queue [add|set|rm|show|mine]`."""
+
 _CHATS: tuple[str, ...] = ("orch", "chats")
 """The CLI words a person's chats live under: `udl orch chats [start|send|show|stop|rm|allow]`."""
 
