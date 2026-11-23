@@ -87,7 +87,7 @@ export function Counts({
 			<Count
 				label="Open questions"
 				value={questions}
-				note={blocking === 0 ? "none blocking" : `${counted(blocking, "blocking", "blocking")}`}
+				note={blocking === 0 ? "none blocking" : `${blocking} blocking`}
 			/>
 			<Count
 				label="To action"

@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { JsonObject, JsonValue, RouteProps } from "@udl/ui-sdk";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fakeCtx } from "../testing/fake";
 import { InboxPage } from "./inbox";
 
@@ -245,6 +245,43 @@ describe("the inbox (29.3)", () => {
 		});
 	});
 
+	it("takes no second click while the inbox is being read again", async () => {
+		// (The answer landed, and the read that says so is still out: the question is still drawn,
+		// and its button is still "Answering…", so a second click cannot get through.)
+		let settleRead: (value: JsonValue) => void = () => {};
+		const held = new Promise<JsonValue>((resolve) => {
+			settleRead = resolve;
+		});
+		let reads = 0;
+		const fake = fakeCtx((name) => {
+			if (name === "orch_answer") {
+				return {};
+			}
+			reads += 1;
+			return reads === 1 ? inbox() : held;
+		});
+		render(<InboxPage path="inbox" params={{}} search={{}} ctx={fake.ctx} />);
+		await waitFor(() => {
+			expect(screen.getByRole("button", { name: "Keep it" })).toBeTruthy();
+		});
+
+		fireEvent.click(screen.getByRole("button", { name: "Keep it" }));
+		await waitFor(() => {
+			expect(screen.getByText("Answering…")).toBeTruthy();
+		});
+
+		// (The option's own button is still there, still the one that was clicked, and disabled.)
+		const keep = screen.getByRole("button", { name: "Keep it" }) as HTMLButtonElement;
+		expect(keep.disabled).toBe(true);
+		fireEvent.click(keep);
+		expect(fake.calls.filter((one) => one.name === "orch_answer")).toHaveLength(1);
+
+		settleRead(inbox({ questions: [] }));
+		await waitFor(() => {
+			expect(screen.queryByText("Answering…")).toBeNull();
+		});
+	});
+
 	it("keeps the question when udl refuses the answer, and says why", async () => {
 		const fake = fakeCtx((name) => {
 			if (name === "orch_answer") {
@@ -284,6 +321,10 @@ describe("the inbox (29.3)", () => {
 		const strip = within(card("Agents"));
 		expect(strip.getByText("deepseek-a")).toBeTruthy();
 		expect(strip.getByText("working · 29.3 the inbox")).toBeTruthy();
+		// (Its task is a link to the task's own page.)
+		expect(strip.getByRole("link", { name: "29.3" }).getAttribute("href")).toBe(
+			"/ui/p/orch/tasks/29.3",
+		);
 		expect(strip.getByRole("img", { name: "working" })).toBeTruthy();
 		expect(strip.getByRole("img", { name: "idle" })).toBeTruthy();
 	});
@@ -410,8 +451,22 @@ describe("the inbox (29.3)", () => {
 	});
 
 	it("says when it last read, so a page left open is not mistaken for news", async () => {
-		await drawn();
+		vi.useFakeTimers();
+		try {
+			const now = Date.now();
+			render(<InboxPage {...given([inbox({ updated_at: new Date(now).toISOString() })])} />);
+			// (The store reads on a microtask, not a timer.)
+			await act(async () => {});
+			expect(screen.getByText("Updated 0 s ago")).toBeTruthy();
 
-		expect(screen.getByText(/^Updated /)).toBeTruthy();
+			// (It ticks: two minutes later the line says two minutes, with no read in between.)
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(120_000);
+			});
+
+			expect(screen.getByText("Updated 2 min ago")).toBeTruthy();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

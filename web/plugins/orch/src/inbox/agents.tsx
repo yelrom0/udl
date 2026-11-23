@@ -1,4 +1,5 @@
 import type { AgentLine } from "../model";
+import { KeyLink } from "./cards";
 
 /** What an agent's state looks like: the dot's colour (DESIGN.md's own table). */
 const DOTS: Readonly<Record<string, string>> = {
@@ -21,6 +22,7 @@ function Agent({ line }: { readonly line: AgentLine }) {
 					role="img"
 				/>
 				<span className="font-medium text-sm">{line.name}</span>
+				{line.task !== null && <KeyLink keyName={line.task} kind="tasks" />}
 			</div>
 			<p className="truncate text-xs opacity-70">{line.line !== "" ? line.line : line.title}</p>
 		</div>

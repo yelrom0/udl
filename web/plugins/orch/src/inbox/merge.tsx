@@ -13,21 +13,13 @@ function Row({ row, why }: { readonly row: MergeRow; readonly why?: string }) {
 	);
 }
 
-/** What a merge list says it waits on, in a line: its blockers, or its place in a stack. */
+/** What a pull says it waits on, in a line: its blockers. */
 function waiting(row: MergeRow): string {
 	return row.blockers.join(" · ");
 }
 
 /** A list of pulls with its own heading, or nothing when it is empty. */
-function List({
-	title,
-	rows,
-	said,
-}: {
-	readonly title: string;
-	readonly rows: readonly MergeRow[];
-	readonly said?: string;
-}) {
+function List({ title, rows }: { readonly title: string; readonly rows: readonly MergeRow[] }) {
 	if (rows.length === 0) {
 		return null;
 	}
@@ -36,7 +28,7 @@ function List({
 			<h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">{title}</h3>
 			<ul className="flex flex-col">
 				{rows.map((row) => (
-					<Row key={`${row.task}-${row.number}`} row={row} why={said ?? waiting(row)} />
+					<Row key={`${row.task}-${row.number}`} row={row} why={waiting(row)} />
 				))}
 			</ul>
 		</div>

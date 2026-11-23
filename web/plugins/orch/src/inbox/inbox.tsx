@@ -10,6 +10,7 @@ import { AgentsStrip } from "./agents";
 import { ago } from "./ago";
 import { Counts } from "./cards";
 import { MergeCard } from "./merge";
+import { useNow } from "./now";
 import { Pinned, Questions } from "./questions";
 
 /** What the inbox is for, in a line (29.1's screen). */
@@ -26,6 +27,7 @@ const WHAT = "What needs you: questions, PRs ready to merge, and things only a p
  */
 export const InboxPage: Component<RouteProps> = ({ ctx }) => {
 	const { inbox, error, refresh } = useInbox(ctx);
+	const now = useNow();
 	const [answering, setAnswering] = useState<string | null>(null);
 	const [refused, setRefused] = useState<string | null>(null);
 
@@ -60,10 +62,12 @@ export const InboxPage: Component<RouteProps> = ({ ctx }) => {
 			} catch (failure) {
 				// (A refusal is udl's, and it says why: the question stays, and the reason does too.)
 				setRefused(messageOf(failure));
-			} finally {
-				setAnswering(null);
-				await refresh();
 			}
+			// (The page is what says the answer landed — a question publishes no event of its own
+			// yet — so the read comes before the button is taken back: a second click while it is
+			// out would answer a question that is already answered.)
+			await refresh();
+			setAnswering(null);
 		})();
 	};
 
@@ -99,7 +103,7 @@ export const InboxPage: Component<RouteProps> = ({ ctx }) => {
 					<ActionsCard actions={actions} />
 				</div>
 			</div>
-			<footer className="text-xs opacity-60">{`Updated ${ago(inbox.updated_at)}`}</footer>
+			<footer className="text-xs opacity-60">{`Updated ${ago(inbox.updated_at, now)}`}</footer>
 		</Page>
 	);
 };
