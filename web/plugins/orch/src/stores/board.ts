@@ -1,11 +1,13 @@
 import type { UIContext } from "@udl/ui-sdk";
 import { createStore } from "zustand/vanilla";
-import { messageOf } from "../json";
+import { asObject, asText, messageOf } from "../json";
 import {
 	type Agent,
 	type Board,
 	boardOf,
 	type Feature,
+	mergeListOf,
+	progressOf,
 	type Suggestion,
 	type Task,
 } from "../model";
@@ -17,12 +19,13 @@ export interface BoardState extends Board {
 	readonly error: string | null;
 }
 
-/** What the board reads: its four calls, made together. */
+/** What the board reads once it knows the project: its five calls, made together. */
 const READS: readonly string[] = [
-	"orch_list_features",
 	"orch_list_tasks",
 	"orch_list_agents",
 	"orch_suggest",
+	"orch_merge_list",
+	"orch_progress",
 ];
 
 /**
@@ -39,25 +42,37 @@ const WATCHED: readonly string[] = [
 	"orch.session.ended",
 	"orch.session.failed",
 	"orch.agent.limited",
+	"orch.task.changed",
+	"orch.task.blocked",
 ];
 
 /** The board's four lists (29.4), read when the store is made and again when any of them moves. */
 export function boardStore(ctx: UIContext): Loaded<BoardState> {
 	const store = createStore<BoardState>(() => ({
+		project: "",
 		features: [] as readonly Feature[],
 		tasks: [] as readonly Task[],
 		agents: [] as readonly Agent[],
 		suggestions: [] as readonly Suggestion[],
+		merge: mergeListOf(undefined),
+		progress: progressOf(undefined),
 		error: null,
 	}));
 	let stopped = false;
 	const reads = coalesced(
 		async () => {
-			const [features, tasks, agents, suggestions] = await Promise.all(
-				READS.map((name) => ctx.call(name, {})),
+			// (The project's features come first: every other read is asked for that project, so
+			// a board of every project would draw one's tasks in another's columns.)
+			const features = await ctx.call("orch_list_features", {});
+			const project = asText(asObject(features).project);
+			const [tasks, agents, suggestions, merge, progress] = await Promise.all(
+				READS.map((name) => ctx.call(name, { project })),
 			);
 			if (!stopped) {
-				store.setState({ ...boardOf(features, tasks, agents, suggestions), error: null });
+				store.setState({
+					...boardOf(features, tasks, agents, suggestions, merge, progress),
+					error: null,
+				});
 			}
 		},
 		(error) => {

@@ -1,24 +1,8 @@
 import type { RouteProps } from "@udl/ui-sdk";
 import type { Component } from "@udl/ui-sdk/react";
-import { useBoard } from "./hooks";
+import { BoardPage } from "./board/board";
 import { InboxPage } from "./inbox/inbox";
 import { Page, Said } from "./page";
-
-/** The board (29.4's page; its four lists, read here). */
-const BoardPage: Component<RouteProps> = ({ ctx }) => {
-	const { features, tasks, agents, error } = useBoard(ctx);
-	return (
-		<Page title="Board">
-			{error !== null ? (
-				<p className="text-error">{error}</p>
-			) : (
-				<Said>
-					{`${features.length} features · ${tasks.length} tasks · ${agents.length} agents`}
-				</Said>
-			)}
-		</Page>
-	);
-};
 
 /** Progress (29.11's page): what is merged, the burn-up and the forecast (27.10). */
 const ProgressPage: Component<RouteProps> = () => (

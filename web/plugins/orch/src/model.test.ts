@@ -124,6 +124,42 @@ describe("reading an answer", () => {
 		expect(empty.agents).toEqual([]);
 	});
 
+	it("reads each agent's queue and who reports to it (29.4)", () => {
+		const board = boardOf(
+			{ project: "udl", features: [] },
+			{ project: "udl", tasks: [] },
+			{
+				items: [
+					{
+						agent: { name: "claude", title: "Claude", role: "manager", model: "m-1" },
+						status: "working",
+						queue: [
+							{ key: "29.4", feature: "29", title: "Board", state: "in_progress", position: 0 },
+							{ key: "29.5", feature: "29", title: "Pages", state: "queued", position: 1 },
+						],
+						reports: ["deepseek-a", "deepseek-b"],
+					},
+				],
+			},
+			{ project: "udl", suggestions: [] },
+		);
+
+		expect(board.agents[0]?.model).toBe("m-1");
+		expect(board.agents[0]?.queue.map((one) => one.key)).toEqual(["29.4", "29.5"]);
+		expect(board.agents[0]?.queue[1]?.position).toBe(1);
+		expect(board.agents[0]?.reports).toEqual(["deepseek-a", "deepseek-b"]);
+	});
+
+	it("reads a suggestion's score and what it would stack on (29.4)", () => {
+		const board = boardOf(undefined, undefined, undefined, {
+			project: "udl",
+			suggestions: [{ task: "29.5", agent: "a", score: 7, reasons: ["free"], stack_on: "29.4" }],
+		});
+
+		expect(board.suggestions[0]?.score).toBe(7);
+		expect(board.suggestions[0]?.stack_on).toBe("29.4");
+	});
+
 	it("knows the four sizes and their points, and nothing else as a size", () => {
 		expect(POINTS).toEqual({ S: 1, M: 3, L: 5, XL: 8 });
 		expect(asSize("XL")).toBe("XL");

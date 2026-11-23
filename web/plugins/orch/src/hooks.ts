@@ -1,16 +1,26 @@
 import type { UIContext } from "@udl/ui-sdk";
 import { useEffect, useState } from "react";
+import { mergeListOf, progressOf } from "./model";
 import { type BoardState, boardStore } from "./stores/board";
 import { type InboxState, inboxStore, type Loaded } from "./stores/inbox";
-
-/** The inbox before it is read: nothing yet, and nothing failed. */
-const NO_INBOX: InboxState = { inbox: null, error: null };
 
 /** What a page that can change what it read is given: the state, and a way to read it again. */
 export type Refreshable<T> = T & { refresh(): Promise<void> };
 
+/** The inbox before it is read: nothing yet, and nothing failed. */
+const NO_INBOX: InboxState = { inbox: null, error: null };
+
 /** The board before it is read. */
-const NO_BOARD: BoardState = { features: [], tasks: [], agents: [], suggestions: [], error: null };
+const NO_BOARD: BoardState = {
+	project: "",
+	features: [],
+	tasks: [],
+	agents: [],
+	suggestions: [],
+	merge: mergeListOf(undefined),
+	progress: progressOf(undefined),
+	error: null,
+};
 
 /**
  * A store made for the page it is drawn in: made on mount, its state followed, and stopped on
