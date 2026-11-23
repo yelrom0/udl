@@ -122,8 +122,10 @@ _HEADING: Final = re.compile(r"^(?P<level>#{1,2}) (?P<text>.+)$")
 _ANY_HEADING: Final = re.compile(r"^#{1,3} ")
 """A heading of any of the three levels: what ends a tracker's own section."""
 
-_BULLET: Final = re.compile(r"^\s*- (?P<text>.*)$")
-"""A bullet of a card, at any depth."""
+_SUBLIST: Final = re.compile(r"^(?:\s*[-*+]|\s+[0-9]+[.)]) (?P<text>.*)$")
+"""A list item under a task line, of any marker a markdown list has: `- `, `* `, `+ `, `1. `,
+`1) `. A numbered one is only a sub-list when it is indented, so a numbered list that is nobody's
+stays the tracker's prose (26.7: what is nested under a task line is the task's)."""
 
 
 @dataclass
@@ -214,9 +216,10 @@ def parse_plan(text: str, *, source: str, stem: str | None = None) -> ParsedPlan
     plan_key = PLAN_KEY if stem is None else f"{PLAN_KEY}-{stem}"
     single = _single_phase(lines)
     tracker = _tracker(lines)
+    taken: set[int] = set()
     if tracker is not None:
-        _read_tracker(lines, tracker, single, plan_key, feature, task, unplaced, source)
-    _read_sections(lines, single, plan_key, feature)
+        _read_tracker(lines, tracker, single, feature, task, unplaced, source, taken)
+    _read_sections(lines, single, plan_key, feature, taken)
     _read_cards(lines, feature, task, _unplaceable(lines, unplaced, source))
     return _as_plan(features, unplaced)
 
@@ -321,14 +324,17 @@ def _read_tracker(
     lines: list[str],
     tracker: tuple[int, int],
     single: str | None,
-    plan_key: str,
     feature: _Named,
     task: _Tasked,
     unplaced: list[UnplacedLine],
     source: str,
+    taken: set[int],
 ) -> None:
     """The tracker's lines: a phase (a feature) and its children (its tasks), in a file of
-    several phases; in a single-phase file, its top-level lines are its tasks."""
+    several phases; in a single-phase file, its top-level lines are its tasks.
+
+    `taken` collects every line this reader claimed — the task lines and the list items under
+    them — so the prose pass drops exactly those and nothing else."""
     start, end = tracker
     phase: str | None = None
     last: _Task | None = None
@@ -340,6 +346,7 @@ def _read_tracker(
             continue
         found = _PHASE_LINE.match(raw)
         if found:
+            taken.add(index)
             state = _state(found["mark"], unplaced, index, raw, source)
             # (A phase it cannot read is not the last one it could: its children are nobody's.)
             phase = found["key"] if state is not None else None
@@ -349,6 +356,7 @@ def _read_tracker(
             continue
         found = _TASK_LINE.match(raw) or (_TOP_LINE.match(raw) if single else None)
         if found:
+            taken.add(index)
             state = _state(found["mark"], unplaced, index, raw, source)
             owner = single or phase
             if state is None:
@@ -365,6 +373,7 @@ def _read_tracker(
             continue
         found = _BOLD_LINE.match(raw) if single else None
         if found:
+            taken.add(index)
             state = _state(found["mark"], unplaced, index, raw, source)
             if state is None:
                 last = None
@@ -375,46 +384,56 @@ def _read_tracker(
                 last.blocked_on = _after_blocked(stripped)
             continue
         if stripped.startswith("- ["):
+            taken.add(index)
             unplaced.append(_unplaced(source, index, raw, "not a task's line: no key"))
             last = None
             continue
-        bullet = _BULLET.match(raw)
+        bullet = _SUBLIST.match(raw)
         if bullet and last is not None:
+            taken.add(index)
             last.spec.append(bullet["text"].strip())
             continue
         last = None
 
 
-def _read_sections(lines: list[str], single: str | None, plan_key: str, feature: _Named) -> None:
+def _read_sections(
+    lines: list[str], single: str | None, plan_key: str, feature: _Named, taken: set[int]
+) -> None:
     """The sections of the file: a phase's own (`## Phase N …`) are its spec, and what is not a
     phase's is the plan feature's (or, in a single-phase file, the phase's own)."""
     heading: str | None = None
-    body: list[str] = []
-    for raw in [*lines, ""]:
+    body: list[tuple[int, str]] = []
+    for index, raw in enumerate([*lines, ""]):
         found = _HEADING.match(raw)
         if found:
-            _kept_heading(heading, body, single, plan_key, feature)
+            _kept_heading(heading, body, single, plan_key, feature, taken)
             heading, body = raw, []
             continue
         if heading is not None:
-            body.append(raw)
-    _kept_heading(heading, body, single, plan_key, feature)
+            body.append((index, raw))
+    _kept_heading(heading, body, single, plan_key, feature, taken)
 
 
 def _kept_heading(
-    heading: str | None, body: list[str], single: str | None, plan_key: str, feature: _Named
+    heading: str | None,
+    body: list[tuple[int, str]],
+    single: str | None,
+    plan_key: str,
+    feature: _Named,
+    taken: set[int],
 ) -> None:
     """What a section says goes where its heading says it goes."""
     if heading is None:
         return
     if heading.strip() == _TRACKER:
-        # (The tracker's entries are its features and tasks; what else the section says — "Next
-        # to build", the marks — is the plan's own words.)
+        # (The tracker's entries are its features and tasks, and the list items under a task line
+        # are that task's own words: both are in `taken`, so what is left here is the plan's own
+        # prose — "Next to build", the marks — and nothing is dropped silently.)
         prose: list[str] = []
-        for line in body:
+        for index, line in body:
             if _ANY_HEADING.match(line):
                 break
-            if line.strip().startswith("-"):
+            if index in taken or not line.strip():
                 continue
             prose.append(line)
         said = "\n".join(prose).strip()
@@ -425,7 +444,7 @@ def _kept_heading(
             else:
                 feature(plan_key, _plan_title(plan_key)).spec.append(said)
         return
-    text = "\n".join(body).strip()
+    text = "\n".join(line for _, line in body).strip()
     found = _PHASE_HEADING.match(heading)
     if found:
         if text:
@@ -474,7 +493,7 @@ def _bullets(lines: list[str], start: int) -> list[str]:
     for raw in lines[start:]:
         if _HEADING.match(raw) or _CARD.match(raw):
             break
-        found = _BULLET.match(raw)
+        found = _SUBLIST.match(raw)
         if found:
             said.append(found["text"].strip())
         elif not raw.strip():

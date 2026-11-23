@@ -209,6 +209,140 @@ def test_a_tracker_s_sub_bullets_join_the_task_s_spec() -> None:
     assert task_of(plan, "30.1").spec == "one thing\nanother thing"
 
 
+def test_a_numbered_sub_list_joins_the_task_s_spec() -> None:
+    """A list nested under a task line is the task's, numbered or not (26.7's card: "sub-bullets
+    under a task line join its spec")."""
+    plan = parse_plan(
+        a_plan(
+            "- [ ] **Phase 30: A phase**",
+            "  - [ ] 30.1 a task:",
+            "    1. first step",
+            "    2. second step",
+            "    3. third step",
+        ),
+        source="plan.md",
+    )
+
+    assert task_of(plan, "30.1").spec == "first step\nsecond step\nthird step"
+
+
+def test_a_numbered_sub_list_is_not_the_feature_s() -> None:
+    """The steps are the task's own words, not the plan's: what a tracker's prose keeps is the
+    lines that are nobody's."""
+    plan = parse_plan(
+        a_plan(
+            "- [ ] **Phase 30: A phase**",
+            "  - [ ] 30.1 a task:",
+            "    1. first step",
+            "    2. second step",
+        ),
+        source="plan.md",
+    )
+
+    assert feature_of(plan, "30").spec == ""
+    assert all("first step" not in one.spec for one in plan.features)
+
+
+def test_a_numbered_list_not_under_a_task_line_goes_where_it_went() -> None:
+    """A list that is not nested under a task line is still the tracker's prose (the plan
+    feature's), as it was before."""
+    text = (
+        "# A plan\n\n## Progress tracker\n\n- [ ] **Phase 30: A phase**\n"
+        "  - [ ] 30.1 a task\n\n1. a step of nobody's\n2. another\n"
+    )
+
+    plan = parse_plan(text, source="plan.md")
+
+    assert task_of(plan, "30.1").spec == ""
+    assert "a step of nobody's" in feature_of(plan, "plan").spec
+
+
+def test_a_stars_and_a_paren_numbered_list_join_too() -> None:
+    """Any marker a markdown list has: `*`, `+`, `1.`, `1)`."""
+    plan = parse_plan(
+        a_plan(
+            "- [ ] **Phase 30: A phase**",
+            "  - [ ] 30.1 a task:",
+            "    * a star",
+            "    + a plus",
+            "    1) a paren",
+        ),
+        source="plan.md",
+    )
+
+    assert task_of(plan, "30.1").spec == "a star\na plus\na paren"
+
+
+def test_a_numbered_step_after_a_blank_line_is_the_plan_s_prose() -> None:
+    """A blank line ends the task's sub-list (as `_read_tracker` says): a numbered item after it
+    belongs to nobody, so it stays the tracker's prose rather than being dropped."""
+    text = (
+        "# A plan\n\n## Progress tracker\n\n- [ ] **Phase 30: A phase**\n"
+        "  - [ ] 30.1 a task:\n\n    1. a step of nobody's\n"
+    )
+
+    plan = parse_plan(text, source="plan.md")
+
+    assert task_of(plan, "30.1").spec == ""
+    assert "a step of nobody's" in feature_of(plan, "plan").spec
+
+
+def test_a_step_under_an_unreadable_mark_is_not_the_task_s() -> None:
+    """A mark the parser does not know leaves no task, so what follows it is the tracker's
+    prose — not a task's spec, and not silently dropped."""
+    text = (
+        "# A plan\n\n## Progress tracker\n\n- [ ] **Phase 30: A phase**\n"
+        "  - [?] 30.1 a strange mark\n    1. a step of nobody's\n"
+    )
+
+    plan = parse_plan(text, source="plan.md")
+
+    assert [line.why for line in plan.unplaced] == ["not a mark I know: '?'"]
+    assert "a step of nobody's" in feature_of(plan, "plan").spec
+
+
+def test_a_mixed_sub_list_is_the_task_s_alone() -> None:
+    """A `- ` bullet under a task does not hand the rest of the list to the plan: every item
+    under the line is the task's, and each is on one place only."""
+    plan = parse_plan(
+        a_plan(
+            "- [ ] **Phase 30: A phase**",
+            "  - [ ] 30.1 a task:",
+            "    - a bullet",
+            "    1. a step",
+            "    * a star",
+        ),
+        source="plan.md",
+    )
+
+    assert task_of(plan, "30.1").spec == "a bullet\na step\na star"
+    assert plan.features == [] or all(one.spec == "" for one in plan.features)
+
+
+def test_a_card_s_numbered_and_starred_items_are_its_own() -> None:
+    """A card's list is its spec too: `*`, `+` and `1.` are items, not continuation text."""
+    text = (
+        "# A plan\n\n## Progress tracker\n\n- [ ] **Phase 30: A phase**\n"
+        "  - [ ] 30.1 a task\n\n**30.1 A task** · needs 30.2\n"
+        "  - a bullet\n  * a star\n  1. a step\n"
+    )
+
+    plan = parse_plan(text, source="plan.md")
+
+    assert task_of(plan, "30.1").spec == "a bullet\na star\na step"
+
+
+def test_the_proxmox_file_s_live_check_has_its_steps() -> None:
+    """22.11's three steps are numbered, not bulleted: they are its own, not the plan's."""
+    plan = parse_plan((PLANS / "03-proxmox.md").read_text(), source="03-proxmox.md")
+
+    assert task_of(plan, "22.11").spec.splitlines() == [
+        "The user creates the pool and the API token in Proxmox.",
+        "Claude connects an account and runs the read-only operations against the real host.",
+        "The user runs `snapshot` and `rollback` on a throwaway VM.",
+    ]
+
+
 # ---------------------------------------------------------------------------------------------
 # A single-phase file: the heading is the feature
 # ---------------------------------------------------------------------------------------------
