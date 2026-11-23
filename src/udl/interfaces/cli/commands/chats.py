@@ -141,14 +141,16 @@ async def talk_loop(
             if not line.strip():
                 continue
             if asked is not None:
-                # (A prompt answered elsewhere, or gone, is not answered again: the line is what
-                # it looks like — a message — and udl's own refusal never ends the loop.)
+                # (A prompt answered elsewhere, or gone, is not answered again: udl refuses the
+                # answer, it is said, and the line goes as what it looks like — a message — so
+                # udl's refusal never ends the loop.)
                 try:
                     await _answered(service, found, asked, line)
+                    asked = None
+                    continue
                 except UDLError as error:
                     stdout().print(f"({error})")
-                asked = None
-                continue
+                    asked = None
             await service.call(
                 "orch_chat_send", SendChatRequest(chat=found.id, text=line, wait=False)
             )

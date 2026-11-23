@@ -24,6 +24,7 @@ from typer.testing import CliRunner
 from support.engine import settings
 from support.orch import orch_registry
 from udl.core.service import UDLService
+from udl.errors import UDLError
 from udl.interfaces.cli.commands import chats
 from udl.plugins.apps.orch.agents import SessionState
 from udl.plugins.apps.orch.chat import (
@@ -142,8 +143,9 @@ def test_a_denial_with_no_reason_says_it_was_denied() -> None:
 class _Talked:
     """A service whose chat operations are scripted: what the loop reads, and what it did."""
 
-    def __init__(self, reads: list[ChatInfo]) -> None:
+    def __init__(self, reads: list[ChatInfo], *, refuse: bool = False) -> None:
         self._reads = reads
+        self.refuse = refuse
         self.said: list[str] = []
         self.answered: list[UUID] = []
 
@@ -157,6 +159,8 @@ class _Talked:
             return self._reads[0]
         if name == "orch_chat_permission":
             assert isinstance(request, PermissionRequest)
+            if self.refuse:
+                raise UDLError("That request is already answered")
             self.answered.append(request.request)
             return self._reads[0]
         raise AssertionError(f"the loop called {name}")
@@ -168,9 +172,10 @@ async def talk(
     *,
     reads: list[ChatInfo],
     lines: list[str],
+    refuse: bool = False,
 ) -> _Talked:
     """Run the loop over `reads`, with `lines` as what the person types."""
-    scripted = _Talked(reads)
+    scripted = _Talked(reads, refuse=refuse)
     monkeypatch.setattr(service, "call", scripted.call)
     typed = list(lines)
 
@@ -226,3 +231,22 @@ async def test_a_prompt_is_shown_once(service: UDLService, monkeypatch: pytest.M
     scripted = await talk(service, monkeypatch, reads=[asked, asked, asked], lines=["d", "/quit"])
 
     assert scripted.answered == [a_permission().id]
+
+
+async def test_a_refused_answer_goes_as_a_message_and_the_loop_goes_on(
+    service: UDLService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(The window the poll leaves: the chat still shows the prompt the person has just answered
+    in the web UI. udl refuses the second answer, it is said, and the line is a message.)"""
+    asked = a_chat(total=0, permission=a_permission())
+
+    scripted = await talk(
+        service,
+        monkeypatch,
+        reads=[asked, asked, asked],
+        lines=["hello", "/quit"],
+        refuse=True,
+    )
+
+    assert scripted.answered == []
+    assert scripted.said == ["hello"]

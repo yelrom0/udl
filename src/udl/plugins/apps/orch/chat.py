@@ -797,7 +797,21 @@ def _info(
 _SHELL_TOOLS: Final = frozenset({"Bash", "bash", "run_command", "shell"})
 """The tools whose input is a command line (the ones never remembered when it chains or nests)."""
 
-_NEVER_REMEMBERED: Final = ("&&", "||", ";", "|", "&", "$(", "`", "<(", ">(", "\n", "\r")
+_NEVER_REMEMBERED: Final = (
+    "&&",
+    "||",
+    ";",
+    "|",
+    "&",
+    "$(",
+    "`",
+    "<(",
+    ">(",
+    ">",
+    "<",
+    "\n",
+    "\r",
+)
 """What a command that chains or nests others has (27.11: Allow for this chat on one is Allow
 once)."""
 

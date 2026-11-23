@@ -559,8 +559,11 @@ async def test_a_chat_left_alone_for_a_day_ends_and_loses_its_token(
     assert "Untouched for 24 hours" in (read.last_error or "")
 
 
-async def test_a_chat_s_token_cannot_change_an_account_or_an_agent(service: UDLService) -> None:
-    """(Admin operations are out of a chat's reach as a whole, not one by one.)"""
+async def test_a_chat_s_token_cannot_connect_an_account_or_change_an_agent(
+    service: UDLService,
+) -> None:
+    """(Admin operations are out of a chat's reach as a whole, not one by one — whether the
+    operation is named in the chat's list or only admin.)"""
     chat = await started(service)
     caller = current_principal.set(
         Principal(kind=PrincipalKind.CHAT, name=chat.owner, chat=chat.id)
@@ -568,6 +571,7 @@ async def test_a_chat_s_token_cannot_change_an_account_or_an_agent(service: UDLS
     try:
         for name, request in (
             ("orch_set_agent", {"name": "claude", "on": False}),
+            ("connect_account", {"integration": "github", "name": "work", "method": "none"}),
             ("set_onepassword_token", {"token": "x"}),
         ):
             with pytest.raises(NotAllowed):
@@ -594,16 +598,21 @@ async def test_a_chat_that_is_over_leaves_nothing_of_udl_s_in_the_folder(
     stopped or forgotten.)"""
     folder = tmp_path / ".udl"
     folder.mkdir()
+    chat = await started(service, directory=str(tmp_path))
+    # (What the harness left there, as a chat's own harness does.)
     (folder / "mcp.json").write_text("{}")
     (folder / "settings.json").write_text("{}")
-
-    chat = await started(service, directory=str(tmp_path))
-    assert (folder / "mcp.json").exists(), "the harness's file is written where it works"
 
     stopped = await service.call("orch_chat_stop", {"chat": chat.id})
     assert isinstance(stopped, ChatInfo)
     assert not (folder / "mcp.json").exists()
     assert not (folder / "settings.json").exists()
+
+    # (And a chat that is forgotten takes them too.)
+    (folder / "mcp.json").write_text("{}")
+    forgotten = await service.call("orch_chat_delete", {"chat": chat.id})
+    assert isinstance(forgotten, ChatInfo)
+    assert not (folder / "mcp.json").exists()
 
 
 async def test_the_chat_s_stream_is_one_chat_s(service: UDLService) -> None:

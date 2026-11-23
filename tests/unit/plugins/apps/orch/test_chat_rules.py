@@ -1,19 +1,17 @@
 """
------------------------
+----------------------
 - test_chat_rules.py -
------------------------
+----------------------
 
 What may be remembered for the rest of a chat (27.11): the same tool and the same exact input,
 and never a shell command that chains, nests or runs another shell.
 """
 
-# System Imports
-from typing import Any
-
 # Package Imports
 import pytest
 
 # Local Imports
+from udl.db.models import JsonObject
 from udl.plugins.apps.orch.chat import rememberable
 
 
@@ -44,6 +42,8 @@ def test_a_plain_command_may_be_remembered(command: str) -> None:
         "echo `rm -rf build`",
         "cat <(rm -rf build)",
         "tee >(rm -rf build)",
+        "ls 2>&1",
+        "ls > out.txt",
         "bash -c 'rm -rf build'",
         "sh -c 'rm -rf build'",
         "/bin/bash -c 'rm -rf build'",
@@ -80,5 +80,5 @@ def test_a_tool_that_is_not_a_shell_is_remembered() -> None:
 
 def test_a_shell_command_is_read_from_its_command() -> None:
     """(Its other fields say nothing about what it runs.)"""
-    given: dict[str, Any] = {"description": "list the folder", "timeout": 1000}
+    given: JsonObject = {"description": "list the folder", "timeout": 1000}
     assert not rememberable("Bash", given)
