@@ -12,7 +12,7 @@ check-py:
 	uv run ruff format --check .
 	uv run ruff check .
 	uv run pyright
-	uv run pytest --cov
+	uv run pytest --cov -n 4
 
 # The API's schema, and the web client's types and fixtures, which are made from it: committed,
 # and regenerated with `make openapi` after any change to the API's routes.
