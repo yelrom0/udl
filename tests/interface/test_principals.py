@@ -201,6 +201,22 @@ async def test_a_call_on_someone_elses_session_is_its_own_callers(
     assert "implementer" in refused["result"]["content"][0]["text"]
 
 
+async def test_an_agents_token_as_a_bearer_header_is_its_own_call(
+    keyed: Harness, token: str
+) -> None:
+    """A harness that can send one header only (Codex's `bearer_token_env_var`) sends the agent's
+    token as `Authorization: Bearer`: /mcp takes it, and the call is that agent's — its role is
+    held exactly as over `X-API-Key`."""
+    async with held(client_for(keyed)) as client:
+        session = await mcp_session(client, token, as_bearer=True)
+        refused = await mcp_call(client, token, session, CONFIG, {}, as_bearer=True)
+        allowed = await mcp_call(client, token, session, STATUS, {}, as_bearer=True)
+
+    assert refused["result"]["isError"] is True
+    assert "implementer" in refused["result"]["content"][0]["text"]
+    assert "structuredContent" in allowed["result"]
+
+
 async def test_the_mcp_server_does_not_know_a_token_it_was_not_given(
     keyed: Harness, token: str
 ) -> None:
@@ -215,17 +231,21 @@ async def test_the_mcp_server_does_not_know_a_token_it_was_not_given(
 # ---------------------------------------------------------------------------------------------
 
 
-async def mcp_session(client: httpx.AsyncClient, token: str) -> dict[str, str]:
-    """An MCP session over /mcp, opened with `token`: the headers a call needs."""
+async def mcp_session(
+    client: httpx.AsyncClient, token: str, *, as_bearer: bool = False
+) -> dict[str, str]:
+    """An MCP session over /mcp, opened with `token`: the headers a call needs. The token goes as
+    `X-API-Key`, or as `Authorization: Bearer` when the caller's harness can send one header
+    only."""
     started = await client.post(
-        "/mcp", json=INITIALIZE, headers={**MCP_HEADERS, "X-API-Key": token}
+        "/mcp", json=INITIALIZE, headers=_mcp_headers(token, as_bearer=as_bearer)
     )
     assert started.status_code == 200, started.text
     session = {"mcp-session-id": started.headers.get("mcp-session-id", "")}
     await client.post(
         "/mcp",
         json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        headers={**MCP_HEADERS, "X-API-Key": token, **session},
+        headers={**_mcp_headers(token, as_bearer=as_bearer), **session},
     )
     return session
 
@@ -236,6 +256,8 @@ async def mcp_call(
     session: dict[str, str],
     name: str,
     arguments: dict[str, Any],
+    *,
+    as_bearer: bool = False,
 ) -> dict[str, Any]:
     """One tool call's answer, as the JSON-RPC result."""
     response = await client.post(
@@ -246,11 +268,20 @@ async def mcp_call(
             "method": "tools/call",
             "params": {"name": name, "arguments": arguments},
         },
-        headers={**MCP_HEADERS, "X-API-Key": token, **session},
+        headers={**_mcp_headers(token, as_bearer=as_bearer), **session},
     )
     assert response.status_code == 200, response.text
     [answer] = _bodies(response)
     return answer
+
+
+def _mcp_headers(token: str, *, as_bearer: bool) -> dict[str, str]:
+    """The headers a /mcp request needs: the session's own, and the token as the key or as a
+    bearer (what a harness that can send one header only sends)."""
+    return {
+        **MCP_HEADERS,
+        **({"Authorization": f"Bearer {token}"} if as_bearer else {"X-API-Key": token}),
+    }
 
 
 def _bodies(response: httpx.Response) -> list[dict[str, Any]]:

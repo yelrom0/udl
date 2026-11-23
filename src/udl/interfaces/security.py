@@ -15,6 +15,7 @@ current_caller, and udl.core.service holds an agent to its role's operations.
 
 # System Imports
 import hmac
+from collections.abc import Mapping
 from contextvars import ContextVar
 from enum import StrEnum
 from typing import Final, Protocol, runtime_checkable
@@ -26,6 +27,33 @@ from udl.config import Settings
 from udl.errors import Unauthorized
 
 API_KEY_HEADER = "X-API-Key"
+"""The header a request sends udl's key in (an agent's token goes in it too, or in a bearer)."""
+
+
+def api_key_of(headers: Mapping[str, str]) -> str | None:
+    """The API key a request sends: `X-API-Key`, or `Authorization: Bearer …`.
+
+    The bearer form is what a client that can only send one header uses (Codex's
+    `bearer_token_env_var`); it is the same key — udl's own or an agent's — so the same rules
+    hold, and the header wins when both are sent."""
+    # (Both headers case-insensitively: a request's own headers are, and a plain mapping a test
+    # passes may spell either as it is written.)
+    given = _header(headers, API_KEY_HEADER)
+    if given:
+        return given
+    scheme, _, token = _header(headers, "Authorization").partition(" ")
+    if scheme.lower() == "bearer" and token.strip():
+        return token.strip()
+    return None
+
+
+def _header(headers: Mapping[str, str], name: str) -> str:
+    """A header's value, whatever case it is spelled in (a request's headers are read this way)."""
+    given = headers.get(name)
+    if given is not None:
+        return given
+    return next((value for key, value in headers.items() if key.lower() == name.lower()), "")
+
 
 AGENT_PREFIX: Final = "udl_agent_"
 """What an agent's token starts with, so a key of udl's own is never taken for one."""
