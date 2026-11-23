@@ -90,6 +90,8 @@ from udl.plugins.apps.orch.chat import (
     StartChatRequest,
     StopChatRequest,
 )
+from udl.plugins.apps.orch.checkout import CHECKOUT_BEHIND
+from udl.plugins.apps.orch.checkout import follow as follow_checkouts
 from udl.plugins.apps.orch.dispatcher import Dispatcher, Outcome, Turns
 from udl.plugins.apps.orch.events import (
     ACTION_NEEDED,
@@ -491,6 +493,7 @@ class Orch(AppPlugin[OrchSettings]):
             TASK_READY,
             TASK_BLOCKED,
             TASK_MERGED,
+            CHECKOUT_BEHIND,
             QUESTION_ASKED,
             QUESTION_ANSWERED,
             ACTION_NEEDED,
@@ -2776,6 +2779,7 @@ class Orch(AppPlugin[OrchSettings]):
         # (28.6: a merged task's worktree and branch are taken away, so the next merge is not
         # held up by a checkout of work that is already in `main`.)
         moved = await self._removed(service, moved, by=by)
+        await self._follow_checkout(service, project=project, key=task.key)
         if moved.state != before:
             events = AppEvents(service.bus, self.name, self.event_types())
             await events.emit(
@@ -2791,6 +2795,51 @@ class Orch(AppPlugin[OrchSettings]):
                 dedupe_key=f"{project}:{task.key}:{pull.head_sha}",
             )
         return Merged(task=task.key, url=link, sha=pull.head_sha, state=moved.state)
+
+    async def _follow_checkout(self, service: UDLService, *, project: str, key: str) -> None:
+        """Bring each host's checkout of the project's repo to the base (28.8), after a merge.
+
+        A checkout that cannot follow — another branch, uncommitted changes, diverged, or a host
+        that did not answer — is noted on the task and named in an `orch.checkout.behind` event.
+        It never fails the merge."""
+        repo = await self._repo_of_project(project)
+        if repo is None:
+            return
+        try:
+            behind = await follow_checkouts(
+                self.records,
+                project=project,
+                key=key,
+                base=repo.base_branch,
+                shells=service.hosts,
+                clock=self.clock,
+            )
+        except (PluginError, UDLError) as error:
+            behind = []
+            found = await stored.TaskRecords(self.records).task(project, key)
+            if found is not None:
+                await stored.NoteRecords(self.records).add(
+                    stored.Note(
+                        owner_kind=OwnerKind.TASK,
+                        owner=found.id,
+                        note_kind=NoteKind.SYSTEM,
+                        text=f"The checkouts could not be followed after this merge: {error}",
+                    )
+                )
+        if not behind:
+            return
+        events = AppEvents(service.bus, self.name, self.event_types())
+        for one in behind:
+            await events.emit(
+                CHECKOUT_BEHIND.name,
+                one,
+                dedupe_key=f"{one.project}:{one.host}:{one.checkout}:{one.why}",
+            )
+
+    async def _repo_of_project(self, project: str) -> stored.Repo | None:
+        """The project's own repo (the one its checkout is of), or None when it has none."""
+        repos = await stored.RepoRecords(self.records).repos(project)
+        return repos[0] if repos else None
 
     async def _removed(self, service: UDLService, task: stored.Task, *, by: str) -> stored.Task:
         """`task` with its worktree and its branch taken away, now that it is merged (27.5's
