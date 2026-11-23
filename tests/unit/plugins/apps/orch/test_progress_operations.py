@@ -52,8 +52,10 @@ from udl.plugins.apps.orch.records import (
 
 PROGRESS_OPERATIONS: list[str] = ["progress", "estimate"]
 
-START = datetime(2026, 11, 15, 9, tzinfo=UTC)
-"""When the fixture history begins (a week before the merges' last day)."""
+START = datetime.now(UTC).replace(hour=9, minute=0, second=0, microsecond=0) - timedelta(days=7)
+"""When the fixture history begins: a week ago, so it moves with the date. The service runs on
+the real clock, and "the last seven days" are counted from today, so a fixed date would make
+the pace's answer change with the day the tests run."""
 
 
 @pytest.fixture
@@ -178,7 +180,7 @@ async def test_the_pace_is_the_points_merged_a_day_over_the_last_seven(
     found = await service.call("orch_progress", {"project": "udl"})
 
     assert isinstance(found, Progress)
-    # (Four of the five merges fell in the last seven days: 15 November is older.)
+    # (Four of the five merges fell in the last seven days: the first, a week ago, is older.)
     assert found.pace == pytest.approx(4 / 7)
 
 
