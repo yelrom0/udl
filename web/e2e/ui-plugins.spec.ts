@@ -78,10 +78,11 @@ test("a plugin's stylesheet is adopted, its @property hoisted, and its theme the
 test("a plugin's widget is on the dashboard", async ({ page }) => {
 	await page.goto("/ui/");
 
-	// (Three: this plugin's, and 18.10's two — the shadcn/ui example and the template, which is
-	// loaded the same way, so the starting point is proven in the shell it starts from.)
+	// (Four: this plugin's, 18.10's two — the shadcn/ui example and the template, which is loaded
+	// the same way, so the starting point is proven in the shell it starts from — and the
+	// orchestrator's own, 29.2's.)
 	const widgets = page.locator(".udl-plugin-slot");
-	await expect(widgets).toHaveCount(3);
+	await expect(widgets).toHaveCount(4);
 	await expect
 		.poll(async () =>
 			widgets.evaluateAll((hosts) => hosts.map((host) => host.shadowRoot?.textContent ?? "")),
@@ -92,6 +93,11 @@ test("a plugin's widget is on the dashboard", async ({ page }) => {
 			widgets.evaluateAll((hosts) => hosts.map((host) => host.shadowRoot?.textContent ?? "")),
 		)
 		.toContainEqual(expect.stringContaining("Drawn into the dashboard slot."));
+	await expect
+		.poll(async () =>
+			widgets.evaluateAll((hosts) => hosts.map((host) => host.shadowRoot?.textContent ?? "")),
+		)
+		.toContainEqual(expect.stringContaining("Orchestrator"));
 });
 
 test("a plugin that throws shows an error card, and the shell carries on", async ({ page }) => {

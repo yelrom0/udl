@@ -35,6 +35,7 @@ describe("a plugin's manifest", () => {
 	it("is called UIManifest: there is no other name for it", () => {
 		// @ts-expect-error — `Manifest` is not exported: a `contributes` block is not a manifest,
 		// and the manifest's type is `UIManifest`.
+		// biome-ignore lint/correctness/noUnusedVariables: (the line *is* the assertion.)
 		type Manifest = import("./index").Manifest;
 
 		expect(true).toBe(true);

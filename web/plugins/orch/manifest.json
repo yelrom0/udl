@@ -1,0 +1,37 @@
+{
+	"name": "orch",
+	"version": "0.1.0",
+	"sdk": "^1.1",
+	"entry": "index.js",
+	"styles": ["index.css"],
+	"isolation": "shadow",
+	"contributes": {
+		"nav": [
+			{ "title": "Inbox", "route": "inbox", "icon": "inbox" },
+			{ "title": "Board", "route": "board", "icon": "layout-dashboard" },
+			{ "title": "Progress", "route": "progress", "icon": "chart-line" },
+			{ "title": "Agents", "route": "agents", "icon": "users" },
+			{ "title": "Q&A", "route": "questions", "icon": "message-circle-question" },
+			{ "title": "Merge", "route": "merge", "icon": "git-pull-request" },
+			{ "title": "To action", "route": "actions", "icon": "list-checks" }
+		],
+		"routes": [
+			"inbox",
+			"board",
+			"progress",
+			"features/$key",
+			"tasks/$key",
+			"agents",
+			"agents/$name",
+			"questions",
+			"questions/$key",
+			"merge",
+			"actions"
+		],
+		"widgets": [{ "slot": "dashboard", "id": "orch" }]
+	},
+	"generated": {
+		"tabs": ["settings"],
+		"hide": ["orch_*"]
+	}
+}

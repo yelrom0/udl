@@ -31,9 +31,11 @@ from udl.core.operations import (
     route,
 )
 from udl.core.schemas import model_schema
+from udl.errors import PluginError
 from udl.plugins.registry import INTEGRATIONS, PluginInfo, PluginRegistry
 from udl.plugins.settings import is_file_only, is_secret, settings_model_of
-from udl.plugins.ui.base import guidance_problems
+from udl.plugins.ui.base import UIBundle, guidance_problems
+from udl.plugins.ui.discovery import bundle_of
 
 log = logging.getLogger(__name__)
 
@@ -180,7 +182,7 @@ def _of_plugin(info: PluginInfo, cls: type[object], ops: OperationRegistry) -> G
         kind=info.kind,
         title=str(getattr(cls, "title", info.name)),
         summary=str(getattr(cls, "summary", "")),
-        has_ui_plugin=getattr(cls, "ui", None) is not None,
+        has_ui_plugin=_ui_bundle(cls) is not None,
         operations=[GeneratedOperation.of(op) for op in found],
         settings=None if model is None else GeneratedForm.of(model),
         accounts=_accounts_of(cls) if integration else None,
@@ -189,10 +191,20 @@ def _of_plugin(info: PluginInfo, cls: type[object], ops: OperationRegistry) -> G
     )
 
 
+def _ui_bundle(cls: type[object]) -> UIBundle | None:
+    """The UI bundle `cls` brings, read the way discovery reads it (its `ui`, or the folder
+    `ui_folder` names once `make web` has built it). A bundle that is there but broken is a
+    problem `GET /ui/plugins.json` says: here it is no UI plugin, not a failed request."""
+    try:
+        return bundle_of(cls)
+    except PluginError:
+        return None
+
+
 def _guidance_problems(cls: type[object], operations: list[str]) -> list[str]:
     """What the UI plugin `cls` brings says about operations it does not have (24.7)."""
-    bundle = getattr(cls, "ui", None)
-    manifest = getattr(bundle, "manifest", None)
+    bundle = _ui_bundle(cls)
+    manifest = None if bundle is None else bundle.manifest
     if manifest is None:
         return []
     return guidance_problems(manifest, operations)

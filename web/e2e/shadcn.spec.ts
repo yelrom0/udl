@@ -9,9 +9,6 @@ import { expect, type Page, test } from "@playwright/test";
  * onto daisyUI's (so the shell's theme drives them), and none of it touches the shell's styles.
  */
 
-/** The plugin's slot: the shell's element the plugin's shadow root is attached to. */
-const SLOT = ".udl-plugin-slot";
-
 /** The token, as a browser spells a computed colour (`oklch(45% .24 277)` → `oklch(0.45 …)`). */
 async function colourOf(page: Page, name: string): Promise<string> {
 	return page.evaluate(

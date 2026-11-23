@@ -55,6 +55,9 @@ E2E_UI_PLUGINS: Final[Path] = Path(__file__).resolve().parent / "e2e_ui_plugins"
 SHADCN_EXAMPLE: Final[Path] = ROOT / "web" / "examples" / "shadcn" / "dist"
 # 18.10's starting point: the template plugin, built the same way (a folder of bundles).
 TEMPLATE: Final[Path] = ROOT / "web" / "packages" / "template" / "dist"
+# 29.2's: the orchestrator's own UI, which `make web` builds beside its plugin (the folder *is*
+# the bundle, so the plugin serves it with itself rather than from `ui_plugin_dirs`).
+ORCH_UI: Final[Path] = ROOT / "src" / "udl" / "plugins" / "apps" / "orch" / "ui"
 # The shell, as `make web` builds it: the other half of the web tree, and what says a build ran.
 SHELL_DIST: Final[Path] = ROOT / "src" / "udl" / "interfaces" / "web" / "dist"
 # How long a test server gets to answer before it is called broken (a loaded machine is slow).
@@ -106,14 +109,18 @@ def half_built() -> str | None:
     saying out loud rather than a page quietly missing a plugin.)"""
     if not SHELL_DIST.is_dir():
         return None
-    # (Named, not by their folders: both end in `dist`.)
-    plugins = {"example": SHADCN_EXAMPLE, "template": TEMPLATE}
+    # (Named, not by their folders: two of them end in `dist`.)
+    plugins = {
+        "the shadcn example": SHADCN_EXAMPLE,
+        "the template": TEMPLATE,
+        "the orchestrator's UI": ORCH_UI,
+    }
     missing = [name for name, path in plugins.items() if not path.is_dir()]
     if not missing:
         return None
     said = " and ".join(missing)
     verb = "is" if len(missing) == 1 else "are"
-    return f"the shell is built and 18.10's {said} {verb} not: run `make web`"
+    return f"the shell is built and {said} {verb} not built: run `make web`"
 
 
 def write_config(root: Path, port: int) -> Path:

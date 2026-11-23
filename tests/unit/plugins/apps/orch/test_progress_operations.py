@@ -52,8 +52,15 @@ from udl.plugins.apps.orch.records import (
 
 PROGRESS_OPERATIONS: list[str] = ["progress", "estimate"]
 
-START = datetime(2026, 11, 15, 9, tzinfo=UTC)
-"""When the fixture history begins (a week before the merges' last day)."""
+NOW = datetime.now(UTC)
+"""When the fixture's history ends: its merges are placed relative to now, so the seven-day pace
+is the same whenever the test runs (an absolute date drifts out of the window in a week)."""
+
+START = NOW - timedelta(days=10)
+"""Ten days back: where the one merge outside the pace's seven days is."""
+
+DAYS_AGO = (10, 3, 2, 1, 0)
+"""How long before now each merged task's pull was merged: one older than the week."""
 
 
 @pytest.fixture
@@ -70,7 +77,7 @@ async def service(tmp_path: Path) -> AsyncIterator[UDLService]:
             Agent(name="deepseek-a", title="deepseek-a", runner="fake", model="m")
         )
         tasks = TaskRecords(records)
-        for number in range(5):
+        for number, days_ago in enumerate(DAYS_AGO):
             task = await tasks.save_task(
                 Task(
                     project="udl",
@@ -88,14 +95,14 @@ async def service(tmp_path: Path) -> AsyncIterator[UDLService]:
                         task=task.id,
                         from_state=OPEN,
                         to_state=IN_PROGRESS,
-                        at=START + timedelta(days=number),
+                        at=NOW - timedelta(days=days_ago, hours=3),
                         by="deepseek-a",
                     ),
                     StateChange(
                         task=task.id,
                         from_state=IN_PROGRESS,
                         to_state=MERGED,
-                        at=START + timedelta(days=number, hours=2),
+                        at=NOW - timedelta(days=days_ago, hours=1),
                         by="deepseek-a",
                     ),
                 ]
@@ -178,7 +185,7 @@ async def test_the_pace_is_the_points_merged_a_day_over_the_last_seven(
     found = await service.call("orch_progress", {"project": "udl"})
 
     assert isinstance(found, Progress)
-    # (Four of the five merges fell in the last seven days: 15 November is older.)
+    # (Four of the five merges fell in the last seven days: the tenth-day-old one is older.)
     assert found.pace == pytest.approx(4 / 7)
 
 

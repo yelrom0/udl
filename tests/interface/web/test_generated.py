@@ -215,6 +215,19 @@ def test_a_plugin_that_brings_a_ui_says_so(tmp_path: Path) -> None:
     assert found["chores"].has_ui_plugin is True
 
 
+def test_a_plugin_whose_ui_is_a_built_folder_says_so(tmp_path: Path) -> None:
+    # (29.2: an app plugin names the folder `make web` builds into, and discovery loads it: the
+    # generated page has to read the bundle the same way, or it says there is no UI plugin.)
+    harness = with_chores(Harness(tmp_path))
+    chores = harness.registry.get(SITES, "chores")
+    folder = a_bundle(tmp_path).dir
+    harness.registry.register(SITES, type("Chores", (chores,), {"ui_folder": folder}))
+
+    found = by_name(ui_of(harness))
+
+    assert found["chores"].has_ui_plugin is True
+
+
 def test_a_plugin_without_a_ui_says_it_has_none(tmp_path: Path) -> None:
     found = by_name(ui_of(with_chores(Harness(tmp_path))))
 
@@ -248,6 +261,18 @@ def test_guidance_that_names_its_operations_is_no_problem(tmp_path: Path) -> Non
     found = _with_guidance(tmp_path, hide=["chores_*"], labels={"chores_do": "Do it"})
 
     assert found.problems == []
+
+
+def test_guidance_is_read_from_a_built_folder_too(tmp_path: Path) -> None:
+    # (29.2: the bundle comes from `ui_folder`, and 24.7's check is not skipped because of it.)
+    harness = with_chores(Harness(tmp_path))
+    chores = harness.registry.get(SITES, "chores")
+    folder = a_bundle(tmp_path, generated={"hide": ["chores_nope_*"]}).dir
+    harness.registry.register(SITES, type("Chores", (chores,), {"ui_folder": folder}))
+
+    found = by_name(ui_of(harness))["chores"]
+
+    assert found.problems == ['its guidance hides "chores_nope_*", and no operation matches']
 
 
 def test_a_plugin_without_a_ui_has_no_problems(tmp_path: Path) -> None:

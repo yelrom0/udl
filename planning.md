@@ -146,7 +146,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [~] 28.7 Auto merge: a project's merger (a reviewer or manager agent) merges its ready PRs after its own review
 - [ ] **Phase 29: Screens (Google Stitch) and the `orch` UI plugin**
   - [x] 29.1 **(Claude)** A new Stitch project: design system from the shell's daisyUI themes; every screen below, desktop and phone, light and dark ([web/plugins/orch/design/](web/plugins/orch/design/README.md)); the user's changes (Q-8) made
-  - [ ] 29.2 The `orch` UI plugin's skeleton: manifest, routes, stores, live data
+  - [~] 29.2 The `orch` UI plugin's skeleton: manifest, routes, stores, live data
   - [ ] 29.3 Inbox (home)
   - [ ] 29.4 Board: features and tasks, agents' queues, the suggested list, drag to assign
   - [ ] 29.5 Feature and task pages (specs, notes, links)

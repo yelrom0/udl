@@ -33,6 +33,7 @@ import logging
 from abc import ABC
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, ForwardRef, TypeIs
 from uuid import UUID
 
@@ -375,6 +376,10 @@ class AppPlugin[S: AppSettings](ABC):
     # The UI it brings of its own (a bundle, 18.7), or None to get the generated page
     # (24.3-24.6) as every other plugin does.
     ui: ClassVar[UIBundle | None] = None
+    ui_folder: ClassVar[Path | None] = None
+    """The folder `make web` builds its UI into, when it brings one that way: discovery loads it
+    (a checkout that has not built it has no bundle, and a broken one is a problem it reports)
+    rather than the plugin loading it at import."""
 
     service: UDLService | None = None
     """The service this app runs on, set by the supervisor when it makes it: what its operations

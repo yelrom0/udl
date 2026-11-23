@@ -72,7 +72,7 @@ def _bundles(
     found: dict[str, tuple[UIBundle, str | None]] = {}
     problems: list[UIBundleProblem] = []
     for info, cls in plugins.entries():
-        bundle = _bundle_of(info.name, info.origin, cls)
+        bundle = _bundle_of(info.origin, cls)
         if isinstance(bundle, UIBundleProblem):
             problems.append(bundle)
         elif bundle is not None:
@@ -123,11 +123,29 @@ def _folders(settings: Settings) -> list[Path]:
     return found
 
 
-def _bundle_of(name: str, origin: str, cls: type[object]) -> UIBundle | UIBundleProblem | None:
-    """The bundle a plugin brings (its `ui`), a problem when that is not a bundle, or None."""
-    bundle = getattr(cls, "ui", None)
-    if bundle is None:
+def bundle_of(cls: type[object]) -> UIBundle | None:
+    """The UI bundle a plugin brings: its `ui`, or the folder `ui_folder` names once `make web`
+    has built it. None when it brings none (or has not built it). Raises PluginError for a bundle
+    that is there but broken: the plugin list says that as a problem, and the generated page has
+    no UI plugin rather than a failed request.
+
+    A folder is loaded here, not by the plugin at import: a checkout that has not built it has no
+    bundle, and a half-written one cannot take the CLI, the API and the MCP down."""
+    folder = getattr(cls, "ui_folder", None)
+    if isinstance(folder, Path):
+        return UIBundle.of(folder) if (folder / "manifest.json").is_file() else None
+    ui = getattr(cls, "ui", None)
+    if ui is None:
         return None
-    if not isinstance(bundle, UIBundle):
-        return UIBundleProblem(origin=origin, error=f"{name}'s ui is {bundle!r}, not a UIBundle")
-    return bundle
+    if not isinstance(ui, UIBundle):
+        name = getattr(cls, "name", cls.__name__)
+        raise PluginError(f"{name}'s ui is {ui!r}, not a UIBundle")
+    return ui
+
+
+def _bundle_of(origin: str, cls: type[object]) -> UIBundle | UIBundleProblem | None:
+    """`bundle_of`, with a bundle that is there but broken said as a problem."""
+    try:
+        return bundle_of(cls)
+    except PluginError as e:
+        return UIBundleProblem(origin=origin, error=e.message)

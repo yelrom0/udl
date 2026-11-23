@@ -18,6 +18,7 @@ import contextlib
 import logging
 from collections.abc import Awaitable, Sequence
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol
 from uuid import UUID
 
@@ -386,6 +387,13 @@ _RUNNERS: tuple[str, ...] = ("orch", "runners")
 __all__ = ["Orch"]
 
 
+UI_FOLDER: Final[Path] = (Path(__file__).parent / "ui").resolve()
+"""Its own UI (29.2), where `make web` builds it: the folder is the bundle (`manifest.json` and
+its files). It is named here and loaded by discovery, so a checkout that has not built the web
+tree has no bundle (the generated page alone) and a half-written one is a problem on
+`GET /ui/plugins.json` rather than an import that takes the CLI, the API and the MCP down."""
+
+
 class Orch(AppPlugin[OrchSettings]):
     """udl's orchestrator: the projects and repos it tracks, and the agents that work them.
 
@@ -396,7 +404,9 @@ class Orch(AppPlugin[OrchSettings]):
     title = "Orchestrator"
     summary = "The work udl tracks: projects, repos, features, tasks, links and notes."
     settings_model = OrchSettings
-    # (Its UI is Phase 29's, a udl.ui plugin's manifest; until then the generated page.)
+    # (Its own UI (29.2), built beside this module by `make web`; until it is built, the
+    # generated page alone.)
+    ui_folder = UI_FOLDER
 
     @classmethod
     def record_kinds(cls) -> Sequence[type[Record]]:
