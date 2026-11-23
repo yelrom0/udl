@@ -59,9 +59,13 @@ async def workers_ended(before: set[threading.Thread]) -> None:
     with a future on this loop and never awaits it, and the worker's last act is a callback on that
     loop. If the test has ended first, the loop is closed, the worker raises "Event loop is closed",
     and the warning fails whichever test runs next on the worker (CI's four workers on four cores
-    did, and so does pinning this module to one core)."""
+    did, and so does pinning this module to one core).
+
+    A worker that has already ended is not listed, so finding none is no failure here; that the
+    workers are found by their name at all is test_an_open_connections_worker_is_found_by_name's."""
     for worker in aiosqlite_workers() - before:
         await asyncio.to_thread(worker.join, 10)
+        assert not worker.is_alive(), f"{worker.name} did not end"
 
 
 def table_names(path: Path) -> set[str]:
@@ -129,13 +133,25 @@ async def test_a_database_that_cannot_be_opened_raises_database_error(tmp_path: 
     )
     before = aiosqlite_workers()
 
-    with pytest.raises(DatabaseError, match="'broken' database") as excinfo:
-        await db.connect()
+    try:
+        with pytest.raises(DatabaseError, match="'broken' database") as excinfo:
+            await db.connect()
 
-    assert "unable to open database file" in str(excinfo.value)
-    assert await db.health() is False
-    await db.close()
-    await workers_ended(before)  # (each failed open left one: see workers_ended)
+        assert "unable to open database file" in str(excinfo.value)
+        assert await db.health() is False
+        await db.close()
+    finally:
+        # (Also when an assertion above fails: a worker left behind would fail the next test.)
+        await workers_ended(before)  # (each failed open left one: see workers_ended)
+
+
+async def test_an_open_connections_worker_is_found_by_name(make_db: MakeDB) -> None:
+    """(workers_ended finds aiosqlite's workers by their thread's name: if a later aiosqlite names
+    them otherwise, this fails, rather than the wait quietly finding nothing.)"""
+    before = aiosqlite_workers()
+
+    async with make_db("udl.db"):
+        assert aiosqlite_workers() - before
 
 
 async def test_database_errors_are_raised_as_database_error(
