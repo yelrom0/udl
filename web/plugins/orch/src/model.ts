@@ -95,6 +95,7 @@ export interface Inbox {
 /** A feature: a part of a project's work (26.2). */
 export interface Feature {
 	readonly key: string;
+	readonly project: string;
 	readonly title: string;
 	readonly status: string;
 }
@@ -109,7 +110,8 @@ export interface Task {
 	readonly size: Size | null;
 	readonly needs: readonly string[];
 	readonly spec: string;
-	readonly hold: boolean;
+	/** Why it is held (built now, merged later), or null. */
+	readonly hold: string | null;
 	readonly blocked_on: string | null;
 	readonly repo: string;
 	readonly branch: string;
@@ -188,13 +190,22 @@ export interface Estimate {
 	readonly worked: string;
 }
 
+/** One of the review bot's items, as udl reads it out of the bot's comment (27.6). */
+export interface ReviewItem {
+	/** Its number in the comment (`1`, or empty for a row without one). */
+	readonly number: string;
+	/** Where it is; anything but `fixed` keeps the pull from being ready. */
+	readonly status: string;
+	readonly text: string;
+}
+
 /** Whether a task's pull may be merged, and what it waits on (27.6). */
 export interface Readiness {
 	readonly ready: boolean;
 	readonly held: boolean;
 	readonly blockers: readonly string[];
 	readonly pending: readonly string[];
-	readonly open_items: readonly string[];
+	readonly open_items: readonly ReviewItem[];
 	readonly waited: number;
 }
 
@@ -364,10 +375,15 @@ export function inboxOf(value: JsonValue | undefined): Inbox {
 	};
 }
 
-/** A feature, as `orch_list_features` sends it. */
-function featureOf(value: JsonValue): Feature {
+/** A feature, as `orch_list_features` and a feature's page send it. */
+function featureOf(value: JsonValue | undefined): Feature {
 	const one = asObject(value);
-	return { key: asText(one.key), title: asText(one.title), status: asText(one.status) };
+	return {
+		key: asText(one.key),
+		project: asText(one.project),
+		title: asText(one.title),
+		status: asText(one.status),
+	};
 }
 
 /** A task, as `orch_list_tasks` sends it. */
@@ -382,7 +398,7 @@ function taskOf(value: JsonValue | undefined): Task {
 		size: asSize(one.size),
 		needs: asArray(one.needs).map((need) => asText(need)),
 		spec: asText(one.spec),
-		hold: asFlag(one.hold),
+		hold: typeof one.hold === "string" && one.hold !== "" ? one.hold : null,
 		blocked_on: typeof one.blocked_on === "string" ? one.blocked_on : null,
 		repo: asText(one.repo),
 		branch: asText(one.branch),
@@ -536,11 +552,7 @@ export function featureInfoOf(value: JsonValue | undefined): FeatureInfo {
 	const info = asObject(value);
 	const feature = asObject(info.feature);
 	return {
-		feature: {
-			key: asText(feature.key),
-			title: asText(feature.title),
-			status: asText(feature.status),
-		},
+		feature: featureOf(feature),
 		spec: asText(feature.spec),
 		status: asText(feature.status),
 		totals: totalsOf(info.totals),
@@ -558,14 +570,7 @@ export function taskInfoOf(value: JsonValue | undefined, unblocks: readonly stri
 		info.feature === null || info.feature === undefined ? null : asObject(info.feature);
 	return {
 		task: taskOf(info.task),
-		feature:
-			feature === null
-				? null
-				: {
-						key: asText(feature.key),
-						title: asText(feature.title),
-						status: asText(feature.status),
-					},
+		feature: feature === null ? null : featureOf(feature),
 		links: asArray(info.links).map(linkOf),
 		notes: asArray(info.notes).map(noteOf),
 		questions: asArray(info.questions).map(questionOf),
@@ -583,6 +588,33 @@ export function estimateOf(value: JsonValue | undefined): Estimate {
 	};
 }
 
+/**
+ * An ISO 8601 duration (`PT4H`, `PT1H20M`, `P1DT2H`) as a person reads it (`4h`, `1h 20m`,
+ * `1d 2h`): what `orch_estimate` sends for what a task takes and has taken. Anything that is not
+ * one is handed back as it came, so a caller may show it as it is.
+ */
+export function durationOf(value: string): string {
+	const match = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$/.exec(value);
+	if (match === null) {
+		return value;
+	}
+	const [, days, hours, minutes, seconds] = match;
+	const parts: string[] = [];
+	if (days !== undefined) {
+		parts.push(`${days}d`);
+	}
+	if (hours !== undefined) {
+		parts.push(`${hours}h`);
+	}
+	if (minutes !== undefined) {
+		parts.push(`${minutes}m`);
+	}
+	if (seconds !== undefined) {
+		parts.push(`${seconds}s`);
+	}
+	return parts.length === 0 ? "0m" : parts.join(" ");
+}
+
 /** Whether a pull may be merged, as `orch_readiness` sends it. */
 export function readinessOf(value: JsonValue | undefined): Readiness {
 	const one = asObject(value);
@@ -591,7 +623,14 @@ export function readinessOf(value: JsonValue | undefined): Readiness {
 		held: asFlag(one.held),
 		blockers: asArray(one.blockers).map((blocker) => asText(blocker)),
 		pending: asArray(one.pending).map((kind) => asText(kind)),
-		open_items: asArray(one.open_items).map((item) => asText(item)),
+		open_items: asArray(one.open_items).map((value) => {
+			const item = asObject(value);
+			return {
+				number: asText(item.number),
+				status: asText(item.status),
+				text: asText(item.text),
+			};
+		}),
 		waited: asNumber(one.waited),
 	};
 }

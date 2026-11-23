@@ -6,7 +6,12 @@ import { TaskPage } from "./task";
 /** What udl answers for 29.2: a ready task with a pull, a note, a question and a session. */
 const ANSWERS: Record<string, unknown> = {
 	orch_get_task: {
-		feature: { key: "29", title: "Screens and the orch UI plugin", status: "active" },
+		feature: {
+			key: "29",
+			project: "udl",
+			title: "Screens and the orch UI plugin",
+			status: "active",
+		},
 		task: {
 			key: "29.2",
 			feature: "29",
@@ -30,13 +35,13 @@ const ANSWERS: Record<string, unknown> = {
 		notes: [{ at: "2026-11-24T01:00:00Z", author: "claude", note_kind: "review", text: "Clean." }],
 		questions: [{ key: "Q-8", title: "Screens", state: "answered", task: "29.2" }],
 	},
-	orch_estimate: { size: "L", estimate: "4h", worked: "1h 20m" },
+	orch_estimate: { size: "L", estimate: "PT4H", worked: "PT1H20M" },
 	orch_readiness: {
 		ready: false,
 		held: false,
 		blockers: ["CI is red"],
 		pending: ["ci"],
-		open_items: ["a nit in docs"],
+		open_items: [{ number: "1", status: "open", text: "a nit in docs" }],
 		waited: 42,
 	},
 	orch_list_tasks: {
@@ -139,9 +144,87 @@ describe("a task's page (29.5)", () => {
 
 		expect(fake.calls.find((one) => one.name === "orch_move_task")?.request).toEqual({
 			key: "29.2",
+			project: "udl",
 			to: "in_progress",
 		});
 		expect(fake.calls.filter((one) => one.name === "orch_get_task").length).toBe(before + 1);
+	});
+
+	it("leaves a person's name as a name: only an agent has a page", async () => {
+		const fake = fakeCtx((name) => {
+			if (name === "orch_get_task") {
+				return {
+					...(ANSWERS.orch_get_task as object),
+					task: {
+						key: "29.2",
+						feature: "29",
+						title: "Held",
+						state: "blocked",
+						assignee: "human:owner",
+					},
+				};
+			}
+			return ANSWERS[name] as never;
+		});
+		render(<TaskPage ctx={fake.ctx} params={{ key: "29.2" }} path="tasks/$key" search={{}} />);
+		await read();
+
+		expect(screen.getByText("human:owner")).toBeTruthy();
+		expect(screen.queryByRole("link", { name: "human:owner" })).toBeNull();
+	});
+
+	it("says why it is held", async () => {
+		const fake = fakeCtx((name) => {
+			if (name === "orch_get_task") {
+				return {
+					...(ANSWERS.orch_get_task as object),
+					task: {
+						key: "29.2",
+						feature: "29",
+						title: "Held",
+						state: "ready",
+						hold: "built now, merged later",
+					},
+				};
+			}
+			return ANSWERS[name] as never;
+		});
+		render(<TaskPage ctx={fake.ctx} params={{ key: "29.2" }} path="tasks/$key" search={{}} />);
+		await read();
+
+		expect(screen.getByText("Held: built now, merged later")).toBeTruthy();
+	});
+
+	it("offers the states it may move to now, after a move", async () => {
+		const fake = fakeCtx((name) => ANSWERS[name] as never);
+		const { rerender } = render(
+			<TaskPage ctx={fake.ctx} params={{ key: "29.2" }} path="tasks/$key" search={{}} />,
+		);
+		await read();
+
+		fireEvent.change(screen.getByRole("combobox", { name: "Move to" }), {
+			target: { value: "blocked" },
+		});
+		expect((screen.getByRole("combobox", { name: "Move to" }) as HTMLSelectElement).value).toBe(
+			"blocked",
+		);
+
+		// (The task moves on, and "blocked" is the state it is in now — not a move it may make.)
+		const moved = fakeCtx((name) => {
+			if (name === "orch_get_task") {
+				return {
+					...(ANSWERS.orch_get_task as object),
+					task: { key: "29.2", feature: "29", title: "Moved", state: "blocked" },
+				};
+			}
+			return ANSWERS[name] as never;
+		});
+		rerender(<TaskPage ctx={moved.ctx} params={{ key: "29.2" }} path="tasks/$key" search={{}} />);
+		await settle();
+
+		const box = screen.getByRole("combobox", { name: "Move to" }) as HTMLSelectElement;
+		expect([...box.options].map((one) => one.value)).not.toContain("blocked");
+		expect(box.value).toBe("open");
 	});
 
 	it("adds a note to the task's timeline", async () => {
@@ -158,6 +241,7 @@ describe("a task's page (29.5)", () => {
 		expect(fake.calls.find((one) => one.name === "orch_add_note")?.request).toEqual({
 			owner_kind: "task",
 			owner: "29.2",
+			project: "udl",
 			note_kind: "progress",
 			text: "The bot is happy.",
 		});
@@ -257,6 +341,7 @@ describe("a task's page's quiet edges (29.5)", () => {
 		expect(fake.calls.find((one) => one.name === "orch_add_link")?.request).toEqual({
 			owner_kind: "task",
 			owner: "29.2",
+			project: "udl",
 			link_kind: "pull",
 			url: "https://github.com/yelrom0/udl/commit/abc1234",
 		});

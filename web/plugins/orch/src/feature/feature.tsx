@@ -27,8 +27,10 @@ function likely(forecast: string | null): string {
  */
 export const FeaturePage: Component<RouteProps> = ({ ctx, params }) => {
 	const key = params.key ?? "";
-	const { info, points, error, refresh } = useFeature(ctx, key);
+	const { info, points, pulls, error, refresh } = useFeature(ctx, key);
 	const feature = info?.feature ?? null;
+	// (Every write names the project: a feature's own answer says which one it is.)
+	const project = feature?.project ?? "";
 	const reading = info === null && error === null;
 	return (
 		<Page title={`Feature ${key}`}>
@@ -45,7 +47,7 @@ export const FeaturePage: Component<RouteProps> = ({ ctx, params }) => {
 						</div>
 						<SpecCard
 							onSave={async (spec) => {
-								await ctx.call("orch_set_feature", { key, spec });
+								await ctx.call("orch_set_feature", { key, project, spec });
 								await refresh();
 							}}
 							spec={info.spec}
@@ -54,16 +56,18 @@ export const FeaturePage: Component<RouteProps> = ({ ctx, params }) => {
 						<Tasks
 							onAdd={async (title) => {
 								// (No key: udl takes the feature's next one.)
-								await ctx.call("orch_set_task", { feature: key, title });
+								await ctx.call("orch_set_task", { feature: key, project, title });
 								await refresh();
 							}}
 							onSplit={async (task, into) => {
 								await ctx.call("orch_split_task", {
 									key: task,
+									project,
 									into: into.map((title) => ({ title })),
 								});
 								await refresh();
 							}}
+							pulls={pulls}
 							tasks={info.tasks}
 						/>
 						<Notes
@@ -72,6 +76,7 @@ export const FeaturePage: Component<RouteProps> = ({ ctx, params }) => {
 								await ctx.call("orch_add_note", {
 									owner_kind: "feature",
 									owner: key,
+									project,
 									...note,
 								});
 								await refresh();
@@ -92,6 +97,7 @@ export const FeaturePage: Component<RouteProps> = ({ ctx, params }) => {
 								await ctx.call("orch_add_link", {
 									owner_kind: "feature",
 									owner: key,
+									project,
 									...link,
 								});
 								await refresh();

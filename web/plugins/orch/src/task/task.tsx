@@ -1,6 +1,7 @@
 import type { RouteProps } from "@udl/ui-sdk";
 import type { Component } from "@udl/ui-sdk/react";
 import { useTask } from "../hooks";
+import { durationOf } from "../model";
 import { Page, Said } from "../page";
 import { Links } from "../parts/links";
 import { Notes } from "../parts/notes";
@@ -17,8 +18,10 @@ import { Keys, PullCard, SessionLine, StateBox } from "./parts";
  */
 export const TaskPage: Component<RouteProps> = ({ ctx, params }) => {
 	const key = params.key ?? "";
-	const { info, estimate, readiness, session, error, refresh } = useTask(ctx, key);
+	const { info, estimate, readiness, session, agents, error, refresh } = useTask(ctx, key);
 	const task = info?.task ?? null;
+	// (Every write names the project: the task's feature says which one it is.)
+	const project = info?.feature?.project ?? "";
 	const reading = info === null && error === null;
 	return (
 		<Page title={`Task ${key}`}>
@@ -44,17 +47,17 @@ export const TaskPage: Component<RouteProps> = ({ ctx, params }) => {
 						<h2 className="text-xl font-semibold">{task.title}</h2>
 						<SizeChip size={task.size} />
 						{estimate !== null && estimate.estimate !== null && (
-							<span className="text-xs opacity-70">{`${estimate.estimate} expected`}</span>
+							<span className="text-xs opacity-70">{`${durationOf(estimate.estimate)} expected`}</span>
 						)}
 						{estimate !== null && estimate.worked !== "" && (
-							<span className="text-xs opacity-70">{`${estimate.worked} worked`}</span>
+							<span className="text-xs opacity-70">{`${durationOf(estimate.worked)} worked`}</span>
 						)}
 					</div>
 					<div className="grid gap-4 lg:grid-cols-3">
 						<div className="flex flex-col gap-4 lg:col-span-2">
 							<SpecCard
 								onSave={async (spec) => {
-									await ctx.call("orch_set_task", { key, spec });
+									await ctx.call("orch_set_task", { key, project, spec });
 									await refresh();
 								}}
 								spec={task.spec}
@@ -66,6 +69,7 @@ export const TaskPage: Component<RouteProps> = ({ ctx, params }) => {
 									await ctx.call("orch_add_note", {
 										owner_kind: "task",
 										owner: key,
+										project,
 										...note,
 									});
 									await refresh();
@@ -78,7 +82,7 @@ export const TaskPage: Component<RouteProps> = ({ ctx, params }) => {
 									wrote(
 										ctx,
 										async () => {
-											await ctx.call("orch_move_task", { key, to });
+											await ctx.call("orch_move_task", { key, project, to });
 										},
 										refresh,
 									)
@@ -89,17 +93,21 @@ export const TaskPage: Component<RouteProps> = ({ ctx, params }) => {
 								<h2 className="text-sm font-semibold">Assignee</h2>
 								{task.assignee === null ? (
 									<p className="text-sm opacity-70">Nobody.</p>
-								) : (
+								) : agents.includes(task.assignee) ? (
 									<a
 										className="link link-hover text-sm"
 										href={`/ui/p/orch/agents/${encodeURIComponent(task.assignee)}`}
 									>
 										{task.assignee}
 									</a>
+								) : (
+									// (A person, `human:<name>`, or an agent udl no longer has: no page to go to.)
+									<span className="text-sm">{task.assignee}</span>
 								)}
 								{task.blocked_on !== null && (
 									<p className="text-xs opacity-70">{`Waiting on ${task.blocked_on}`}</p>
 								)}
+								{task.hold !== null && <p className="text-xs opacity-70">{`Held: ${task.hold}`}</p>}
 								{task.branch !== "" && (
 									<p className="font-mono text-xs opacity-70">{task.branch}</p>
 								)}
@@ -118,6 +126,7 @@ export const TaskPage: Component<RouteProps> = ({ ctx, params }) => {
 									await ctx.call("orch_add_link", {
 										owner_kind: "task",
 										owner: key,
+										project,
 										...link,
 									});
 									await refresh();

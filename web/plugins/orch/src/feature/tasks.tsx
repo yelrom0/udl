@@ -1,11 +1,16 @@
 import { useState } from "react";
+import { messageOf } from "../json";
 import { KeyLink } from "../keyLink";
+import { LinkChip } from "../linkChip";
 import type { Task } from "../model";
 import { SizeChip } from "../sizeChip";
+import type { OpenPull } from "../stores/feature";
 
 /** What `<Tasks>` is given: a feature's tasks, and what the page may do to them. */
 export interface TasksProps {
 	readonly tasks: readonly Task[];
+	/** The pull open on each task, by its key (Q-8: it wears it as a chip). */
+	readonly pulls: Readonly<Record<string, OpenPull>>;
 	/** Add one by its title; given nothing, the feature cannot grow from here. */
 	readonly onAdd?: ((title: string) => Promise<void>) | undefined;
 	/** Split one into these titles; given nothing, none may be split. */
@@ -24,7 +29,7 @@ function linesOf(text: string): string[] {
  * A feature's tasks (29.5), in udl's order: each key a link to its page, its title, its state
  * and its size. A box adds a task, and a task can be split into pieces — one title a line.
  */
-export function Tasks({ tasks, onAdd, onSplit }: TasksProps) {
+export function Tasks({ tasks, pulls, onAdd, onSplit }: TasksProps) {
 	const [title, setTitle] = useState("");
 	const [splitting, setSplitting] = useState<string | null>(null);
 	const [pieces, setPieces] = useState("");
@@ -36,7 +41,7 @@ export function Tasks({ tasks, onAdd, onSplit }: TasksProps) {
 			await work();
 			setError(null);
 		} catch (failure) {
-			setError(failure instanceof Error ? failure.message : String(failure));
+			setError(messageOf(failure));
 		} finally {
 			setBusy(false);
 		}
@@ -61,6 +66,14 @@ export function Tasks({ tasks, onAdd, onSplit }: TasksProps) {
 									{task.state}
 								</span>
 								<SizeChip size={task.size} />
+								{pulls[task.key] !== undefined && (
+									<LinkChip
+										kind="pull"
+										state={{}}
+										title={task.title}
+										url={(pulls[task.key] as OpenPull).url}
+									/>
+								)}
 								{onSplit !== undefined && (
 									<button
 										className="btn btn-xs btn-ghost"

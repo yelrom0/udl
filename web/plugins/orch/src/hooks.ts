@@ -62,6 +62,7 @@ const NO_FEATURE: FeatureState = {
 	info: null,
 	points: { points: 0, merged: 0, forecast: null },
 	pace: 0,
+	pulls: {},
 	error: null,
 };
 
@@ -71,6 +72,7 @@ const NO_TASK: TaskState = {
 	estimate: null,
 	readiness: null,
 	session: null,
+	agents: [],
 	error: null,
 };
 

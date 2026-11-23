@@ -45,8 +45,11 @@ export function StateBox({
 	readonly onMove: (to: string) => Promise<void>;
 }) {
 	const moves = movesFrom(state);
-	const [to, setTo] = useState(moves[0] ?? "");
+	const [chosen, setChosen] = useState(moves[0] ?? "");
 	const [busy, setBusy] = useState(false);
+	// (After a move, the state it was in is no longer a move: what was chosen falls back to the
+	// first one the task may make now, rather than pointing at a state the box does not offer.)
+	const to = moves.includes(chosen) ? chosen : (moves[0] ?? "");
 	return (
 		<section aria-label="State" className="flex flex-col gap-2">
 			<div className="flex items-center gap-2">
@@ -61,7 +64,7 @@ export function StateBox({
 						aria-label="Move to"
 						className="select select-xs select-bordered"
 						onChange={(event) => {
-							setTo(event.target.value);
+							setChosen(event.target.value);
 						}}
 						value={to}
 					>
@@ -142,7 +145,9 @@ export function PullCard({
 							<p className="text-xs font-semibold">The bot still lists</p>
 							<ul aria-label="Open items" className="list-inside list-disc text-xs">
 								{readiness.open_items.map((item) => (
-									<li key={item}>{item}</li>
+									<li key={`${item.number}-${item.text}`}>
+										<span className="badge badge-ghost badge-xs">{item.status}</span> {item.text}
+									</li>
 								))}
 							</ul>
 						</div>

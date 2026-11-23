@@ -54,6 +54,8 @@ describe("a task's store (29.5)", () => {
 		expect(state.estimate?.estimate).toBe("4h");
 		expect(state.readiness?.blockers).toEqual(["CI is red"]);
 		expect(state.session).toEqual({ agent: "deepseek-a", id: "s-1", state: "running" });
+		// (The names an assignee may be, so a page links only the agents it has.)
+		expect(state.agents).toEqual(["deepseek-a"]);
 		loaded.stop();
 	});
 
@@ -77,13 +79,13 @@ describe("a task's store (29.5)", () => {
 		loaded.stop();
 	});
 
-	it("reads the task's feature's tasks for what it unblocks, and nothing else's", async () => {
+	it("reads the project's tasks for what it unblocks, not only its feature's", async () => {
 		const fake = fakeCtx((name) => ANSWERS[name] as never);
 		const loaded = taskStore(fake.ctx, "29.2");
 		await settle();
 
+		// (The project's tasks: what a task unblocks may be in another feature.)
 		expect(fake.calls.find((one) => one.name === "orch_list_tasks")?.request).toEqual({
-			feature: "29",
 			project: "udl",
 		});
 		loaded.stop();

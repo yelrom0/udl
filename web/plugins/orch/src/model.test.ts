@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	asSize,
 	boardOf,
+	durationOf,
 	estimateOf,
 	featureInfoOf,
 	inboxOf,
@@ -222,7 +223,7 @@ describe("a feature's and a task's pages (29.5)", () => {
 					repo: "yelrom0/udl",
 					branch: "feat/29.2-ui-skeleton",
 					blocked_on: "CI",
-					hold: true,
+					hold: "built now, merged later",
 				},
 				links: [{ link_kind: "pull", url: "https://github.com/o/r/pull/80" }],
 				notes: [{ at: "2026-11-24T01:00:00Z", author: "claude", note_kind: "note", text: "ok" }],
@@ -235,7 +236,8 @@ describe("a feature's and a task's pages (29.5)", () => {
 		expect(info.task.spec).toBe("## It");
 		expect(info.task.branch).toBe("feat/29.2-ui-skeleton");
 		expect(info.task.blocked_on).toBe("CI");
-		expect(info.task.hold).toBe(true);
+		// (A hold is why it is held, not a flag.)
+		expect(info.task.hold).toBe("built now, merged later");
 		expect(info.feature?.key).toBe("29");
 		expect(info.notes[0]?.text).toBe("ok");
 		expect(info.questions[0]?.key).toBe("Q-8");
@@ -266,17 +268,28 @@ describe("a feature's and a task's pages (29.5)", () => {
 			held: true,
 			blockers: ["CI is red", "the bot has 2 items"],
 			pending: ["the bot"],
-			open_items: ["a nit"],
+			open_items: [{ number: "1", status: "open", text: "a nit" }],
 			waited: 42,
 		});
 		expect(readiness.ready).toBe(false);
 		expect(readiness.held).toBe(true);
 		expect(readiness.blockers).toEqual(["CI is red", "the bot has 2 items"]);
-		expect(readiness.open_items).toEqual(["a nit"]);
+		expect(readiness.open_items).toEqual([{ number: "1", status: "open", text: "a nit" }]);
 		expect(readiness.waited).toBe(42);
 
 		expect(estimateOf(undefined).size).toBeNull();
 		expect(readinessOf(undefined).blockers).toEqual([]);
+	});
+
+	it("reads a duration as a person reads it, and anything else as it came", () => {
+		// (What `orch_estimate` sends: an ISO 8601 duration.)
+		expect(durationOf("PT4H")).toBe("4h");
+		expect(durationOf("PT1H20M")).toBe("1h 20m");
+		expect(durationOf("P1DT2H30M")).toBe("1d 2h 30m");
+		expect(durationOf("PT0S")).toBe("0s");
+		expect(durationOf("P")).toBe("0m");
+		expect(durationOf("4h")).toBe("4h");
+		expect(durationOf("")).toBe("");
 	});
 
 	it("finds the session a task is in, among the agents' (29.6's page takes it)", () => {

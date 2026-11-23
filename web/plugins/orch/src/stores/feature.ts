@@ -12,11 +12,20 @@ export interface FeaturePoints {
 	readonly forecast: string | null;
 }
 
-/** What a feature's page holds: the feature, its progress row, and the project's pace. */
+/** A pull that is open on a task (Q-8: the chip on a feature's task row). */
+export interface OpenPull {
+	readonly number: number;
+	readonly url: string;
+}
+
+/** What a feature's page holds: the feature, its progress row, the project's pace, and the
+ * pulls open on its tasks. */
 export interface FeatureState {
 	readonly info: FeatureInfo | null;
 	readonly points: FeaturePoints;
 	readonly pace: number;
+	/** The pull open on each task, by its key. */
+	readonly pulls: Readonly<Record<string, OpenPull>>;
 	readonly error: string | null;
 }
 
@@ -39,6 +48,7 @@ export function featureStore(ctx: UIContext, key: string): Loaded<FeatureState> 
 		info: null,
 		points: { points: 0, merged: 0, forecast: null },
 		pace: 0,
+		pulls: {},
 		error: null,
 	}));
 	let stopped = false;
@@ -51,13 +61,18 @@ export function featureStore(ctx: UIContext, key: string): Loaded<FeatureState> 
 			const project = asText(asObject(asObject(info).feature).project);
 			// (The progress is beside the feature: if udl cannot answer it, the page says so of its
 			// own card and draws the rest.)
-			const progress = await orNone(ctx.call("orch_progress", { project }));
+			const [progress, merge] = await Promise.all([
+				orNone(ctx.call("orch_progress", { project })),
+				// (Q-8: each task with an open pull wears it as a chip.)
+				orNone(ctx.call("orch_merge_list", { project })),
+			]);
 			if (!stopped) {
 				const feature = featureInfoOf(info);
 				store.setState({
 					info: feature,
 					points: pointsOf(progress, feature.feature.key),
 					pace: asNumber(asObject(progress).pace),
+					pulls: pullsOf(merge),
 					error: null,
 				});
 			}
@@ -83,6 +98,22 @@ export function featureStore(ctx: UIContext, key: string): Loaded<FeatureState> 
 			}
 		},
 	};
+}
+
+/** The pull open on each task, from `orch_merge_list`'s four lists (a merged or done one is not
+ * open, so it is not there). */
+function pullsOf(merge: JsonValue | undefined): Record<string, OpenPull> {
+	const pulls: Record<string, OpenPull> = {};
+	const list = asObject(merge);
+	for (const row of [...asArray(list.ready), ...asArray(list.coming), ...asArray(list.held)]) {
+		const one = asObject(row);
+		const task = asText(one.task);
+		if (task === "") {
+			continue;
+		}
+		pulls[task] = { number: asNumber(one.number), url: asText(one.url) };
+	}
+	return pulls;
 }
 
 /** One feature's row of `orch_progress`, by its key. */

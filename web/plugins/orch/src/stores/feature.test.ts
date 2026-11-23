@@ -20,6 +20,29 @@ const ANSWERS: Record<string, unknown> = {
 		links: [],
 		notes: [{ at: "2026-11-24T01:00:00Z", author: "claude", note_kind: "note", text: "hi" }],
 	},
+	orch_merge_list: {
+		project: "udl",
+		ready: [
+			{
+				task: "29.3",
+				feature: "29",
+				title: "The inbox",
+				number: 99,
+				url: "https://github.com/yelrom0/udl/pull/99",
+			},
+		],
+		coming: [
+			{
+				task: "29.2",
+				feature: "29",
+				title: "The skeleton",
+				number: 98,
+				url: "https://github.com/yelrom0/udl/pull/98",
+			},
+		],
+		held: [],
+		done: [{ task: "28.7", feature: "28", title: "Merged", number: 78, url: "u" }],
+	},
 	orch_progress: {
 		project: "udl",
 		features: [
@@ -44,6 +67,13 @@ describe("a feature's store (29.5)", () => {
 		// (Its row: what its tasks come to, and when they are likely done.)
 		expect(state.points).toEqual({ points: 13, merged: 5, forecast: "2026-12-01" });
 		expect(state.pace).toBe(1.5);
+		// (The pulls open on its tasks: ready or coming, never a merged one.)
+		expect(state.pulls["29.3"]).toEqual({
+			number: 99,
+			url: "https://github.com/yelrom0/udl/pull/99",
+		});
+		expect(state.pulls["29.2"]?.number).toBe(98);
+		expect(state.pulls["28.7"]).toBeUndefined();
 		expect(state.error).toBeNull();
 		loaded.stop();
 	});

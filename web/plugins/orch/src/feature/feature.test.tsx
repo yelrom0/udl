@@ -21,6 +21,21 @@ const ANSWERS: Record<string, unknown> = {
 		links: [{ link_kind: "pull", url: "https://github.com/o/r/pull/80", title: "80", state: {} }],
 		notes: [{ at: "2026-11-24T01:00:00Z", author: "claude", note_kind: "review", text: "ok" }],
 	},
+	orch_merge_list: {
+		project: "udl",
+		ready: [
+			{
+				task: "29.3",
+				feature: "29",
+				title: "The inbox",
+				number: 99,
+				url: "https://github.com/yelrom0/udl/pull/99",
+			},
+		],
+		coming: [],
+		held: [],
+		done: [],
+	},
 	orch_progress: {
 		project: "udl",
 		features: [
@@ -70,6 +85,21 @@ describe("a feature's page (29.5)", () => {
 		).toBe("/ui/p/orch/tasks/29.3");
 	});
 
+	it("wears the pull open on a task as a chip on its row (Q-8)", async () => {
+		const fake = fakeCtx((name) => ANSWERS[name] as never);
+		render(<FeaturePage ctx={fake.ctx} params={{ key: "29" }} path="features/$key" search={{}} />);
+		await read();
+
+		const rows = within(screen.getByRole("list", { name: "Tasks" })).getAllByRole("listitem");
+		// (29.3 has a pull ready to merge; 29.2 has none.)
+		expect(
+			within(rows[1] as HTMLElement)
+				.getByRole("link", { name: /#99/ })
+				.getAttribute("href"),
+		).toBe("https://github.com/yelrom0/udl/pull/99");
+		expect(within(rows[0] as HTMLElement).queryByRole("link", { name: /#/ })).toBeNull();
+	});
+
 	it("draws its links and its notes", async () => {
 		const fake = fakeCtx((name) => ANSWERS[name] as never);
 		render(<FeaturePage ctx={fake.ctx} params={{ key: "29" }} path="features/$key" search={{}} />);
@@ -96,6 +126,7 @@ describe("a feature's page (29.5)", () => {
 
 		expect(fake.calls.find((one) => one.name === "orch_set_feature")?.request).toEqual({
 			key: "29",
+			project: "udl",
 			spec: "## New",
 		});
 		expect(fake.calls.filter((one) => one.name === "orch_get_feature").length).toBe(before + 1);
@@ -115,6 +146,7 @@ describe("a feature's page (29.5)", () => {
 		// (No key: udl takes the feature's next one.)
 		expect(fake.calls.find((one) => one.name === "orch_set_task")?.request).toEqual({
 			feature: "29",
+			project: "udl",
 			title: "A new page",
 		});
 	});
@@ -134,6 +166,7 @@ describe("a feature's page (29.5)", () => {
 
 		expect(fake.calls.find((one) => one.name === "orch_split_task")?.request).toEqual({
 			key: "29.3",
+			project: "udl",
 			into: [{ title: "The inbox page" }, { title: "The inbox store" }],
 		});
 	});

@@ -21,6 +21,8 @@ export interface TaskState {
 	readonly estimate: Estimate | null;
 	readonly readiness: Readiness | null;
 	readonly session: TaskSession | null;
+	/** Every agent's name: an assignee that is one of them is a page to go to. */
+	readonly agents: readonly string[];
 	readonly error: string | null;
 }
 
@@ -47,26 +49,24 @@ export function taskStore(ctx: UIContext, key: string): Loaded<TaskState> {
 		estimate: null,
 		readiness: null,
 		session: null,
+		agents: [],
 		error: null,
 	}));
 	let stopped = false;
 	const reads = coalesced(
 		async () => {
 			const info = await ctx.call("orch_get_task", { key });
-			// (The project is the feature's own answer: `orch_estimate` names it, and the feature's
-			// tasks are read within it.)
-			const of = asObject(asObject(info).feature);
-			const feature = asText(of.key);
-			const project = asText(of.project);
+			// (The project is the feature's own answer: `orch_estimate` names it.)
+			const project = asText(asObject(asObject(info).feature).project);
 			// (Each of these is beside the task, not the task: one udl cannot answer — no GitHub
 			// account is connected, say — leaves its own card unsaid, and the page stands.)
 			const [estimate, readiness, agents, tasks] = await Promise.all([
 				orNone(ctx.call("orch_estimate", { project, task: key })),
 				orNone(ctx.call("orch_readiness", { key, project })),
 				orNone(ctx.call("orch_list_agents", {})),
-				feature === ""
-					? undefined
-					: await orNone(ctx.call("orch_list_tasks", { feature, project })),
+				// (The project's tasks, not its feature's: what a task unblocks may be in another
+				// feature, and `needs` names a key of the project.)
+				orNone(ctx.call("orch_list_tasks", { project })),
 			]);
 			if (!stopped) {
 				store.setState({
@@ -74,6 +74,7 @@ export function taskStore(ctx: UIContext, key: string): Loaded<TaskState> {
 					estimate: estimate === undefined ? null : estimateOf(estimate),
 					readiness: readiness === undefined ? null : readinessOf(readiness),
 					session: sessionOfTask(agents, key),
+					agents: namesOf(agents),
 					error: null,
 				});
 			}
@@ -99,6 +100,11 @@ export function taskStore(ctx: UIContext, key: string): Loaded<TaskState> {
 			}
 		},
 	};
+}
+
+/** Every agent's name, as `orch_list_agents` sends them. */
+function namesOf(agents: JsonValue | undefined): string[] {
+	return asArray(asObject(agents).items).map((item) => asText(asObject(asObject(item).agent).name));
 }
 
 /** The keys of the tasks whose `needs` name `key` (in the order udl lists them). */
