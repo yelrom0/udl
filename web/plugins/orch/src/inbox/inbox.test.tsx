@@ -282,6 +282,50 @@ describe("the inbox (29.3)", () => {
 		});
 	});
 
+	it("keeps each question's own answer in flight: one finishing leaves the other waiting", async () => {
+		const settle = new Map<string, (value: JsonValue) => void>();
+		const held = new Map<string, Promise<JsonValue>>();
+		for (const key of ["Q-8", "Q-11"]) {
+			held.set(
+				key,
+				new Promise<JsonValue>((resolve) => {
+					settle.set(key, resolve);
+				}),
+			);
+		}
+		const two = inbox({
+			questions: [question(), question({ key: "Q-11", title: "And this one?", options: ["Yes"] })],
+		});
+		const fake = fakeCtx((name, request) => {
+			if (name === "orch_answer") {
+				return held.get(String(request.key)) ?? {};
+			}
+			return two;
+		});
+		render(<InboxPage path="inbox" params={{}} search={{}} ctx={fake.ctx} />);
+		await waitFor(() => {
+			expect(screen.getByRole("button", { name: "Keep it" })).toBeTruthy();
+		});
+
+		fireEvent.click(screen.getByRole("button", { name: "Keep it" }));
+		fireEvent.click(screen.getByRole("button", { name: "Yes" }));
+		await waitFor(() => {
+			expect(screen.getAllByText("Answering…")).toHaveLength(2);
+		});
+
+		// (The first one's answer lands and its read finishes: the second is still on its way.)
+		settle.get("Q-8")?.({});
+		await waitFor(() => {
+			expect(screen.getAllByText("Answering…")).toHaveLength(1);
+		});
+		expect((screen.getByRole("button", { name: "Yes" }) as HTMLButtonElement).disabled).toBe(true);
+
+		settle.get("Q-11")?.({});
+		await waitFor(() => {
+			expect(screen.queryByText("Answering…")).toBeNull();
+		});
+	});
+
 	it("keeps the question when udl refuses the answer, and says why", async () => {
 		const fake = fakeCtx((name) => {
 			if (name === "orch_answer") {

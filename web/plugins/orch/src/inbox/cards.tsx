@@ -52,11 +52,6 @@ function Count({
 	);
 }
 
-/** "1 question", "2 questions": a count and its word. */
-function counted(count: number, one: string, many: string): string {
-	return count === 1 ? `1 ${one}` : `${count} ${many}`;
-}
-
 /**
  * The three counts the inbox is (28.4), side by side: what is ready to merge (and what is coming
  * or held behind it), what is being asked (and how much of it blocks), and what only a person

@@ -28,7 +28,9 @@ const WHAT = "What needs you: questions, PRs ready to merge, and things only a p
 export const InboxPage: Component<RouteProps> = ({ ctx }) => {
 	const { inbox, error, refresh } = useInbox(ctx);
 	const now = useNow();
-	const [answering, setAnswering] = useState<string | null>(null);
+	// (Each question's own answer, so one landing does not take the "Answering…" off another
+	// that is still out — two different questions may be answered at once.)
+	const [answering, setAnswering] = useState<ReadonlySet<string>>(() => new Set());
 	const [refused, setRefused] = useState<string | null>(null);
 
 	if (error !== null) {
@@ -50,7 +52,7 @@ export const InboxPage: Component<RouteProps> = ({ ctx }) => {
 
 	const project = inbox.project;
 	const answer = (question: Question, choice: string): void => {
-		setAnswering(question.key);
+		setAnswering((was) => new Set(was).add(question.key));
 		setRefused(null);
 		void (async () => {
 			try {
@@ -67,7 +69,11 @@ export const InboxPage: Component<RouteProps> = ({ ctx }) => {
 			// yet — so the read comes before the button is taken back: a second click while it is
 			// out would answer a question that is already answered.)
 			await refresh();
-			setAnswering(null);
+			setAnswering((was) => {
+				const left = new Set(was);
+				left.delete(question.key);
+				return left;
+			});
 		})();
 	};
 

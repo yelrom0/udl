@@ -5,7 +5,7 @@ import { Card, KeyLink } from "./cards";
 export interface QuestionProps {
 	readonly question: Question;
 	/** The question being answered, when one is (so its buttons say so and take no click). */
-	readonly answering: string | null;
+	readonly answering: ReadonlySet<string>;
 	answer(question: Question, choice: string): void;
 }
 
@@ -39,7 +39,7 @@ function About({ question }: { readonly question: Question }) {
 
 /** The buttons a question offers: one click per option, or the thread when it offers none. */
 function Answers({ question, answering, answer }: QuestionProps) {
-	const busy = answering === question.key;
+	const busy = answering.has(question.key);
 	if (question.options.length === 0) {
 		return (
 			<a className="link text-sm" href={threadOf(question.key)}>
@@ -116,7 +116,7 @@ export function Questions({
 	answer,
 }: {
 	readonly questions: readonly Question[];
-	readonly answering: string | null;
+	readonly answering: ReadonlySet<string>;
 	answer(question: Question, choice: string): void;
 }) {
 	return (
