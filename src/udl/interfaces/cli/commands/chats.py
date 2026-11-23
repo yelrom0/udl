@@ -228,8 +228,8 @@ def an_answer(line: str) -> bool:
 
 def decided(typed: str) -> tuple[ChatDecision, str]:
     """What the person's line means: the decision, and why when it is denied (any line that is
-    not one of the words that allow denies it, and is passed on as the reason — a word matched
-    whole, so "actually, don't" denies and never allows)."""
+    not one of the words that allow, alone, denies it, and is passed on as the reason — so
+    "actually, don't" and "chat about it first" deny, and never allow)."""
     words = typed.strip().lower().split()
     word = words[0] if len(words) == 1 else ""  # (only the word alone allows: a sentence denies)
     if word in _ONCE:
