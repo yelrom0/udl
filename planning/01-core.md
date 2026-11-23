@@ -317,13 +317,16 @@ build-backend = "uv_build"
 
 ```make
 export UV_LOCKED := 1                # every uv command fails if uv.lock is out of date with pyproject.toml
+PYTEST_WORKERS ?= 4                  # pytest-xdist workers, not `auto`: up to three suites run at once on
+                                     # jeff-wiggle and each worker starts its own database containers;
+                                     # CI runs PYTEST_WORKERS=0 (one process) until its parallel runs are reliable
 
 check:
 	uv lock --check
 	uv run ruff format --check .
 	uv run ruff check .
 	uv run pyright
-	uv run pytest --cov              # branch coverage + the 90 % gate live in [tool.coverage]
+	uv run pytest --cov -n $(PYTEST_WORKERS)  # branch coverage + the 90 % gate live in [tool.coverage]
 ```
 
 It deliberately avoids `uv sync --locked`: that sync is exact, so it would uninstall extras installed with

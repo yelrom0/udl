@@ -3,6 +3,12 @@
 # installed with `uv sync --all-extras` (e.g. playwright) are kept between runs.
 export UV_LOCKED := 1
 
+# pytest's workers (pytest-xdist, the user's call on 23 Nov 2026): four locally, where up to three
+# suites run at once and each worker starts its own database containers; CI runs `make check
+# PYTEST_WORKERS=0` (one process, as before) until its parallel runs are reliable: its first two
+# had a test miss its timing and an aiosqlite thread outlive its loop, which no local run did.
+PYTEST_WORKERS ?= 4
+
 .PHONY: check check-py check-openapi check-web fmt test smoke web e2e openapi
 
 check: check-py check-openapi check-web
@@ -12,7 +18,7 @@ check-py:
 	uv run ruff format --check .
 	uv run ruff check .
 	uv run pyright
-	uv run pytest --cov
+	uv run pytest --cov -n $(PYTEST_WORKERS)
 
 # The API's schema, and the web client's types and fixtures, which are made from it: committed,
 # and regenerated with `make openapi` after any change to the API's routes.
