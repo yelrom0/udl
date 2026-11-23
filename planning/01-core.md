@@ -317,9 +317,9 @@ build-backend = "uv_build"
 
 ```make
 export UV_LOCKED := 1                # every uv command fails if uv.lock is out of date with pyproject.toml
-PYTEST_WORKERS ?= 4                  # pytest-xdist workers, not `auto`: up to three suites run at once on
-                                     # jeff-wiggle and each worker starts its own database containers;
-                                     # CI runs PYTEST_WORKERS=0 (one process) until its parallel runs are reliable
+PYTEST_WORKERS ?= 4                  # pytest-xdist workers, here and on CI, not `auto`: up to three suites
+                                     # run at once on jeff-wiggle, each worker starts its own database
+                                     # containers, and GitHub's runners have four cores
 
 check:
 	uv lock --check

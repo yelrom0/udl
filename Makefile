@@ -3,10 +3,9 @@
 # installed with `uv sync --all-extras` (e.g. playwright) are kept between runs.
 export UV_LOCKED := 1
 
-# pytest's workers (pytest-xdist, the user's call on 23 Nov 2026): four locally, where up to three
-# suites run at once and each worker starts its own database containers; CI runs `make check
-# PYTEST_WORKERS=0` (one process, as before) until its parallel runs are reliable: its first two
-# had a test miss its timing and an aiosqlite thread outlive its loop, which no local run did.
+# pytest's workers (pytest-xdist, the user's call on 23 Nov 2026): four, not `auto`, here and on CI.
+# Locally up to three suites run at once and each worker starts its own database containers; GitHub's
+# runners have four cores. `make check PYTEST_WORKERS=0` runs one process.
 PYTEST_WORKERS ?= 4
 
 .PHONY: check check-py check-openapi check-web fmt test smoke web e2e openapi
