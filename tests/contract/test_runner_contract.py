@@ -49,6 +49,7 @@ from udl.plugins.runners.base import (
     TurnReason,
 )
 from udl.plugins.runners.claude_code import ClaudeCode, ClaudeCodeOptions
+from udl.plugins.runners.codex import Codex, CodexOptions, CodexSessions
 from udl.plugins.runners.command import (
     CommandOutput,
     CommandRunner,
@@ -89,6 +90,9 @@ def _case(plugin: type[AnAgentRunner], options: RunnerOptions, build: Build) -> 
 
 
 HARNESS = Path(__file__).resolve().parents[1] / "support" / "fake_harness.py"
+"""The fake harness, as a command a command runner runs (it answers as the harnesses do)."""
+CODEX_HARNESS = Path(__file__).resolve().parents[1] / "support" / "codex_harness.py"
+"""The fake codex CLI: `--version`, `login status`, and `exec`/`exec resume` printing JSON lines."""
 """The fake harness, as a command a command runner runs (it answers as the harnesses do)."""
 
 ENDLESS = timedelta(hours=24)
@@ -137,6 +141,23 @@ def _claude_case() -> Case:
     return _case(ClaudeCode, CLAUDE, _claude)
 
 
+# (`CODEX` is above: the same fake harness, as the CLI a codex runner runs — its `--json` lines.)
+CODEX = CodexOptions(cli=[sys.executable, str(CODEX_HARNESS)])
+
+
+def _codex(shell: RecordingShell, store: Sessions) -> AnAgentRunner:
+    return Codex(
+        CODEX,
+        shell=shell,
+        clock=FakeClock(),
+        sessions=CodexSessions(specs=store.specs, sent=store.sent),
+    )
+
+
+def _codex_case() -> Case:
+    return _case(Codex, CODEX, _codex)
+
+
 def _command_case() -> Case:
     return _case(CommandRunner, COMMAND, _command)
 
@@ -170,6 +191,7 @@ def _opencode_case() -> Case:
 
 CASES: dict[str, Callable[[], Case]] = {
     "claude-code": _claude_case,
+    "codex": _codex_case,
     "command": _command_case,
     "fake": _fake_case,
     "opencode": _opencode_case,

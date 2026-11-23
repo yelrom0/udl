@@ -1,0 +1,10 @@
+{"type": "thread.started", "thread_id": "01a1fc8d-14a2-7b80-b0a7-309f18201dc7"}
+{"type": "item.completed", "item": {"id": "item_0", "type": "error", "message": "Model metadata for `qwen3.6-35b-a3b` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."}}
+{"type": "turn.started"}
+{"type": "item.started", "item": {"id": "item_1", "type": "reasoning", "text": "Listing the folder."}}
+{"type": "item.started", "item": {"id": "item_2", "type": "command_execution", "command": "ls -la", "aggregated_output": "", "exit_code": null, "status": "in_progress"}}
+{"type": "item.completed", "item": {"id": "item_2", "type": "command_execution", "command": "ls -la", "aggregated_output": "total 8\ndrwxr-xr-x  2 user user 4096 Nov 21 16:00 .\n", "exit_code": 0, "status": "completed"}}
+{"type": "item.started", "item": {"id": "item_3", "type": "mcp_tool_call", "server": "udl", "tool": "get_status", "arguments": {}, "status": "in_progress"}}
+{"type": "item.completed", "item": {"id": "item_3", "type": "mcp_tool_call", "server": "udl", "tool": "get_status", "arguments": {}, "result": {"ok": true}, "status": "completed"}}
+{"type": "item.completed", "item": {"id": "item_4", "type": "agent_message", "text": "udl is up, and the folder is empty."}}
+{"type": "turn.completed", "usage": {"input_tokens": 6437, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "output_tokens": 22, "reasoning_output_tokens": 0}}

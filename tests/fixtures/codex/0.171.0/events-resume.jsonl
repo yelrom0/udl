@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"01a1fc8d-14a2-7b80-b0a7-309f18201dc7"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for `qwen3.6-35b-a3b` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Goodbye"}}
+{"type":"turn.completed","usage":{"input_tokens":12920,"cached_input_tokens":6458,"cache_write_input_tokens":0,"output_tokens":44,"reasoning_output_tokens":0}}
