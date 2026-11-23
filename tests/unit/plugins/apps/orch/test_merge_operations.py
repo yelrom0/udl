@@ -12,6 +12,7 @@ these tests register a fake `github` app that answers both (the real integration
 """
 
 # System Imports
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -24,9 +25,13 @@ from pydantic import BaseModel, ValidationError
 # Local Imports
 from support.clock import FakeClock
 from support.engine import registry, settings
+from support.git import git
+from udl.automations.events import EventRecord
 from udl.core.operations import OperationHints
 from udl.core.service import UDLService
+from udl.db.records import RecordQuery
 from udl.errors import ConfigError, DoesNotExist, NotAllowed, PluginError
+from udl.hosts import Host
 from udl.interfaces.security import Principal as Caller
 from udl.interfaces.security import PrincipalKind, current_principal
 from udl.plugins.apps.base import AppPlugin, AppRecords, AppSettings
@@ -53,15 +58,20 @@ from udl.plugins.apps.orch.models import (
 )
 from udl.plugins.apps.orch.plugin import Orch
 from udl.plugins.apps.orch.records import (
+    Agent,
+    AgentRecords,
     Feature,
     FeatureRecords,
     LinkRecords,
     NoteRecords,
     Project,
     ProjectRecords,
+    Repo,
+    RepoRecords,
     Task,
     TaskRecords,
 )
+from udl.plugins.apps.orch.workspace import prepare
 from udl.plugins.registry import APPS, PluginRegistry
 
 HEAD: str = "dc1fd19aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -724,3 +734,189 @@ async def test_promote_refuses_a_project_with_nothing_after_the_base(service: UD
 async def test_promote_refuses_a_task_that_is_not_there(service: UDLService) -> None:
     with pytest.raises(DoesNotExist, match=r"F-1\.9"):
         await service.call("orch_promote", PromoteRequest(tasks=["F-1.9"]))
+
+
+# ---------------------------------------------------------------------------------------------
+# What a merge leaves behind: the worktree goes, unless it cannot or must not yet
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def a_repo(tmp_path: Path) -> Path:
+    """A bare `origin` and a checkout of it, as 27.5's pushes have."""
+    (tmp_path / "work").mkdir()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    bare = tmp_path / "origin.git"
+    git("init", "--bare", "-b", "main", str(bare), cwd=tmp_path)
+    git("init", "-b", "main", cwd=checkout)
+    (checkout / "README.md").write_text("udl\n")
+    git("add", "README.md", cwd=checkout)
+    git("commit", "-m", "the first commit", cwd=checkout)
+    git("config", "user.name", "udl", cwd=checkout)
+    git("config", "user.email", "udl@example.com", cwd=checkout)
+    git("config", "commit.gpgsign", "false", cwd=checkout)
+    git("remote", "add", "origin", str(bare), cwd=checkout)
+    git("push", "-u", "origin", "main", cwd=checkout)
+    return tmp_path
+
+
+@pytest.fixture
+async def working(tmp_path: Path, a_repo: Path) -> AsyncIterator[UDLService]:
+    """The service, its repo and agent, and the task in a real worktree, ready to merge.
+
+    (The project has nothing after its base, so a person's merge makes the task `done`.)"""
+    async with UDLService(settings(tmp_path), registry=orch_registry()) as running:
+        await running.db.upsert_record(Host.local(str(a_repo / "work")))
+        records = AppRecords(running.db)
+        await ProjectRecords(records).save_project(
+            Project(name="udl", title="udl", review_bot="claude[bot]", promotion=[])
+        )
+        await FeatureRecords(records).save_feature(Feature(project="udl", key="F-1", title="It"))
+        await RepoRecords(records).save_repo(
+            Repo(
+                project="udl",
+                name="udl",
+                github="yelrom0/udl",
+                account="github:yelrom0",
+                base_branch="main",
+                gate=["true"],
+                checkouts={"local": str(a_repo / "checkout")},
+            )
+        )
+        await AgentRecords(records).save_agent(
+            Agent(name="deepseek-b", title="deepseek-b", runner="opencode", host="local")
+        )
+        tasks = TaskRecords(records)
+        await tasks.save_task(
+            Task(
+                project="udl",
+                feature="F-1",
+                key="F-1.1",
+                title="It",
+                repo="udl",
+                assignee="deepseek-b",
+            )
+        )
+        found = await tasks.task("udl", "F-1.1")
+        assert found is not None
+        await tasks.move(found, IN_PROGRESS, by=Principal(kind="system", role="start"))
+        started = await tasks.task("udl", "F-1.1")
+        assert started is not None
+        repo = await RepoRecords(records).repo("udl", "udl")
+        assert repo is not None
+        made = await prepare(
+            started,
+            repo=repo,
+            host=Host.local(str(a_repo / "work")),
+            shell=await running.hosts.shell("local"),
+        )
+        await tasks.save_task(
+            started.model_copy(update={"branch": made.branch, "worktree": made.path})
+        )
+        await LinkRecords(records).add(
+            project="udl",
+            owner_kind=OwnerKind.TASK,
+            owner="F-1.1",
+            kind="pull",
+            url="https://github.com/yelrom0/udl/pull/1",
+        )
+        ready = await tasks.task("udl", "F-1.1")
+        assert ready is not None
+        await tasks.move(ready, READY, by=Principal(kind="system", role="ready"))
+        yield running
+
+
+async def the_task(service: UDLService) -> Task:
+    """The task, as it is stored now."""
+    found = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
+    assert found is not None
+    return found
+
+
+async def notes_of(service: UDLService) -> list[str]:
+    """What the task's notes say, oldest first."""
+    found = await the_task(service)
+    notes = await NoteRecords(AppRecords(service.db)).for_owner(OwnerKind.TASK, found.id)
+    return [one.text for one in notes]
+
+
+async def merged_events(service: UDLService) -> list[EventRecord]:
+    """The `orch.task.merged` events stored so far."""
+    return await service.db.list_records(
+        EventRecord, RecordQuery(where={"type": "orch.task.merged"})
+    )
+
+
+async def test_a_merge_takes_the_worktree_and_the_branch_away(
+    working: UDLService, a_repo: Path
+) -> None:
+    task = await the_task(working)
+    assert task.worktree is not None
+    assert task.branch is not None
+    path, branch = Path(task.worktree), task.branch
+
+    found = await merged(working, key="F-1.1", confirm="yelrom0/udl#1")
+
+    assert found.state == DONE
+    assert not await asyncio.to_thread(path.exists)
+    assert git("branch", "--list", branch, cwd=a_repo / "checkout") == ""
+    after = await the_task(working)
+    assert (after.worktree, after.branch) == (None, None)
+
+
+async def test_a_worktree_that_cannot_be_taken_away_keeps_the_merge(
+    working: UDLService,
+) -> None:
+    """(The pull is merged whatever became of the checkout: the note says so, and the merge
+    still says it happened.)"""
+    repos = RepoRecords(AppRecords(working.db))
+    repo = await repos.repo("udl", "udl")
+    assert repo is not None
+    await repos.save_repo(repo.model_copy(update={"checkouts": {}}))
+
+    found = await merged(working, key="F-1.1", confirm="yelrom0/udl#1")
+
+    assert found.state == DONE
+    assert any("could not be taken away" in one for one in await notes_of(working))
+    after = await the_task(working)
+    assert after.worktree is not None
+    assert [one.data["task"] for one in await merged_events(working)] == ["F-1.1"]
+
+
+async def test_a_task_whose_agent_is_gone_keeps_its_worktree(working: UDLService) -> None:
+    """(udl cannot say which host it is on, so it says so rather than guessing this one.)"""
+    tasks = TaskRecords(AppRecords(working.db))
+    found = await the_task(working)
+    await tasks.save_task(found.model_copy(update={"assignee": "nobody-udl-knows"}))
+
+    merged_task = await merged(working, key="F-1.1", confirm="yelrom0/udl#1")
+
+    assert merged_task.state == DONE
+    assert any("does not know its agent's host" in one for one in await notes_of(working))
+    after = await the_task(working)
+    assert after.worktree is not None
+
+
+async def test_an_agent_s_own_merge_leaves_the_worktree_its_session_is_in(
+    working: UDLService,
+) -> None:
+    """(With `merge = agent` the agent merges from the worktree itself: taking it away mid-call
+    would take away the folder its own session is running in.)"""
+    await set_project(working, merge=MergePolicy.AGENT)
+    task = await the_task(working)
+    assert task.worktree is not None
+    path = Path(task.worktree)
+    caller = current_principal.set(
+        Caller(kind=PrincipalKind.AGENT, name="deepseek-b", role="implementer")
+    )
+    try:
+        found = await merged(working, key="F-1.1", confirm="yelrom0/udl#1")
+    finally:
+        current_principal.reset(caller)
+
+    assert found.state == MERGED
+    assert await asyncio.to_thread(path.exists)
+    assert any(
+        "until the session that merged it has ended" in one for one in await notes_of(working)
+    )

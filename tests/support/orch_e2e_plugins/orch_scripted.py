@@ -16,8 +16,8 @@ the file back without that turn, so each turn happens once. A step is one of:
 - `{"shell": ["git", "add", "-A"]}` — a program, in the session's own folder;
 - `{"wait": 0.1}` — a pause, for a turn that has to let the server get somewhere first.
 
-A step's answer is kept in `answers`, and the turn ends with the last one as its text. Nothing
-here reaches the network but udl's own MCP server.
+A turn ends with its last step's answer as its text. Nothing here reaches the network but udl's
+own MCP server.
 """
 
 # System Imports
@@ -26,7 +26,7 @@ import json
 from collections.abc import AsyncIterator, Mapping, Sequence
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import ClassVar, TypeGuard
 
 # Package Imports
 import httpx2
@@ -34,8 +34,6 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 
 # Local Imports
-from udl.clock import Clock
-from udl.hosts.shell import HostShell
 from udl.plugins.runners.base import (
     AgentEvent,
     AgentRunner,
@@ -54,14 +52,40 @@ STORE: dict[str, SessionSpec] = {}
 """What each session was started with, by id: a session outlives the runner object udl makes for
 each call, as a real harness's does."""
 
-ANSWERS: dict[str, Any] = {}
-"""What the last step of the last turn answered, for a test that reads the turn's text."""
-
 TURN_TIMEOUT: timedelta = timedelta(seconds=60)
 """How long one step gets (a tool call back into udl, or a program)."""
 
 
-def _chosen(turns: Sequence[dict[str, Any]], prompt: str) -> int | None:
+def _is_dict(value: object) -> TypeGuard[dict[str, object]]:
+    """Whether `value` is a turn, or a step: a mapping of JSON's own."""
+    return isinstance(value, dict)
+
+
+def _is_list(value: object) -> TypeGuard[list[object]]:
+    """Whether `value` is a list of JSON's own (the turns, or a turn's steps)."""
+    return isinstance(value, list)
+
+
+def _dicts(value: object, *, what: str) -> list[dict[str, object]]:
+    """`value` as a list of mappings (the turns, or a turn's steps), checked."""
+    if not _is_list(value):
+        raise ValueError(f"{what} is not a list: {value!r}")
+    found: list[dict[str, object]] = []
+    for one in value:
+        if not _is_dict(one):
+            raise ValueError(f"a {what}'s item is not an object: {one!r}")
+        found.append(one)
+    return found
+
+
+def _strings(value: object, *, what: str) -> list[str]:
+    """`value` as a list of strings (a program and its arguments), checked."""
+    if not _is_list(value):
+        raise ValueError(f"{what} is not a list: {value!r}")
+    return [str(one) for one in value]
+
+
+def _chosen(turns: Sequence[dict[str, object]], prompt: str) -> int | None:
     """Which turn this prompt is: the first whose `when` it says, else the first with no `when`.
 
     (The dispatcher may give a turn this script did not expect — it is waiting on the bot, say —
@@ -89,12 +113,6 @@ class ScriptedRunner(AgentRunner[ScriptedOptions]):
 
     name: ClassVar[str] = "scripted"
     options_model: ClassVar[type[RunnerOptions]] = ScriptedOptions
-    requires: ClassVar[tuple[Any, ...]] = ()
-
-    def __init__(
-        self, options: ScriptedOptions, *, shell: HostShell, clock: Clock, **rest: Any
-    ) -> None:
-        super().__init__(options, shell=shell, clock=clock)
 
     async def health(self) -> RunnerHealth:
         return RunnerHealth(installed=True, signed_in=True, version="scripted-1.0")
@@ -128,49 +146,56 @@ class ScriptedRunner(AgentRunner[ScriptedOptions]):
             yield TextDelta(text="Nothing to do yet.")
             yield TurnEnded(reason=TurnReason.DONE, text="Nothing to do yet.")
             return
-        steps = turns[chosen]["steps"]
+        steps = _dicts(turns[chosen]["steps"], what="turn")
         self._write([one for at, one in enumerate(turns) if at != chosen])
         said = ""
         for step in steps:
             if "wait" in step:
-                await asyncio.sleep(float(step["wait"]))
+                await asyncio.sleep(float(str(step["wait"])))
                 continue
             if "mcp" in step:
-                said = await self._call(spec, step["mcp"])
-                yield ToolFinished(name=str(step["mcp"].get("tool", "udl")), ok=True)
+                call = step["mcp"]
+                if not _is_dict(call):
+                    raise ValueError(f"An mcp step is not an object: {call!r}")
+                said = await self._call(spec, call)
+                yield ToolFinished(name=str(call.get("tool") or "udl"), ok=True)
                 continue
             if "shell" in step:
-                said = await self._run(spec, step["shell"])
+                said = await self._run(spec, _strings(step["shell"], what="shell"))
                 continue
             raise ValueError(f"A step is not one udl knows: {step!r}")
-        ANSWERS[session.id] = said
         yield TextDelta(text=str(said))
         yield TurnEnded(reason=TurnReason.DONE, text=str(said))
 
     # -- what a turn does -----------------------------------------------------------------------
 
-    def _turns(self) -> list[dict[str, Any]]:
+    def _turns(self) -> list[dict[str, object]]:
         """The turns still to run, oldest first."""
         path = Path(self.options.dir) / "turns.json"
         if not path.is_file():
             return []
-        loaded: list[dict[str, Any]] = json.loads(path.read_text())
-        return loaded
+        return _dicts(json.loads(path.read_text()), what="turns")
 
-    def _write(self, turns: Sequence[dict[str, Any]]) -> None:
+    def _write(self, turns: Sequence[dict[str, object]]) -> None:
         """The turns still to run, after the one just taken."""
         path = Path(self.options.dir) / "turns.json"
         path.write_text(json.dumps(list(turns)))
 
-    async def _call(self, spec: SessionSpec, step: Mapping[str, Any]) -> str:
+    async def _call(self, spec: SessionSpec, step: Mapping[str, object]) -> str:
         """One MCP call on udl, with the session's own token, as an agent's tool call is."""
         if spec.mcp is None:
             raise ValueError("The session was given no MCP endpoint to call.")
+        arguments = step.get("arguments")
+        asked: dict[str, object] = {}
+        if arguments is not None:
+            for one in _dicts([arguments], what="call"):
+                asked = one
         token = spec.mcp.token.get_secret_value() if spec.mcp.token is not None else ""
-        async with httpx2.AsyncClient(headers={"X-API-Key": token}, timeout=60) as http:
+        timeout = TURN_TIMEOUT.total_seconds()
+        async with httpx2.AsyncClient(headers={"X-API-Key": token}, timeout=timeout) as http:
             transport = streamable_http_client(spec.mcp.url, http_client=http)
             async with Client(transport) as client:
-                answer = await client.call_tool(str(step["tool"]), dict(step.get("arguments", {})))
+                answer = await client.call_tool(str(step.get("tool") or ""), asked)
         if answer.is_error:
             raise ValueError(f"The call failed: {answer.content}")
         return json.dumps(answer.structured_content, default=str)

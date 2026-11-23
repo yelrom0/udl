@@ -408,19 +408,27 @@ def _pushed(served: Served, fake: FakeGitHub, origin: Path, key: str) -> bool:
     return True
 
 
-def _the_listed(served: Served, key: str) -> dict[str, object] | None:
-    """The row ready to merge lists for the task, once it names the commit it is ready at."""
+def _a_new_head(served: Served, fake: FakeGitHub, origin: Path, key: str, was: str) -> bool:
+    """Whether the agent has pushed a head that is not `was`, with the pull moved to it."""
+    head = _the_head(served, origin, key)
+    if not head or head == was:
+        return False
+    pull = _the_pull(fake)
+    if pull is not None and pull["head_sha"] != head:
+        number = pull["number"]
+        assert isinstance(number, int)
+        fake.push(head, repo="yelrom0/udl", number=number)  # (as GitHub sees a branch push)
+    return pull is not None and pull["head_sha"] == head
+
+
+def _the_listed(served: Served, key: str) -> dict[str, object]:
+    """The row ready to merge lists for the task, once it names the commit it is ready at (an
+    empty one until it does: a row with no sha is not ready to merge)."""
     listed = _dict(served.json("orch", "merge-list", "--json"))
     rows = [row for row in (_dict(one) for one in _list(listed["ready"])) if row.get("task") == key]
     if not rows or not rows[0]["sha"]:
-        return None
+        return {}
     return rows[0]
-
-
-def _noted(served: Served, key: str, text: str) -> bool:
-    """Whether one of the task's notes says `text`."""
-    shown = _dict(served.json("orch", "tasks", "show", key, "--json"))
-    return any(text in str(_dict(one)["text"]) for one in _list(shown["notes"]))
 
 
 def _the_state(served: Served, key: str) -> str:
@@ -469,18 +477,12 @@ def test_the_whole_run(served: Served, github: tuple[FakeGitHub, str], tmp_path:
                 {"mcp": {"tool": "orch_push", "arguments": {"key": "1.1"}}},
                 when="The right way.",
             ),
-            # Once the bot has found one item: say what it is, and that it needs no change.
+            # Once the bot has found one item: fix it, and push the head that fixes it.
             a_turn(
-                {
-                    "mcp": {
-                        "tool": "orch_add_note",
-                        "arguments": {
-                            "owner_kind": "task",
-                            "owner": "1.1",
-                            "text": "The bot's item was a false alarm: the file already says it.",
-                        },
-                    }
-                },
+                {"shell": ["sh", "-c", "echo 'the right thing, said plainly' > README.md"]},
+                {"shell": ["git", "add", "-A"]},
+                {"shell": ["git", "commit", "-m", "fix: the file says it plainly"]},
+                {"mcp": {"tool": "orch_push", "arguments": {"key": "1.1"}}},
                 when="The file says the wrong thing",
             ),
             # Once the bot's verification is clean: say the pull is ready.
@@ -507,13 +509,13 @@ def test_the_whole_run(served: Served, github: tuple[FakeGitHub, str], tmp_path:
     # The agent pushes; the fake GitHub's pull is on the commit it pushed (as GitHub's is), and
     # the fake bot finds one item.
     served.wait_for("pushed", lambda: _pushed(served, fake, origin, "1.1"))
+    # (The head the first push made, read before the bot's item is there: the agent's turn for
+    # the fix is prompted by that item, and it must not have pushed by the time this is read.)
+    first = _the_head(served, origin, "1.1")
     fake.comments["yelrom0/udl#1"] = [comment_body(1, FIRST_REVIEW, login=BOT)]
-    served.wait_for(
-        "the false alarm answered",
-        lambda: _noted(served, "1.1", "was a false alarm"),
-    )
 
-    # The bot runs again, and its verification of the same head is clean.
+    # The agent fixes it and pushes again: a new head, which the pull is moved to.
+    served.wait_for("fixed", lambda: _a_new_head(served, fake, origin, "1.1", first))
     fake.comments["yelrom0/udl#1"] = [
         comment_body(1, FIRST_REVIEW, login=BOT),
         comment_body(2, CLEAN_REVIEW, login=BOT),
@@ -522,9 +524,13 @@ def test_the_whole_run(served: Served, github: tuple[FakeGitHub, str], tmp_path:
     # The agent says the pull is ready.
     served.wait_for("ready", lambda: _the_state(served, "1.1") == "ready")
 
-    # Ready to merge lists it, and a person merges it.
+    before = _dict(_dict(served.json("orch", "tasks", "show", "1.1", "--json"))["task"])
+    assert before["worktree"]
+    assert before["branch"]
+
+    # Ready to merge lists it at that head, and a person merges it.
     row = served.wait_for("listed for merging", lambda: _the_listed(served, "1.1"))
-    assert row is not None
+    assert row["sha"] == _the_head(served, origin, "1.1")
     served.cli(
         "orch",
         "merge",
@@ -536,10 +542,13 @@ def test_the_whole_run(served: Served, github: tuple[FakeGitHub, str], tmp_path:
         str(row["sha"]),
     )
 
-    # The task is done (a person merged, and nothing follows its base), its worktree is gone, and
-    # the answer it waited on is on its notes.
-    task = _dict(_dict(served.json("orch", "tasks", "show", "1.1", "--json"))["task"])
+    # The task is done (a person merged, and nothing follows its base), its worktree and its
+    # branch are gone, and the answer it waited on is on its notes.
+    shown = _dict(served.json("orch", "tasks", "show", "1.1", "--json"))
+    task = _dict(shown["task"])
     assert task["state"] == "done"
     assert task["worktree"] in (None, "")
-    notes = _list(_dict(served.json("orch", "tasks", "show", "1.1", "--json"))["notes"])
-    assert any("The right way." in str(_dict(note)["text"]) for note in notes)
+    assert task["branch"] in (None, "")
+    assert not Path(str(before["worktree"])).exists()
+    assert git("branch", "--list", str(before["branch"]), cwd=checkout) == ""
+    assert any("The right way." in str(_dict(note)["text"]) for note in _list(shown["notes"]))

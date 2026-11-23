@@ -2571,8 +2571,7 @@ class Orch(AppPlugin[OrchSettings]):
         )
         # (28.6: a merged task's worktree and branch are taken away, so the next merge is not
         # held up by a checkout of work that is already in `main`.)
-        if task.worktree and task.branch:
-            moved = await self._removed(service, moved, repo=await self._repo_of(task))
+        moved = await self._removed(service, moved, by=by)
         if moved.state != before:
             events = AppEvents(service.bus, self.name, self.event_types())
             await events.emit(
@@ -2589,32 +2588,48 @@ class Orch(AppPlugin[OrchSettings]):
             )
         return Merged(task=task.key, url=link, sha=pull.head_sha, state=moved.state)
 
-    async def _removed(
-        self, service: UDLService, task: stored.Task, *, repo: stored.Repo
-    ) -> stored.Task:
+    async def _removed(self, service: UDLService, task: stored.Task, *, by: str) -> stored.Task:
         """`task` with its worktree and its branch taken away, now that it is merged (27.5's
         `remove()`), and its record saying it has neither.
 
-        A removal that fails is written on the task's notes and is not a reason to un-merge it:
-        the pull is merged whatever became of the checkout, and a person can take it away."""
+        It never fails a merge: the pull is merged whatever became of the checkout, so anything
+        that stops a removal (a repo it cannot find, a host udl cannot reach, a checkout that is
+        already gone) is written on the task's notes and the task comes back as it was. Nor does
+        it take away the worktree of the agent that made the merge itself: that agent's session
+        is in the folder, so it stays until the session ends (28.8's checkout takes it away)."""
         if not task.worktree or not task.branch:
             return task
-        agent = await stored.AgentRecords(self.records).agent(task.assignee or "")
-        hosts = service.hosts
-        host = await hosts.get(agent.host if agent is not None else LOCAL)
-        found = space.Worktree(
-            host=host.name, path=task.worktree, branch=task.branch, base=repo.base_branch
-        )
+        if by == task.assignee:
+            return await self._left(
+                task, "its worktree stays until the session that merged it has ended"
+            )
         try:
+            agent = await stored.AgentRecords(self.records).agent(task.assignee or "")
+            if agent is None:
+                return await self._left(
+                    task,
+                    "its worktree could not be taken away: udl does not know its agent's host",
+                )
+            repo = await self._repo_of(task)
+            hosts = service.hosts
+            host = await hosts.get(agent.host)
+            found = space.Worktree(
+                host=host.name,
+                path=task.worktree,
+                branch=task.branch,
+                base=repo.base_branch,
+            )
             await space.remove(found, repo=repo, shell=await hosts.shell(host.name))
         except (PluginError, UDLError) as error:
-            await stored.NoteRecords(self.records).system(
-                OwnerKind.TASK, task.id, f"its worktree could not be taken away: {error}"
-            )
-            return task
+            return await self._left(task, f"its worktree could not be taken away: {error}")
         return await stored.TaskRecords(self.records).save_task(
             task.model_copy(update={"worktree": None, "branch": None})
         )
+
+    async def _left(self, task: stored.Task, why: str) -> stored.Task:
+        """`task` as it is, with `why` its worktree is still there on its notes."""
+        await stored.NoteRecords(self.records).system(OwnerKind.TASK, task.id, why)
+        return task
 
     async def promotion(self, request: PromotionRequest) -> PromotionList:
         """What a promotion would carry (28.3): the tasks merged and not done, per repo, for a

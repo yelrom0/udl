@@ -2218,6 +2218,7 @@ postgres = [
 [package.dev-dependencies]
 dev = [
     { name = "asyncssh" },
+    { name = "httpx2" },
     { name = "hypothesis" },
     { name = "pyright", extra = ["nodejs"] },
     { name = "pytest" },
@@ -2266,6 +2267,7 @@ provides-extras = ["browser", "postgres", "mongodb"]
 [package.metadata.requires-dev]
 dev = [
     { name = "asyncssh", specifier = ">=2.24.0" },
+    { name = "httpx2", specifier = ">=2.13.1" },
     { name = "hypothesis", specifier = ">=6.168.5" },
     { name = "pyright", extras = ["nodejs"], specifier = ">=1.1.414" },
     { name = "pytest", specifier = ">=9.1.1" },
