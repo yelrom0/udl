@@ -97,9 +97,12 @@ from udl.integrations.watchers import WatcherState, WatcherStatus
 from udl.plugins.apps.orch.models import (
     Action,
     AgentLine,
+    FeatureInfo,
     Inbox,
     InboxRequest,
+    Link,
     MergeList,
+    NoteInfo,
     Question,
 )
 from udl.plugins.downloaders.base import MediaCandidate, MediaKind
@@ -1302,6 +1305,80 @@ def secrets_status(console: Console, found: SecretsStatus) -> None:
             escape("\n".join(resolver.problems)),
         )
     console.print(table)
+
+
+def feature(console: Console, found: FeatureInfo) -> None:
+    """A feature with its tasks (26.6): the feature's own line and words, its tasks as a table of
+    the five columns a person reads (key, state, title, size, assignee), and each task's spec
+    under its own key.
+
+    The tasks used to be one table of every `Task` field, seventeen of them, so at 80 columns
+    every cell was `…`. The spec is not dropped: it is printed below, which is what Phase 26's
+    done-when asks (`features show` prints each task's spec). `--json` is the operation's own
+    answer, unchanged."""
+    one = found.feature
+    totals = found.totals
+    said = f"[bold]{escape(one.key)}[/]  {escape(one.title)}  [dim]{escape(one.status)}[/]"
+    # (What the tasks come to: 26.8's points, and the sizes are on the rows below.)
+    said += f"  [dim]points: {totals.points}"
+    if totals.points_merged:
+        said += f", {totals.points_merged} merged"
+    if totals.points_ready:
+        said += f", {totals.points_ready} ready"
+    if totals.unsized:
+        said += f", {totals.unsized} unsized"
+    said += "[/]"
+    console.print(said)
+    if one.spec:
+        console.print()
+        console.print(escape(one.spec), highlight=False)
+    console.print()
+    if not found.tasks:
+        console.print("[dim]No tasks.[/]")
+        return
+    table = Table("Key", "State", "Title", "Size", "Assignee", title="Tasks", title_justify="left")
+    for task in found.tasks:
+        table.add_row(
+            escape(task.key),
+            escape(str(task.state)),
+            escape(task.title),
+            escape(str(task.size) if task.size is not None else "-"),
+            escape(task.assignee or "-"),
+        )
+    console.print(table)
+    for task in found.tasks:
+        if not task.spec:
+            continue
+        console.print()
+        console.print(f"[bold]{escape(task.key)}[/]")
+        console.print(escape(task.spec), highlight=False)
+    _feature_links(console, found.links)
+    _feature_notes(console, found.notes)
+
+
+def _feature_links(console: Console, links: list[Link]) -> None:
+    """What points at the feature: its pulls and issues, kind and URL on one line."""
+    if not links:
+        return
+    console.print()
+    console.rule("[bold]Links[/]", align="left")
+    for link in links:
+        said = f"[bold]{escape(link.link_kind)}[/]  {escape(link.url)}"
+        if link.title:
+            said += f"  {escape(link.title)}"
+        console.print(said)
+
+
+def _feature_notes(console: Console, notes: list[NoteInfo]) -> None:
+    """The feature's notes, oldest first: who wrote it, what kind, and what it says."""
+    if not notes:
+        return
+    console.print()
+    console.rule("[bold]Notes[/]", align="left")
+    for note in notes:
+        console.print(f"[dim]{escape(note.author)} · {escape(str(note.note_kind))}[/]")
+        console.print(escape(note.text), highlight=False)
+        console.print()
 
 
 def inbox(console: Console, found: Inbox) -> None:

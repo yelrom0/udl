@@ -122,6 +122,7 @@ def _operations(ctx: Any) -> OperationRegistry:
 _PLUGIN_GROUPS = "udl.plugin_groups"
 
 PLUGIN_RENDERERS: Final[Mapping[str, Callable[..., None]]] = {
+    "orch_get_feature": render.feature,
     "orch_inbox": render.inbox,
 }
 """How the CLI draws the plugin operations whose own answer is not the default (`udl orch
