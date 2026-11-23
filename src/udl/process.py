@@ -182,12 +182,18 @@ async def run_process(
         )
     )
 
+    # (Until the program has ended, not only its output: a program can close its output and run
+    # on, and one that is exiting has closed it a moment before it is reaped. A cancel in that
+    # moment stops it too, rather than leaving it running past its caller with its transport
+    # outliving the loop.)
+    ended = asyncio.ensure_future(asyncio.gather(output, process.wait()))
+
     async def stop() -> None:
         await _stop(process, grace)
-        await output  # its pipes close as it exits
+        await ended  # its pipes close as it exits
 
     try:
-        while not (await asyncio.wait([output], timeout=interval))[0]:
+        while not (await asyncio.wait([ended], timeout=interval))[0]:
             if cancel.cancelled:
                 await stop()
                 raise Cancelled(cancelled)
@@ -197,9 +203,9 @@ async def run_process(
         cancel.cancel()
         await asyncio.shield(stop())
         raise
-    _, (stdout, cut_out), (stderr, cut_err) = output.result()
+    (_, (stdout, cut_out), (stderr, cut_err)), returncode = ended.result()
     return ProcessResult(
-        returncode=await process.wait(),
+        returncode=returncode,
         stdout=stdout.decode(errors="replace"),
         stderr=stderr.decode(errors="replace"),
         truncated=cut_out or cut_err,
