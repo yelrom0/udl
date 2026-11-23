@@ -209,8 +209,14 @@ async def _answered(service: UDLService, found: ChatInfo, request: UUID, line: s
     )
 
 
-_ANSWERS: Final = frozenset({"o", "once", "a", "allow", "c", "chat", "d", "deny", "denied"})
-"""What a line that answers a prompt is: one word, one of these (anything else is a message)."""
+_ONCE: Final = frozenset({"o", "once", "a", "allow"})
+"""The words that allow a request once."""
+_CHAT: Final = frozenset({"c", "chat"})
+"""The words that allow it for the rest of the chat."""
+_DENIED: Final = frozenset({"d", "deny", "denied"})
+"""The words that deny it."""
+_ANSWERS: Final = _ONCE | _CHAT | _DENIED
+"""What a line that answers a prompt is: one of these, alone (anything else is a message)."""
 
 
 def an_answer(line: str) -> bool:
@@ -222,11 +228,13 @@ def an_answer(line: str) -> bool:
 
 def decided(typed: str) -> tuple[ChatDecision, str]:
     """What the person's line means: the decision, and why when it is denied (any line that is
-    not one of the two allows denies it, and is passed on as the reason)."""
-    choice = typed.strip().lower()
-    if choice.startswith(("o", "a")):
+    not one of the words that allow denies it, and is passed on as the reason — a word matched
+    whole, so "actually, don't" denies and never allows)."""
+    words = typed.strip().lower().split()
+    word = words[0] if words else ""
+    if word in _ONCE:
         return ChatDecision.ALLOW_ONCE, ""
-    if choice.startswith("c"):
+    if word in _CHAT:
         return ChatDecision.ALLOW_CHAT, ""
     return ChatDecision.DENY, typed.strip() or "Denied in the terminal."
 

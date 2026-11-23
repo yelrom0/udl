@@ -119,7 +119,13 @@ def test_the_first_look_shows_nothing_that_was_already_there() -> None:
         ("c", ChatDecision.ALLOW_CHAT),
         ("chat", ChatDecision.ALLOW_CHAT),
         ("d", ChatDecision.DENY),
+        ("deny", ChatDecision.DENY),
         ("no, that is my repo", ChatDecision.DENY),
+        # (A word is matched whole: a sentence that starts with a letter is not an allow.)
+        ("actually, don't", ChatDecision.DENY),
+        ("absolutely not", ChatDecision.DENY),
+        ("cancel that", ChatDecision.DENY),
+        ("can you explain first?", ChatDecision.DENY),
     ],
 )
 def test_a_persons_answer_is_a_decision(typed: str, decision: ChatDecision) -> None:
