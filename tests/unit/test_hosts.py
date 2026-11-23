@@ -445,12 +445,14 @@ async def test_an_interaction_reads_nothing_when_nothing_is_printed() -> None:
 
 async def test_a_read_that_follows_buffered_text_waits_again() -> None:
     """A read that drains text it already had must not leave the next one returning "" at once."""
+    # (Each line in one write: under `-u`, print() writes its text and its newline separately, and
+    # a reader that wakes between the two gets "one", then "\n" on its own. On a busy machine it
+    # does: CI's four workers on four cores did, and so does pinning this test to one core.)
     talked = await local().interact(
         [
             sys.executable,
-            "-u",
             "-c",
-            "import time; print('one', flush=True); time.sleep(0.3); print('two')",
+            "import os, time; os.write(1, b'one\\n'); time.sleep(0.3); os.write(1, b'two\\n')",
         ]
     )
 

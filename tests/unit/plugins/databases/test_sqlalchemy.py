@@ -8,8 +8,10 @@ regression tests for the Phase 0 bugs (the per-class singleton, writes that were
 """
 
 # System Imports
+import asyncio
 import re
 import sqlite3
+import threading
 from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
@@ -41,6 +43,25 @@ def make_db(tmp_path: Path) -> MakeDB:
         return SQLAlchemyDatabase(connection(f"sqlite+aiosqlite:///{tmp_path / name}"))
 
     return make
+
+
+def aiosqlite_workers() -> set[threading.Thread]:
+    """The aiosqlite connections' worker threads running now (a thread's default name ends with
+    its target's)."""
+    return {t for t in threading.enumerate() if t.name.endswith("(_connection_worker_thread)")}
+
+
+async def workers_ended(before: set[threading.Thread]) -> None:
+    """Wait for the aiosqlite workers started since `before` to end, while this test's loop is
+    still open.
+
+    A connect that fails leaves its worker to stop on its own: aiosqlite (0.22.1) queues the stop
+    with a future on this loop and never awaits it, and the worker's last act is a callback on that
+    loop. If the test has ended first, the loop is closed, the worker raises "Event loop is closed",
+    and the warning fails whichever test runs next on the worker (CI's four workers on four cores
+    did, and so does pinning this module to one core)."""
+    for worker in aiosqlite_workers() - before:
+        await asyncio.to_thread(worker.join, 10)
 
 
 def table_names(path: Path) -> set[str]:
@@ -106,6 +127,7 @@ async def test_a_database_that_cannot_be_opened_raises_database_error(tmp_path: 
     db = SQLAlchemyDatabase(
         connection(f"sqlite+aiosqlite:///{tmp_path / 'missing' / 'udl.db'}", name="broken")
     )
+    before = aiosqlite_workers()
 
     with pytest.raises(DatabaseError, match="'broken' database") as excinfo:
         await db.connect()
@@ -113,6 +135,7 @@ async def test_a_database_that_cannot_be_opened_raises_database_error(tmp_path: 
     assert "unable to open database file" in str(excinfo.value)
     assert await db.health() is False
     await db.close()
+    await workers_ended(before)  # (each failed open left one: see workers_ended)
 
 
 async def test_database_errors_are_raised_as_database_error(
