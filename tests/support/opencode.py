@@ -124,12 +124,17 @@ class FakeShell(HostShell):
         self.status = status
         self.service = service if service is not None else json.dumps({"password": PASSWORD})
         self.runs: list[list[str]] = []
+        self.given: list[tuple[list[str], bytes | None]] = []
+        """Every argv it was asked to run, with what was written to it, in order (a sign-in's
+        key is on stdin, and this is how a test reads it)."""
         self.files: dict[str, str] = {}
         """The files written through the shell (an agent file, by its name)."""
         self.writes_fail = False
         """Whether writing a file fails."""
         self.auths = "[]"
         """What `opencode auth list --format json` prints."""
+        self.signed_out = False
+        """Whether `codex login status` says Not logged in (a runner that signs in with a key)."""
         self.streams: list[tuple[list[str], str]] = []
         """Every argv it was asked to stream, and what it answered (an install's output)."""
         self.started: list[list[str]] = []
@@ -151,6 +156,7 @@ class FakeShell(HostShell):
         tail: bool = False,
     ) -> ProcessResult:
         self.runs.append(list(argv))
+        self.given.append((list(argv), stdin))
         answered = self._answer(argv, stdin=stdin)
         if answered.returncode != 0 and check:
             # (As the real shell does: a command that fails is PluginFailed, not a result.)
@@ -163,6 +169,10 @@ class FakeShell(HostShell):
         """What this fake says to `argv` (before the shell's own failure rule is applied)."""
         if argv[1:4] == ["auth", "list", "--format"]:
             return ProcessResult(returncode=0, stdout=self.auths, stderr="")
+        # (Before the generic `status` below: `codex login status` ends in `status` too.)
+        if argv[1:3] == ["login", "status"]:
+            said = "Not logged in" if self.signed_out else "Logged in using ChatGPT"
+            return ProcessResult(returncode=0, stdout=f"{said}\n", stderr="")
         if argv[-1] == "status":
             return ProcessResult(returncode=0, stdout=f"{self.status}\n", stderr="")
         if argv[-1] == "--version":

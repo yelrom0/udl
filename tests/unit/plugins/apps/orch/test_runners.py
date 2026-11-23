@@ -40,6 +40,7 @@ from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.plugin import Orch
 from udl.plugins.apps.orch.settings import OrchSettings
 from udl.plugins.registry import RUNNERS, PluginRegistry
+from udl.plugins.runners.codex import Codex, CodexOptions, CodexSessions
 from udl.plugins.runners.manage import SetupRunnerRequest
 from udl.plugins.runners.opencode import OpenCode, OpenCodeOptions
 from udl.plugins.secrets.base import SecretRef, SecretStore
@@ -202,6 +203,87 @@ def _opencode_against(fake: FakeOpenCode) -> type[OpenCode]:
             )
 
     return Runner
+
+
+def _codex_against(fake_shell: FakeShell) -> type[Codex]:
+    """The real `codex` runner, on a fake shell (its host's programs are a test's)."""
+
+    class Runner(Codex):
+        def __init__(self, options: CodexOptions, *, shell: HostShell, clock: Clock) -> None:
+            super().__init__(
+                options, shell=fake_shell, clock=clock, sessions=CodexSessions(specs={})
+            )
+
+    return Runner
+
+
+async def test_a_setup_signs_codex_in_with_the_key(tmp_path: Path) -> None:
+    """`orch_runner_setup` end to end for codex: udl has an OpenAI key, so the runner signs Codex
+    in with it — `codex login --with-api-key`, the key on stdin and in no argv."""
+    shell = FakeShell()
+    shell.signed_out = True  # (codex is not signed in: the fake says so, as the CLI does)
+    registry = PluginRegistry.discover(builtin_only=True)
+    registry.register(RUNNERS, _codex_against(shell))
+    service = UDLService(
+        settings(tmp_path),
+        registry=registry,
+        clock=FakeClock(),
+        secrets=MemorySecretStore(SecretsSettings()),
+    )
+
+    def shell_for(found: Host) -> FakeShell:
+        return shell
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("udl.hosts.manager.shell_for", shell_for)
+        async with service:
+            await service.db.upsert_record(Host.local("/w"))
+            await connection(service.db, name="oa", plugin="openai", ref=OPENAI_REF)
+            await service.secrets.set(SecretRef(OPENAI_REF), SecretStr("sk-openai"))
+            app = await service.apps.get("orch")
+            assert isinstance(app, Orch)
+
+            setup = await app.runner_setup(
+                SetupRunnerRequest(host="local", runner="codex"), service=service
+            )
+
+    assert setup.files == ["~/.codex/rules/udl.rules"]
+    [[argv, stdin]] = [given for given in shell.given if "--with-api-key" in given[0]]
+    assert argv[-2:] == ["login", "--with-api-key"]
+    assert stdin == b"sk-openai"
+    assert "sk-openai" not in " ".join(argv)
+
+
+async def test_a_setup_leaves_a_codex_that_is_signed_in_alone(tmp_path: Path) -> None:
+    """A setup runs whenever udl has an OpenAI connection, so it must not move a host the user
+    signed in with the ChatGPT plan to the key: codex is signed in, so no `--with-api-key`."""
+    shell = FakeShell()
+    registry = PluginRegistry.discover(builtin_only=True)
+    registry.register(RUNNERS, _codex_against(shell))
+    service = UDLService(
+        settings(tmp_path),
+        registry=registry,
+        clock=FakeClock(),
+        secrets=MemorySecretStore(SecretsSettings()),
+    )
+
+    def shell_for(found: Host) -> FakeShell:
+        return shell
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("udl.hosts.manager.shell_for", shell_for)
+        async with service:
+            await service.db.upsert_record(Host.local("/w"))
+            await connection(service.db, name="oa", plugin="openai", ref=OPENAI_REF)
+            await service.secrets.set(SecretRef(OPENAI_REF), SecretStr("sk-openai"))
+            app = await service.apps.get("orch")
+            assert isinstance(app, Orch)
+
+            await app.runner_setup(
+                SetupRunnerRequest(host="local", runner="codex"), service=service
+            )
+
+    assert [given for given in shell.given if "--with-api-key" in given[0]] == []
 
 
 async def test_a_setup_gives_the_harness_the_keys_and_no_argv(tmp_path: Path) -> None:
