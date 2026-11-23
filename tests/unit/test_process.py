@@ -134,6 +134,64 @@ async def test_cancelling_the_task_stops_the_program(tmp_path: Path) -> None:
     assert not await asyncio.to_thread(running, pid_file.read_text())
 
 
+def closes_its_output(marker: Path, pid_file: Path) -> list[str]:
+    """A program that writes its pid, closes its stdout and stderr, and runs on: its output is all
+    read, so what is left of run_process is waiting for it to end."""
+    return python(
+        f"import os, pathlib, time; pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid())); "
+        f"os.close(1); os.close(2); pathlib.Path({str(marker)!r}).touch(); time.sleep(30)"
+    )
+
+
+async def test_cancelling_the_task_stops_a_program_whose_output_has_ended(tmp_path: Path) -> None:
+    """(Also once its output is read, while it is waited on: a cancel there used to leave it
+    running past its caller, and its transport outlived its loop. On a busy machine a program
+    that is just exiting is in that state, which is what CI's four workers saw.)"""
+    token = CancelToken()
+    marker, pid_file = tmp_path / "started", tmp_path / "pid"
+    task = asyncio.create_task(
+        run_process(closes_its_output(marker, pid_file), cancel=token, interval=0.05)
+    )
+    await asyncio.to_thread(wait_for, marker)
+    await asyncio.sleep(0.3)  # (its closed output is read to the end)
+
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert token.cancelled
+    assert not await asyncio.to_thread(running, pid_file.read_text())
+
+
+async def test_cancelling_the_token_stops_a_program_whose_output_has_ended(
+    tmp_path: Path,
+) -> None:
+    """(The token is heard, and the ticks go on, until the program has ended, not only until its
+    output has.)"""
+    token = CancelToken()
+    ticks: list[None] = []
+    marker, pid_file = tmp_path / "started", tmp_path / "pid"
+    task = asyncio.create_task(
+        run_process(
+            closes_its_output(marker, pid_file),
+            cancel=token,
+            on_tick=lambda: ticks.append(None),
+            interval=0.05,
+        )
+    )
+    await asyncio.to_thread(wait_for, marker)
+    await asyncio.sleep(0.3)  # (its closed output is read to the end)
+    ticked = len(ticks)
+    await asyncio.sleep(0.3)
+
+    token.cancel()
+
+    with pytest.raises(Cancelled):
+        await asyncio.wait_for(task, 10)
+    assert len(ticks) > ticked
+    assert not await asyncio.to_thread(running, pid_file.read_text())
+
+
 async def test_a_cancelled_token_never_starts_the_program(tmp_path: Path) -> None:
     token = CancelToken()
     token.cancel()
