@@ -18,8 +18,8 @@ function hoursOf(points: number, progress: Progress, model: string): number | nu
 	return rate === undefined ? null : Math.round(points * rate.hours_per_point * 10) / 10;
 }
 
-/** Its keys, with the one being carried moved to where it was dropped: before the entry it was
- * dropped on, whether the drag went up or down. */
+/** Its keys, with the one being carried moved to where it was dropped: above the entry going
+ * up, below it going down. */
 export function moved(keys: readonly string[], dragged: string, onto: string): string[] {
 	if (dragged === onto) {
 		return [...keys];

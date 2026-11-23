@@ -3,7 +3,7 @@ import type { Component } from "@udl/ui-sdk/react";
 import { useBoard } from "../hooks";
 import { Page, Said } from "../page";
 import { AgentsPane } from "./agents";
-import { assigned } from "./drops";
+import { assigned, drop } from "./drops";
 import { FeaturesPane } from "./features";
 import { Filters } from "./filtersRow";
 import { SuggestedPane } from "./suggested";
@@ -72,7 +72,15 @@ export const BoardPage: Component<RouteProps> = ({ ctx, search }) => {
 							/>
 							<SuggestedPane
 								onQueue={(suggestion) => {
-									void assigned(ctx, suggestion.task, suggestion.agent, project, refresh);
+									// (The same drop a drag makes: a suggestion whose need is only
+									// `ready` asks "Stack on #N?" before it is queued.)
+									void drop(
+										ctx,
+										{ kind: "suggestion", suggestion },
+										{ kind: "agent", agent: suggestion.agent },
+										project,
+										refresh,
+									);
 								}}
 								suggestions={suggested}
 							/>

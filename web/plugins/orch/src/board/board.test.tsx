@@ -188,9 +188,11 @@ describe("the board (29.4)", () => {
 		expect(screen.queryByRole("article", { name: /29\.2/ })).toBeNull();
 		expect(screen.getByRole("article", { name: /29\.3/ })).toBeTruthy();
 
-		fireEvent.change(screen.getByRole("searchbox", { name: /text/i }), {
-			target: { value: "inbox" },
-		});
+		const box = screen.getByRole("searchbox", { name: /text/i });
+		fireEvent.change(box, { target: { value: "inbox" } });
+		// (Typing alone writes nothing: the URL takes one entry per search, not one per letter.)
+		expect(fake.navigations).toEqual([]);
+		fireEvent.keyDown(box, { key: "Enter" });
 
 		expect(fake.navigations).toEqual(["/ui/p/orch/board?state=queued&text=inbox"]);
 	});
@@ -326,8 +328,9 @@ describe("the board's other paths (29.4)", () => {
 		carry(null);
 	});
 
-	it("queues a suggestion from its own button", async () => {
+	it("queues a suggestion from its own button, asking the stack question first", async () => {
 		const fake = drawn();
+		fake.yes = true;
 		await read();
 
 		fireEvent.click(
@@ -337,6 +340,8 @@ describe("the board's other paths (29.4)", () => {
 		);
 		await settle();
 
+		// (The button is the same drop a drag makes, so its need is asked about too.)
+		expect(fake.asked).toEqual(["Stack on #29.3?"]);
 		expect(fake.calls.find((one) => one.name === "orch_assign")?.request).toEqual({
 			key: "29.5",
 			agent: "deepseek-a",

@@ -1,4 +1,5 @@
 import type { UIContext } from "@udl/ui-sdk";
+import { useEffect, useState } from "react";
 import { BOARD, filterPath, filtersOf } from "./filters";
 
 /** The states a task can be filtered by, as the board offers them (the Concepts table's). */
@@ -22,6 +23,13 @@ export function Filters({
 	readonly navigate?: UIContext["navigate"] | undefined;
 }) {
 	const { state, text } = filtersOf(search);
+	// (The box is typed into freely, and the URL is written when the typing is done: one history
+	// entry per search, not one per letter.)
+	const [typed, setTyped] = useState(text);
+	// (The URL is the truth: Back and Forward put the query's text back in the box.)
+	useEffect(() => {
+		setTyped(text);
+	}, [text]);
 	const go = (change: Parameters<typeof filterPath>[2]): void => {
 		navigate?.(filterPath(BOARD, search, change));
 	};
@@ -50,12 +58,22 @@ export function Filters({
 				<input
 					aria-label="Text"
 					className="input input-sm input-bordered"
-					value={text}
+					onBlur={() => {
+						if (typed !== text) {
+							go({ text: typed });
+						}
+					}}
 					onChange={(event) => {
-						go({ text: event.target.value });
+						setTyped(event.target.value);
+					}}
+					onKeyDown={(event) => {
+						if (event.key === "Enter" && typed !== text) {
+							go({ text: typed });
+						}
 					}}
 					placeholder="in a task's title"
 					type="search"
+					value={typed}
 				/>
 			</label>
 		</div>
