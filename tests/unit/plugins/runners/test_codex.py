@@ -55,10 +55,12 @@ class HomeShell(LocalShell):
     """A real local shell that runs as if the home were a test's folder (so a test can write to
     it without touching the real one)."""
 
-    def __init__(self, home: Path) -> None:
+    def __init__(self, home: Path, env: Mapping[str, str] | None = None) -> None:
         super().__init__(Host.local(str(home)))
         self.home = home
         """The home directory it runs as."""
+        self.env = dict(env or {})
+        """What every program it runs is given (the fake CLI's own knobs)."""
         self.calls: list[tuple[list[str], bytes | None]] = []
         """Every argv it was asked to run, with what was written to it, in order."""
 
@@ -79,7 +81,7 @@ class HomeShell(LocalShell):
         return await super().run(
             argv,
             cwd=cwd,
-            env={**(env or {}), "HOME": str(self.home)},
+            env={**self.env, **(env or {}), "HOME": str(self.home)},
             secret_env=secret_env,
             stdin=stdin,
             within=within,
@@ -253,30 +255,60 @@ def test_a_login_status_of_both_kinds_is_read() -> None:
 
 
 async def test_setup_signs_in_with_the_key_it_is_given(tmp_path: Path) -> None:
-    """25.13: when udl has an OpenAI key, the codex runner signs in with it — `codex login
-    --with-api-key`, the key on **stdin**, never in an argv, a log or a record."""
-    shell = HomeShell(tmp_path / "home")
+    """25.13: when udl has an OpenAI key and Codex is not signed in, the runner signs in with it
+    — `codex login --with-api-key`, the key on **stdin**, never in an argv or a log line."""
+    shell = HomeShell(tmp_path / "home", env={"CODEX_HARNESS_SIGNED_OUT": "1"})
     given = Codex(CodexOptions(cli=[sys.executable, str(CODEX)]), shell=shell, clock=FakeClock())
 
     await given.setup(env={"OPENAI_API_KEY": "sk-s3cret"})
 
     [[argv, stdin]] = [call for call in shell.calls if call[0][-1] == "--with-api-key"]
     assert argv == [sys.executable, str(CODEX), "login", "--with-api-key"]
-    assert stdin is not None
-    assert stdin.decode().strip() == "sk-s3cret"
+    assert stdin == b"sk-s3cret"
     assert "sk-s3cret" not in " ".join(argv)
+
+
+async def test_setup_does_not_replace_the_sign_in_the_user_made(tmp_path: Path) -> None:
+    """A setup runs whenever udl has an OpenAI connection (its own AI provider usually), so
+    signing in with the key unconditionally would move a host signed in with the ChatGPT plan to
+    per-token billing behind the user's back. A host that is signed in is left as it is."""
+    shell = HomeShell(tmp_path / "home")
+    given = Codex(CodexOptions(cli=[sys.executable, str(CODEX)]), shell=shell, clock=FakeClock())
+
+    await given.setup(env={"OPENAI_API_KEY": "sk-s3cret"})
+
+    assert [call for call in shell.calls if "--with-api-key" in call[0]] == []
 
 
 async def test_setup_leaves_the_plans_sign_in_alone(tmp_path: Path) -> None:
     """A harness signed in with a plan needs no key: udl does not invent one, and does not sign
     in behind the user's back."""
-    shell = HomeShell(tmp_path / "home")
+    shell = HomeShell(tmp_path / "home", env={"CODEX_HARNESS_SIGNED_OUT": "1"})
     given = Codex(CodexOptions(cli=[sys.executable, str(CODEX)]), shell=shell, clock=FakeClock())
 
     await given.setup(env={"OPENROUTER_API_KEY": "or-s3cret"})
 
     assert [call for call in shell.calls if "--with-api-key" in call[0]] == []
     assert not any("or-s3cret" in (stdin or b"").decode() for _, stdin in shell.calls)
+
+
+async def test_a_key_codex_refuses_is_reported_without_the_key(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A sign-in Codex refuses is the failure it says (the CLI's own message), and the key is in
+    no error text udl writes."""
+    shell = HomeShell(
+        tmp_path / "home",
+        env={"CODEX_HARNESS_SIGNED_OUT": "1", "CODEX_HARNESS_KEY_REFUSED": "1"},
+    )
+    given = Codex(CodexOptions(cli=[sys.executable, str(CODEX)]), shell=shell, clock=FakeClock())
+
+    with pytest.raises(PluginFailed) as refused:
+        await given.setup(env={"OPENAI_API_KEY": "sk-s3cret"})
+
+    assert "Incorrect API key provided" in str(refused.value)
+    assert "sk-s3cret" not in str(refused.value)
+    assert "sk-s3cret" not in caplog.text
 
 
 def test_a_signed_out_login_status_is_read_from_stderr() -> None:

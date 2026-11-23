@@ -8,6 +8,9 @@ A `codex` in a file: what the codex runner's tests point their binary at (the tw
 fake_harness.py for claude-code), so a turn runs a program and its JSON lines are parsed without
 a model, an install or a sign-in.
 
+`CODEX_HARNESS_SIGNED_OUT=1` makes `login status` say `Not logged in`; `CODEX_HARNESS_KEY_REFUSED=1`
+makes `login --with-api-key` fail as a refused key does.
+
 It answers the way Codex 0.171 does:
 - `--version` prints `codex-cli 0.171.0`.
 - `login status` prints what it prints (`Logged in using ChatGPT`, or `Not logged in`).
@@ -53,8 +56,15 @@ def main(argv: list[str]) -> int:
     if "--version" in argv or "-V" in argv:
         print(VERSION)
         return 0
+    if argv[1:3] == ["login", "--with-api-key"]:
+        if _flag("KEY_REFUSED"):
+            print("Incorrect API key provided", file=sys.stderr)
+            return 1
+        sys.stdin.read()
+        return 0
     if argv[1:2] == ["login"]:
-        print("Logged in using ChatGPT" if "status" in argv else "")
+        if "status" in argv:
+            print("Not logged in" if _flag("SIGNED_OUT") else "Logged in using ChatGPT")
         return 0
     return turn(resume=_resumed(argv))
 

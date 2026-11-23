@@ -15,8 +15,7 @@ invented, because a harness signed in with a plan needs none.
 
 # System Imports
 import json
-from collections.abc import AsyncIterator, Mapping, Sequence
-from datetime import timedelta
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Final
 
@@ -47,7 +46,6 @@ from udl.plugins.runners.opencode import OpenCode, OpenCodeOptions
 from udl.plugins.secrets.base import SecretRef, SecretStore
 from udl.plugins.secrets.memory import MemorySecretStore
 from udl.plugins.secrets.resolvers import ResolvingStore
-from udl.process import CancelToken, ProcessResult
 
 OPENROUTER_REF: Final = "ai/providers/openrouter/api_key"
 """Where a connection's options hold OpenRouter's key."""
@@ -207,41 +205,6 @@ def _opencode_against(fake: FakeOpenCode) -> type[OpenCode]:
     return Runner
 
 
-class _CodexShell(FakeShell):
-    """The fake shell, recording what each command was given on stdin (a sign-in's key)."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.given: list[tuple[list[str], bytes | None]] = []
-        """Every argv, with what was written to it, in order."""
-
-    async def run(
-        self,
-        argv: Sequence[str],
-        *,
-        cwd: str | None = None,
-        env: Mapping[str, str] | None = None,
-        secret_env: Mapping[str, str] | None = None,
-        stdin: bytes | None = None,
-        within: timedelta | None = None,
-        cancel: CancelToken | None = None,
-        check: bool = True,
-        tail: bool = False,
-    ) -> ProcessResult:
-        self.given.append((list(argv), stdin))
-        return await super().run(
-            argv,
-            cwd=cwd,
-            env=env,
-            secret_env=secret_env,
-            stdin=stdin,
-            within=within,
-            cancel=cancel,
-            check=check,
-            tail=tail,
-        )
-
-
 def _codex_against(fake_shell: FakeShell) -> type[Codex]:
     """The real `codex` runner, on a fake shell (its host's programs are a test's)."""
 
@@ -257,7 +220,7 @@ def _codex_against(fake_shell: FakeShell) -> type[Codex]:
 async def test_a_setup_signs_codex_in_with_the_key(tmp_path: Path) -> None:
     """`orch_runner_setup` end to end for codex: udl has an OpenAI key, so the runner signs Codex
     in with it — `codex login --with-api-key`, the key on stdin and in no argv."""
-    shell = _CodexShell()
+    shell = FakeShell()
     registry = PluginRegistry.discover(builtin_only=True)
     registry.register(RUNNERS, _codex_against(shell))
     service = UDLService(

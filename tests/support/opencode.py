@@ -124,6 +124,9 @@ class FakeShell(HostShell):
         self.status = status
         self.service = service if service is not None else json.dumps({"password": PASSWORD})
         self.runs: list[list[str]] = []
+        self.given: list[tuple[list[str], bytes | None]] = []
+        """Every argv it was asked to run, with what was written to it, in order (a sign-in's
+        key is on stdin, and this is how a test reads it)."""
         self.files: dict[str, str] = {}
         """The files written through the shell (an agent file, by its name)."""
         self.writes_fail = False
@@ -151,6 +154,7 @@ class FakeShell(HostShell):
         tail: bool = False,
     ) -> ProcessResult:
         self.runs.append(list(argv))
+        self.given.append((list(argv), stdin))
         answered = self._answer(argv, stdin=stdin)
         if answered.returncode != 0 and check:
             # (As the real shell does: a command that fails is PluginFailed, not a result.)

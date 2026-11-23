@@ -275,10 +275,25 @@ class Codex(AgentRunner[CodexOptions]):
             stdin=said.encode(),
         )
         if key := (env or {}).get(OPENAI_API_KEY):
-            # (The key on stdin: it is never an argv, a log line or a record. Idempotent: signing
-            # in again with the same key is what it does.)
-            await self.shell.run([*self.options.cli, "login", "--with-api-key"], stdin=key.encode())
+            await self._sign_in_with(key)
         return [f"~/{_RULES}"]
+
+    async def _sign_in_with(self, key: str) -> None:
+        """Sign in with an API key, but never over a sign-in the user made.
+
+        A setup runs whenever udl has an OpenAI connection (its own AI provider usually), so
+        signing in unconditionally would move a host that is signed in with the ChatGPT plan to
+        per-token billing behind the user's back — and undoing it means `codex login
+        --device-auth` again. So a host that is already signed in is left as it is; to move one
+        to the key, sign it out first (`udl orch runner-logout`), then set it up again.
+
+        The key is on **stdin**: never an argv, a log line or a record."""
+        status = await self.shell.run([*self.options.cli, "login", "status"], check=False)
+        said = f"{status.stdout}{status.stderr}"
+        if _SIGNED_IN.search(said):
+            log.info("codex on %s is already signed in; leaving it alone", self.shell.host.name)
+            return
+        await self.shell.run([*self.options.cli, "login", "--with-api-key"], stdin=key.encode())
 
     # -- a session -----------------------------------------------------------------------------
 
