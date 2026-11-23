@@ -73,6 +73,29 @@ describe("the sessions store", () => {
 		stop();
 	});
 
+	it("reads the rest of a batch when one of them fails", async () => {
+		// (An event that names no session reads every one watched: one failing must not leave
+		// the others half-read.)
+		const fake = fakeCtx((_name, request) => {
+			if (request.session === "ses_1") {
+				throw new Error("no such session");
+			}
+			return { ...SESSION, id: request.session as string };
+		});
+		const { store, read, stop } = sessionsStore(fake.ctx);
+		await read("ses_1");
+		await read("ses_2");
+		await read("ses_3");
+
+		fake.emit("orch.session.ended", {});
+		await settle();
+
+		expect(fake.calls.filter((one) => one.request.session === "ses_3")).toHaveLength(2);
+		expect(store.getState().error).toBe("no such session");
+		expect(store.getState().sessions.ses_2?.id).toBe("ses_2");
+		stop();
+	});
+
 	it("stops listening when it is stopped", async () => {
 		const fake = fakeCtx(() => SESSION);
 		const { read, stop } = sessionsStore(fake.ctx);

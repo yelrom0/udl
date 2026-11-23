@@ -33,14 +33,23 @@ export function sessionsStore(ctx: UIContext): Sessions {
 			while (pending.size > 0) {
 				const ids = [...pending];
 				pending.clear();
+				let failed: unknown = null;
 				for (const session of ids) {
-					const value = await ctx.call("orch_get_session", { session });
-					if (!stopped) {
-						store.setState((state) => ({
-							sessions: { ...state.sessions, [session]: sessionOf(value) },
-							error: null,
-						}));
+					try {
+						const value = await ctx.call("orch_get_session", { session });
+						if (!stopped) {
+							store.setState((state) => ({
+								sessions: { ...state.sessions, [session]: sessionOf(value) },
+								error: null,
+							}));
+						}
+					} catch (error) {
+						// (One session failing must not leave the rest of the batch unread.)
+						failed = failed ?? error;
 					}
+				}
+				if (failed !== null) {
+					throw failed;
 				}
 			}
 		},

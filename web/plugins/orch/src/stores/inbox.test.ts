@@ -115,6 +115,18 @@ describe("the inbox store", () => {
 		stop();
 	});
 
+	it("reads again when a link is refreshed, which is how a pull's checks arrive", async () => {
+		const fake = fakeCtx(() => INBOX);
+		const { stop } = inboxStore(fake.ctx);
+		await settle();
+
+		fake.emit("orch.link.changed", { kind: "pull", key: "80" });
+		await settle();
+
+		expect(fake.calls.map((one) => one.name)).toEqual(["orch_inbox", "orch_inbox"]);
+		stop();
+	});
+
 	it("ignores events that are not orch's", async () => {
 		const fake = fakeCtx(() => INBOX);
 		const { stop } = inboxStore(fake.ctx);

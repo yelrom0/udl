@@ -17,14 +17,16 @@ export interface Loaded<T> {
 }
 
 /**
- * What changes what waits on a person: a pull readied or merged, the auto merge switch, a
- * session starting, ending or failing, and an agent out of quota (a question and a to-action
- * have no event of their own yet: 28.5 gives them one). Not `orch.session.event`: that fires
- * for every line a runner streams, and `orch_inbox` reads GitHub.
+ * What changes what waits on a person: a pull readied or merged, a link refreshed (which is how
+ * a pull's checks and the bot's review reach 28.3's merge list), the auto merge switch, a session
+ * starting, ending or failing, and an agent out of quota (a question and a to-action have no
+ * event of their own yet: 28.5 gives them one). Not `orch.session.event`: that fires for every
+ * line a runner streams, and `orch_inbox` reads GitHub.
  */
 const WATCHED: readonly string[] = [
 	"orch.task.ready",
 	"orch.task.merged",
+	"orch.link.changed",
 	"orch.project.changed",
 	"orch.session.started",
 	"orch.session.ended",
