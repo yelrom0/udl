@@ -4,7 +4,8 @@ import { Card, KeyLink } from "./cards";
 /** What a question's card is given: the question, and what answering it does. */
 export interface QuestionProps {
 	readonly question: Question;
-	/** The question being answered, when one is (so its buttons say so and take no click). */
+	/** The keys of the questions being answered, one per answer in flight (so their buttons say
+	 * so and take no click). */
 	readonly answering: ReadonlySet<string>;
 	answer(question: Question, choice: string): void;
 }
