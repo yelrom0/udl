@@ -136,6 +136,9 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [~] 27.9 Operations (agents, queues, sessions, suggestions) via CLI, API and MCP
   - [x] 27.10 Working time, hours per point learned per model, forecasts: `orch_progress`
   - [ ] 27.11 Chat sessions: Claude Code or Codex as the user, its permission prompts relayed to the web UI, a token per chat
+  - [ ] 27.12 Resource limits: gates and sessions under a memory cap; `gates_per_host` (default 1)
+  - [ ] 27.13 Host health (memory, swap, disk and btrfs, I/O pressure, harness services) and what udl does about it (`on_breach`, default act and tell)
+  - [ ] 27.14 Usage left per agent: a paid key's money left, a free tier's requests left (counted), on the CLI, API, MCP and web
 - [ ] **Phase 28: Human comms: Q&A, Ready to merge, To action**
   - [x] 28.1 `Question` records and their thread; an answer reaches the agent and is written into the tasks it concerns
   - [x] 28.2 `HumanAction` records ("To action") with a result
@@ -144,6 +147,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [ ] 28.5 Events for all of it, and a `notify` example
   - [ ] 28.6 End to end on fakes: task → agent → question → answer → PR → ready → merged
   - [~] 28.7 Auto merge: a project's merger (a reviewer or manager agent) merges its ready PRs after its own review
+  - [ ] 28.8 The checkout follows `main`: after a merge, each host's checkout of the repo fast-forwards to it
 - [ ] **Phase 29: Screens (Google Stitch) and the `orch` UI plugin**
   - [x] 29.1 **(Claude)** A new Stitch project: design system from the shell's daisyUI themes; every screen below, desktop and phone, light and dark ([web/plugins/orch/design/](web/plugins/orch/design/README.md)); the user's changes (Q-8) made
   - [~] 29.2 The `orch` UI plugin's skeleton: manifest, routes, stores, live data
