@@ -113,7 +113,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 25.10 `command` runner (any other AI's CLI)
   - [x] 25.11 Managing harnesses on every host: status (version, signed in, plan, limits), install and update, sign-in started from the hub
   - [~] 25.12 `codex` runner: OpenAI's Codex CLI on any host, on that host's ChatGPT sign-in (the twin of `claude-code`) (optional: Q-9)
-  - [~] 25.13 OpenAI by API key: the `openai` AI provider, OpenCode's `openai/…` models, Codex signed in with a key (the Codex half isn't built: 25.12's runner signs in with `login --device-auth` only, not with a key)
+  - [~] 25.13 OpenAI by API key: the `openai` AI provider, OpenCode's `openai/…` models, Codex signed in with a key
 - [ ] **Phase 26: Work tracking: projects, features, tasks, links**
   - [x] 26.1 `udl.apps` plugin kind: `AppPlugin` + contract suite + `FakeApp`; app services in the runtime
   - [x] 26.2 `Project` and `Repo` records
