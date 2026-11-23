@@ -5078,22 +5078,6 @@
             "description": "How long it took, in seconds.",
             "title": "Seconds",
             "type": "number"
-          },
-          "stopped": {
-            "anyOf": [
-              {
-                "enum": [
-                  "memory",
-                  "timeout"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Why udl or the kernel stopped it, when one did (27.12): at its memory cap, or at its time\n(None: it ended on its own).",
-            "title": "Stopped"
           }
         },
         "required": [

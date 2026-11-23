@@ -431,7 +431,7 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
                 guards=guards,
             )
         unit = await self._unit()
-        memory = await self._cap_of(unit) if unit is not None else None
+        memory = await self.memory_cap(unit) if unit is not None else None
         policy = await self._oom_policy(unit) if unit is not None else None
         return RunnerHealth(
             installed=True,

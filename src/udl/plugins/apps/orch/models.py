@@ -1117,9 +1117,6 @@ class GateRun(_Model):
     """The last of its output (the end, which is where a failure says why)."""
     seconds: float
     """How long it took, in seconds."""
-    stopped: Literal["memory", "timeout"] | None = None
-    """Why udl or the kernel stopped it, when one did (27.12): at its memory cap, or at its time
-    (None: it ended on its own)."""
 
 
 class PushResult(_Model):

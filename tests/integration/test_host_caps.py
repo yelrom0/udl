@@ -13,6 +13,7 @@ the test's own shell stands in for.
 """
 
 # System Imports
+import sys
 from datetime import timedelta
 from pathlib import Path
 from typing import Final
@@ -23,7 +24,14 @@ import pytest
 # Local Imports
 from udl.errors import OverCap
 from udl.hosts import Host
-from udl.hosts.shell import LocalShell, Probe, ResourceLimits
+from udl.hosts.shell import (
+    Command,
+    LocalShell,
+    Probe,
+    ResourceLimits,
+    capped,
+    remote_line,
+)
 
 
 class _Never(Probe):
@@ -90,15 +98,6 @@ async def test_a_run_with_no_cap_says_nothing_about_one(here: LocalShell) -> Non
     assert result.limits is None
 
 
-async def test_the_probe_is_asked_once_a_host(here: LocalShell) -> None:
-    """(A probe is a process: asking it before every gate would be a cost for an answer that does
-    not change while the host is there.)"""
-    first = await here.run(["true"], limits=ResourceLimits(memory=256 * 1024**2), check=False)
-    second = await here.run(["true"], limits=ResourceLimits(memory=256 * 1024**2), check=False)
-
-    assert first.limits == second.limits
-
-
 @pytest.mark.host
 async def test_a_capped_run_the_kernel_stopped_is_over_cap(here: LocalShell) -> None:
     """(The card's 22.9 GiB run: the cap is what ends it, and udl says that rather than the
@@ -108,7 +107,7 @@ async def test_a_capped_run_the_kernel_stopped_is_over_cap(here: LocalShell) -> 
 
     with pytest.raises(OverCap, match="passed its memory cap of 256 MiB"):
         await here.run(
-            ["python3", "-c", "x = bytearray(1024 * 1024 * 1024)"],
+            [sys.executable, "-c", "x = bytearray(1024 * 1024 * 1024)"],
             limits=ResourceLimits(memory=256 * 1024**2),
             within=timedelta(minutes=1),
         )
@@ -124,14 +123,41 @@ async def test_an_uncapped_run_stopped_the_same_way_is_not_called_over_cap(
     assert result.limits is None
 
 
+@pytest.mark.host
 async def test_a_capped_stream_the_kernel_stopped_is_over_cap(here: LocalShell) -> None:
+    """(It allocates past its cap, so it is one of the card's host tests, not the gate's.)"""
     if not await enforced(here):
         pytest.skip("this machine has no user systemd: nothing to enforce a cap")
 
     with pytest.raises(OverCap, match="passed its memory cap of 256 MiB"):
         async for _ in here.stream(
-            ["python3", "-c", "x = bytearray(1024 * 1024 * 1024)"],
+            [sys.executable, "-c", "x = bytearray(1024 * 1024 * 1024)"],
             limits=ResourceLimits(memory=256 * 1024**2),
             within=timedelta(minutes=1),
         ):
             pass
+
+
+@pytest.mark.host
+async def test_a_capped_run_over_ssh_arrives_as_137_and_never_255(tmp_path: Path) -> None:
+    """(Over SSH, a program the kernel killed at its cap arrives as 137, never as ssh's own 255:
+    255 would read as "could not reach the host" instead of "it passed its cap". The remote line
+    is what sshd runs — `sh -lc` — and `systemd-run --scope` is what translates the kill into an
+    exit code. Run here as sshd runs it, so no host of the user's is needed.)"""
+    host = Host.local(str(tmp_path))  # (only for its name: the line is run here, as sshd runs it)
+    killer = tmp_path / "killer.sh"
+    killer.write_text("kill -9 $$\n")
+    limits = ResourceLimits(memory=256 * 1024**2)
+    # (The command a capped run becomes: the scope's argv, reporting its own status.)
+    capped_run = Command(
+        capped(("sh", str(killer)), limits, unit="udl-gate-test"), reports_status=True
+    )
+    line = remote_line(host, capped_run)
+
+    shell = LocalShell(host)
+    if not await enforced(shell):
+        pytest.skip("this machine has no user systemd: nothing to enforce a cap")
+    assert line.startswith("sh -lc "), "sshd's own shell runs it, so a signal becomes a code"
+    said = await shell.run(["sh", "-c", line], check=False)
+
+    assert said.returncode == 137

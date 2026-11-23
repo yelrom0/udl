@@ -27,7 +27,7 @@ from support.engine import registry, settings
 from support.git import git
 from udl.core.operations import OperationHints
 from udl.core.service import UDLService
-from udl.errors import NotAllowed
+from udl.errors import NotAllowed, ToolUnavailable
 from udl.hosts import Host
 from udl.hosts.shell import HostShell, Interaction, ResourceLimits
 from udl.plugins.apps.base import AppPlugin, AppRecords, AppSettings
@@ -114,6 +114,8 @@ class GateShell:
         slow: bool = False,
         cleanup: Sequence[str] = ("sh", "-c", "cat", "cleanup.txt"),
         cleanup_says: str = "containers removed",
+        enforces: bool = True,
+        stop_fails: bool = False,
     ) -> None:
         self._shell = shell
         self.host = shell.host
@@ -121,6 +123,8 @@ class GateShell:
         self._slow = slow
         self._cleanup = list(cleanup)
         self._cleanup_says = cleanup_says
+        self._enforces = enforces
+        self._stop_fails = stop_fails
         self.units: list[str | None] = []
         """The unit each gate run was under."""
         self.limits: list[ResourceLimits | None] = []
@@ -145,6 +149,9 @@ class GateShell:
         limits: ResourceLimits | None = None,
         unit: str | None = None,
     ) -> ProcessResult:
+        if list(argv) == ["systemd-run", "--user", "--scope", "-q", "true"]:
+            # (The probe the gate makes before stopping a unit it is not sure exists.)
+            return ProcessResult(returncode=0 if self._enforces else 127, stdout="", stderr="")
         if limits is not None:
             self.units.append(unit)
             self.limits.append(limits)
@@ -154,6 +161,8 @@ class GateShell:
             return self._gate
         if list(argv)[:3] == ["systemctl", "--user", "stop"]:
             self.stops.append(list(argv))
+            if self._stop_fails:
+                raise ToolUnavailable("systemctl is not installed here")
             return ProcessResult(returncode=0, stdout="", stderr="")
         if list(argv) == self._cleanup:
             self.cleanups.append(list(argv))
@@ -369,6 +378,37 @@ async def test_a_gate_that_runs_past_its_time_is_stopped_and_says_so(
     )
 
 
+async def test_a_timeout_where_the_host_caps_nothing_stops_nothing(
+    service: UDLService,
+) -> None:
+    """(A host with no user systemd never made a scope, so there is no unit to stop: the gate
+    was the plain program, and the cleanup still runs.)"""
+    shell = a_gate(await service.hosts.shell("local"), slow=True, enforces=False)
+
+    with pytest.raises(NotAllowed, match="ran past the 0:30:00 it gets") as refused:
+        await pushed(service, shell)
+
+    assert (refused.value.hint or "").startswith("stopped: timeout")
+    assert shell.stops == []
+    assert len(shell.cleanups) == 1
+
+
+async def test_a_stop_that_fails_is_said_and_the_cleanup_still_runs(
+    service: UDLService,
+) -> None:
+    """(A gate over its time on a host whose stop does not work is still the agent's refusal,
+    with what went wrong said, and the cleanup runs whatever the stop did.)"""
+    shell = a_gate(await service.hosts.shell("local"), slow=True, stop_fails=True)
+
+    with pytest.raises(NotAllowed, match="ran past the 0:30:00 it gets") as refused:
+        await pushed(service, shell)
+
+    hint = refused.value.hint or ""
+    assert hint.startswith("stopped: timeout")
+    assert "systemctl is not installed here" in hint
+    assert len(shell.cleanups) == 1
+
+
 async def test_the_cleanup_runs_only_after_a_stop(service: UDLService) -> None:
     """(A gate that simply failed leaves what it made: the agent reads its failure where it is.)"""
     shell = a_gate(
@@ -408,17 +448,6 @@ async def test_the_gate_s_unit_is_named_for_the_task_and_escaped(service: UDLSer
     assert unit is not None
     assert unit.startswith("udl-gate-udl-F-1.1-")
     assert len(unit.rsplit("-", 1)[1]) == 8
-
-
-async def test_a_pass_says_no_stop(service: UDLService) -> None:
-    shell = a_gate(
-        await service.hosts.shell("local"),
-        gate=ProcessResult(returncode=0, stdout="", stderr="", limits="enforced"),
-    )
-
-    found = await pushed(service, shell)
-
-    assert found.gate.stopped is None
 
 
 async def test_no_cap_is_a_plain_run(service: UDLService) -> None:

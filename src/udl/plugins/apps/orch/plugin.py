@@ -955,6 +955,7 @@ class Orch(AppPlugin[OrchSettings]):
                 harnesses=self.harnesses,
                 clock=self.clock,
                 permission_minutes=self.settings.chat_permission_minutes,
+                memory=self.settings.session_memory,
             )
         return self._chats
 

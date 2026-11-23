@@ -189,7 +189,9 @@ class FakeShell(HostShell):
         if argv[0] == "systemctl" and argv[-1] == "--value":
             return ProcessResult(returncode=0, stdout=f"{self.cgroup}\n", stderr="")
         if argv[0] == "cat" and argv[-1].startswith("/sys/fs/cgroup"):
-            if self.capped is None:
+            # (Only the unit's own cgroup answers: a read of any other path is a file that is
+            # not there, as on a host — so a wrong path is a test failure, not a lucky answer.)
+            if self.capped is None or argv[-1] != f"/sys/fs/cgroup{self.cgroup}/memory.max":
                 return ProcessResult(returncode=1, stdout="", stderr="cat: No such file")
             return ProcessResult(returncode=0, stdout=f"{self.capped}\n", stderr="")
         if argv[1:4] == ["auth", "list", "--format"]:

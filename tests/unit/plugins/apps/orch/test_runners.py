@@ -231,7 +231,7 @@ async def test_a_setup_signs_codex_in_with_the_key(tmp_path: Path) -> None:
         secrets=MemorySecretStore(SecretsSettings()),
     )
 
-    def shell_for(found: Host) -> FakeShell:
+    def shell_for(found: Host, seen: object = None) -> FakeShell:
         return shell
 
     with pytest.MonkeyPatch.context() as patch:
@@ -267,7 +267,7 @@ async def test_a_setup_leaves_a_codex_that_is_signed_in_alone(tmp_path: Path) ->
         secrets=MemorySecretStore(SecretsSettings()),
     )
 
-    def shell_for(found: Host) -> FakeShell:
+    def shell_for(found: Host, seen: object = None) -> FakeShell:
         return shell
 
     with pytest.MonkeyPatch.context() as patch:
@@ -300,7 +300,7 @@ async def test_a_setup_gives_the_harness_the_keys_and_no_argv(tmp_path: Path) ->
         secrets=MemorySecretStore(SecretsSettings()),
     )
 
-    def shell_for(found: Host) -> FakeShell:
+    def shell_for(found: Host, seen: object = None) -> FakeShell:
         """Every host answers through the one fake shell."""
         return shell
 

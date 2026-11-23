@@ -30,7 +30,7 @@ from udl.core.service import UDLService
 from udl.db.manager import DBManager
 from udl.errors import ConfigError, NotAllowed, PluginFailed, ToolUnavailable
 from udl.hosts import Host, HostName, HostShell
-from udl.hosts.shell import ResourceLimits, scope_of, unit_name
+from udl.hosts.shell import PROBE, SYSTEMD, ResourceLimits, scope_of, unit_name
 from udl.interfaces.security import current_principal
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.links import pull_ref
@@ -374,23 +374,18 @@ async def push(
             unit=unit,
             cleanup=cleanup,
         )
-    stopped: Literal["memory", "timeout"] | None = None
-    if gate.returncode != 0 and _over_cap(gate, limits):
-        stopped = "memory"
+    capped = _over_cap(gate, limits)
     output = _tails(gate.stdout, gate.stderr)
-    if stopped is not None and cleanup:
+    if capped is not None and cleanup:
         output = _said(output, await _cleanup(shell, cleanup, path))
     ran = GateRun(
         exit_code=gate.returncode,
         output=output,
         seconds=round((service.clock.now() - started).total_seconds(), 1),
-        stopped=stopped,
     )
-    if stopped == "memory":
+    if capped is not None:
         raise NotAllowed(
-            f"the gate passed its memory cap of {limits.words}"
-            if limits
-            else "the gate was stopped",
+            f"the gate passed its memory cap of {capped.words}",
             hint=_stopped_hint("memory", ran.output),
         )
     if gate.returncode != 0:
@@ -565,7 +560,7 @@ async def _gate(
             gate, cwd=path, within=within, check=False, tail=True, limits=limits, unit=unit
         )
     except TimeoutError as slow:
-        said = await _stopped_gate(shell, unit, cleanup=cleanup, path=path)
+        said = await _stopped_gate(shell, unit, limits=limits, cleanup=cleanup, path=path)
         raise NotAllowed(
             f"the gate ran past the {within} it gets",
             hint=_said(
@@ -595,25 +590,52 @@ CLEANUP_GRACE: Final = timedelta(minutes=5)
 suite."""
 
 
-def _over_cap(gate: ProcessResult, limits: ResourceLimits | None) -> bool:
-    """Whether a gate ended because the kernel stopped it at its memory cap: SIGKILL (137, or -9
-    from a shell) on a run whose cap the host enforced, which udl did not stop itself (a timeout
-    stops the unit and says so, 27.12)."""
-    return limits is not None and gate.limits == "enforced" and gate.returncode in (137, -9)
+def _over_cap(gate: ProcessResult, limits: ResourceLimits | None) -> ResourceLimits | None:
+    """The cap a gate ended at, when the kernel stopped it there: SIGKILL (137, or -9 from a
+    shell) on a run whose cap the host enforced, which udl did not stop itself (a timeout stops
+    the unit and says so, 27.12). None: it ended on its own, or the cap was not enforced."""
+    if limits is None or gate.limits != "enforced" or gate.returncode not in (137, -9):
+        return None
+    return limits
 
 
 async def _stopped_gate(
-    shell: HostShell, unit: str | None, *, cleanup: Sequence[str] | None, path: str
+    shell: HostShell,
+    unit: str | None,
+    *,
+    limits: ResourceLimits | None,
+    cleanup: Sequence[str] | None,
+    path: str,
 ) -> str:
     """Stop the gate's unit (so its children go too) and run the repo's cleanup: what a timeout
-    does before the agent is told, and what it says, when it says anything."""
-    if unit is not None:
-        await shell.run(
-            ["systemctl", "--user", "stop", scope_of(unit)], within=STOP_GRACE, check=False
-        )
+    does before the agent is told, and what it says, when it says anything.
+
+    Only a capped run on a host that enforces its caps is a unit: anywhere else the gate was the
+    plain program, and stopping a unit that does not exist is a failure an agent would read as
+    the gate's. A stop that fails is said rather than raised, and the cleanup runs whatever the
+    stop did (it is what removes what the suite left behind)."""
+    said = ""
+    if unit is not None and limits is not None and await _enforces(shell):
+        try:
+            await shell.run(
+                ["systemctl", "--user", "stop", scope_of(unit)], within=STOP_GRACE, check=False
+            )
+        except (PluginFailed, ToolUnavailable, TimeoutError) as failed:
+            said = f"stopping it: {failed}"
     if cleanup is None:
-        return ""
-    return await _cleanup(shell, cleanup, path)
+        return said
+    return _said(said, await _cleanup(shell, cleanup, path))
+
+
+async def _enforces(shell: HostShell) -> bool:
+    """Whether a capped run on this host really is a unit to stop (27.12): the same probe the
+    shell makes before it caps a run, asked here because a gate that ran past its time has no
+    result to read. A host without user systemd has no unit to stop, so it is not asked to."""
+    try:
+        said = await shell.run([*SYSTEMD, "true"], within=PROBE, check=False)
+    except PluginFailed, ToolUnavailable, TimeoutError:
+        return False
+    return said.returncode == 0
 
 
 async def _cleanup(shell: HostShell, cleanup: Sequence[str], path: str) -> str:

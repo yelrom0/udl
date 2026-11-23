@@ -31,6 +31,7 @@ from collections.abc import (
     AsyncIterator,
     Awaitable,
     Mapping,
+    MutableMapping,
     Sequence,
 )
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -390,21 +391,27 @@ def capped(
 
 class Probe:
     """Whether a host runs a capped program under user systemd: asked once, and kept until the
-    shell (one host) is gone (27.12)."""
+    host changes (27.12).
 
-    def __init__(self, shell: HostShell) -> None:
+    A shell is made on every call (`Hosts.shell()`), so the answer is kept in the map a service's
+    hosts share (`Hosts`' own), by host name: a host is probed once, not before every gate and
+    every turn."""
+
+    def __init__(self, shell: HostShell, seen: MutableMapping[str, bool] | None = None) -> None:
         self._shell = shell
-        self._there: bool | None = None
+        self._seen: MutableMapping[str, bool] = seen if seen is not None else {}
+        """The answers hosts have already given, by name (shared by one service's shells)."""
 
     async def there(self) -> bool:
         """Whether `systemd-run --user --scope` works here."""
-        if self._there is None:
+        name = self._shell.host.name
+        if name not in self._seen:
             try:
                 result = await self._shell.run([*SYSTEMD, "true"], within=PROBE, check=False)
-                self._there = result.returncode == 0
+                self._seen[name] = result.returncode == 0
             except PluginFailed, ToolUnavailable, TimeoutError:
-                self._there = False
-        return self._there
+                self._seen[name] = False
+        return self._seen[name]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -427,6 +434,11 @@ class Command:
     """Secrets for its environment: never in an argv, but read from the command's stdin."""
     stdin: bytes | None = None
     """What it reads on stdin (after the secrets, which come first, a line each)."""
+    reports_status: bool = False
+    """Whether the remote shell waits for the program and exits with its code, instead of
+    `exec`ing it (27.12). A capped run needs it: a shell that execs a program the kernel kills at
+    its cap dies with it, so sshd reports a signal and the ssh client exits 255 — "the host was
+    not reached" — instead of 137, which is what a cap looks like."""
 
     def __post_init__(self) -> None:
         for name in self.secret_env:
@@ -462,14 +474,19 @@ def remote_command(command: Command) -> str:
     # (Exported, not just assigned: a plain `NAME=value command` would reach the program, but a
     # NAME=value line of its own only sets a shell variable, so export them all.)
     parts += [f"export {name}={shlex.quote(value)}" for name, value in sorted(command.env.items())]
-    parts.append("exec " + " ".join(shlex.quote(part) for part in command.argv))
+    program = " ".join(shlex.quote(part) for part in command.argv)
+    parts.append(program if command.reports_status else "exec " + program)
     body = " && ".join(parts)
-    if command.cwd is None:
-        return body
-    # (Joined with `&&`: a folder that is not there, or a secret line that never comes, stops the
-    # whole command, so the program never runs with an empty secret or somewhere else. Local
-    # run() refuses the same cases, so the shells agree.)
-    return f"cd -- {shlex.quote(command.cwd)} && {{ {body}; }}"
+    if command.cwd is not None:
+        # (Joined with `&&`: a folder that is not there, or a secret line that never comes, stops
+        # the whole command, so the program never runs with an empty secret or somewhere else.
+        # Local run() refuses the same cases, so the shells agree.)
+        body = f"cd -- {shlex.quote(command.cwd)} && {{ {body}; }}"
+    if command.reports_status:
+        # (Waiting for it is what turns a kill into an exit code: the shell is still there to
+        # say 128+9, where an exec'd program's signal would be sshd's "exit-signal".)
+        body += "; exit $?"
+    return body
 
 
 def _secrets(command: Command) -> bytes | None:
@@ -825,7 +842,10 @@ async def _limited(
     if limits is None:
         return command, None
     if await probe.there():
-        return replace(command, argv=capped(command.argv, limits, unit=unit)), "enforced"
+        return (
+            replace(command, argv=capped(command.argv, limits, unit=unit), reports_status=True),
+            "enforced",
+        )
     return command, "unenforced"
 
 
@@ -854,11 +874,11 @@ def _over_cap(
 class LocalShell:
     """A shell on this machine: udl.process."""
 
-    def __init__(self, host: Host) -> None:
+    def __init__(self, host: Host, seen: MutableMapping[str, bool] | None = None) -> None:
         if host.transport is not HostTransport.LOCAL:
             raise ValueError(f"{host.name!r} is not this machine")
         self.host = host
-        self._probe = Probe(self)
+        self._probe = Probe(self, seen)
 
     def run(
         self,
@@ -996,11 +1016,11 @@ class SshShell:
     requires: ClassVar[tuple[Requirement, ...]] = (Requirement.binary("ssh"),)
     """ssh has to be on the machine udl runs on (not on the host: it is reached with ssh)."""
 
-    def __init__(self, host: Host) -> None:
+    def __init__(self, host: Host, seen: MutableMapping[str, bool] | None = None) -> None:
         if host.transport is not HostTransport.SSH:
             raise ValueError(f"{host.name!r} is not reached over SSH")
         self.host = host
-        self._probe = Probe(self)
+        self._probe = Probe(self, seen)
 
     def run(
         self,
@@ -1120,8 +1140,11 @@ class SshShell:
         return _forwarded_ssh(self.host, port)
 
 
-def shell_for(host: Host) -> HostShell:
-    """The shell that acts on `host`: LocalShell for this machine, SshShell for another."""
+def shell_for(host: Host, seen: MutableMapping[str, bool] | None = None) -> HostShell:
+    """The shell that acts on `host`: LocalShell for this machine, SshShell for another.
+
+    `seen` is where the caps probe keeps its answer per host (27.12), shared by one service's
+    shells so a host is asked once."""
     if host.transport is HostTransport.LOCAL:
-        return LocalShell(host)
-    return SshShell(host)
+        return LocalShell(host, seen)
+    return SshShell(host, seen)

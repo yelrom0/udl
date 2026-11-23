@@ -87,7 +87,7 @@ async def hosts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterato
     """A started service with `local` and `thevault`, each answering through a script."""
     shells = {name: ScriptedShell(host(name)) for name in HOSTS}
 
-    def shell_for(found: Host) -> ScriptedShell:
+    def shell_for(found: Host, seen: object = None) -> ScriptedShell:
         return shells[found.name]
 
     monkeypatch.setattr("udl.hosts.manager.shell_for", shell_for)
@@ -290,7 +290,7 @@ async def test_a_runner_udl_cannot_make_is_a_problem_not_the_end(
     listed."""
     shells = {name: ScriptedShell(host(name)) for name in HOSTS}
 
-    def shell_for(found: Host) -> ScriptedShell:
+    def shell_for(found: Host, seen: object = None) -> ScriptedShell:
         return shells[found.name]
 
     monkeypatch.setattr("udl.hosts.manager.shell_for", shell_for)
@@ -665,7 +665,7 @@ def test_the_runners_command_lists_them_rather_than_showing_its_group_help(
     sits at the group's own path, which is also where its install, setup and sign-in live."""
     shells = {name: ScriptedShell(host(name)) for name in HOSTS}
 
-    def shell_for(found: Host) -> ScriptedShell:
+    def shell_for(found: Host, seen: object = None) -> ScriptedShell:
         return shells[found.name]
 
     monkeypatch.setattr("udl.hosts.manager.shell_for", shell_for)

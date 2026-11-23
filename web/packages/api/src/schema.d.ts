@@ -5901,12 +5901,6 @@ export interface components {
              * @description How long it took, in seconds.
              */
             seconds: number;
-            /**
-             * Stopped
-             * @description Why udl or the kernel stopped it, when one did (27.12): at its memory cap, or at its time
-             *     (None: it ended on its own).
-             */
-            stopped?: ("memory" | "timeout") | null;
         };
         /**
          * GetAgentRequest

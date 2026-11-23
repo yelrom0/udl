@@ -221,6 +221,8 @@ async def test_the_owner_starts_a_chat_and_sends_it_a_turn(service: UDLService) 
     assert spec.permission_mode is None, "the person's own settings decide"
     assert spec.permission_tool == "mcp__udl__orch_chat_ask_permission"
     assert spec.mcp is not None, "the harness is pointed at udl's MCP server"
+    assert spec.memory == 20 * 1024**3, "a chat's turn is capped like an agent's (27.12)"
+    assert spec.unit == "udl-session-chat", "and its turn is named for the chat, not an agent"
 
 
 async def test_a_permission_is_asked_and_the_answer_reaches_the_harness(

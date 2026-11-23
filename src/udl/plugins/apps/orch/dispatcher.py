@@ -1346,8 +1346,8 @@ loop comes back to it, and a wait with no end is a hang."""
 
 class TurnLease:
     """One session's turn, held across processes (27.9): a `Lease` named `orch-turn:<session>`,
-    the way a gate's lane is `orch-gate:<host>` (27.5), so a person's typed turn (in the CLI's
-    process) and the loop's (in `udl serve`) never run one session at once.
+    the way a gate's lane is `orch-gate:<host>:<n>` (27.5, 27.12), so a person's typed turn (in
+    the CLI's process) and the loop's (in `udl serve`) never run one session at once.
 
     `held()` takes it — waiting for it, or not — and gives it back however the turn ends, renewing
     it while the turn runs: a process that dies mid-turn lets the next one in when its lease

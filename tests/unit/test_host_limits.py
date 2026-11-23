@@ -14,12 +14,22 @@ with its `.scope` suffix: a bare name means `.service` to `systemctl`.
 import pytest
 
 # Local Imports
-from udl.hosts.shell import ResourceLimits, capped, escaped, scope_of, size_words, unit_name
+from tests.support.harnesses import ScriptedShell
+
+from udl.hosts.shell import (
+    Probe,
+    ResourceLimits,
+    capped,
+    escaped,
+    scope_of,
+    size_words,
+    unit_name,
+)
 
 
-def test_a_plain_name_keeps_its_dots_and_escapes_its_dashes() -> None:
-    """(systemd-escape's own answer: `systemd-escape 27.3a` is `27.3a`, and `F-1.1` is
-    `F\\x2d1.1`.)"""
+def test_a_plain_name_keeps_its_dots_and_its_inner_dashes() -> None:
+    """(A part is escaped by `systemd-escape`'s rules, except that a dash inside it is kept: it is
+    how the parts are joined, and `deepseek-b` reads better than `deepseek\\x2db`.)"""
     assert unit_name("udl-gate", "udl", "27.3a", "0a1b2c3d") == "udl-gate-udl-27.3a-0a1b2c3d"
     assert unit_name("udl-gate", "udl", "F-1.1", "0a1b2c3d") == "udl-gate-udl-F-1.1-0a1b2c3d"
 
@@ -90,3 +100,20 @@ def test_a_cap_is_said_in_words() -> None:
 def test_a_cap_must_be_more_than_nothing() -> None:
     with pytest.raises(ValueError, match="not more than nothing"):
         ResourceLimits(memory=0)
+
+
+class _Shell(ScriptedShell):
+    """A shell that answers every argv with exit 0, and counts what it was asked."""
+
+
+async def test_the_caps_probe_is_asked_once_a_host() -> None:
+    """(A shell is made on every call — `Hosts.shell()` — so the answer is kept by host name, in
+    the map a service's hosts share: a host is probed once, not before every gate and turn.)"""
+    shell = _Shell()
+    shell.answer(["systemd-run", "--user", "--scope", "-q", "true"], code=0)
+    seen: dict[str, bool] = {}
+
+    assert await Probe(shell, seen).there() is True
+    assert await Probe(shell, seen).there() is True
+
+    assert len([argv for argv in shell.runs if argv[:2] == ["systemd-run", "--user"]]) == 1

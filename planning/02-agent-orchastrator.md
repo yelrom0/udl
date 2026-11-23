@@ -1409,25 +1409,32 @@ Run by Claude on 22 Nov 2026 against `main` at `2858d25` (throwaway data dirs, a
   - on the fakes, all of the above;
   - on jeff-wiggle, an opt-in `-m host` test whose gate allocates past a 256 MiB cap is stopped and reported `memory` while the machine stays up. Claude runs it.
 
-- **Built (`deepseek-b`, 24 Nov 2026, PR #TBD):** the caps, the lanes and the cleanup, as the card
-  asked, with two places the build reads the card differently.
+- **Built (`deepseek-b`, 24 Nov 2026, PR #101):** the caps, the lanes and the cleanup, as the card
+  asked, with a few places the build reads the card differently.
   - **What is there:** `HostShell.run()`/`stream()` take `limits: ResourceLimits | None` and a
-    `unit`; a host is probed once (`systemd-run --user --scope -q true`) and kept until its shell is
-    gone, and a capped run is a transient user scope with `MemoryMax` and `MemorySwapMax=0`. Where
+    `unit`; a host is probed once (`systemd-run --user --scope -q true`) and the answer is kept by
+    host name in the map a service's shells share (a shell is made per call, so keeping it in one
+    shell would probe before every gate and every turn), and a capped run is a transient user
+    scope with `MemoryMax` and `MemorySwapMax=0`. Where
     the probe fails, the run goes ahead and its result says `limits="unenforced"`. `ProcessResult`
     carries that state, and a capped run ending on 137/-9 that udl did not stop raises `OverCap`
     ("passed its memory cap of 4 GiB"). A stop ends the push, so the reason is in the `NotAllowed`
     (`hint` starts `stopped: memory` or `stopped: timeout`, then the gate's or the cleanup's own
-    output) rather than in a `PushResult` that is never returned; `GateRun.stopped` carries it
-    where a gate run is recorded. A timeout `systemctl --user stop <unit>.scope`s the unit, so the
-    suite's children go with it, and `gate_cleanup` runs after either stop — not after a gate that
-    failed on its own. `OrchSettings` has `gates_per_host`, `gate_memory` (4 GiB) and
+    output) rather than in a `PushResult` that is never returned, so no field records a stop that
+    nothing ever reads. A timeout `systemctl --user stop <unit>.scope`s the unit, so the suite's
+    children go with it — only where the host really enforces caps (elsewhere there is no unit,
+    and a stop that fails is said in the hint instead of raised), and `gate_cleanup` runs after
+    either stop — not after a gate that failed on its own. `OrchSettings` has `gates_per_host`, `gate_memory` (4 GiB) and
     `session_memory` (20 GiB), all `ByteSize | None` but `gates_per_host`; `Repo` has
     `gate_cleanup`. The lane takes one of `gates_per_host` leases (`orch-gate:<host>:<n>`), and a
     push with slots waits as before.
   - **Sessions:** `SessionSpec` gains `memory` and `unit` (a prefix), and `command`, `codex` and
     `claude-code` run each turn as `udl-session-<agent>-<8 hex>`; an `OverCap` from the shell is
-    that turn's `RunnerFailed` and `TurnEnded(ERROR)`. `opencode` runs its turns in its service, so
+    that turn's `RunnerFailed` and `TurnEnded(ERROR)`; a person's chat (27.11) is capped the same
+    way, as `udl-session-chat-<8 hex>`. Over SSH a capped run is wrapped so the shell waits for it
+    and exits with its code (`reports_status`): a shell that `exec`s a program the kernel kills
+    dies with it, and sshd then reports a signal, so the client exits 255 — "the host was not
+    reached" — instead of 137. `opencode` runs its turns in its service, so
     its health reports the unit's `MemoryMax` and `OOMPolicy`, and `problems` says when there is no
     cap or when `OOMPolicy` is not `continue`.
   - **Read differently:** the unit name is `unit_name(prefix, *parts)` — udl's own prefix stays
@@ -1436,16 +1443,18 @@ Run by Claude on 22 Nov 2026 against `main` at `2858d25` (throwaway data dirs, a
     `deepseek\x2db`; a leading `-` is still escaped). So the gate's unit is
     `udl-gate-udl-27.3a-0a1b2c3d` and a turn's `udl-session-deepseek-b-0a1b2c3d`.
   - **Left out:** `udl hosts check` does not yet say whether a host has user systemd (the gate's
-    own result says `unenforced` instead, which is where a person meets it); the `-m host` test on
-    jeff-wiggle (the card's second done-when) is the user's to run — `pyproject.toml` gains a
+    own result says `unenforced` instead, which is where a person meets it). The card's second
+    done-when is the `-m host` test on jeff-wiggle, which Claude runs: `pyproject.toml` gains a
     `host` marker, deselected by default like `network`, and `tests/integration/test_host_caps.py`
     is `pytest -m host`.
-  - **Tests:** `tests/unit/test_host_limits.py` (names, the argv, the words of a cap),
-    `tests/integration/test_host_caps.py` (a real scope's own `memory.max`, no systemd, the probe
-    once, a 1 GiB allocation stopped at 256 MiB), `tests/integration/plugins/apps/orch/
-    test_gate_caps.py` (memory, timeout, cleanup only after a stop, 137 unenforced, the unit's
-    name), `test_gate_lane.py` (two slots, a third waiting), and the runners' own files (the cap
-    and unit each turn gets, `RunnerFailed` at the cap, `opencode`'s `MemoryMax`/`OOMPolicy`).
+  - **Tests:** `tests/unit/test_host_limits.py` (names, the argv, the words of a cap, the probe
+    asked once per host), `tests/integration/test_host_caps.py` (a real scope's own `memory.max`,
+    no systemd, a 1 GiB allocation stopped at 256 MiB, and a capped run through the remote line
+    arriving as 137 and never 255), `tests/integration/plugins/apps/orch/test_gate_caps.py`
+    (memory, timeout, a timeout where the host caps nothing, a stop that fails, cleanup only
+    after a stop, 137 unenforced, the unit's name), `test_gate_lane.py` (two slots, a third
+    waiting), `test_chat.py` (a chat's turn is capped), and the runners' own files (the cap and
+    unit each turn gets, `RunnerFailed` at the cap, `opencode`'s `MemoryMax`/`OOMPolicy`).
 
 **27.13 Host health, and what udl does about it** · needs 27.12, 28.2, 25.11 · size L (the user, 23 Nov 2026)
 - Why: on 23 Nov btrfs ran out of unallocated space. `df` still showed 116 GiB free, but metadata couldn't grow, so every commit failed with "No space left on device". Later, five full suites at once took disk I/O pressure to 50%. Claude caught both by hand every half hour. This makes it udl's.
