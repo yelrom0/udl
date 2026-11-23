@@ -408,7 +408,7 @@ _AGENTS: tuple[str, ...] = ("orch", "agents")
 
 _QUEUE: tuple[str, ...] = ("orch", "queue")
 _CHATS: tuple[str, ...] = ("orch", "chats")
-"""The CLI words the queue's operations live under: `udl orch queue [show|mine|add|set|rm]`."""
+"""The CLI words a person's chats live under: `udl orch chats [start|send|show|stop|rm|allow]`."""
 
 _RUNNERS: tuple[str, ...] = ("orch", "runners")
 """The CLI words a harness's operations live under: `udl orch runners [install]`."""
@@ -887,7 +887,6 @@ class Orch(AppPlugin[OrchSettings]):
                         "directory": "--in",
                         "model": "--model",
                         "host": "--host",
-                        "permission_mode": "--permissions",
                         "title": "--title",
                     },
                 ),
@@ -932,7 +931,7 @@ class Orch(AppPlugin[OrchSettings]):
             cls.operation(
                 "chat_permission",
                 title="Answer what a chat's harness asked",
-                hints=OperationHints(idempotent=True),
+                hints=OperationHints(),
                 cli=CLISpec(path=(*_CHATS, "allow"), arguments=("chat", "request")),
             ),
         ]
@@ -1017,12 +1016,14 @@ class Orch(AppPlugin[OrchSettings]):
         It is the one chat operation a chat's own token may call, and the chat is its own: a
         token never says which chat it is asking for."""
         who = _caller()
-        wanted = request.chat
-        if who is not None and who.is_chat and who.chat is not None:
-            wanted = who.chat  # (a chat's token asks for its own chat, never another)
-        chat = await self._chat(wanted)
-        if await self.chats.allowed(chat, request.tool, request.input):
-            return PermissionAnswer(allow=True, message="Allowed for the rest of this chat.")
+        if who is None or not who.is_chat or who.chat is None:
+            raise NotAllowed(
+                "only a chat's harness asks this, with the chat's own token",
+                hint="The person answers a chat's permission prompt; udl's owner does not ask.",
+            )
+        chat = await self._chat(who.chat)  # (its own chat, never one the request names)
+        if await self.chats.allowed(chat, request.tool_name, request.input):
+            return PermissionAnswer(behavior="allow", updatedInput=request.input)
         return await self.chats.ask(chat, request)
 
     async def chat_permission(self, request: PermissionRequest) -> ChatInfo:

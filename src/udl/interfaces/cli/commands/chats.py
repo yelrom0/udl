@@ -13,7 +13,9 @@ asks you what it asks (its permission prompts), and sends what you type.
 
 # System Imports
 import asyncio
+import contextlib
 from typing import Annotated
+from uuid import UUID
 
 # Package Imports
 import typer
@@ -111,25 +113,44 @@ async def _talk(
         raise typer.BadParameter("Give --chat <id>, or --new to start one.")
     stdout().print(HELP)
 
-    seen = 0
-    while True:
-        found = await _read(service, str(found.id), limit=200)
-        seen = shown(found, seen=seen)
-        if found.permission is not None:
-            if not await _answer(service, found):
+    # (The loop looks at the chat while the person types, so what the harness says — and what it
+    # asks — shows as it comes, not when the next line is typed.)
+    seen = found.total
+    asked: UUID | None = None
+    typing = asyncio.create_task(_typed())
+    try:
+        while True:
+            found = await _read(service, str(found.id), limit=200)
+            seen = shown(found, seen=seen)
+            if found.permission is not None and found.permission.id != asked:
+                asked = found.permission.id
+                _prompted(found)
+            if found.state.value in ("failed", "ended"):
+                stdout().print(
+                    f"\n({found.state.value}: {found.last_error or 'the harness is gone'})"
+                )
+                return
+            done, _ = await asyncio.wait({typing}, timeout=POLL)
+            if not done:
+                continue
+            line = typing.result()
+            typing = asyncio.create_task(_typed())
+            if line is None or line.strip().lower() in QUIT:
                 stdout().print("Leaving the chat. It keeps running.")
                 return
-            continue
-        if found.state.value in ("failed", "ended"):
-            stdout().print(f"({found.state.value}: {found.last_error or 'the harness is gone'})")
-            return
-        line = await _typed()
-        if line is None or line.strip() in QUIT:
-            stdout().print("Leaving the chat. It keeps running.")
-            return
-        if not line.strip():
-            continue
-        await service.call("orch_chat_send", SendChatRequest(chat=found.id, text=line, wait=False))
+            if not line.strip():
+                continue
+            if asked is not None:
+                await _answered(service, found, asked, line)
+                asked = None
+                continue
+            await service.call(
+                "orch_chat_send", SendChatRequest(chat=found.id, text=line, wait=False)
+            )
+    finally:
+        typing.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await typing
 
 
 def shown(found: ChatInfo, *, seen: int) -> int:
@@ -150,22 +171,22 @@ def _said(event: AnAgentEvent) -> None:
         stdout().print(event.text, end="")
 
 
-async def _answer(service: UDLService, found: ChatInfo) -> bool:
-    """Ask the person about what the harness wants to do, and tell the harness (False: they
-    left the chat instead of answering)."""
+def _prompted(found: ChatInfo) -> None:
+    """What the harness wants to do, shown as it asks (the person's next line answers it)."""
     asked = found.permission
     if asked is None:
-        return True
+        return
     stdout().print(f"\n[{asked.tool}] {asked.input}")
-    typed = await _typed("allow [o]nce, for this [c]hat, or [d]eny? ")
-    if typed is None or typed.strip().lower() in QUIT:
-        return False
-    decision, message = decided(typed)
+    stdout().print("allow [o]nce, for this [c]hat, or [d]eny?")
+
+
+async def _answered(service: UDLService, found: ChatInfo, request: UUID, line: str) -> None:
+    """The person's line, as the answer to what the harness asked."""
+    decision, message = decided(line)
     await service.call(
         "orch_chat_permission",
-        PermissionRequest(chat=found.id, request=asked.id, decision=decision, message=message),
+        PermissionRequest(chat=found.id, request=request, decision=decision, message=message),
     )
-    return True
 
 
 def decided(typed: str) -> tuple[ChatDecision, str]:
@@ -181,8 +202,6 @@ def decided(typed: str) -> tuple[ChatDecision, str]:
 
 async def _read(service: UDLService, chat_id: str, *, limit: int) -> ChatInfo:
     """The chat, as `orch_chat_get` answers it (a `UDLError` says what is wrong with the id)."""
-    from uuid import UUID
-
     try:
         wanted = UUID(chat_id)
     except ValueError:

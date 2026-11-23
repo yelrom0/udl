@@ -9,6 +9,7 @@ operations it calls are the other chat commands', tested with them.
 """
 
 # System Imports
+import re
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -21,6 +22,12 @@ from typer.testing import CliRunner
 from udl.interfaces.cli.commands import chats
 from udl.plugins.apps.orch.agents import SessionState
 from udl.plugins.apps.orch.chat import ChatDecision, ChatInfo
+
+
+def plain(text: str) -> str:
+    """What the terminal shows, without its colours and with its wrapping undone (a narrow one
+    breaks a message across lines, as CI's does)."""
+    return " ".join(re.sub(r"\x1b\[[0-9;]*m", "", text).split())
 
 
 def a_chat(*, total: int = 0) -> ChatInfo:
@@ -44,7 +51,7 @@ def test_it_needs_a_chat_to_join_or_one_to_start() -> None:
     result = CliRunner().invoke(app, [])
 
     assert result.exit_code == 2
-    assert "Give --chat <id>, or --new to start one" in result.output
+    assert "Give --chat <id>, or --new to start one" in plain(result.output)
 
 
 def test_it_will_not_take_both() -> None:
@@ -54,7 +61,7 @@ def test_it_will_not_take_both() -> None:
     result = CliRunner().invoke(app, ["--chat", "one", "--new"])
 
     assert result.exit_code == 2
-    assert "not both" in result.output
+    assert "not both" in plain(result.output)
 
 
 def test_only_what_is_new_is_shown() -> None:

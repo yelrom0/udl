@@ -3833,27 +3833,25 @@ export interface components {
          * AskPermissionRequest
          * @description What a harness asks udl, through udl's MCP server, before it acts in a chat (27.11): the
          *     tool it wants and what it wants to use it on.
+         *
+         *     This is Claude Code's own permission-prompt protocol, not udl's: it calls the tool with
+         *     `tool_name`, `input` and `tool_use_id`, and reads back `behavior` with `updatedInput` or
+         *     `message`. The chat is never in the request — it is the one the calling token is for.
          */
         AskPermissionRequest: {
-            /**
-             * Chat
-             * Format: uuid
-             * @description The chat it is asking in (what its token names).
-             */
-            chat: string;
-            /** @description What it wants to use it on. */
+            /** @description What it wants to use it on, as the harness asked. */
             input?: components["schemas"]["JsonObject"];
             /**
-             * Message
-             * @description What it says it is doing, in a line.
+             * Tool Name
+             * @description The tool it wants to use (`Bash`, `Edit`, …).
+             */
+            tool_name: string;
+            /**
+             * Tool Use Id
+             * @description Which of its tool uses this is (the harness's own id: udl keeps it only as it came).
              * @default
              */
-            message: string;
-            /**
-             * Tool
-             * @description The tool it wants to use.
-             */
-            tool: string;
+            tool_use_id: string;
         };
         /**
          * AskRequest
@@ -4354,7 +4352,7 @@ export interface components {
             /**
              * Id
              * Format: uuid
-             * @description Its id (what `orch_chat_answer_permission` takes).
+             * @description Its id (what `orch_chat_permission` takes).
              */
             id: string;
             /** @description What it wants to use it on, as the harness asked. */
@@ -7428,20 +7426,26 @@ export interface components {
         };
         /**
          * PermissionAnswer
-         * @description What the harness is told: whether it may act, and why not.
+         * @description What the harness is told, in its own protocol: whether it may act, on what, and why not.
+         *
+         *     `behavior` is the word Claude Code reads (`allow` or `deny`), and `updatedInput` is what it
+         *     then runs: the input it asked with, unchanged.
          */
         PermissionAnswer: {
             /**
-             * Allow
+             * Behavior
              * @description Whether it may act.
+             * @enum {string}
              */
-            allow: boolean;
+            behavior: "allow" | "deny";
             /**
              * Message
              * @description Why not, when it may not.
              * @default
              */
             message: string;
+            /** @description What it may run (the input it asked with: udl never changes it). */
+            updatedInput?: components["schemas"]["JsonObject"] | null;
         };
         /**
          * PermissionRequest
@@ -10568,13 +10572,6 @@ export interface components {
              * @default
              */
             model: string;
-            /**
-             * Permission Mode
-             * @description What the harness's permission mode is recorded as (`manual`: it asks before it acts). udl
-             *     does not pass it: a chat runs as the person would, so their own settings decide.
-             * @default manual
-             */
-            permission_mode: string;
             /** @description The harness (`claude-code`). */
             runner: components["schemas"]["Name"];
             /**

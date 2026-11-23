@@ -18,6 +18,7 @@ refused() before it runs an operation an agent called. Nothing else compares a r
 """
 
 # System Imports
+import contextlib
 import logging
 import secrets
 from datetime import timedelta
@@ -29,10 +30,11 @@ from pydantic import BaseModel, ConfigDict, SecretStr
 # Local Imports
 from udl.clock import Clock, SystemClock
 from udl.db.records import Name
-from udl.errors import DoesNotExist, NotAllowed, UDLError
+from udl.errors import DoesNotExist, NotAllowed, PluginError, UDLError
 from udl.interfaces.security import AGENT_PREFIX, Principal, PrincipalKind
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.agents import AgentRole, ManagerPowers
+from udl.plugins.apps.orch.chat import chat_secret_ref
 from udl.plugins.apps.orch.managers import switched_on
 from udl.plugins.apps.orch.records import (
     AgentRecords,
@@ -113,7 +115,9 @@ the powers it switches on)."""
 _CHAT_REFUSED: Final = frozenset(
     {
         # (A chat is the person's own work, done through udl: it may do what they may, but not
-        # hand out tokens, change auto merge, or write the secret store.)
+        # hand out tokens, change auto merge, or write the secret store. Every admin operation
+        # is refused with them — a chat has no business changing accounts, agents or settings —
+        # and the two named here are the ones a chat might otherwise reach by not being admin.)
         "orch_issue_token",
         "orch_set_auto_merge",
         "set_onepassword_token",
@@ -177,11 +181,12 @@ async def refused_for(service: UDLService, principal: Principal, name: str, *, a
     if principal.is_chat:
         if name in _CHAT_ALWAYS:
             return
-        if name in _CHAT_REFUSED or name.startswith("orch_chat_"):
+        if admin or name in _CHAT_REFUSED or name.startswith("orch_chat_"):
             raise NotAllowed(
                 f"{name} is not one of the operations a chat's token may call",
                 hint="A chat's token does the person's work through udl; it cannot hand out "
-                "tokens, change auto merge, write the secret store, or manage a chat (27.11).",
+                "tokens, change auto merge, write the secret store, change an account or an "
+                "agent, or manage a chat (27.11).",
             )
         return
     powers: ManagerPowers | None = None
@@ -276,8 +281,12 @@ class OrchTokens:
                 return None
             if self._clock.now() - chat.updated_at > await self._chat_idle():
                 # (27.11: a token outlives its chat being untouched by `chat_idle` hours. It is
-                # taken away as it is refused, so nothing keeps a stale one alive.)
+                # taken away as it is refused, with what carried it — the secret, and the file
+                # its harness reads it from — so a chat someone comes back to starts again.)
                 await self._records.delete(ChatToken, kept.id)
+                if self._service is not None:
+                    with contextlib.suppress(UDLError, PluginError):
+                        await self._service.secrets.delete(chat_secret_ref(chat.id))
                 log.info(
                     "refused the chat %s's token: untouched since %s", chat.id, chat.updated_at
                 )

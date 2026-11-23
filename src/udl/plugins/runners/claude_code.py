@@ -248,10 +248,12 @@ class ClaudeCode(AgentRunner[ClaudeCodeOptions]):
         folder = f"{spec.cwd}/{_FOLDER}"
         if spec.instructions is not None:
             await self._write(f"{folder}/system-prompt.md", spec.instructions)
-        await self._write(
-            f"{folder}/settings.json",
-            json.dumps({"permissions": {"deny": list(spec.deny)}}, indent=2),
-        )
+        if not spec.own_settings:
+            # (27.11: a chat runs as the person would, so udl writes no settings for it.)
+            await self._write(
+                f"{folder}/settings.json",
+                json.dumps({"permissions": {"deny": list(spec.deny)}}, indent=2),
+            )
         if spec.mcp is not None:
             await self._write(f"{folder}/mcp.json", _mcp_config(spec))
         await self._exclude(spec.cwd)

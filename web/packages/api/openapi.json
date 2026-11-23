@@ -1273,33 +1273,26 @@
       },
       "AskPermissionRequest": {
         "additionalProperties": false,
-        "description": "What a harness asks udl, through udl's MCP server, before it acts in a chat (27.11): the\ntool it wants and what it wants to use it on.",
+        "description": "What a harness asks udl, through udl's MCP server, before it acts in a chat (27.11): the\ntool it wants and what it wants to use it on.\n\nThis is Claude Code's own permission-prompt protocol, not udl's: it calls the tool with\n`tool_name`, `input` and `tool_use_id`, and reads back `behavior` with `updatedInput` or\n`message`. The chat is never in the request \u2014 it is the one the calling token is for.",
         "properties": {
-          "chat": {
-            "description": "The chat it is asking in (what its token names).",
-            "format": "uuid",
-            "title": "Chat",
-            "type": "string"
-          },
           "input": {
             "$ref": "#/components/schemas/JsonObject",
-            "description": "What it wants to use it on."
+            "description": "What it wants to use it on, as the harness asked."
           },
-          "message": {
-            "default": "",
-            "description": "What it says it is doing, in a line.",
-            "title": "Message",
+          "tool_name": {
+            "description": "The tool it wants to use (`Bash`, `Edit`, \u2026).",
+            "title": "Tool Name",
             "type": "string"
           },
-          "tool": {
-            "description": "The tool it wants to use.",
-            "title": "Tool",
+          "tool_use_id": {
+            "default": "",
+            "description": "Which of its tool uses this is (the harness's own id: udl keeps it only as it came).",
+            "title": "Tool Use Id",
             "type": "string"
           }
         },
         "required": [
-          "chat",
-          "tool"
+          "tool_name"
         ],
         "title": "AskPermissionRequest",
         "type": "object"
@@ -2171,7 +2164,7 @@
             "type": "string"
           },
           "id": {
-            "description": "Its id (what `orch_chat_answer_permission` takes).",
+            "description": "Its id (what `orch_chat_permission` takes).",
             "format": "uuid",
             "title": "Id",
             "type": "string"
@@ -7807,22 +7800,37 @@
       },
       "PermissionAnswer": {
         "additionalProperties": false,
-        "description": "What the harness is told: whether it may act, and why not.",
+        "description": "What the harness is told, in its own protocol: whether it may act, on what, and why not.\n\n`behavior` is the word Claude Code reads (`allow` or `deny`), and `updatedInput` is what it\nthen runs: the input it asked with, unchanged.",
         "properties": {
-          "allow": {
+          "behavior": {
             "description": "Whether it may act.",
-            "title": "Allow",
-            "type": "boolean"
+            "enum": [
+              "allow",
+              "deny"
+            ],
+            "title": "Behavior",
+            "type": "string"
           },
           "message": {
             "default": "",
             "description": "Why not, when it may not.",
             "title": "Message",
             "type": "string"
+          },
+          "updatedInput": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JsonObject"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What it may run (the input it asked with: udl never changes it)."
           }
         },
         "required": [
-          "allow"
+          "behavior"
         ],
         "title": "PermissionAnswer",
         "type": "object"
@@ -13414,12 +13422,6 @@
             "default": "",
             "description": "The model (empty: the harness's own default).",
             "title": "Model",
-            "type": "string"
-          },
-          "permission_mode": {
-            "default": "manual",
-            "description": "What the harness's permission mode is recorded as (`manual`: it asks before it acts). udl\ndoes not pass it: a chat runs as the person would, so their own settings decide.",
-            "title": "Permission Mode",
             "type": "string"
           },
           "runner": {

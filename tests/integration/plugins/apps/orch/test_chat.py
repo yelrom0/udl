@@ -20,6 +20,7 @@ the operations and what they write.
 import asyncio
 from collections.abc import AsyncIterator
 from contextvars import Token
+from datetime import timedelta
 from pathlib import Path
 from typing import ClassVar
 from uuid import UUID
@@ -46,17 +47,20 @@ from udl.interfaces.security import (
     authenticate,
     current_principal,
 )
-from udl.plugins.apps.base import AppRecords
+from udl.plugins.apps.base import AppEvents, AppRecords
 from udl.plugins.apps.orch.agents import SessionState
 from udl.plugins.apps.orch.chat import (
+    AskPermissionRequest,
     ChatInfo,
     ChatList,
     ChatPermissionInfo,
+    Chats,
     PermissionAnswer,
     chat_secret_ref,
 )
 from udl.plugins.apps.orch.plugin import Orch
 from udl.plugins.apps.orch.records import (
+    Chat,
     ChatPermission,
     ChatRecords,
     ChatTokenRecords,
@@ -65,6 +69,7 @@ from udl.plugins.apps.orch.records import (
 from udl.plugins.apps.orch.tokens import tokens_for
 from udl.plugins.registry import APPS, RUNNERS, PluginRegistry
 from udl.plugins.runners.base import AgentEvent, SessionRef, TextDelta, TurnEnded, TurnReason
+from udl.plugins.runners.manage import Harnesses
 from udl.plugins.secrets.base import SecretRef
 
 SCRIPT: dict[str, Turn] = {}
@@ -227,18 +232,11 @@ async def test_a_permission_is_asked_and_the_answer_reaches_the_harness(
 
     async def wants_bash(runner: FakeRunner, session: SessionRef) -> AsyncIterator[AgentEvent]:
         chat = await chat_of(service)
-        asked = await service.call(
-            "orch_chat_ask_permission",
-            {
-                "chat": str(chat.id),
-                "tool": "Bash",
-                "input": {"command": "rm -rf build"},
-                "message": "Clear the build",
-            },
+        asked = await asked_by_harness(
+            service, chat, tool="Bash", given={"command": "rm -rf build"}
         )
-        assert isinstance(asked, PermissionAnswer)
         answer.append(asked)
-        yield TextDelta(text="Fine." if asked.allow else f"No: {asked.message}")
+        yield TextDelta(text="Fine." if asked.behavior == "allow" else f"No: {asked.message}")
         yield TurnEnded(reason=TurnReason.DONE)
 
     SCRIPT["clear the build"] = wants_bash
@@ -261,7 +259,7 @@ async def test_a_permission_is_asked_and_the_answer_reaches_the_harness(
     )
     done = await settled(service, chat)
     assert answer
-    assert answer[0].allow is False
+    assert answer[0].behavior == "deny"
     assert answer[0].message == "not that folder"
     assert done.last_text == "No: not that folder"
 
@@ -277,13 +275,9 @@ async def test_a_permission_allowed_for_the_chat_is_not_asked_again(
     async def runs(runner: FakeRunner, session: SessionRef) -> AsyncIterator[AgentEvent]:
         chat = await chat_of(service)
         for command in ("ls", "ls", "git status", "git push", "ls && rm x"):
-            asked = await service.call(
-                "orch_chat_ask_permission",
-                {"chat": str(chat.id), "tool": "Bash", "input": {"command": command}},
-            )
-            assert isinstance(asked, PermissionAnswer)
-            asked_for.append(command if not asked.allow else f"{command} (allowed)")
-            if asked.allow is False:
+            asked = await asked_by_harness(service, chat, tool="Bash", given={"command": command})
+            asked_for.append(command if asked.behavior == "deny" else f"{command} (allowed)")
+            if asked.behavior == "deny":
                 break  # (a test that is waiting for a person's answer stops here)
         yield TurnEnded(reason=TurnReason.DONE)
 
@@ -446,11 +440,12 @@ async def test_the_chat_s_token_does_the_person_s_work_and_not_more(service: UDL
         )
         assert assigned is not None, "a chat does the person's work through udl"
 
-        # (A token asks for its own chat, whatever the request names: the chat is its own.)
+        # (A token asks for its own chat, whatever the request names: the chat is its own — and
+        # the request cannot name one at all, so the token's chat is the only one it can reach.)
         asking = asyncio.create_task(
             service.call(
                 "orch_chat_ask_permission",
-                {"chat": other.id, "tool": "Bash", "input": {"command": "ls"}},
+                {"tool_name": "Bash", "input": {"command": "ls"}, "tool_use_id": "toolu_2"},
             )
         )
         filed = await pending_of(service, mine)
@@ -465,7 +460,7 @@ async def test_the_chat_s_token_does_the_person_s_work_and_not_more(service: UDL
     )
     answer = await asyncio.wait_for(asking, timeout=10)
     assert isinstance(answer, PermissionAnswer)
-    assert answer.allow
+    assert answer.behavior == "allow"
 
     # (Stopped: its token is deleted, and no longer resolves.)
     stopped = await service.call("orch_chat_stop", {"chat": mine.id})
@@ -475,6 +470,52 @@ async def test_the_chat_s_token_does_the_person_s_work_and_not_more(service: UDL
 
     with pytest.raises(Unauthorized):
         await authenticate(service.settings, given, tokens=orch_tokens(service))
+
+
+async def test_nobody_answering_in_time_is_a_denial(service: UDLService) -> None:
+    """(The card's timeout: a prompt nobody answers within `chat_permission_minutes` is denied,
+    and the harness is told why — it is never left waiting.)"""
+    clock = FakeClock()
+    records = AppRecords(service.db)
+    chats = Chats(
+        service=service,
+        records=records,
+        events=AppEvents(service.bus, "orch", []),
+        harnesses=Harnesses(service),
+        clock=clock,
+        permission_minutes=10,
+    )
+    chat = await records.save(Chat(owner="human:owner", runner="fake"))
+
+    asking = asyncio.create_task(
+        chats.ask(chat, AskPermissionRequest(tool_name="Bash", input={"command": "ls"}))
+    )
+    for _ in range(200):
+        if await ChatRecords(records).pending(chat.id) is not None:
+            break
+        await asyncio.sleep(0.01)
+    else:
+        raise AssertionError("the request was never filed")
+
+    await clock.advance(timedelta(minutes=11))
+    answer = await asyncio.wait_for(asking, timeout=10)
+
+    assert answer.behavior == "deny"
+    assert "10 minutes" in answer.message
+
+
+async def test_an_agent_s_token_cannot_start_a_chat(service: UDLService) -> None:
+    """(The card's last test: starting a chat is the person's, so an agent's token is refused.)"""
+    caller = current_principal.set(
+        Principal(kind=PrincipalKind.AGENT, name="claude", role="implementer")
+    )
+    try:
+        with pytest.raises(NotAllowed):
+            await service.call(
+                "orch_chat_start", {"runner": "fake", "directory": "/work/udl", "model": "fake-1"}
+            )
+    finally:
+        current_principal.reset(caller)
 
 
 async def test_a_token_of_a_chat_that_is_gone_is_unknown(service: UDLService) -> None:
@@ -518,6 +559,26 @@ async def test_the_chat_s_stream_is_one_chat_s(service: UDLService) -> None:
 # ---------------------------------------------------------------------------------------------
 
 
+async def asked_by_harness(
+    service: UDLService, chat: object, *, tool: str, given: dict[str, object]
+) -> PermissionAnswer:
+    """What a chat's harness asks udl, as it does: with the chat's own token (its principal), and
+    in its own protocol (`tool_name`, `input`, `tool_use_id`)."""
+    assert isinstance(chat, ChatInfo)
+    caller = current_principal.set(
+        Principal(kind=PrincipalKind.CHAT, name=chat.owner, chat=chat.id)
+    )
+    try:
+        answer = await service.call(
+            "orch_chat_ask_permission",
+            {"tool_name": tool, "input": given, "tool_use_id": "toolu_1"},
+        )
+    finally:
+        current_principal.reset(caller)
+    assert isinstance(answer, PermissionAnswer)
+    return answer
+
+
 async def test_a_chat_is_read_with_its_permissions_and_its_last_words(
     service: UDLService,
 ) -> None:
@@ -526,10 +587,7 @@ async def test_a_chat_is_read_with_its_permissions_and_its_last_words(
     async def asks(runner: FakeRunner, session: SessionRef) -> AsyncIterator[AgentEvent]:
         yield TextDelta(text="Let me edit a.py.")
         chat = await chat_of(service)
-        await service.call(
-            "orch_chat_ask_permission",
-            {"chat": str(chat.id), "tool": "Edit", "input": {"file": "a.py"}},
-        )
+        await asked_by_harness(service, chat, tool="Edit", given={"file": "a.py"})
         yield TurnEnded(reason=TurnReason.DONE)
 
     SCRIPT["edit it"] = asks

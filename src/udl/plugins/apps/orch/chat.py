@@ -16,13 +16,14 @@ it asks udl one thing, before it acts: may I use this tool (27.11's permission p
 import asyncio
 import contextlib
 import logging
+import re
 import secrets
 from collections.abc import Mapping, Sequence
 from datetime import timedelta
 from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 from uuid import UUID, uuid4
 
 # Package Imports
@@ -68,7 +69,7 @@ log = logging.getLogger(__name__)
 LOCAL: Final = "local"
 """This machine, as the hosts name it."""
 
-_POLL: Final = 0.05
+_POLL: Final = 0.25
 """How often a waiting permission looks for its answer (a person answers in a moment, or not)."""
 
 
@@ -100,7 +101,7 @@ class ChatPermissionInfo(_Model):
     """A permission a chat's harness asked for, as an operation answers it."""
 
     id: UUID
-    """Its id (what `orch_chat_answer_permission` takes)."""
+    """Its id (what `orch_chat_permission` takes)."""
     tool: str
     """The tool it wants to use (`Bash`, `Edit`, …)."""
     input: JsonObject = Field(default_factory=dict)
@@ -182,9 +183,6 @@ class StartChatRequest(_Model):
     """The model (empty: the harness's own default)."""
     host: HostName = "local"
     """The host it runs on."""
-    permission_mode: str = "manual"
-    """What the harness's permission mode is recorded as (`manual`: it asks before it acts). udl
-    does not pass it: a chat runs as the person would, so their own settings decide."""
     text: Text = ""
     """What to say first (empty: the chat waits for its first message)."""
     title: Title = "A chat"
@@ -236,16 +234,18 @@ class DeleteChatRequest(_Model):
 
 class AskPermissionRequest(_Model):
     """What a harness asks udl, through udl's MCP server, before it acts in a chat (27.11): the
-    tool it wants and what it wants to use it on."""
+    tool it wants and what it wants to use it on.
 
-    chat: UUID
-    """The chat it is asking in (what its token names)."""
-    tool: str
-    """The tool it wants to use."""
+    This is Claude Code's own permission-prompt protocol, not udl's: it calls the tool with
+    `tool_name`, `input` and `tool_use_id`, and reads back `behavior` with `updatedInput` or
+    `message`. The chat is never in the request — it is the one the calling token is for."""
+
+    tool_name: str
+    """The tool it wants to use (`Bash`, `Edit`, …)."""
     input: JsonObject = Field(default_factory=dict)
-    """What it wants to use it on."""
-    message: str = ""
-    """What it says it is doing, in a line."""
+    """What it wants to use it on, as the harness asked."""
+    tool_use_id: str = ""
+    """Which of its tool uses this is (the harness's own id: udl keeps it only as it came)."""
 
 
 class ChatDecision(StrEnum):
@@ -275,10 +275,23 @@ class PermissionRequest(_Model):
 
 
 class PermissionAnswer(_Model):
-    """What the harness is told: whether it may act, and why not."""
+    """What the harness is told, in its own protocol: whether it may act, on what, and why not.
 
-    allow: bool
+    `behavior` is the word Claude Code reads (`allow` or `deny`), and `updatedInput` is what it
+    then runs: the input it asked with, unchanged."""
+
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        use_attribute_docstrings=True,
+        serialize_by_alias=True,
+        populate_by_name=True,
+    )
+
+    behavior: Literal["allow", "deny"]
     """Whether it may act."""
+    updated_input: JsonObject | None = Field(default=None, alias="updatedInput")
+    """What it may run (the input it asked with: udl never changes it)."""
     message: str = ""
     """Why not, when it may not."""
 
@@ -342,7 +355,7 @@ class Chats:
                 owner=owner,
                 runner=request.runner,
                 model=request.model,
-                permission_mode=request.permission_mode,
+                permission_mode="manual",  # (a label: udl passes no mode to the harness)
                 host=request.host,
                 directory=directory,
                 state=SessionState.STARTING,
@@ -586,6 +599,7 @@ class Chats:
             runner = await self._harnesses.runner(current.host, current.runner)
             with contextlib.suppress(PluginError, UDLError):
                 await runner.stop(current.ref)
+        await self._forget_files(current)
         await self._live(current, "orch.chat.ended", {"chat": str(current.id)})
         return await self.info(current)
 
@@ -598,7 +612,19 @@ class Chats:
         if current.state is not SessionState.ENDED:
             await self.stop(current)
         await self._service.secrets.delete(chat_secret_ref(current.id))
+        await self._forget_files(current)
         await stored.ChatRecords(self._records).delete(current)
+
+    async def _forget_files(self, chat: stored.Chat) -> None:
+        """Take udl's own files out of the person's folder: the harness reads its token from
+        `.udl/mcp.json`, and a chat that is over leaves nothing of udl's behind (27.11). A folder
+        on another host is the person's own shell, and udl does not reach into it."""
+        if chat.host != LOCAL or not chat.directory:
+            return
+        with contextlib.suppress(UDLError, PluginError):
+            shell = await self._service.hosts.shell(LOCAL)
+            for name in ("mcp.json", "settings.json"):
+                await shell.run(["rm", "-f", f"{chat.directory}/.udl/{name}"])
 
     # -- permissions ---------------------------------------------------------------------------
 
@@ -608,12 +634,10 @@ class Chats:
         current = await self._saved(chat)
         if current is None:
             raise DoesNotExist(f"There is no chat {chat.id}", hint="It may have been deleted.")
-        if current.state is SessionState.ENDED:
-            return PermissionAnswer(allow=False, message="That chat has ended.")
+        if current.state in (SessionState.ENDED, SessionState.FAILED):
+            return PermissionAnswer(behavior="deny", message="That chat has ended.")
         asked = await self._records.save(
-            stored.ChatPermission(
-                chat=current.id, tool=request.tool, input=request.input, message=request.message
-            )
+            stored.ChatPermission(chat=current.id, tool=request.tool_name, input=request.input)
         )
         await self._live(
             current,
@@ -623,15 +647,15 @@ class Chats:
         answered = await self._wait_for(asked)
         if answered is None:
             return PermissionAnswer(
-                allow=False,
+                behavior="deny",
                 message=(
                     f"Nobody answered within {self._permission_minutes} minutes, so udl did not "
                     "allow it."
                 ),
             )
-        return PermissionAnswer(
-            allow=answered.state is ChatPermissionState.ALLOWED, message=answered.message
-        )
+        if answered.state is ChatPermissionState.ALLOWED:
+            return PermissionAnswer(behavior="allow", updatedInput=request.input)
+        return PermissionAnswer(behavior="deny", message=answered.message or "Denied.")
 
     async def _wait_for(self, asked: stored.ChatPermission) -> stored.ChatPermission | None:
         """`asked` once it is answered, or None when nobody answers within the chat's time (a
@@ -773,13 +797,38 @@ def _info(
 _SHELL_TOOLS: Final = frozenset({"Bash", "bash", "run_command", "shell"})
 """The tools whose input is a command line (the ones never remembered when it chains or nests)."""
 
-_NEVER_REMEMBERED: Final = ("&&", "||", ";", "|", "$(", "`")
+_NEVER_REMEMBERED: Final = ("&&", "||", ";", "|", "&", "$(", "`", "<(", ">(", "\n", "\r")
 """What a command that chains or nests others has (27.11: Allow for this chat on one is Allow
 once)."""
 
-_SHELLS: Final = frozenset({"sh", "bash", "zsh", "dash", "fish", "env", "xargs", "sudo", "command"})
+_SHELLS: Final = frozenset(
+    {
+        "sh",
+        "bash",
+        "zsh",
+        "dash",
+        "fish",
+        "env",
+        "xargs",
+        "sudo",
+        "command",
+        "eval",
+        "exec",
+        "nohup",
+        "timeout",
+        "ssh",
+        "nice",
+        "setsid",
+        "stdbuf",
+        "script",
+    }
+)
 """What a command runs when its first word is one of these (a shell, or something that runs what
 it is given): never remembered either."""
+
+
+_ASSIGNED: Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+"""What a shell command's leading assignments look like (`VAR=x bash …`)."""
 
 
 def _rememberable(tool: str, given: JsonObject) -> bool:
@@ -793,8 +842,13 @@ def _rememberable(tool: str, given: JsonObject) -> bool:
         return False
     if any(part in command for part in _NEVER_REMEMBERED):
         return False
-    first = command.strip().split()[0].rsplit("/", 1)[-1]
-    return first not in _SHELLS
+    words = command.strip().split()
+    # (`VAR=x bash -c …` runs a shell: what comes before the first word may be assignments.)
+    first = next(
+        (word for word in words if not _ASSIGNED.match(word)),
+        "",
+    ).rsplit("/", 1)[-1]
+    return bool(first) and first not in _SHELLS
 
 
 def _json(value: object) -> JsonValue:

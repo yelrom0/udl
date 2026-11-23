@@ -69,6 +69,7 @@ class OrchSettings(AppSettings):
     chat_permission_minutes: PositiveInt = 10
     """How long a chat's harness waits for a person to answer its permission prompt, in minutes:
     past it, udl does not allow what it asked (a harness is never left waiting forever)."""
+
     session_days: PositiveInt = 30
     """How many days a session's transcript (its SessionEvents) is kept: what the dispatcher
     (27.7) prunes with SessionRecords.prune(), when it starts and on every `PRUNE_EVERY` tick."""
