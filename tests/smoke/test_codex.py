@@ -11,11 +11,20 @@ the user's ChatGPT plan is not udl's to spend.
 
 It needs the CLI (0.171.0), that profile and the router's key in `LLAMA_API_KEY`, so it never
 runs by default: `uv run pytest -m network`. The provider the profile names is read from
-`UDL_CODEX_PROVIDER` (the profile's own `model_provider`), since it is the machine's.
+`UDL_CODEX_PROVIDER` (the profile's own `model_provider`) and the model from `UDL_CODEX_MODEL`,
+since they are the machine's; the defaults are the local router's.
+
+**The MCP turn needs an OpenAI model.** Codex 0.171 hands the model only its own
+`list_mcp_resources`/`list_mcp_resource_templates` — it holds a server's tools back for a tool
+search only OpenAI's models have — so with a local model the turn cannot call `get_status`
+(it did reach udl's server, and the model saw none of its 127 tools). So that one test runs with
+`UDL_CODEX_MODEL` naming an OpenAI model (and `UDL_CODEX_PROVIDER` the provider that serves it,
+an API key one); with the local model it is skipped, saying so, and the other three tests still
+run.
 
 What it covers, as 25.12's card asks: a real turn that ends and says what it used, a resumed
-turn, a real `login status`, and — with a hub started here — one real turn that calls `get_status`
-over udl's MCP, which is the card's done-when.
+turn, a real `login status`, and — with a hub started here and an OpenAI model — one real turn
+that calls `get_status` over udl's MCP, which is the card's done-when.
 """
 
 # System Imports
@@ -53,8 +62,12 @@ CLI: Final = Path("~/.local/bin/codex").expanduser()
 """The installed Codex CLI (none: this is skipped)."""
 PROVIDER: Final = os.environ.get("UDL_CODEX_PROVIDER", "jeff-wiggle")
 """The provider the local profile names (`model_provider` in `~/.codex/local.config.toml`)."""
-MODEL: Final = "qwen3.6-35b-a3b"
-"""What the router serves (the profile's own model)."""
+MODEL: Final = os.environ.get("UDL_CODEX_MODEL", "qwen3.6-35b-a3b")
+"""The model the profile runs (its own `model`): the local router's, unless `UDL_CODEX_MODEL`
+names another (an OpenAI model, for the MCP turn)."""
+OPENAI_MODEL: Final = os.environ.get("UDL_CODEX_MODEL", "")
+"""The OpenAI model for the MCP turn (`UDL_CODEX_MODEL`): none for the local router, which cannot
+be offered an MCP server's tools."""
 
 pytestmark = [
     pytest.mark.skipif(not KEY, reason="LLAMA_API_KEY is not set"),
@@ -141,10 +154,14 @@ async def test_a_real_resumed_turn_ends_too(tmp_path: Path) -> None:
     assert second[-1].reason is TurnReason.DONE
 
 
+@pytest.mark.skipif(
+    not OPENAI_MODEL, reason="UDL_CODEX_MODEL (an OpenAI model) is not set: Codex hides MCP tools"
+)
 async def test_a_real_turn_calls_get_status_over_udls_mcp(tmp_path: Path) -> None:
     """The card's done-when: one real turn that calls `get_status` over udl's MCP. The hub is
     started here, with a key, and the session's token is that key (in the environment, never in
-    an argv)."""
+    an argv). It needs an OpenAI model: Codex 0.171 does not offer a local model an MCP server's
+    tools."""
     home = tmp_path / "hub"
     home.mkdir()
     with hub(home) as (port, key), repo(tmp_path / "work") as work:
@@ -153,7 +170,7 @@ async def test_a_real_turn_calls_get_status_over_udls_mcp(tmp_path: Path) -> Non
         session = await runner.start(
             SessionSpec(
                 cwd=str(work),
-                model=MODEL,
+                model=OPENAI_MODEL,
                 instructions=(
                     "You can call tools. When you are asked to call one, call exactly the tool "
                     "named, and do not list resources or explain instead."
