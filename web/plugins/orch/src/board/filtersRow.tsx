@@ -58,17 +58,19 @@ export function Filters({
 				<input
 					aria-label="Text"
 					className="input input-sm input-bordered"
-					onBlur={() => {
-						if (typed !== text) {
-							go({ text: typed });
+					onBlur={(event) => {
+						// (The box's own value, not the last render's: a keystroke and a blur can
+						// arrive in the same tick.)
+						if (event.target.value !== text) {
+							go({ text: event.target.value });
 						}
 					}}
 					onChange={(event) => {
 						setTyped(event.target.value);
 					}}
 					onKeyDown={(event) => {
-						if (event.key === "Enter" && typed !== text) {
-							go({ text: typed });
+						if (event.key === "Enter" && event.currentTarget.value !== text) {
+							go({ text: event.currentTarget.value });
 						}
 					}}
 					placeholder="in a task's title"
