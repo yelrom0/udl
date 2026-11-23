@@ -45,8 +45,12 @@ PLUGINS: Final[Path] = ROOT / "tests" / "support" / "orch_e2e_plugins"
 API_KEY: Final = "e2e-orch-key"
 """The key the server asks for, and what the CLI sends."""
 
-READY_TIMEOUT: Final[float] = 60.0
-"""How long the server, or a turn, gets to get somewhere (a loaded machine is slow)."""
+READY_TIMEOUT: Final[float] = 180.0
+"""How long the server, or a turn, gets to get somewhere.
+
+(A loaded machine is slow: the dispatcher wakes on its own 30-second tick, and in the full suite —
+`make check` runs 7,500 tests — one tick plus the turn it starts can take minutes. A hang still
+fails, in three minutes rather than not at all.)"""
 
 CONFIG: Final[str] = """\
 download_dir = "{root}/downloads"
@@ -431,6 +435,20 @@ def _the_listed(served: Served, key: str) -> dict[str, object]:
     return rows[0]
 
 
+def _answered_the_wait(served: Served) -> bool:
+    """Answer the dispatcher's "how long to wait?" question, if it has asked one.
+
+    (It asks when only time stands in the way of the pull — the checks running, the bot not done
+    with this head — and here that is a race of the test's own making: the head moves with the
+    fix, and the bot's answer to it is written a moment later. A person says to carry on, as they
+    would, and the agent hears both that and the pull's news.)"""
+    for question in _the_questions(served):
+        if "how long to wait" in str(question["title"]):
+            served.cli("orch", "answer", "--key", str(question["key"]), "--answer", "Carry on now.")
+            return True
+    return False
+
+
 def _the_state(served: Served, key: str) -> str:
     """Where the task is now."""
     task = _dict(_dict(served.json("orch", "tasks", "show", key, "--json"))["task"])
@@ -521,8 +539,15 @@ def test_the_whole_run(served: Served, github: tuple[FakeGitHub, str], tmp_path:
         comment_body(2, CLEAN_REVIEW, login=BOT),
     ]
 
-    # The agent says the pull is ready.
-    served.wait_for("ready", lambda: _the_state(served, "1.1") == "ready")
+    # The agent says the pull is ready (answering, as a person would, if the dispatcher looked at
+    # the pull in the moment between the head moving and the bot's answer being written).
+    def _ready() -> bool:
+        if _the_state(served, "1.1") == "ready":
+            return True
+        _answered_the_wait(served)
+        return False
+
+    served.wait_for("ready", _ready)
 
     before = _dict(_dict(served.json("orch", "tasks", "show", "1.1", "--json"))["task"])
     assert before["worktree"]
