@@ -11,8 +11,16 @@ interface Listener {
 
 /** A fake `UIContext`: its calls recorded, and its events publishable, for a store's tests. */
 export interface Fake {
-	readonly ctx: UIContext;
+	ctx: UIContext;
 	readonly calls: { name: string; request: JsonObject }[];
+	/** Where a page navigated to, in order (a filter written into the URL). */
+	navigations: string[];
+	/** What a page said in a toast, in order (a refusal, and why). */
+	toasts: { message: string; kind: string }[];
+	/** What a page asked before doing something (`stack on #N?`). */
+	asked: string[];
+	/** What `confirm` answers from now on. */
+	yes: boolean;
 	emit(type: string, data?: JsonObject): void;
 	listeners(): number;
 }
@@ -50,7 +58,25 @@ export function matches(filter: string | JsonObject, event: JsonObject): boolean
 export function fakeCtx(answer: Answer): Fake {
 	const calls: { name: string; request: JsonObject }[] = [];
 	const kept = new Set<Listener>();
-	const ctx: UIContext = {
+	const fake: Fake = {
+		// (Filled in below, so the context's own callbacks can push onto these.)
+		ctx: undefined as unknown as UIContext,
+		calls,
+		navigations: [],
+		toasts: [],
+		asked: [],
+		yes: true,
+		emit(type, data) {
+			const event: JsonObject = { type, data: data ?? {} };
+			for (const listener of [...kept]) {
+				if (matches(listener.filter, event)) {
+					listener.heard(event);
+				}
+			}
+		},
+		listeners: () => kept.size,
+	};
+	fake.ctx = {
 		api: null,
 		call: async (name, request) => {
 			const body = request ?? {};
@@ -68,24 +94,19 @@ export function fakeCtx(answer: Answer): Fake {
 		},
 		theme: { mode: "light", name: "light", tokens: {}, onChange: () => () => {} },
 		stores: {},
-		navigate: () => {},
-		toast: () => {},
-		confirm: async () => true,
+		navigate: (to) => {
+			fake.navigations.push(to);
+		},
+		toast: (message, kind) => {
+			fake.toasts.push({ message, kind: kind ?? "info" });
+		},
+		confirm: async (question) => {
+			fake.asked.push(question);
+			return fake.yes;
+		},
 		plugin: { name: "orch", version: "0.1.0", baseUrl: "/ui/plugins/orch/" },
 	};
-	return {
-		ctx,
-		calls,
-		emit(type, data) {
-			const event: JsonObject = { type, data: data ?? {} };
-			for (const listener of [...kept]) {
-				if (matches(listener.filter, event)) {
-					listener.heard(event);
-				}
-			}
-		},
-		listeners: () => kept.size,
-	};
+	return fake;
 }
 
 /** Wait for the promises a store started to settle (its load is not awaited by its maker). */

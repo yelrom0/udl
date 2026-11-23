@@ -1,21 +1,35 @@
 import type { RouteProps } from "@udl/ui-sdk";
 import type { Component } from "@udl/ui-sdk/react";
-import { useBoard } from "./hooks";
-import { InboxPage } from "./inbox/inbox";
+import { BoardPage } from "./board/board";
+import { useInbox } from "./hooks";
 import { Page, Said } from "./page";
 
-/** The board (29.4's page; its four lists, read here). */
-const BoardPage: Component<RouteProps> = ({ ctx }) => {
-	const { features, tasks, agents, error } = useBoard(ctx);
-	return (
-		<Page title="Board">
-			{error !== null ? (
+/** What waits on a person, in a line: the three counts the inbox is (28.4). */
+function countsOf(ready: number, questions: number, actions: number): string {
+	return [
+		`${ready} ready to merge`,
+		questions === 1 ? "1 question" : `${questions} questions`,
+		`${actions} to action`,
+	].join(" · ");
+}
+
+/** The inbox (29.3's page; 28.4's answer, read here). */
+const InboxPage: Component<RouteProps> = ({ ctx }) => {
+	const { inbox, error } = useInbox(ctx);
+	if (error !== null) {
+		return (
+			<Page title="Inbox">
 				<p className="text-error">{error}</p>
-			) : (
-				<Said>
-					{`${features.length} features · ${tasks.length} tasks · ${agents.length} agents`}
-				</Said>
-			)}
+			</Page>
+		);
+	}
+	return (
+		<Page title="Inbox">
+			<Said>
+				{inbox === null
+					? "Reading what waits on a person…"
+					: countsOf(inbox.merge.ready.length, inbox.questions.length, inbox.actions.length)}
+			</Said>
 		</Page>
 	);
 };
