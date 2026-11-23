@@ -198,8 +198,8 @@ A task's life: **assigned** (dragged to an agent, or picked from its suggestions
 - **Memory (the user, Q-7, 20 Nov 2026 AEDT):** only Claude writes Claude's memory, in any regard, and the OpenCode agents keep their own, separate memory in Magic Context. So the `opencode-claude-memory` plugin is `readOnly: true` in `~/.config/opencode/opencode.json`: no `memory_save` or `memory_delete`, no extraction, no auto-dream, and nothing written under `~/.claude`. Magic Context's `memory.enabled` is on in `~/.config/cortexkit/magic-context.jsonc`, so an agent remembers with `ctx_memory`, and the historian captures memories as it compresses a session. It keys a project by its root commit, so all udl worktrees share one memory, kept in Magic Context's own store. Both switches are user-level, since neither plugin can scope by agent, so the user's own OpenCode sessions follow them too. The agents' `AGENTS.md` says so. Claude still moves out anything an OpenCode session writes under `~/.claude`.
 - **Codex (the user, Q-9, 21 Nov 2026 AEDT):** 25.12 is optional, and the user isn't signing Codex in: that subscription isn't the user's, and the user uses the Claude Code plugin. Claude installed `codex` 0.171.0 on jeff-wiggle (`~/.local/bin`, not signed in) so 25.12 has a real CLI to read. A test's real turn runs on jeff-wiggle's llama.cpp router instead (`codex exec --profile local`, the router's key from `LLAMA_API_KEY`, never in a file). Claude recorded the first turn and a resume for the fixtures. 25.12 is `ernie-d`'s, on the free tier.
 - **Phase 26's end (the user, Q-10, 21 Nov 2026 AEDT: "your recommendation"):** 26.6 and 26.7 moved from `ernie-c` to `deepseek-a`, since they had become the critical path (26.8, 27.10 and Phase 29 wait on them). `ernie-c` kept 26.5. This is an exception to the 19 Nov rule that ERNIE keeps its unstarted lines; the rule still holds otherwise.
-
-- **Codex's MCP turn (the user, Q-13, 23 Nov 2026):** 25.12 merges without the OpenAI test turn. Codex 0.171 offers an MCP server's tools only to OpenAI's models, and the user works through Claude rather than Codex, so the real `get_status` turn waits for Norbert's first real use; the smoke test keeps it and skips it, saying why, until a model is named.
+- **Local gates stay, for agents too (the user, Q-12, 23 Nov 2026 AEDT):** asked whether agents could commit with `--no-verify` (on 23 Nov five full `make check` runs at once took disk I/O pressure to 50%), the user said: "No! The reason we force local testing is to avoid longer runs that actually potentially cost `GitHub Actions` minutes during their `PR CI`. If it passes locally, it should also pass on `GitHub` reducing bounce back-and-forward runs to the actions runners." So the pre-commit hook's `make check` and `agent-push`'s run both stay. Contention is handled by scheduling instead: rule 9 of `planning/agent-queues/_rules.md` allows at most two full suites at once on jeff-wiggle, with the DeepSeek agents' tasks first.
+- **25.12 merges without its OpenAI turn (the user, Q-13, 23 Nov 2026 AEDT):** the card's MCP smoke turn (`get_status` over udl's MCP) can't run on jeff-wiggle's local model, because Codex 0.171 offers an MCP server's tools only to OpenAI's own models, and the test key's OpenAI account has no credit (Q-11). The user said: "Yes, merge without the `OpenAI` test turn. If there's issues, we will figure them out when `Norbert` tries to connect as I use `Claude` and will continue to do so via `MCP` (so this feature doesn't really apply to me)". So 25.12 merged (#64) and is `[~]`, not `[x]`, until Norbert's first real use runs that turn. The smoke test keeps the turn and skips it, saying why, until a model is named (`UDL_CODEX_MODEL`).
 
 **Phase 23 is done when:** a throwaway one-line PR opened by an implementation agent goes red on a failing test, green after the fix, gets the bot's review, and can only be merged through the PR.
 
@@ -889,6 +889,7 @@ Today's plan (18.9, "Without a UI plugin") gives a plugin without a UI plugin no
   - `udl ai models --provider openai` lists models against the fake, and an opt-in smoke test does against the real one;
   - an `opencode` agent on an `openai/…` model passes the runner contract against `FakeOpenCode`.
 - **Built (`ernie-c`, 21 Nov 2026; finished by `deepseek-b`, 22 Nov 2026, PR #67):** `OpenAIProvider` (`udl/plugins/ai/openai.py`, named `openai`, entry point `openai` in `udl.ai`): OpenAI's API is the compatible one, so it is `OpenAICompatibleProvider` with its url filled in (`OpenAIProviderOptions`, defaulting to `https://api.openai.com/v1`), its models and its health both `GET /models`, and `credit_left` None (OpenAI has no credit endpoint). A 401 or a 403 is said as OpenAI's own (`OpenAI: the key was refused`), and a 429 is `RateLimited` with its `Retry-After` (the compatible provider's, unchanged). The key is udl's to keep: a connection's `api_key` may be an `op://` reference, `load_secrets()` reads it through the store and the resolvers, and what is sent is the Bearer it gave; a kept reference that never went through the store is still the `ConfigError` it was. **`orch_runner_setup`** gives the harness the keys udl keeps for the providers it has (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`), by each connection's `plugin` rather than its name, and the runner's own setup puts them in the service's credential store (`POST /api/credential`), never an argv — so an `opencode` agent's model ids can start `openai/`. A key udl has not been given is not invented: a harness signed in with a plan needs none. **Tests, written first:** `tests/unit/plugins/ai/test_openai_provider.py` (17: the name, the url, the options, the models, the health with `credit_left` None, a 401 and a 403 refused, a 429 with its `Retry-After`, a chat and a stream, a price, the Bearer, no key at all, a key read from the store, an `op://` reference resolved through a resolver, and a kept reference refused as unsent), `tests/unit/plugins/apps/orch/test_runners.py` (9: both keys, one, none, a connection that is off or of another provider, a connection named for a project, a reference resolved rather than sent, no key in the options, and the end-to-end `orch_runner_setup` — the key arrives at `POST /api/credential`, is in no command on the host, and is in no record: the connection keeps where the key is, not the key), `tests/unit/plugins/runners/test_opencode.py` (an `openai/…` model listed by its provider and id), the AI provider contract over a new `openai` case, and `tests/smoke/test_openai.py` (3, opt-in with `UDL_OPENAI_KEY`). `OpenAICompatibleProvider`'s own suite (`test_openai.py`, 43 tests) is untouched. **Left out, and why:** the card's Codex bullet ("Codex on a host can be signed in with the key") because 25.12 is optional (Q-9) and still in review (#64) — a follow-up once #64 is in; `udl ai models --provider openai` **through the CLI**, because this repo has no AI CLI tests at all (`models()` is proven against `FakeOpenAI`, and the operation's CLI, API and MCP paths are the catalogue's parity test); and the full runner *contract* on an `openai/…` model, because `FakeOpenCode` offers one model and the contract's path is the same for every provider — the model-id test above pins the part that is OpenAI's.
+- **Open (Claude, 23 Nov 2026):** the Codex half, "Codex on a host can be signed in with the key instead of the plan", isn't built. 25.12's runner signs in with `codex login --device-auth` only. 25.12's PR (#64) ticked this task `[x]`, and Claude set it back to `[~]` (only Claude ticks `[x]`). What's left: the runner's `login` takes the OpenAI key from the secret store and runs `codex login --with-api-key` with the key on stdin, never in argv; `orch_runner_setup` does it when both a key and a codex runner are set; tested on the fake shell.
 
 **Phase 25 is done when:** with real connections, `udl secrets status` shows 1Password healthy, `udl ai models --provider openrouter` lists models, `udl github list-pulls` lists udl's, `udl hosts check thevault` passes, and `udl orch runners` reports the `claude` CLI on both machines.
 
@@ -1374,6 +1375,94 @@ Run by Claude on 22 Nov 2026 against `main` at `2858d25` (throwaway data dirs, a
   - an agent's token can't start a chat.
 - Done when: an opt-in smoke test on `local`, with the real `claude`, starts a chat that asks to run `ls`; it is allowed through `orch_chat_permission`, and its answer names a file.
 
+**27.12 Resource limits: gates and sessions under a cap** · needs 25.6, 27.5, 27.7 · size M (the user, 23 Nov 2026)
+- Why: on 22 Nov one agent's runaway test grew to 22.9 GiB, the kernel's OOM killer took it, and systemd stopped the scope the harness ran in, so every agent was down for 90 minutes. Claude's supervision has run every test under `systemd-run --user --scope -p MemoryMax=4G -p MemorySwapMax=0 timeout …` since. This makes it udl's.
+- Build:
+  - **Settings** (`OrchSettings`, `[apps.orch]`):
+    - `gates_per_host: PositiveInt = 1`. The user chose a setting defaulting to 1, as 27.5 built it: a bigger host can raise it.
+    - `gate_memory: ByteSize | None = "4GiB"` and `session_memory: ByteSize | None = "20GiB"` (None: no cap).
+    - `Repo` gains `gate_cleanup: Gate | None = None`: an argv run after a gate that was stopped (see below).
+  - **`GateLane` with N slots:** `gates_per_host` leases per host, `orch-gate:<host>:<n>` for `n` in `0…N-1`. A push takes the first free one and waits as today when all are held. With N = 1 it behaves exactly as now.
+  - **A capped run (`HostShell`):** `run()` takes `limits: ResourceLimits | None` (`memory: ByteSize`, swap always 0) and `unit: str`.
+    - **Where systemd is there:** a host where `systemd-run --user --scope -q true` succeeds (probed once per host and kept until the host changes) runs the argv as `systemd-run --user --scope -q --unit=<unit> -p MemoryMax=<bytes> -p MemorySwapMax=0 -- <argv>`.
+    - **Elsewhere** (no user systemd, macOS), it runs as today, and the result says `limits="unenforced"`, never silently.
+  - **Gates:** `push()` runs the repo's `gate` with `gate_memory`, as unit `udl-gate-<project>-<key>-<8 hex>`.
+    - **Unit names:** each part (`<project>`, `<key>`) goes through `systemd-escape`, so a key like `27.3a` or a project with a slash makes a valid name. The unit is a scope, so it is always named with its suffix, `<unit>.scope`: a bare name means `.service` to `systemctl`.
+    - **The cap is hit:** a capped run that ends on `SIGKILL` (exit 137, or `-9` from the shell) when udl didn't stop it was stopped by the kernel's OOM killer at the cap. `PushResult` gets `stopped = "memory"` and the message "the gate passed its memory cap of 4 GiB", and nothing is pushed. (The scope's `memory.events` and `Result` are gone once a transient scope ends, so they aren't read.)
+    - **On a timeout** (27.5's `gate_minutes`), udl stops the unit itself with `systemctl --user stop <unit>.scope`, so its children go too, and `stopped = "timeout"`. udl records that it stopped it, so this is never read as `memory`.
+    - **After either,** the repo's `gate_cleanup` runs in the worktree (5 minutes at most, its tail added to the result). For udl itself it's unset, since `tests/support/servers.py` reaps its own containers (#74).
+  - **Sessions:** a runner that starts a process per turn through `HostShell` (`claude-code`, `codex`, `command`) runs it with `session_memory`, as unit `udl-session-<agent>-<8 hex>`, so a runaway in a turn is that turn's failure (`RunnerFailed`, "the session passed its memory cap"), not the host's.
+    - `opencode` runs as a service: 25.11's harness status reports the service's `MemoryMax` and `OOMPolicy` and warns when there's no cap, or when `OOMPolicy` isn't `continue` (an OOM kill would otherwise stop the whole service). udl doesn't edit units.
+- Tests first:
+  - with a `FakeShell` recording argv: wrapped when the probe succeeds, plain with `unenforced` when it fails;
+  - the stop argv names `<unit>.scope`, and a key such as `27.3a` makes an escaped, valid unit name;
+  - a capped run ending on `SIGKILL` that udl didn't stop reads `memory`, and one udl stopped reads `timeout`;
+  - `gates_per_host = 2` lets two pushes gate at once and a third waits;
+  - a gate stopped by its cap pushes nothing and says `memory`;
+  - a timeout stops the unit and says `timeout`;
+  - `gate_cleanup` runs only after a stop;
+  - a session's turn is wrapped, and its cap is `RunnerFailed`.
+- Done when:
+  - on the fakes, all of the above;
+  - on jeff-wiggle, an opt-in `-m host` test whose gate allocates past a 256 MiB cap is stopped and reported `memory` while the machine stays up. Claude runs it.
+
+**27.13 Host health, and what udl does about it** · needs 27.12, 28.2, 25.11 · size L (the user, 23 Nov 2026)
+- Why: on 23 Nov btrfs ran out of unallocated space. `df` still showed 116 GiB free, but metadata couldn't grow, so every commit failed with "No space left on device". Later, five full suites at once took disk I/O pressure to 50%. Claude caught both by hand every half hour. This makes it udl's.
+- Build: `orch/health.py`.
+  - **`HostHealth`,** per host:
+    - `memory_available`, `swap_used`, `swap_total`;
+    - `io_pressure` (`/proc/pressure/io`'s `some avg60`, %);
+    - `disks: list[DiskHealth]`, for every path udl uses on the host (its `work_dir` and each repo's checkout there): `free` and `size` (`df -B1`), and on btrfs (`stat -f -c %T` says `btrfs`) also `unallocated`, `metadata_used` and `metadata_total` (`btrfs filesystem usage -b`, which needs no root for these);
+    - `harnesses`: each harness service's `MemoryCurrent`/`MemoryMax` (`systemctl --user show`);
+    - `gates`: running and allowed;
+    - `at`.
+  - **Reading it:** one `sh -c` script through `HostShell`, printing a JSON line per measure, read by a typed parser. A measure a host can't give (no PSI, not Linux, not btrfs) is `None` and shown as "not measured", never as zero.
+  - **Thresholds** (`[apps.orch.health]`): `memory_min = "2GiB"`, `swap_max_ratio = 0.9`, `disk_min = "10GiB"`, `btrfs_unallocated_min = "1GiB"`, `btrfs_metadata_max_ratio = 0.9`, `io_pressure_max = 40` (the 23 Nov incident ran at 45–70%), `check_minutes = 10`.
+  - **Issues:** each breach is a `HealthIssue` (`host`, `kind`, `detail`, `hint`), and the hint names the fix. For example:
+    - btrfs unallocated: "a data balance frees it: `sudo btrfs balance start -dusage=10 <mount>`, which needs root, so a person runs it";
+    - disk: "udl removes a task's worktree after its merge; look for others".
+  - **What it does is a setting** (the user, 23 Nov 2026: "Allow the user to set what they want it to do out of these options, with act + tell as default"): `on_breach: Literal["act_and_tell", "tell", "act"] = "act_and_tell"`.
+    - **act:** while a host has an open issue, the dispatcher starts no new turn there and the gate lane starts no new gate there. What's running finishes; a gate over its own cap is 27.12's. A check that finds the host healthy releases it.
+    - **tell:** one `HumanAction` (28.2, "To action", `when = now`) per open issue (host + kind), with the detail and hint. It isn't raised twice while the issue stays open, and udl closes it when the issue clears (its result: "cleared at …").
+    - **Either way:** `orch.host.unhealthy` and `orch.host.healthy` events carry the issues.
+  - **When it runs:** every `check_minutes` from the dispatcher's loop, and before a gate starts when the last check is older than that.
+  - **Operations:** `orch_host_health` (read-only; `host?`) → `list[HostHealth]` with their issues. CLI `udl orch hosts health`; MCP and API as every operation.
+  - **The inbox:** its agents strip (28.4) gets a line for a host that is held.
+- Tests first:
+  - the parser over captured outputs: ext4, btrfs, no PSI, macOS;
+  - each threshold becomes its issue;
+  - `act` holds turns and gates and releases them on recovery;
+  - `tell` raises one action, never twice, and closes it when the issue clears;
+  - `act_and_tell` does both;
+  - the events.
+- Done when:
+  - on the fakes, a host whose btrfs unallocated space drops under its threshold holds new gates, raises a To action that names the balance, and resumes when it recovers;
+  - `udl orch hosts health` reads real numbers on jeff-wiggle. Claude runs it.
+
+**27.14 Usage left, per agent** · needs 25.3, 27.7, 27.10, 28.2 · size M (the user, 23 Nov 2026: "how much usage agents have left (including free, using requests sent) … retrieved via mcp/cli and also displayed via the web interface")
+- Build: `orch/usage.py`.
+  - **`orch_usage`** (read-only; `agent?`) → `list[AgentUsage]`, one per agent: its runner, model and provider, plus:
+    - `paid: KeyUsage | None`: the provider key it spends from, read through the provider's `health()` (25.3: OpenRouter's `GET /key`). It holds the key's label, `spent`, `limit` and `left` (the provider's `limit_remaining`), and `spent_today` when the provider gives it. Never the key itself.
+      - **The provider API grows for this:** `ProviderHealth` (25.2) gains `key: KeyStatus | None` (`label`, `spent`, `limit`, `left`, `spent_today`, `free_tier: bool | None`), beside `credit_left`. OpenRouter's `_KeyInfo` parses `usage`, `limit`, `limit_remaining`, `usage_daily` and `is_free_tier` from `GET /key` and fills it in, `FakeOpenRouter` serves those fields, and the provider contract suite checks a provider that says nothing leaves `key` as `None`.
+    - `free: FreeUsage | None`, for a model on a free tier:
+      - `requests_today`: udl's own count of the model requests the agent's sessions made since the allowance's last reset. Each runner `Usage` event in the transcript (27.7) is one request.
+      - `allowance`, `left`, `resets_at`, and `source = "counted"`, since the provider doesn't say what's left of a free tier.
+    - `own`: the agent's own turns, tokens and cost today and in all, summed over its sessions (27.7, 27.10).
+    - `limited_until`, from its session;
+    - `state: "ok" | "low" | "out"`: `low` once `left` is under `usage_low_ratio` (0.1) of the limit or allowance, `out` at nothing or while limited.
+  - **Allowances** (`[apps.orch.allowances]`), keyed by `provider:model-glob`. The default, for OpenRouter's `*:free` models, is OpenRouter's rule: 50 requests a day, or 1,000 once the account has bought $10 of credits (the key's `is_free_tier` is false), resetting at 00:00 UTC (11:00 AEDT, as the ERNIE agents saw). An allowance is the account's, so agents on one account share its `left`, and each has its own `requests_today`.
+  - **CLI** `udl orch agents usage` (a table: agent, model, left, today, resets, state); MCP and API as every operation. The `orch.usage.low` and `orch.usage.out` events fire when an agent crosses into either state.
+  - **A paid key going `low`** raises a To action, "raise the cap?" (28.2), once per key per cap.
+  - **`AgentInfo`** (27.9) and the inbox's `AgentLine` (28.4) gain `usage`: one line, such as `$3.36 left of $8` or `412 of 1,000 requests left, resets 11:00`. 29.6 draws it.
+- Tests first:
+  - `ProviderHealth.key` filled from a `FakeOpenRouter` key (`usage`, `limit`, `limit_remaining`, `usage_daily`, `is_free_tier`), and a paid key's left read from it;
+  - a free model's requests counted from transcript `Usage` events since the last 00:00 UTC, and two agents on one account sharing its allowance;
+  - 50 vs 1,000 by `is_free_tier`;
+  - `low` and `out` crossings raise their events once;
+  - a low paid key raises one To action;
+  - the key never appears in a result, a log or an event.
+- Done when: on the fakes, `udl orch agents usage` shows a paid agent's money left and a free agent's requests left, with its reset time; and the same answer comes over MCP.
+
 **Phase 27 is done when:** `udl orch agents set fake-a --runner fake …`, `udl orch assign 22.2 fake-a`, and the task reaches `ready` with its PR linked, on the fakes, with `udl serve` restarted once in the middle.
 
 ---
@@ -1473,6 +1562,20 @@ This is human-comms.md as data. Its three sections become three lists with the s
 - Done when: on the fakes, a reviewer merger takes a stack of three PRs from Ready to merge to merged by itself.
 - **Built (deepseek-a, 22 Nov 2026, PR #78):** `Project.auto_merge` and `merger`; `orch_set_auto_merge` (`on`, `merger?`, `project?`), the owner's alone (`admin`, no MCP tool: an agent's token is refused, and `PrincipalKind` has only `owner` and `agent`, so a chat's is an agent's, refused by the same check), which is the only writer of the two fields (`orch_set_project` refuses a change to either — on a new project too — naming it), and publishes `orch.project.changed` with the time in its dedupe key, so on-off-on is said every time. `udl orch projects auto-merge udl --on --merger claude` runs it. **The merger's turn:** the dispatcher gives a project's merger a turn of its own — a standing `merge` task in the project it merges (`merging` feature, never finished, with a worktree to read the diff in) and a prompt with **one** ready pull (the first it may act on): its task, title, URL, head SHA, feature, spec, the diff's `git` command in that worktree, and the exact `orch_review_task` and `orch_merge` calls. Its own ready pull is skipped where the project has no review bot, and a row with a blocker of its own — a check still running, or one stacked on a pull not merged — is nobody's to be on yet: neither is prompted, the list says why ("waiting for a person: the merger's own task", "it waits on F-1.1, which is ready"), and the one it is told of is the next that is free. The same list is not told twice (`Agent.last_merge_news`, its own field: a manager's quiet tick no longer wipes it). `orch_merge` widens 28.3: it is **not** admin (a merger may be a reviewer, and the role table cannot know which agent that is), so the operation's own checks decide — a person, the assignee where `merge = agent`, or the project's merger with auto merge on, a `ready` task, and not its own unless there is a review bot; it reads the pull as udl on its own behalf, and an auto merge is a review, so a project with nothing after its base sees the task `done`. A merge publishes `orch.task.merged` with `by` and `auto`, and its note says "Merged by claude (auto merge)". `orch_merge_list` and `orch_inbox` carry `auto_merge` and `merger`, and each ready row its `MergerState` (`reviewing`, `next`, `changes asked` — the merger's own verdict only, and only with auto merge on); only the merger's `changes` sends a ready task back to `in_progress`. **Not done:** the diff's stat is not on GitHub's pull shape (`get_pull` has no such field), so the prompt gives the `git diff` command in the merger's worktree instead. **Tests, written first:** 34 in `tests/unit/plugins/apps/orch/test_auto_merge.py` (the switch, its refusals — agent and owner — and its event; `set_project`'s refusals; the lists and their row states; the merger's merge, its refusals, the note and event, `done` and the promotion; the own-task marking), 8 in `tests/integration/plugins/apps/orch/test_dispatcher.py` (the turn merges a ready pull and is told the exact call; the same list once; its own task skipped; **a stack of three merged by itself, bottom first** — the done when; nothing merged with it off; a `changes` verdict moving on; its standing task in the project it merges, with a worktree; the next one it may act on, past its own and what is stacked on it), and 1 in `tests/interface/test_orch_operations.py` (the card's own CLI line, run for real). `orch_merge` re-checks `needs` at the head it merges (27.6's readiness), so a pull stacked on an unmerged one cannot be merged first, and that has its own test in `tests/unit/plugins/apps/orch/test_merge_operations.py`.
 
+**28.8 The checkout follows `main`** · needs 28.3, 27.5 · size S (the user, 23 Nov 2026)
+- Why: people read the plan in a repo's own checkout (`Repo.checkouts[host]`), while merges land on GitHub. On 23 Nov udl's checkout on jeff-wiggle was seven merges behind, so the user saw 27.9 as not started when it had merged.
+- Build: after a merge, as part of 28.3's after-merge step, for each host in `Repo.checkouts`:
+  - `git -C <checkout> fetch origin <base>`.
+  - Then, if the checkout is on `<base>`, has nothing uncommitted, and can fast-forward: `git merge --ff-only origin/<base>`.
+  - Otherwise nothing changes. A `system` note on the merged task, and an `orch.checkout.behind` event, name the checkout and why (another branch, uncommitted changes, diverged).
+  - A host that can't be reached is the same: noted, never fatal to the merge.
+- Tests first, on a temp repo with a bare `origin`:
+  - a merge moves a clean checkout to the merge commit;
+  - a dirty one is left as it is, and noted;
+  - one on another branch is left, and noted;
+  - one that diverged is left, and noted.
+- Done when: on the fakes, after a three-PR stack merges, the host's checkout is at the last merge.
+
 **Phase 28 is done when:** that test passes, and `udl orch inbox` during it shows each stage.
 
 ---
@@ -1557,11 +1660,12 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 - **Screens (29.1, Google Stitch):** **Feature**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=d2657d70cd2d41f29da24fb19918b6cf) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=4dc4588af1d843e8820efd62c771d5cc), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=1d4c2ed96c2a4aa189e87ef8718fccf9) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=51abd9cf242f4b79abe75aa577dddcd2); `web/plugins/orch/design/feature-{light,dark}-{desktop,phone}.png`; **Task**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=6423d930355047cb84df2a85eaaca868) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=bd90d38f4a3b449495a9f43bff0fa93b), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=22c404ee1d564a5a8e72da8d588f5cd4) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=b4dd135234bd406fab8a0321554992a3); `web/plugins/orch/design/task-{light,dark}-{desktop,phone}.png`.
 - **Q-8 (user, 21 Nov 2026):** **Feature:** each card has a clear edge in both themes (DESIGN.md's card rule: a `base-content` 20 % border and a shadow), and tasks get a Size column. An open PR is a chip that links to it. A Progress card shows the points merged, the feature's burn-up, its forecast, and the rate behind it (27.10). **Task:** its size, its estimate and the time worked so far (`orch_estimate`), and its PR as a link.
 
-**29.6 Agents** · needs 29.2, 26.8
+**29.6 Agents** · needs 29.2, 26.8, and 27.14 for its usage only
 - Build: **Agents:** the hierarchy as a tree (humans at the root); dragging an agent onto a manager sets `manager` ("assign models to models"), refused with a reason for a cycle or a non-manager; an editor for an agent (runner, model from `orch_list_runners`' list for its host, host, role, brief, and a manager's four powers as switches). **Agent:** status, queue (sortable), token rotate, pause / resume / stop, and the session: a live transcript from the SSE stream (text, tool calls collapsed to a line, usage and cost), a box to send it a message (owner only).
 - Done when: its e2e test builds a manager with two reports by dragging, and watches a fake session stream.
 - **Screens (29.1, Google Stitch):** **Agents**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=7791ff8dfd96441a8f407efbda0f23b5) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=d17fed4e665c45a880b2114968ccdcb3), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=ddefdd0cfbfb4718a0a6d7650b5754f1) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=0e287012078b43938fff6f0b4b492fa8); `web/plugins/orch/design/agents-{light,dark}-{desktop,phone}.png`; **Agent**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=da1624bace6c4b98a0d64c45d05165a0) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=fa261cca352745de8be29520980348ed), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=e4a4d6e0423e4ce989f0222376cac769) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=27ecbc8414ca40a091f73a3dac131dc2); `web/plugins/orch/design/agent-{light,dark}-{desktop,phone}.png`.
 - **Q-8 (user, 21 Nov 2026):** on an agent's page, the queue shows each task's size, the current task's open PR as a chip, and the queue's points.
+- **Usage (27.14, the user, 23 Nov 2026):** the Agents page and each agent's page show its usage left (`AgentInfo.usage`, and the fuller `orch_usage` on the agent's page: money left of its key's cap, or free requests left today with the reset time, with `low` and `out` coloured), and the inbox's agents strip shows each `AgentLine.usage`. It refreshes on `orch.usage.*` events.
 
 **29.7 Q&A** · needs 29.2
 - Build: open questions (blocking first) and answered ones with their outcomes; a thread view with the question, what it is about (link chips), option buttons or a markdown answer box, follow-ups, "Close with outcome". New questions appear live, with a count in the nav.
