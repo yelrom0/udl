@@ -19,7 +19,7 @@ const ANSWERS: Record<string, unknown> = {
 		notes: [{ at: "2026-11-24T01:00:00Z", author: "claude", note_kind: "note", text: "ok" }],
 		questions: [{ key: "Q-8", title: "Screens", state: "open", task: "29.2" }],
 	},
-	orch_estimate: { size: "L", estimate: "4h", worked: "1h" },
+	orch_estimate: { size: "L", estimate: "PT4H", worked: "PT1H" },
 	orch_readiness: { ready: false, blockers: ["CI is red"], open_items: [], pending: ["ci"] },
 	orch_list_tasks: {
 		project: "udl",
@@ -27,6 +27,9 @@ const ANSWERS: Record<string, unknown> = {
 			{ key: "29.2", feature: "29", state: "ready", needs: [] },
 			{ key: "29.5", feature: "29", state: "open", needs: ["29.2"] },
 			{ key: "29.6", feature: "29", state: "open", needs: ["29.2", "29.3"] },
+			// (A task of another feature, waiting on this one: the project's tasks are read, not
+			// its feature's.)
+			{ key: "30.1", feature: "30", state: "open", needs: ["29.2"] },
 		],
 	},
 	orch_list_agents: {
@@ -50,8 +53,9 @@ describe("a task's store (29.5)", () => {
 		expect(state.info?.task.key).toBe("29.2");
 		expect(state.info?.feature?.key).toBe("29");
 		// (The tasks whose needs name it, and only those.)
-		expect(state.info?.unblocks).toEqual(["29.5", "29.6"]);
-		expect(state.estimate?.estimate).toBe("4h");
+		expect(state.info?.unblocks).toEqual(["29.5", "29.6", "30.1"]);
+		// (As udl sends it: the page is what reads it as a person does.)
+		expect(state.estimate?.estimate).toBe("PT4H");
 		expect(state.readiness?.blockers).toEqual(["CI is red"]);
 		expect(state.session).toEqual({ agent: "deepseek-a", id: "s-1", state: "running" });
 		// (The names an assignee may be, so a page links only the agents it has.)

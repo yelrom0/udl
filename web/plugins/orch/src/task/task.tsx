@@ -1,7 +1,8 @@
 import type { RouteProps } from "@udl/ui-sdk";
 import type { Component } from "@udl/ui-sdk/react";
 import { useTask } from "../hooks";
-import { durationOf } from "../model";
+import { KeyLink } from "../keyLink";
+import { durationOf, isQuestionKey } from "../model";
 import { Page, Said } from "../page";
 import { Links } from "../parts/links";
 import { Notes } from "../parts/notes";
@@ -105,7 +106,18 @@ export const TaskPage: Component<RouteProps> = ({ ctx, params }) => {
 									<span className="text-sm">{task.assignee}</span>
 								)}
 								{task.blocked_on !== null && (
-									<p className="text-xs opacity-70">{`Waiting on ${task.blocked_on}`}</p>
+									<section
+										aria-label="Waiting on"
+										className="flex items-center gap-1 text-xs opacity-70"
+									>
+										Waiting on{" "}
+										{isQuestionKey(task.blocked_on) ? (
+											// (A question is a page to go to; a line of text is not.)
+											<KeyLink kind="question" label={task.blocked_on} />
+										) : (
+											task.blocked_on
+										)}
+									</section>
 								)}
 								{task.hold !== null && <p className="text-xs opacity-70">{`Held: ${task.hold}`}</p>}
 								{task.branch !== "" && (

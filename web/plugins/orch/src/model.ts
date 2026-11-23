@@ -588,6 +588,11 @@ export function estimateOf(value: JsonValue | undefined): Estimate {
 	};
 }
 
+/** Whether what a task waits on is a question's key (`Q-<n>`), rather than a line of text. */
+export function isQuestionKey(value: string): boolean {
+	return /^Q-\d+$/.test(value);
+}
+
 /**
  * An ISO 8601 duration (`PT4H`, `PT1H20M`, `P1DT2H`) as a person reads it (`4h`, `1h 20m`,
  * `1d 2h`): what `orch_estimate` sends for what a task takes and has taken. Anything that is not

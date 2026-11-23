@@ -6,6 +6,7 @@ import {
 	estimateOf,
 	featureInfoOf,
 	inboxOf,
+	isQuestionKey,
 	mergeListOf,
 	movesFrom,
 	POINTS,
@@ -279,6 +280,15 @@ describe("a feature's and a task's pages (29.5)", () => {
 
 		expect(estimateOf(undefined).size).toBeNull();
 		expect(readinessOf(undefined).blockers).toEqual([]);
+	});
+
+	it("tells a question's key from a line of text", () => {
+		// (What a task waits on is the question's key, `Q-<n>`, or free text.)
+		expect(isQuestionKey("Q-8")).toBe(true);
+		expect(isQuestionKey("Q-108")).toBe(true);
+		expect(isQuestionKey("CI")).toBe(false);
+		expect(isQuestionKey("Q-8 and Q-9")).toBe(false);
+		expect(isQuestionKey("")).toBe(false);
 	});
 
 	it("reads a duration as a person reads it, and anything else as it came", () => {
