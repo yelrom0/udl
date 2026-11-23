@@ -78,6 +78,7 @@ export function sessionsStore(ctx: UIContext): Sessions {
 	return {
 		store,
 		read,
+		refresh: () => reads.ask(),
 		stop: () => {
 			stopped = true;
 			reads.stop();
