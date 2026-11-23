@@ -1943,7 +1943,7 @@ async def _refuse_an_agent(
 ) -> None:
     """Refuse an agent any operation its role and its powers do not allow. The table is orch's
     (27.2, 27.8), read here so that nothing else has to know a role."""
-    if who is None or not who.is_agent:
+    if who is None or not (who.is_agent or who.is_chat):
         return
     from udl.plugins.apps.orch.tokens import refused_for  # (orch's role table)
 

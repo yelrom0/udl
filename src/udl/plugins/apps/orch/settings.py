@@ -61,6 +61,15 @@ class OrchSettings(AppSettings):
     only udl may do for an agent (push, open a pull, merge one), and what would throw away work.
     File-only, like the rest of a server's own settings (27.7)."""
 
+    chat_idle: PositiveInt = 24
+    """How long a chat's token keeps working with its chat untouched, in hours (27.11): past it,
+    the token is refused and taken away, so a chat left open for a week is not a key left open
+    for a week."""
+
+    chat_permission_minutes: PositiveInt = 10
+    """How long a chat's harness waits for a person to answer its permission prompt, in minutes:
+    past it, udl does not allow what it asked (a harness is never left waiting forever)."""
+
     session_days: PositiveInt = 30
     """How many days a session's transcript (its SessionEvents) is kept: what the dispatcher
     (27.7) prunes with SessionRecords.prune(), when it starts and on every `PRUNE_EVERY` tick."""

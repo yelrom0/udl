@@ -26,7 +26,7 @@ import json
 import re
 import types
 import typing
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
@@ -75,12 +75,18 @@ def cli_groups(
     *,
     renderers: Mapping[str, Callable[..., None]] | None = None,
     watchers: Mapping[str, Callable[..., Awaitable[None]]] | None = None,
+    written: Mapping[tuple[str, ...], Sequence[tuple[str, Callable[..., None], str]]] | None = None,
 ) -> dict[str, TyperGroup]:
     """The command groups of the operations plugins add (`udl <plugin> <op>`, or the path their
     CLISpec gives), by their first word: shown by the renderer in `renderers`, and followed by
-    the watcher in `watchers` (both by operation name: a plugin's own drawing is the CLI's)."""
+    the watcher in `watchers` (both by operation name: a plugin's own drawing is the CLI's).
+
+    `written` adds commands that are not operations at all — a plugin's own loop over them (as
+    `udl orch chat` is, 27.11) — by the words they are under: their name, the function, and the
+    help it shows."""
     renderers = renderers or {}
     watchers = watchers or {}
+    written = written or {}
     apps: dict[tuple[str, ...], typer.Typer] = {}
     own = _own_paths(op for op in ops if op.namespace is not None)
     for op in ops:
@@ -91,6 +97,10 @@ def cli_groups(
             continue
         command = cli_command(op, shown=renderers.get(op.name), watcher=watchers.get(op.name))
         _group(apps, path[:-1], own=own).command(path[-1], help=op.description)(command)
+    for path, written_here in written.items():
+        group = _group(apps, path[:-1], own=own)
+        for name, made, help_text in written_here:
+            group.command(name, help=help_text)(made)
     return {path[0]: typer.main.get_group(app) for path, app in apps.items() if len(path) == 1}
 
 

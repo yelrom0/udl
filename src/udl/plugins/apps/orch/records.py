@@ -74,6 +74,7 @@ from udl.plugins.apps.orch.models import (
     ActionState,
     ActionWhen,
     BranchName,
+    ChatPermissionState,
     CheckedBranchPattern,
     FeatureStatus,
     Gate,
@@ -734,6 +735,139 @@ class AgentToken(Record):
             agent="deepseek-a",
             hash=hashlib.sha256(b"udl_agent_example").hexdigest(),
             last_used_at=None,
+        )
+
+
+class Chat(Record):
+    """A chat a person has with their own harness (27.11), as it is stored: their harness, in
+    their folder, with the options they chose — not an agent's session, and not a task's.
+
+    It is the person's, so only they (or a token issued for this chat) read it. Its transcript is
+    the `SessionEvent`s of its session, as an agent's is, so the live view and the transcript are
+    the same code. `permission_mode` is what the person asked for: `manual` is what makes a
+    harness that can ask stop and ask udl."""
+
+    kind = "orch_chat"
+    indexed = ("owner", "state")
+    scope = RecordScope.RUNTIME
+    sync = SyncRule.NEVER
+
+    owner: str
+    """Who it is: `human:<name>` (a person, as questions and actions name them)."""
+    runner: Name
+    """The harness it is in (`claude-code`)."""
+    model: str = ""
+    """The model it was asked for (the harness's own default when empty)."""
+    permission_mode: str = "manual"
+    """The harness's permission mode (27.11: `manual` for a chat that may ask)."""
+    host: HostName = "local"
+    """The host its harness runs on."""
+    directory: str = ""
+    """The folder it works in."""
+    ref: SessionRef | None = None
+    """Its harness's session, once it has started one."""
+    state: SessionState = SessionState.STARTING
+    """Where it is: starting, running, idle (it answered and waits), failed or ended."""
+    title: Title = "A chat"
+    """What it is about, in a line (what the person said first, until they say otherwise)."""
+    turns: NonNegativeInt = 0
+    """How many turns it has had."""
+    tokens_in: NonNegativeInt = 0
+    tokens_out: NonNegativeInt = 0
+    cost: Decimal | None = None
+    last_error: str = ""
+    """Why its last turn failed, as its harness said (a chat that dies says so)."""
+    last_text: str = ""
+    """What its harness last said (what a list shows, and what a turn's answer is)."""
+    pending: list[str] = Field(default_factory=list[str])
+    """What the person said while a turn was running: each one is the next turn, in order
+    (27.11: a chat takes one turn at a time)."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            owner="human:claude",
+            runner="claude-code",
+            model="opus",
+            permission_mode="manual",
+            host="local",
+            directory="/home/me/udl",
+            ref=SessionRef(
+                runner="claude-code",
+                id="5b0e1c7a-4d4a-4f0e-9b2a-6f8d3c2e1a90",
+                cwd="/home/me/udl",
+                host="local",
+            ),
+            state=SessionState.IDLE,
+            title="Why does the queue say 26.3 is ready?",
+            turns=1,
+            tokens_in=1200,
+            tokens_out=300,
+            cost=Decimal("0.0312"),
+            last_text="It is ready because its pull's checks passed.",
+        )
+
+
+class ChatPermission(Record):
+    """A permission a chat's harness asked for (27.11), as it is stored: what it wants to run,
+    and what the person said.
+
+    It is the chat's own, and it is answered by the person the chat is (or by the token that was
+    issued for that chat). While it is pending, the harness's turn waits for it."""
+
+    kind = "orch_chat_permission"
+    indexed = ("chat", "state")
+    scope = RecordScope.RUNTIME
+    sync = SyncRule.NEVER
+
+    chat: UUID
+    """The chat it was asked in."""
+    tool: str
+    """The tool the harness wants to use (`Bash`, `Edit`, …)."""
+    input: JsonObject = Field(default_factory=dict)
+    """What it wants to use it on, as the harness asked."""
+    state: ChatPermissionState = ChatPermissionState.PENDING
+    """Where it is: waiting for the person, allowed, or denied."""
+    message: str = ""
+    """Why it was denied, when the person said why."""
+    allowed_for_chat: bool = False
+    """Whether the person allowed this tool for the rest of the chat, not this call only."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            chat=UUID("0b9a1f8e-6a5f-4d1f-9a52-2d0e7f1a3c48"),
+            tool="Bash",
+            input={"command": "uv run pytest tests/unit -q"},
+            state=ChatPermissionState.PENDING,
+        )
+
+
+class ChatToken(Record):
+    """A token a chat's own client calls udl with (27.11), as it is stored: its SHA-256, never the
+    token itself (that is in udl's secret store, at apps/orch/chats/<id>/token).
+
+    It reaches one chat and nothing else: it reads that chat, sends it turns, answers its
+    permissions and stops it. It is unique by its hash, so a token is found by hashing the one
+    presented."""
+
+    kind = "orch_chat_token"
+    indexed = ("chat", "hash")
+    unique = (("hash",),)
+
+    chat: UUID
+    """The chat it is for."""
+    owner: str
+    """Who the chat is (`human:<name>`), so a chat's token says whose it is."""
+    hash: str
+    """The SHA-256 of the token (hex)."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            chat=UUID("0b9a1f8e-6a5f-4d1f-9a52-2d0e7f1a3c48"),
+            owner="human:claude",
+            hash=hashlib.sha256(b"udl_chat_example").hexdigest(),
         )
 
 
@@ -1821,6 +1955,85 @@ class AgentTokenRecords:
         found = await self.for_agent(agent)
         for token in found:
             await self._records.delete(AgentToken, token.id)
+        return bool(found)
+
+
+class ChatRecords:
+    """Where orch keeps people's chats (27.11): the ones a person has, and the permissions their
+    harnesses asked for, in the order they were asked."""
+
+    def __init__(self, records: AppRecords) -> None:
+        self._records = records
+
+    async def of(self, owner: str) -> list[Chat]:
+        """The chats of `owner`, the most recently spoken in first."""
+        return sorted(
+            await self._records.list(Chat, RecordQuery(where={"owner": owner})),
+            key=lambda chat: (chat.updated_at, str(chat.id)),
+            reverse=True,
+        )
+
+    async def by_id(self, chat: UUID) -> Chat | None:
+        """The chat with that id, or None when there is none."""
+        return await self._records.get(Chat, chat)
+
+    async def permissions(self, chat: UUID) -> list[ChatPermission]:
+        """What the harness of `chat` asked for, in the order it asked."""
+        return sorted(
+            await self._records.list(ChatPermission, RecordQuery(where={"chat": chat})),
+            key=lambda asked: (asked.created_at, str(asked.id)),
+        )
+
+    async def pending(self, chat: UUID) -> ChatPermission | None:
+        """The permission `chat`'s harness is waiting on, if it is waiting on one."""
+        for asked in await self.permissions(chat):
+            if asked.state is ChatPermissionState.PENDING:
+                return asked
+        return None
+
+    async def delete(self, chat: Chat) -> None:
+        """Forget `chat`, with what its harness asked and the token it was given (a chat that is
+        gone is not asked about again)."""
+        for asked in await self.permissions(chat.id):
+            await self._records.delete(ChatPermission, asked.id)
+        for event in await self._records.list(
+            SessionEvent, RecordQuery(where={"session": chat.id})
+        ):
+            await self._records.delete(SessionEvent, event.id)
+        await ChatTokenRecords(self._records).delete_for(chat.id)
+        await self._records.delete(Chat, chat.id)
+
+
+class ChatTokenRecords:
+    """Where orch keeps the tokens a chat's own client calls udl with (27.11): only their
+    hashes. One token per chat — issuing one replaces the one it had."""
+
+    def __init__(self, records: AppRecords) -> None:
+        self._records = records
+
+    async def issue(self, chat: Chat, token: str) -> ChatToken:
+        """Keep the hash of `token` for `chat`, replacing any it had (so the old one stops
+        working at once)."""
+        for old in await self.for_chat(chat.id):
+            await self._records.delete(ChatToken, old.id)
+        return await self._records.save(
+            ChatToken(chat=chat.id, owner=chat.owner, hash=hash_token(token), created_at=utcnow())
+        )
+
+    async def for_chat(self, chat: UUID) -> list[ChatToken]:
+        """The tokens of `chat` (one, unless one is being rotated)."""
+        return await self._records.list(ChatToken, RecordQuery(where={"chat": chat}))
+
+    async def by_hash(self, digest: str) -> ChatToken | None:
+        """The token with that hash, or None when there is none."""
+        found = await self._records.list(ChatToken, RecordQuery(where={"hash": digest}))
+        return found[0] if found else None
+
+    async def delete_for(self, chat: UUID) -> bool:
+        """Forget every token of `chat` (when it is deleted). Returns whether it had one."""
+        found = await self.for_chat(chat)
+        for token in found:
+            await self._records.delete(ChatToken, token.id)
         return bool(found)
 
 

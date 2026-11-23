@@ -11,7 +11,7 @@ interfaces) and `udl browser login`. The operations plugins add are commands too
 
 # System Imports
 import importlib.metadata
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Annotated, Any, Final
 
@@ -31,6 +31,7 @@ from udl.interfaces.cli.commands import (
     automations,
     browser,
     chains,
+    chats,
     downloads,
     fetch,
     hosts,
@@ -102,7 +103,10 @@ def _plugin_groups(ctx: Any) -> dict[str, TyperGroup]:
     root = ctx.find_root()
     if _PLUGIN_GROUPS not in root.meta:
         root.meta[_PLUGIN_GROUPS] = cli_groups(
-            _operations(root), renderers=PLUGIN_RENDERERS, watchers=PLUGIN_WATCHERS
+            _operations(root),
+            renderers=PLUGIN_RENDERERS,
+            watchers=PLUGIN_WATCHERS,
+            written=PLUGIN_COMMANDS,
         )
     groups: dict[str, TyperGroup] = root.meta[_PLUGIN_GROUPS]
     return groups
@@ -131,6 +135,18 @@ PLUGIN_WATCHERS: Final[Mapping[str, Callable[..., Awaitable[None]]]] = {
     "orch_inbox": render.watch_inbox,
 }
 """The plugin operations a person can follow with `--watch` (`udl orch inbox --watch`)."""
+
+PLUGIN_COMMANDS: Final[Mapping[tuple[str, ...], Sequence[tuple[str, Callable[..., None], str]]]] = {
+    ("orch", "chat"): [
+        (
+            "chat",
+            chats.chat,
+            "Talk to your own harness, in this terminal: its turns, and the prompts it asks you.",
+        )
+    ],
+}
+"""Commands a plugin has that are not operations: its own loop over them (27.11's `udl orch
+chat`, which is a conversation in a terminal rather than one call)."""
 
 
 app = typer.Typer(

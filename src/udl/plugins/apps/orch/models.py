@@ -76,6 +76,7 @@ __all__ = [
     "BlockRequest",
     "BranchName",
     "BranchPattern",
+    "ChatPermissionState",
     "CloseQuestionRequest",
     "DeleteProjectRequest",
     "DeleteRepoRequest",
@@ -885,6 +886,14 @@ class QuestionState(StrEnum):
     OPEN = "open"
     ANSWERED = "answered"
     CLOSED = "closed"
+
+
+class ChatPermissionState(StrEnum):
+    """Where a chat's permission is: waiting for the person, allowed, or denied."""
+
+    PENDING = "pending"
+    ALLOWED = "allowed"
+    DENIED = "denied"
 
 
 class Question(_Model):

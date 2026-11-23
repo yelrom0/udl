@@ -248,10 +248,12 @@ class ClaudeCode(AgentRunner[ClaudeCodeOptions]):
         folder = f"{spec.cwd}/{_FOLDER}"
         if spec.instructions is not None:
             await self._write(f"{folder}/system-prompt.md", spec.instructions)
-        await self._write(
-            f"{folder}/settings.json",
-            json.dumps({"permissions": {"deny": list(spec.deny)}}, indent=2),
-        )
+        if not spec.own_settings:
+            # (27.11: a chat runs as the person would, so udl writes no settings for it.)
+            await self._write(
+                f"{folder}/settings.json",
+                json.dumps({"permissions": {"deny": list(spec.deny)}}, indent=2),
+            )
         if spec.mcp is not None:
             await self._write(f"{folder}/mcp.json", _mcp_config(spec))
         await self._exclude(spec.cwd)
@@ -350,13 +352,19 @@ class ClaudeCode(AgentRunner[ClaudeCodeOptions]):
         folder = f"{spec.cwd}/{_FOLDER}"
         argv = [*self.options.cli, "-p", "--output-format", "stream-json", "--verbose"]
         argv += ["--model", spec.model] if spec.model else []
-        argv += ["--permission-mode", self.options.permission_mode]
+        if not spec.own_settings:
+            argv += ["--permission-mode", spec.permission_mode or self.options.permission_mode]
+        if spec.permission_tool is not None:
+            argv += ["--permission-prompt-tool", spec.permission_tool]
         argv += ["--session-id", session.id] if first else ["--resume", session.id]
-        argv += ["--settings", f"{folder}/settings.json"]
+        if not spec.own_settings:
+            argv += ["--settings", f"{folder}/settings.json"]
         if spec.instructions is not None:
             argv += ["--append-system-prompt-file", f"{folder}/system-prompt.md"]
         if spec.mcp is not None:
-            argv += ["--mcp-config", f"{folder}/mcp.json", "--strict-mcp-config"]
+            argv += ["--mcp-config", f"{folder}/mcp.json"]
+            if not spec.own_settings:
+                argv += ["--strict-mcp-config"]
         return argv
 
     def _events(self, line: str) -> list[AgentEvent]:

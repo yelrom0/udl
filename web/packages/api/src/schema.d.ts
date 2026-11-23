@@ -932,6 +932,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orch/chats/{chat}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One chat, as it happens.
+         * @description Server-sent events, from now on, of one chat's own: `event` (an EventInfo) for each `orch.chat.*` event it published — that it started, each thing its harness said, what it asked to do, and that it answered, failed or ended. Live only: a client that reconnects reloads the chat (`orch_chat_get`) rather than resuming.
+         */
+        get: operations["orch_chat_stream"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/orch/sessions/{session}/stream": {
         parameters: {
             query?: never;
@@ -1103,6 +1123,174 @@ export interface paths {
          * @description Say that only a person can do this (28.1): `orch_ask`, blocking.
          */
         post: operations["orch_block"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/chat_ask_permission": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What a chat's harness asks udl before it acts (27.11's `--permission-prompt-tool`):
+         * @description What a chat's harness asks udl before it acts (27.11's `--permission-prompt-tool`):
+         *     the person answers, and the harness is told — allowed, or denied with why.
+         *
+         *     It is the one chat operation a chat's own token may call, and the chat is its own: a
+         *     token never says which chat it is asking for.
+         */
+        post: operations["orch_chat_ask_permission"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/chat_delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Forget a chat, with its transcript, what its harness asked and the token it was
+         * @description Forget a chat, with its transcript, what its harness asked and the token it was
+         *     given.
+         */
+        post: operations["orch_chat_delete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/chat_get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * One chat, with the newest page of its transcript and what its harness is waiting
+         * @description One chat, with the newest page of its transcript and what its harness is waiting
+         *     on.
+         */
+        post: operations["orch_chat_get"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/chat_list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Your chats (only udl's owner asks for every chat: a chat's token sees its own).
+         * @description Your chats (only udl's owner asks for every chat: a chat's token sees its own).
+         */
+        post: operations["orch_chat_list"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/chat_permission": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The person's answer to what a chat's harness asked: allow it once, allow the same
+         * @description The person's answer to what a chat's harness asked: allow it once, allow the same
+         *     request for the rest of the chat, or deny it and say why.
+         */
+        post: operations["orch_chat_permission"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/chat_send": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Say something to a chat: one turn of its harness, streamed into the chat's events.
+         * @description Say something to a chat: one turn of its harness, streamed into the chat's events.
+         */
+        post: operations["orch_chat_send"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/chat_start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a chat with your own harness (27.11): your runner, your folder, your model, and
+         * @description Start a chat with your own harness (27.11): your runner, your folder, your model, and
+         *     `manual` permissions so it asks udl before it acts. Only udl's owner starts chats.
+         */
+        post: operations["orch_chat_start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/orch/chat_stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End a chat: its harness's session ends, and a turn it was in is ended with it.
+         * @description End a chat: its harness's session ends, and a turn it was in is ended with it.
+         */
+        post: operations["orch_chat_stop"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3642,6 +3830,30 @@ export interface components {
             state: components["schemas"]["AppState"];
         };
         /**
+         * AskPermissionRequest
+         * @description What a harness asks udl, through udl's MCP server, before it acts in a chat (27.11): the
+         *     tool it wants and what it wants to use it on.
+         *
+         *     This is Claude Code's own permission-prompt protocol, not udl's: it calls the tool with
+         *     `tool_name`, `input` and `tool_use_id`, and reads back `behavior` with `updatedInput` or
+         *     `message`. The chat is never in the request — it is the one the calling token is for.
+         */
+        AskPermissionRequest: {
+            /** @description What it wants to use it on, as the harness asked. */
+            input?: components["schemas"]["JsonObject"];
+            /**
+             * Tool Name
+             * @description The tool it wants to use (`Bash`, `Edit`, …).
+             */
+            tool_name: string;
+            /**
+             * Tool Use Id
+             * @description Which of its tool uses this is (the harness's own id: udl keeps it only as it came).
+             * @default
+             */
+            tool_use_id: string;
+        };
+        /**
          * AskRequest
          * @description Asking something only the manager or a person can answer (28.1).
          */
@@ -3985,6 +4197,189 @@ export interface components {
              */
             challenges: components["schemas"]["WaitingChallenge"][];
         };
+        /**
+         * ChatDecision
+         * @description What a person decided about what a chat's harness asked.
+         * @enum {string}
+         */
+        ChatDecision: "allow_once" | "allow_chat" | "deny";
+        /**
+         * ChatInfo
+         * @description A chat as an operation answers it: whose it is, where it got to, what it has cost, what it
+         *     last said, and what its harness is waiting on.
+         */
+        ChatInfo: {
+            /**
+             * Cost
+             * @description What its turns cost, when its harness says.
+             */
+            cost?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             * @description When it was started.
+             */
+            created_at: string;
+            /**
+             * Directory
+             * @description The folder it works in.
+             * @default
+             */
+            directory: string;
+            /**
+             * Events
+             * @description Its transcript (paged: the newest page of it, oldest first).
+             */
+            events?: (components["schemas"]["TextDelta"] | components["schemas"]["ToolStarted"] | components["schemas"]["ToolFinished"] | components["schemas"]["Usage"] | components["schemas"]["TurnEnded"] | components["schemas"]["RunnerLimited"] | components["schemas"]["RunnerFailed"])[];
+            /**
+             * Host
+             * @description The host its harness runs on.
+             * @default local
+             */
+            host: string;
+            /**
+             * Id
+             * Format: uuid
+             * @description Its id (what every other chat operation takes).
+             */
+            id: string;
+            /**
+             * Last Error
+             * @description Why its last turn failed, as its harness said.
+             * @default
+             */
+            last_error: string;
+            /**
+             * Last Text
+             * @description What its harness last said.
+             * @default
+             */
+            last_text: string;
+            /**
+             * Model
+             * @description The model it was asked for (empty: the harness's own default).
+             * @default
+             */
+            model: string;
+            /**
+             * Owner
+             * @description Whose it is (`human:<name>`).
+             */
+            owner: string;
+            /**
+             * Pending
+             * @description How many things the person said are queued for the next turns.
+             * @default 0
+             */
+            pending: number;
+            /** @description What its harness is waiting on, if it is waiting on one. */
+            permission?: components["schemas"]["ChatPermissionInfo"] | null;
+            /**
+             * Permission Mode
+             * @description The harness's permission mode.
+             * @default manual
+             */
+            permission_mode: string;
+            /** @description The harness it is in. */
+            runner: components["schemas"]["Name"];
+            /** @description Where it is: starting, running, idle, failed or ended. */
+            state: components["schemas"]["SessionState"];
+            /**
+             * Title
+             * @description What it is about, in a line.
+             * @default A chat
+             */
+            title: string;
+            /**
+             * Tokens In
+             * @description The tokens it was given, over its turns.
+             * @default 0
+             */
+            tokens_in: number;
+            /**
+             * Tokens Out
+             * @description The tokens it wrote, over its turns.
+             * @default 0
+             */
+            tokens_out: number;
+            /**
+             * Total
+             * @description How many events its transcript has.
+             * @default 0
+             */
+            total: number;
+            /**
+             * Turns
+             * @description How many turns it has had.
+             * @default 0
+             */
+            turns: number;
+            /**
+             * Updated At
+             * Format: date-time
+             * @description When it was last spoken in.
+             */
+            updated_at: string;
+        };
+        /**
+         * ChatList
+         * @description Every chat of a person, each as `ChatInfo` answers one (without its transcript).
+         */
+        ChatList: {
+            /**
+             * Items
+             * @description The chats, the most recently spoken in first.
+             */
+            items?: components["schemas"]["ChatInfo"][];
+        };
+        /**
+         * ChatPermissionInfo
+         * @description A permission a chat's harness asked for, as an operation answers it.
+         */
+        ChatPermissionInfo: {
+            /**
+             * Allowed For Chat
+             * @description Whether the person allowed this tool for the rest of the chat.
+             * @default false
+             */
+            allowed_for_chat: boolean;
+            /**
+             * Asked At
+             * Format: date-time
+             * @description When it was asked.
+             */
+            asked_at: string;
+            /**
+             * Id
+             * Format: uuid
+             * @description Its id (what `orch_chat_permission` takes).
+             */
+            id: string;
+            /** @description What it wants to use it on, as the harness asked. */
+            input?: components["schemas"]["JsonObject"];
+            /**
+             * Message
+             * @description Why it was denied, when the person said why.
+             * @default
+             */
+            message: string;
+            /**
+             * @description Where it is: waiting for the person, allowed, or denied.
+             * @default pending
+             */
+            state: components["schemas"]["ChatPermissionState"];
+            /**
+             * Tool
+             * @description The tool it wants to use (`Bash`, `Edit`, …).
+             */
+            tool: string;
+        };
+        /**
+         * ChatPermissionState
+         * @description Where a chat's permission is: waiting for the person, allowed, or denied.
+         * @enum {string}
+         */
+        ChatPermissionState: "pending" | "allowed" | "denied";
         /**
          * CheckInfo
          * @description One of a commit's checks.
@@ -4341,6 +4736,19 @@ export interface components {
         DeleteAgentRequest: {
             /** @description The agent's name. */
             name: components["schemas"]["Name"];
+        };
+        /**
+         * DeleteChatRequest
+         * @description Forgetting a chat, with its transcript, what its harness asked and the token it was
+         *     given.
+         */
+        DeleteChatRequest: {
+            /**
+             * Chat
+             * Format: uuid
+             * @description The chat.
+             */
+            chat: string;
         };
         /**
          * DeleteProjectRequest
@@ -5503,6 +5911,24 @@ export interface components {
             name: components["schemas"]["Name"];
         };
         /**
+         * GetChatRequest
+         * @description One chat, with its transcript (a page of it) and what it is waiting on.
+         */
+        GetChatRequest: {
+            /**
+             * Chat
+             * Format: uuid
+             * @description The chat.
+             */
+            chat: string;
+            /**
+             * Limit
+             * @description How many of its latest events to answer (its newest page).
+             * @default 200
+             */
+            limit: number;
+        };
+        /**
          * GetFeatureRequest
          * @description Asking for one feature: its tasks, its links and its notes.
          */
@@ -6293,6 +6719,18 @@ export interface components {
             project?: components["schemas"]["Name"] | null;
         };
         /**
+         * ListChatsRequest
+         * @description The caller's chats.
+         */
+        ListChatsRequest: {
+            /**
+             * All
+             * @description Whether to answer every chat (only udl's owner may: a chat's token sees its own).
+             * @default false
+             */
+            all: boolean;
+        };
+        /**
          * ListFeaturesRequest
          * @description Asking for a project's features (all of them, when none is named).
          */
@@ -6985,6 +7423,58 @@ export interface components {
         PauseAgentRequest: {
             /** @description The agent's name. */
             name: components["schemas"]["Name"];
+        };
+        /**
+         * PermissionAnswer
+         * @description What the harness is told, in its own protocol: whether it may act, on what, and why not.
+         *
+         *     `behavior` is the word Claude Code reads (`allow` or `deny`), and `updatedInput` is what it
+         *     then runs: the input it asked with, unchanged.
+         */
+        PermissionAnswer: {
+            /**
+             * Behavior
+             * @description Whether it may act.
+             * @enum {string}
+             */
+            behavior: "allow" | "deny";
+            /**
+             * Message
+             * @description Why not, when it may not.
+             * @default
+             */
+            message: string;
+            /** @description What it may run (the input it asked with: udl never changes it). */
+            updatedInput?: components["schemas"]["JsonObject"] | null;
+        };
+        /**
+         * PermissionRequest
+         * @description The person's answer to what a chat's harness asked (27.11's `orch_chat_permission`).
+         */
+        PermissionRequest: {
+            /**
+             * Chat
+             * Format: uuid
+             * @description The chat.
+             */
+            chat: string;
+            /**
+             * @description What the person decided.
+             * @default deny
+             */
+            decision: components["schemas"]["ChatDecision"];
+            /**
+             * Message
+             * @description Why, when it is denied (the harness is told).
+             * @default
+             */
+            message: string;
+            /**
+             * Request
+             * Format: uuid
+             * @description What was asked (its id).
+             */
+            request: string;
         };
         /**
          * PersonMode
@@ -9081,6 +9571,30 @@ export interface components {
             text: boolean;
         };
         /**
+         * SendChatRequest
+         * @description Saying something to a chat, which is one turn of its harness.
+         */
+        SendChatRequest: {
+            /**
+             * Chat
+             * Format: uuid
+             * @description The chat.
+             */
+            chat: string;
+            /**
+             * Text
+             * @description What to say (the turn's prompt).
+             */
+            text: string;
+            /**
+             * Wait
+             * @description Whether to wait for the turn to end (a client that streams sets this False and reads the
+             *     chat's events).
+             * @default true
+             */
+            wait: boolean;
+        };
+        /**
          * SendRequest
          * @description A message typed into an agent's session (the owner's only).
          *
@@ -10035,6 +10549,45 @@ export interface components {
             project?: components["schemas"]["Name"] | null;
         };
         /**
+         * StartChatRequest
+         * @description Starting a chat with the caller's own harness (27.11): their runner, their folder, their
+         *     model — and `manual` permissions, so the harness may ask before it acts.
+         */
+        StartChatRequest: {
+            /**
+             * Directory
+             * @description The folder it works in (empty: the folder udl runs in).
+             * @default
+             */
+            directory: string;
+            /**
+             * Host
+             * @description The host it runs on.
+             * @default local
+             */
+            host: string;
+            /**
+             * Model
+             * @description The model (empty: the harness's own default).
+             * @default
+             */
+            model: string;
+            /** @description The harness (`claude-code`). */
+            runner: components["schemas"]["Name"];
+            /**
+             * Text
+             * @description What to say first (empty: the chat waits for its first message).
+             * @default
+             */
+            text: string;
+            /**
+             * Title
+             * @description What it is about, in a line (the default: what the person says first).
+             * @default A chat
+             */
+            title: string;
+        };
+        /**
          * StartLoginRequest
          * @description Sign a harness in.
          */
@@ -10080,6 +10633,18 @@ export interface components {
              * @description The step, in the shorthand.
              */
             step: string;
+        };
+        /**
+         * StopChatRequest
+         * @description Ending a chat: its harness's session ends, and nothing it was doing goes on.
+         */
+        StopChatRequest: {
+            /**
+             * Chat
+             * Format: uuid
+             * @description The chat.
+             */
+            chat: string;
         };
         /**
          * StopSessionRequest
@@ -14504,6 +15069,37 @@ export interface operations {
             };
         };
     };
+    orch_chat_stream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chat: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     orch_session_stream: {
         parameters: {
             query?: never;
@@ -14965,6 +15561,630 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Question"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_chat_ask_permission: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskPermissionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PermissionAnswer"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_chat_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatInfo"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_chat_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GetChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatInfo"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_chat_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ListChatsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatList"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_chat_permission: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PermissionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatInfo"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_chat_send: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatInfo"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_chat_start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatInfo"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_chat_stop: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StopChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatInfo"];
                 };
             };
             /** @description Bad Request */

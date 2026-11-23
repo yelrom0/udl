@@ -105,6 +105,8 @@ API_ONLY = {
     # (One agent's session, as it happens, 27.9: a stream is not an operation, as the events'
     # is not.)
     "GET /orch/sessions/{session}/stream": "orch_session_stream",
+    # (A chat's turns, as they happen, 27.11: a stream is not an operation either.)
+    "GET /orch/chats/{chat}/stream": "orch_chat_stream",
 }
 
 

@@ -10,13 +10,16 @@ and nothing else, whatever an operation's hints say.
 """
 
 # System Imports
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Final
 
 # Package Imports
 import pytest
 from pydantic import SecretStr
 
 # Local Imports
+from support.clock import FakeClock
 from support.engine import databases, registry, settings
 from support.interfaces import Harness
 from udl.config import APISettings
@@ -31,6 +34,9 @@ from udl.plugins.apps.orch.records import (
     AgentRecords,
     AgentToken,
     AgentTokenRecords,
+    Chat,
+    ChatRecords,
+    ChatTokenRecords,
     hash_token,
 )
 from udl.plugins.apps.orch.tokens import (
@@ -43,8 +49,14 @@ from udl.plugins.apps.orch.tokens import (
 )
 from udl.plugins.secrets.base import SecretRef
 
+NOW: Final = datetime(2026, 11, 24, 9, 0, tzinfo=UTC)
+"""When these tests' clock starts."""
+
 TOKEN = "udl_agent_abcdefghijklmnop"  # noqa: S105 - (a fake's own)
 """A token as udl issues one (a fake's own)."""
+
+CHAT_TOKEN = "udl_chat_abcdefghijklmnop"  # noqa: S105 - (a fake's own)
+"""A chat's token, as 27.11 issues one (a fake's own)."""
 
 
 @pytest.fixture
@@ -362,3 +374,55 @@ async def test_deleting_an_agent_that_had_no_token_is_fine(agents: AgentRecords)
     await an_agent(agents, "fake-a", AgentRole.IMPLEMENTER)
 
     assert await agents.delete_agent("fake-a") is True
+
+
+# ---------------------------------------------------------------------------------------------
+# A chat's token, and how long it outlives its chat being untouched (27.11)
+# ---------------------------------------------------------------------------------------------
+
+
+async def a_chat(records: AppRecords) -> Chat:
+    """A chat of the owner's, with a token issued for it."""
+    chat = await records.save(Chat(owner="human:owner", runner="claude-code"))
+    await ChatTokenRecords(records).issue(chat, CHAT_TOKEN)
+    return chat
+
+
+async def test_a_chat_s_token_is_its_chat_while_it_is_used(tmp_path: Path) -> None:
+    clock = FakeClock(NOW)
+    db = databases(settings(tmp_path), registry(), clock=clock)
+    await db.connect()
+    records = AppRecords(db)
+    chat = await a_chat(records)
+    await clock.advance(timedelta(hours=23))
+
+    who = await OrchTokens(records, clock=clock).principal_for(CHAT_TOKEN)
+
+    assert who is not None
+    assert (who.kind, who.name, who.chat) == (PrincipalKind.CHAT, "human:owner", chat.id)
+
+
+async def test_a_chat_s_token_untouched_for_a_day_is_refused_and_taken_away(
+    tmp_path: Path,
+) -> None:
+    """(A chat left open for a week is not a key left open for a week.)"""
+    clock = FakeClock(NOW)
+    db = databases(settings(tmp_path), registry(), clock=clock)
+    await db.connect()
+    records = AppRecords(db)
+    await a_chat(records)
+    await clock.advance(timedelta(hours=25))
+
+    assert await OrchTokens(records, clock=clock).principal_for(CHAT_TOKEN) is None
+    assert await ChatTokenRecords(records).by_hash(hash_token(CHAT_TOKEN)) is None
+
+
+async def test_a_chat_s_token_goes_when_its_chat_does(tmp_path: Path) -> None:
+    clock = FakeClock(NOW)
+    db = databases(settings(tmp_path), registry(), clock=clock)
+    await db.connect()
+    records = AppRecords(db)
+    chat = await a_chat(records)
+    await ChatRecords(records).delete(chat)
+
+    assert await OrchTokens(records, clock=clock).principal_for(CHAT_TOKEN) is None
