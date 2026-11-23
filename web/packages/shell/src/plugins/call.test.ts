@@ -73,6 +73,19 @@ describe("calling an operation by name", () => {
 		expect(new Headers(first?.init?.headers).get("X-UDL-CSRF")).toBe("1");
 	});
 
+	it("sends an empty object for a write whose request has no fields", async () => {
+		const { fetch, asked } = answering({ items: [] });
+
+		// (A plugin's operation whose request is all optional is a `{}`: a write with no body at
+		// all is a 422 from udl.)
+		await callOperation("orch_list_features", {}, fetch);
+
+		const [first] = asked;
+		expect(first?.url).toBe("/plugins/orch/list_features");
+		expect(first?.init?.method).toBe("POST");
+		expect(first?.init?.body).toBe("{}");
+	});
+
 	it("answers nothing for a request udl answers with nothing", async () => {
 		const fetch = async (): Promise<Response> => new Response(null, { status: 204 });
 
