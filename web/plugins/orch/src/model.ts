@@ -110,29 +110,67 @@ export interface Task {
 	readonly needs: readonly string[];
 }
 
-/** An agent, as the board shows it (27.1). */
+/** A task on an agent's queue, as `orch_list_agents` sends it (29.4). */
+export interface QueueEntry {
+	readonly key: string;
+	readonly feature: string;
+	readonly title: string;
+	readonly state: string;
+	readonly position: number | null;
+}
+
+/** An agent, as the board shows it (27.1, 29.4): what it is, what it is doing, its queue, and
+ * the agents that report to it. */
 export interface Agent {
 	readonly name: string;
 	readonly title: string;
 	readonly role: string;
 	readonly status: string;
+	readonly model: string;
+	readonly queue: readonly QueueEntry[];
+	readonly reports: readonly string[];
 }
 
-/** A task suggested next, with the agent it suits (27.4). */
+/** A task suggested next, with the agent it suits and why (27.4, 29.4). */
 export interface Suggestion {
 	readonly task: string;
 	readonly title: string;
 	readonly feature: string;
 	readonly agent: string;
+	readonly score: number;
 	readonly reasons: readonly string[];
+	/** The task whose branch it stacks on, when its need is `ready` and not merged yet. */
+	readonly stack_on: string | null;
 }
 
-/** What the board reads: features, tasks, agents and suggestions. */
+/** A feature's points, as `orch_progress` sends them (27.10): its bar, per Q-8. */
+export interface FeaturePoints {
+	readonly key: string;
+	readonly points: number;
+	readonly merged: number;
+}
+
+/** What a point costs a model, as `orch_progress` sends it (27.10): an agent's column's hours. */
+export interface ModelRate {
+	readonly model: string;
+	readonly hours_per_point: number;
+}
+
+/** The board's share of a project's progress (27.10). */
+export interface Progress {
+	readonly features: readonly FeaturePoints[];
+	readonly models: readonly ModelRate[];
+}
+
+/** What the board reads: features, tasks, agents, suggestions, the merge list and progress. */
 export interface Board {
+	readonly project: string;
 	readonly features: readonly Feature[];
 	readonly tasks: readonly Task[];
 	readonly agents: readonly Agent[];
 	readonly suggestions: readonly Suggestion[];
+	readonly merge: MergeList;
+	readonly progress: Progress;
 }
 
 /** A session, as `orch_get_session` answers it (27.7): where it is and what it last said. */
@@ -251,6 +289,18 @@ function taskOf(value: JsonValue): Task {
 	};
 }
 
+/** A task on a queue, as `AgentInfo.queue` sends it. */
+function queueEntryOf(value: JsonValue): QueueEntry {
+	const one = asObject(value);
+	return {
+		key: asText(one.key),
+		feature: asText(one.feature),
+		title: asText(one.title),
+		state: asText(one.state),
+		position: typeof one.position === "number" ? one.position : null,
+	};
+}
+
 /** An agent, as `orch_list_agents` sends it (its `AgentInfo`, narrowed to what the board shows). */
 function agentOf(value: JsonValue): Agent {
 	const info = asObject(value);
@@ -260,6 +310,33 @@ function agentOf(value: JsonValue): Agent {
 		title: asText(agent.title),
 		role: asText(agent.role),
 		status: asText(info.status),
+		model: asText(agent.model),
+		queue: asArray(info.queue).map(queueEntryOf),
+		reports: asArray(info.reports).map((one) => asText(one)),
+	};
+}
+
+/** A feature's points, as `orch_progress` sends them. */
+function featurePointsOf(value: JsonValue): FeaturePoints {
+	const one = asObject(value);
+	return { key: asText(one.key), points: asNumber(one.points), merged: asNumber(one.merged) };
+}
+
+/** What a point costs a model, as `orch_progress` sends it. */
+function modelRateOf(value: JsonValue): ModelRate {
+	const one = asObject(value);
+	return {
+		model: asText(one.model),
+		hours_per_point: asNumber(asObject(one.hours_per_point).hours),
+	};
+}
+
+/** The board's share of a project's progress, as `orch_progress` sends it. */
+export function progressOf(value: JsonValue | undefined): Progress {
+	const progress = asObject(value);
+	return {
+		features: asArray(progress.features).map(featurePointsOf),
+		models: asArray(progress.models).map(modelRateOf),
 	};
 }
 
@@ -271,7 +348,9 @@ function suggestionOf(value: JsonValue): Suggestion {
 		title: asText(one.title),
 		feature: asText(one.feature),
 		agent: asText(one.agent),
+		score: asNumber(one.score),
 		reasons: asArray(one.reasons).map((reason) => asText(reason)),
+		stack_on: typeof one.stack_on === "string" ? one.stack_on : null,
 	};
 }
 
@@ -294,11 +373,16 @@ export function boardOf(
 	tasks: JsonValue | undefined,
 	agents: JsonValue | undefined,
 	suggestions: JsonValue | undefined,
+	merge?: JsonValue | undefined,
+	progress?: JsonValue | undefined,
 ): Board {
 	return {
+		project: asText(asObject(features).project),
 		features: asArray(asObject(features).features).map(featureOf),
 		tasks: asArray(asObject(tasks).tasks).map(taskOf),
 		agents: asArray(asObject(agents).items).map(agentOf),
 		suggestions: asArray(asObject(suggestions).suggestions).map(suggestionOf),
+		merge: mergeListOf(merge),
+		progress: progressOf(progress),
 	};
 }

@@ -31,6 +31,28 @@ const ANSWERS: Record<string, unknown> = {
 			},
 		],
 	},
+	orch_merge_list: {
+		project: "udl",
+		auto_merge: true,
+		merger: "claude",
+		ready: [
+			{
+				task: "29.2",
+				feature: "29",
+				title: "The UI plugin's skeleton",
+				number: 80,
+				url: "https://x/80",
+			},
+		],
+		coming: [],
+		held: [],
+		done: [],
+	},
+	orch_progress: {
+		project: "udl",
+		features: [{ key: "29", title: "Screens", points: 26, merged: 8 }],
+		models: [{ model: "m-1", runner: "claude-code", tasks: 9, hours_per_point: { hours: 1.5 } }],
+	},
 	orch_suggest: {
 		project: "udl",
 		suggestions: [
@@ -47,23 +69,34 @@ const ANSWERS: Record<string, unknown> = {
 };
 
 describe("the board store", () => {
-	it("reads the features, tasks, agents and suggestions once it is made", async () => {
+	it("reads the features first, then the rest of the board for that project", async () => {
 		const fake = fakeCtx((name) => ANSWERS[name] as never);
 
 		const { store, stop } = boardStore(fake.ctx);
 		await settle();
 
+		expect(fake.calls[0]?.name).toBe("orch_list_features");
 		expect(fake.calls.map((one) => one.name).sort()).toEqual([
 			"orch_list_agents",
 			"orch_list_features",
 			"orch_list_tasks",
+			"orch_merge_list",
+			"orch_progress",
 			"orch_suggest",
 		]);
+		// (The project the features named is what the rest are asked for.)
+		for (const call of fake.calls.slice(1)) {
+			expect(call.request.project).toBe("udl");
+		}
 		const state = store.getState();
 		expect(state.features.map((one) => one.key)).toEqual(["29"]);
 		expect(state.tasks.map((one) => one.key)).toEqual(["29.2"]);
 		expect(state.agents.map((one) => one.name)).toEqual(["deepseek-a"]);
 		expect(state.suggestions.map((one) => one.task)).toEqual(["29.3"]);
+		expect(state.project).toBe("udl");
+		expect(state.merge.ready[0]?.url).toBe("https://x/80");
+		expect(state.progress.features[0]?.merged).toBe(8);
+		expect(state.progress.models[0]?.hours_per_point).toBe(1.5);
 		expect(state.error).toBeNull();
 		stop();
 	});
@@ -78,7 +111,7 @@ describe("the board store", () => {
 		fake.emit("orch.session.ended", { agent: "deepseek-a" });
 		await settle();
 
-		expect(fake.calls).toHaveLength(12);
+		expect(fake.calls).toHaveLength(18);
 		stop();
 	});
 
@@ -93,8 +126,8 @@ describe("the board store", () => {
 		}
 		await settle();
 
-		// (Twenty lines published together are one read: 8 calls, not 20 × 4.)
-		expect(fake.calls).toHaveLength(8);
+		// (Twenty lines published together are one read: 12 calls, not 20 × 6.)
+		expect(fake.calls).toHaveLength(12);
 		stop();
 	});
 
@@ -124,11 +157,10 @@ describe("the board store", () => {
 		await settle();
 
 		fake.emit("github.pull.updated");
-		fake.emit("orch.question.asked");
 		fake.emit("orch.session.event");
 		await settle();
 
-		expect(fake.calls).toHaveLength(4);
+		expect(fake.calls).toHaveLength(6);
 		stop();
 	});
 
