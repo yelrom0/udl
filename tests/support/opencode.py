@@ -132,9 +132,9 @@ class FakeShell(HostShell):
         self.writes_fail = False
         """Whether writing a file fails."""
         self.auths = "[]"
+        """What `opencode auth list --format json` prints."""
         self.signed_out = False
         """Whether `codex login status` says Not logged in (a runner that signs in with a key)."""
-        """What `opencode auth list --format json` prints."""
         self.streams: list[tuple[list[str], str]] = []
         """Every argv it was asked to stream, and what it answered (an install's output)."""
         self.started: list[list[str]] = []
