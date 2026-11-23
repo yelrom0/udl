@@ -22,7 +22,13 @@ from udl.config import APISettings, Settings
 from udl.core.operations import Caller, current_caller
 from udl.core.paths import check_output_dir
 from udl.errors import NotAllowed, Unauthorized
-from udl.interfaces.security import OWNER, Principal, PrincipalKind, authenticate
+from udl.interfaces.security import (
+    OWNER,
+    Principal,
+    PrincipalKind,
+    api_key_of,
+    authenticate,
+)
 
 
 def roots(*paths: Path) -> Settings:
@@ -170,6 +176,18 @@ async def test_an_agent_s_token_with_nowhere_to_look_is_unauthorized() -> None:
 async def test_an_agents_token_is_not_the_api_key() -> None:
     with pytest.raises(Unauthorized, match="X-API-Key"):
         await authenticate(keyed("s3cret"), "s3cret-not", Book())
+
+
+def test_the_key_a_request_sends_is_read_from_either_header() -> None:
+    """`X-API-Key` or `Authorization: Bearer` — the bearer form is what a client that can send
+    one header only (Codex's `bearer_token_env_var`) sends. The header wins when both are."""
+    assert api_key_of({"X-API-Key": "s3cret"}) == "s3cret"
+    assert api_key_of({"Authorization": "Bearer s3cret"}) == "s3cret"
+    assert api_key_of({"authorization": "bearer s3cret"}) == "s3cret"
+    assert api_key_of({"X-API-Key": "one", "Authorization": "Bearer two"}) == "one"
+    assert api_key_of({"Authorization": "Basic s3cret"}) is None
+    assert api_key_of({}) is None
+    assert api_key_of({"Authorization": "Bearer "}) is None
 
 
 def test_an_agents_token_is_hashed_the_way_the_book_does_it() -> None:
