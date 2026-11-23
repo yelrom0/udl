@@ -10,9 +10,6 @@ export type Refreshable<T> = T & { refresh(): Promise<void> };
 /** The inbox before it is read: nothing yet, and nothing failed. */
 const NO_INBOX: InboxState = { inbox: null, error: null };
 
-/** What a page that can change what it read is given: the state, and a way to read it again. */
-export type Refreshable<T> = T & { refresh(): Promise<void> };
-
 /** The board before it is read. */
 const NO_BOARD: BoardState = {
 	project: "",
