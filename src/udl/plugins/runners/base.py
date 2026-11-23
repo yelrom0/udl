@@ -143,9 +143,6 @@ class SessionSpec(_Model):
     unit: str | None = None
     """What its turn's unit is named, as a prefix (27.12): `udl-session-<agent>`, then the turn's
     own 8 hex. None: the runner's own name."""
-    own_settings: list[str] = Field(default_factory=list)
-    """The session's own arguments, passed to the harness as they are (27.11's chat: a person's
-    own harness and their own options)."""
 
 
 def turn_cap(spec: SessionSpec, runner: str) -> tuple[ResourceLimits | None, str | None]:
