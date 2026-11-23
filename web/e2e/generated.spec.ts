@@ -51,8 +51,10 @@ test("a plugin with no UI plugin gets a page that does something", async ({ page
 	// the field takes one or many, so its box holds JSON.)
 	await listCard.getByRole("textbox", { name: /^Account/ }).fill(JSON.stringify(`fake:${name}`));
 	await listCard.getByRole("button", { name: "Refresh" }).click();
-	await expect(listCard.getByText("The first thing")).toBeVisible();
-	await expect(listCard.getByText("The second thing")).toBeVisible();
+	// (A shared CI runner answering a list that also ran on open: it is given longer than the
+	// default 5s, as `orch.spec.ts` gives the server's own waits.)
+	await expect(listCard.getByText("The first thing")).toBeVisible({ timeout: 15_000 });
+	await expect(listCard.getByText("The second thing")).toBeVisible({ timeout: 15_000 });
 
 	// -- a destructive one: only after confirming -----------------------------------------
 	const deleteCard = page.locator("article", { hasText: "Delete a thing" });
