@@ -46,7 +46,8 @@ jobs:
         run: uv run playwright install --with-deps chromium
 
       - name: make check
-        run: make check
+        # (One pytest process here, as before: see PYTEST_WORKERS in the Makefile.)
+        run: make check PYTEST_WORKERS=0
 
   e2e:
     runs-on: ubuntu-latest
