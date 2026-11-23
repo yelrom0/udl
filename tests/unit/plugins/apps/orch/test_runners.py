@@ -254,6 +254,38 @@ async def test_a_setup_signs_codex_in_with_the_key(tmp_path: Path) -> None:
     assert "sk-openai" not in " ".join(argv)
 
 
+async def test_a_setup_leaves_a_codex_that_is_signed_in_alone(tmp_path: Path) -> None:
+    """A setup runs whenever udl has an OpenAI connection, so it must not move a host the user
+    signed in with the ChatGPT plan to the key: codex is signed in, so no `--with-api-key`."""
+    shell = FakeShell()
+    registry = PluginRegistry.discover(builtin_only=True)
+    registry.register(RUNNERS, _codex_against(shell))
+    service = UDLService(
+        settings(tmp_path),
+        registry=registry,
+        clock=FakeClock(),
+        secrets=MemorySecretStore(SecretsSettings()),
+    )
+
+    def shell_for(found: Host) -> FakeShell:
+        return shell
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("udl.hosts.manager.shell_for", shell_for)
+        async with service:
+            await service.db.upsert_record(Host.local("/w"))
+            await connection(service.db, name="oa", plugin="openai", ref=OPENAI_REF)
+            await service.secrets.set(SecretRef(OPENAI_REF), SecretStr("sk-openai"))
+            app = await service.apps.get("orch")
+            assert isinstance(app, Orch)
+
+            await app.runner_setup(
+                SetupRunnerRequest(host="local", runner="codex"), service=service
+            )
+
+    assert [given for given in shell.given if "--with-api-key" in given[0]] == []
+
+
 async def test_a_setup_gives_the_harness_the_keys_and_no_argv(tmp_path: Path) -> None:
     """`orch_runner_setup` end to end: the key udl keeps for a connection reaches the service's
     own credential store (`POST /api/credential`), and is in no command on the host."""

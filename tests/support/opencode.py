@@ -169,13 +169,14 @@ class FakeShell(HostShell):
         """What this fake says to `argv` (before the shell's own failure rule is applied)."""
         if argv[1:4] == ["auth", "list", "--format"]:
             return ProcessResult(returncode=0, stdout=self.auths, stderr="")
+        # (Before the generic `status` below: `codex login status` ends in `status` too.)
+        if argv[1:3] == ["login", "status"]:
+            said = "Not logged in" if self.signed_out else "Logged in using ChatGPT"
+            return ProcessResult(returncode=0, stdout=f"{said}\n", stderr="")
         if argv[-1] == "status":
             return ProcessResult(returncode=0, stdout=f"{self.status}\n", stderr="")
         if argv[-1] == "--version":
             return ProcessResult(returncode=0, stdout="2.1.2\n", stderr="")
-        if argv[1:3] == ["login", "status"]:
-            said = "Not logged in" if self.signed_out else "Logged in using ChatGPT"
-            return ProcessResult(returncode=0, stdout=f"{said}\n", stderr="")
         if argv[0] == "sh" and "cat > " in argv[-1]:
             # (A file written through the shell: an agent file by its name, else by its path.)
             if self.writes_fail:
