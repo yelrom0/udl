@@ -104,6 +104,7 @@ dev = [
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "pytest-httpserver>=1.2.0",
+    "pytest-xdist>=3.8.0",
     "asyncssh>=2.24.0",
     "respx>=0.23.1",
     "ruff>=0.17.0",
@@ -111,7 +112,6 @@ dev = [
     "types-yt-dlp>=2026.8.19.20261008",
     "udl[browser,postgres,mongodb]",
     "uvicorn>=0.54.0",
-    "pytest-xdist>=3.8.0",
 ]
 
 # ---------------------------------------------------------------------------------------------

@@ -4,8 +4,9 @@
 --------------
 
 Database servers for the database plugins' tests (PostgreSQL, MongoDB): the server an environment
-variable names, else a throwaway Docker container that lasts the test run. With neither, the tests
-that need the server are skipped.
+variable names, else a throwaway Docker container that lasts the session that started it (the whole
+run, or one pytest-xdist worker's share of it). With neither, the tests that need the server are
+skipped.
 """
 
 # System Imports
