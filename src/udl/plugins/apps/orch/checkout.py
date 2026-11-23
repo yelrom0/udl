@@ -13,8 +13,9 @@ which checkout and why. A host that cannot be reached is the same: noted, never 
 """
 
 # System Imports
+from collections.abc import Awaitable
 from datetime import timedelta
-from typing import Final
+from typing import Final, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
@@ -23,7 +24,6 @@ from udl.clock import Clock
 from udl.errors import DoesNotExist, PluginFailed, ToolUnavailable
 
 # Local Imports
-from udl.hosts.manager import Hosts
 from udl.hosts.shell import HostShell
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.models import HostName, Key, NoteKind, OwnerKind
@@ -34,10 +34,19 @@ from udl.plugins.apps.orch.records import (
     TaskRecords,
 )
 
-__all__ = ["CHECKOUT_BEHIND", "GIT", "CheckoutBehind", "follow"]
+__all__ = ["CHECKOUT_BEHIND", "GIT", "CheckoutBehind", "HostShells", "follow"]
 
 GIT: timedelta = timedelta(minutes=5)
 """How long a checkout's git commands may take (as workspace's)."""
+
+
+class HostShells(Protocol):
+    """What `follow` needs of the hosts: the shell of the host called `name` (udl's
+    `Hosts.shell`, and a test's fake of one)."""
+
+    def shell(self, name: str) -> Awaitable[HostShell]:
+        """The shell that acts on the host called `name`."""
+        ...
 
 
 class CheckoutBehind(BaseModel):
@@ -76,7 +85,7 @@ async def follow(
     project: str,
     key: Key,
     repo: str,
-    shells: Hosts,
+    shells: HostShells,
     clock: Clock | None = None,
 ) -> list[CheckoutBehind]:
     """After `key` merged: bring every checkout of the repo `repo` (`owner/name`) to its own
@@ -124,7 +133,9 @@ def advice(why: str, checkout: str, base: str) -> str:
     return f"It is at {checkout}; check the host and the path."
 
 
-async def _bring_up_to_date(shells: Hosts, host: HostName, checkout: str, base: str) -> str | None:
+async def _bring_up_to_date(
+    shells: HostShells, host: HostName, checkout: str, base: str
+) -> str | None:
     """Bring one checkout to `origin/<base>`, or say why it was left. None: it followed."""
     try:
         shell = await shells.shell(host)

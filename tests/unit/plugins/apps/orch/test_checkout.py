@@ -22,7 +22,9 @@ import pytest
 
 # Local Imports
 from support.engine import settings
+from support.harnesses import ScriptedShell
 from udl.core.service import UDLService
+from udl.hosts.shell import HostShell
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.checkout import CHECKOUT_BEHIND, CheckoutBehind, follow
 from udl.plugins.apps.orch.models import OwnerKind
@@ -37,6 +39,7 @@ from udl.plugins.apps.orch.records import (
     Task,
     TaskRecords,
 )
+from udl.process import ProcessResult
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -184,13 +187,24 @@ async def test_a_diverged_checkout_is_left_and_noted(service: UDLService, repo: 
     assert "mine" in git(repo, "log", "-1", "--format=%s")
 
 
-async def test_an_unreachable_host_is_noted_not_raised(service: UDLService, repo: Path) -> None:
+async def test_a_checkout_that_is_not_a_repo_is_noted_not_raised(
+    service: UDLService, repo: Path
+) -> None:
     nowhere = repo.parent / "nowhere"
     nowhere.mkdir()
     found = await RepoRecords(AppRecords(service.db)).repo("udl", "udl")
     assert found is not None
     await RepoRecords(AppRecords(service.db)).save_repo(
-        found.model_copy(update={"checkouts": {"local": str(repo), "elsewhere": str(nowhere)}})
+        found.model_copy(
+            update={
+                "checkouts": {
+                    "local": str(repo),
+                    # (A second host that is this machine, at a path that is not a repo: the
+                    # honest way to name one that is here and cannot be read.)
+                    "nowhere": str(nowhere),
+                }
+            }
+        )
     )
     bring(repo)
 
@@ -202,27 +216,33 @@ async def test_an_unreachable_host_is_noted_not_raised(service: UDLService, repo
         shells=service.hosts,
     )
 
-    lost = next(one for one in behind if one.host == "elsewhere")
-    assert "could not be reached" in lost.why
+    lost = next(one for one in behind if one.checkout == str(nowhere))
+    assert "could not be reached" in lost.why or "not a git repository" in lost.why
     # (The reachable one still followed: one bad host never stops the others.)
     assert git(repo, "rev-parse", "HEAD") == git(repo, "rev-parse", "origin/main")
 
 
+class _TimeoutShell(ScriptedShell):
+    """A host's shell whose every command runs out of time (28.8: a fetch that hangs)."""
+
+    async def run(self, argv: object = (), **kwargs: object) -> ProcessResult:
+        raise TimeoutError("git fetch timed out")
+
+
+class _TimeoutHosts:
+    """Hosts whose only shell never answers (a typed fake: `follow` needs `shell(name)`)."""
+
+    async def shell(self, name: str) -> HostShell:
+        return _TimeoutShell()
+
+
 async def test_a_timeout_is_noted_not_raised(service: UDLService, repo: Path) -> None:
-    class _Shell:
-        async def run(self, args: list[str], within: object = None) -> object:
-            raise TimeoutError("git fetch timed out")
-
-    class _Hosts:
-        async def shell(self, name: str) -> object:
-            return _Shell()
-
     behind = await follow(
         AppRecords(service.db),
         project="udl",
         key="F-1.1",
         repo="yelrom0/udl",
-        shells=_Hosts(),  # type: ignore[arg-type]
+        shells=_TimeoutHosts(),
     )
 
     assert len(behind) == 1

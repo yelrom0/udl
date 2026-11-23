@@ -2755,7 +2755,6 @@ class Orch(AppPlugin[OrchSettings]):
         if ref is None:
             raise NotAllowed(f"{task.key!r} has no pull to merge")
         repo, number = ref
-        repo_name = repo
         # (The merge is udl's on the caller's behalf: `github_merge_pull` is not an agent's to
         # call, and who may merge at all is decided by the caller.)
         from udl.interfaces.security import current_principal
@@ -2796,7 +2795,7 @@ class Orch(AppPlugin[OrchSettings]):
             )
         # (28.8, after the merge's own event and result: several hosts times a few git commands each
         # must not hold up `orch_merge` or the next auto merge.)
-        await self._follow_checkout(service, project=project, key=task.key, repo=repo_name)
+        await self._follow_checkout(service, project=project, key=task.key, repo=repo)
         return Merged(task=task.key, url=link, sha=pull.head_sha, state=moved.state)
 
     async def _follow_checkout(
