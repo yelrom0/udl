@@ -28,8 +28,8 @@ const READS: readonly string[] = [
 /**
  * What moves what the board draws: a pull readied or merged, a link refreshed, and an agent's
  * session starting, ending, failing or running out of quota — which is where its status comes
- * from. A feature and a task's state have no event of their own yet (28.5), and
- * `orch.session.event` is a line a runner streamed, not a status change.
+ * from. `orch.session.event` is a line a runner streamed, not a status change. (28.5's
+ * `orch.task.changed` is watched by 29.4's board, where a task's state is drawn.)
  */
 const WATCHED: readonly string[] = [
 	"orch.task.ready",
