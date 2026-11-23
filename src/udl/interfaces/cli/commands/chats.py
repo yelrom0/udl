@@ -14,7 +14,7 @@ asks you what it asks (its permission prompts), and sends what you type.
 # System Imports
 import asyncio
 import contextlib
-from typing import Annotated
+from typing import Annotated, Final
 from uuid import UUID
 
 # Package Imports
@@ -151,6 +151,8 @@ async def talk_loop(
                 except UDLError as error:
                     stdout().print(f"({error})")
                     asked = None
+                    if an_answer(line):
+                        continue  # (it answered a prompt that was already closed: not a turn)
             await service.call(
                 "orch_chat_send", SendChatRequest(chat=found.id, text=line, wait=False)
             )
@@ -205,6 +207,17 @@ async def _answered(service: UDLService, found: ChatInfo, request: UUID, line: s
         "orch_chat_permission",
         PermissionRequest(chat=found.id, request=request, decision=decision, message=message),
     )
+
+
+_ANSWERS: Final = frozenset({"o", "once", "a", "allow", "c", "chat", "d", "deny", "denied"})
+"""What a line that answers a prompt is: one word, one of these (anything else is a message)."""
+
+
+def an_answer(line: str) -> bool:
+    """Whether a line is an answer to a prompt rather than a message (so a prompt that is
+    already closed does not turn the answer into a turn of its own)."""
+    words = line.strip().lower().split()
+    return len(words) == 1 and words[0] in _ANSWERS
 
 
 def decided(typed: str) -> tuple[ChatDecision, str]:

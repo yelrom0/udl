@@ -250,3 +250,39 @@ async def test_a_refused_answer_goes_as_a_message_and_the_loop_goes_on(
 
     assert scripted.answered == []
     assert scripted.said == ["hello"]
+
+
+async def test_a_closed_prompt_swallows_the_answer_but_not_the_message(
+    service: UDLService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(A line that plainly answers a prompt is not sent as a turn when the prompt has gone.)"""
+    asked = a_chat(total=0, permission=a_permission())
+
+    scripted = await talk(
+        service,
+        monkeypatch,
+        reads=[asked, asked, asked],
+        lines=["o", "hello", "/quit"],
+        refuse=True,
+    )
+
+    assert scripted.answered == []
+    assert scripted.said == ["hello"]
+
+
+@pytest.mark.parametrize(
+    ("line", "answer"),
+    [
+        ("o", True),
+        ("allow", True),
+        ("c", True),
+        ("chat", True),
+        ("d", True),
+        ("deny", True),
+        ("hello", False),
+        ("allow me to explain", False),
+        ("", False),
+    ],
+)
+def test_what_reads_as_an_answer(line: str, answer: bool) -> None:
+    assert chats.an_answer(line) is answer
