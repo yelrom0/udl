@@ -13,7 +13,8 @@ export interface InboxState {
 /** A store, and what stops it listening. */
 export interface Loaded<T> {
 	readonly store: StoreApi<T>;
-	/** Read again now: what a page asks after it changed something with no event of its own. */
+	/** Read again now: what a page asks after it changed something, to see it without waiting for
+	 * the event that says so. */
 	refresh(): Promise<void>;
 	stop(): void;
 }
@@ -21,9 +22,9 @@ export interface Loaded<T> {
 /**
  * What changes what waits on a person: a pull readied or merged, a link refreshed (which is how
  * a pull's checks and the bot's review reach 28.3's merge list), the auto merge switch, a session
- * starting, ending or failing, and an agent out of quota (a question and a to-action have no
- * event of their own yet: 28.5 gives them one). Not `orch.session.event`: that fires for every
- * line a runner streams, and `orch_inbox` reads GitHub.
+ * starting, ending or failing, an agent out of quota, and — from 28.5 — a question asked or
+ * answered, a to-action needed and an agent gone idle. Not `orch.session.event`: that fires for
+ * every line a runner streams, and `orch_inbox` reads GitHub.
  */
 const WATCHED: readonly string[] = [
 	"orch.task.ready",
@@ -34,6 +35,10 @@ const WATCHED: readonly string[] = [
 	"orch.session.ended",
 	"orch.session.failed",
 	"orch.agent.limited",
+	"orch.question.asked",
+	"orch.question.answered",
+	"orch.action.needed",
+	"orch.agent.idle",
 ];
 
 /**

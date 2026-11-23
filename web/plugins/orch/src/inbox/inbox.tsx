@@ -22,8 +22,8 @@ const WHAT = "What needs you: questions, PRs ready to merge, and things only a p
  * The blocking questions are pinned on top, each with its options as one click; the three counts
  * (28.4's three lists) say what is behind them; the agents strip says what every agent is on;
  * and the merge, questions and to-action cards hold the rest. Answering calls `orch_answer`, then
- * reads the inbox again — a question and a to-action have no event of their own yet (28.5 gives
- * them one), so the page is what says the answer landed.
+ * reads the inbox again, so the question leaves and its button comes back at once — without
+ * waiting for `orch.question.answered` (28.5) to arrive.
  */
 export const InboxPage: Component<RouteProps> = ({ ctx }) => {
 	const { inbox, error, refresh } = useInbox(ctx);
@@ -65,9 +65,9 @@ export const InboxPage: Component<RouteProps> = ({ ctx }) => {
 				// (A refusal is udl's, and it says why: the question stays, and the reason does too.)
 				setRefused(messageOf(failure));
 			}
-			// (The page is what says the answer landed — a question publishes no event of its own
-			// yet — so the read comes before the button is taken back: a second click while it is
-			// out would answer a question that is already answered.)
+			// (The read comes before the button is taken back: a second click while it is out would
+			// answer a question that is already answered. `orch.question.answered` would read it
+			// too, but the button would wait for the event to arrive.)
 			await refresh();
 			setAnswering((was) => {
 				const left = new Set(was);
