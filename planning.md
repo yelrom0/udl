@@ -145,7 +145,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 28.3 Ready to merge: ready now (in merge order), coming soon, held, done; merging and what follows a merge
   - [x] 28.4 `orch_inbox`: the three sections in one call; `udl orch inbox`
   - [~] 28.5 Events for all of it, and a `notify` example
-  - [ ] 28.6 End to end on fakes: task → agent → question → answer → PR → ready → merged
+  - [~] 28.6 End to end on fakes: task → agent → question → answer → PR → ready → merged
   - [x] 28.7 Auto merge: a project's merger (a reviewer or manager agent) merges its ready PRs after its own review
   - [ ] 28.8 The checkout follows `main`: after a merge, each host's checkout of the repo fast-forwards to it
 - [ ] **Phase 29: Screens (Google Stitch) and the `orch` UI plugin**
