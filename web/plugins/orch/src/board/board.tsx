@@ -3,7 +3,7 @@ import type { Component } from "@udl/ui-sdk/react";
 import { useBoard } from "../hooks";
 import { Page, Said } from "../page";
 import { AgentsPane } from "./agents";
-import { assign, carrying, drop, reordered } from "./drops";
+import { assigned } from "./drops";
 import { FeaturesPane } from "./features";
 import { Filters } from "./filtersRow";
 import { SuggestedPane } from "./suggested";
@@ -30,6 +30,10 @@ export const BoardPage: Component<RouteProps> = ({ ctx, search }) => {
 		useBoard(ctx);
 	const { state, text } = { state: search.state ?? "", text: search.text ?? "" };
 	const shown = tasks.filter((task) => matches(task, state, text));
+	// (A suggestion is a task too, so the same filters apply: it is one nothing has started.)
+	const suggested = suggestions.filter((one) =>
+		matches({ state: "open", title: one.title }, state, text),
+	);
 	const reading = project === "" && error === null;
 	return (
 		<Page title="Board">
@@ -45,40 +49,32 @@ export const BoardPage: Component<RouteProps> = ({ ctx, search }) => {
 							)}
 							<FeaturesPane
 								agents={agents}
+								ctx={ctx}
 								features={features}
 								merge={merge}
 								onAssign={(key, agent) => {
-									void assign(ctx, key, agent, refresh);
-								}}
-								onDrop={() => {
-									void drop(ctx, carrying(), { kind: "features" }, refresh);
+									void assigned(ctx, key, agent, project, refresh);
 								}}
 								progress={progress}
+								project={project}
+								refresh={refresh}
 								tasks={shown}
 							/>
 						</div>
 						<div className="flex flex-col gap-4">
 							<AgentsPane
 								agents={agents}
-								onDrop={(agent) => {
-									void drop(ctx, carrying(), { kind: "agent", agent }, refresh);
-								}}
-								onReorder={(agent, keys) => {
-									void reordered(ctx, agent, keys, refresh);
-								}}
+								ctx={ctx}
 								progress={progress}
+								project={project}
+								refresh={refresh}
 								tasks={tasks}
 							/>
 							<SuggestedPane
 								onQueue={(suggestion) => {
-									void drop(
-										ctx,
-										{ kind: "suggestion", suggestion },
-										{ kind: "agent", agent: suggestion.agent },
-										refresh,
-									);
+									void assigned(ctx, suggestion.task, suggestion.agent, project, refresh);
 								}}
-								suggestions={suggestions}
+								suggestions={suggested}
 							/>
 						</div>
 					</div>

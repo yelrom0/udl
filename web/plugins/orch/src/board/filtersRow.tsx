@@ -50,7 +50,7 @@ export function Filters({
 				<input
 					aria-label="Text"
 					className="input input-sm input-bordered"
-					defaultValue={text}
+					value={text}
 					onChange={(event) => {
 						go({ text: event.target.value });
 					}}

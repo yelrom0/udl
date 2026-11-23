@@ -11,7 +11,7 @@ function Card({
 }) {
 	return (
 		<article
-			aria-label={`${suggestion.task} ${suggestion.title}`}
+			aria-label={`Suggested: ${suggestion.task} ${suggestion.title}`}
 			className="flex flex-col gap-1 rounded-lg border border-base-content/20 p-2"
 			draggable
 			onDragStart={() => {

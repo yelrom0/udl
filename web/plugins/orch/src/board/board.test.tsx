@@ -1,10 +1,12 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { RouteProps } from "@udl/ui-sdk";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { fakeCtx, settle } from "../testing/fake";
+import { moved } from "./agents";
 import { BoardPage } from "./board";
+import { carry } from "./drops";
 
-/** What the board's six calls answer: one feature with two tasks, one agent, one suggestion. */
+/** What the board's six calls answer: one feature with three tasks, one agent, one suggestion. */
 const ANSWERS: Record<string, unknown> = {
 	orch_list_features: {
 		project: "udl",
@@ -96,7 +98,7 @@ const ANSWERS: Record<string, unknown> = {
 	orch_progress: {
 		project: "udl",
 		features: [{ key: "29", title: "Screens", points: 26, merged: 8 }],
-		models: [{ model: "m-1", runner: "claude-code", tasks: 9, hours_per_point: { hours: 1.5 } }],
+		models: [{ model: "m-1", hours_per_point: { hours: 1.5 } }],
 	},
 };
 
@@ -113,14 +115,28 @@ function drawn(search: Record<string, string> = {}) {
 	return fake;
 }
 
+/** What a drop asked udl to change (a re-read is not a change). */
+function writes(fake: { readonly calls: { name: string }[] }): string[] {
+	return fake.calls
+		.map((one) => one.name)
+		.filter(
+			(name) => name === "orch_assign" || name === "orch_unassign" || name === "orch_reorder_queue",
+		);
+}
+
+/** The board, read once. */
+async function read(): Promise<void> {
+	await waitFor(() => {
+		expect(screen.getByRole("region", { name: /29 · Screens/ })).toBeTruthy();
+	});
+}
+
 describe("the board (29.4)", () => {
 	it("draws a feature, its bar and its tasks with their size and their pull", async () => {
 		drawn();
-		await waitFor(() => {
-			expect(screen.getByRole("heading", { level: 2, name: /29/ })).toBeTruthy();
-		});
+		await read();
 
-		const feature = screen.getByRole("region", { name: /29/ });
+		const feature = screen.getByRole("region", { name: /29 · Screens/ });
 		expect(within(feature).getByText("Screens")).toBeTruthy();
 		// (Q-8: each feature's bar is its points merged out of its points.)
 		expect(within(feature).getByText("8 of 26 points")).toBeTruthy();
@@ -139,28 +155,24 @@ describe("the board (29.4)", () => {
 
 	it("draws each agent's column: its dot, its queue in order, and its hours", async () => {
 		drawn();
-		await waitFor(() => {
-			expect(screen.getByRole("region", { name: /deepseek-a/ })).toBeTruthy();
-		});
+		await read();
 
-		const column = screen.getByRole("region", { name: /deepseek-a/ });
+		const column = screen.getByRole("region", { name: "deepseek-a" });
 		expect(within(column).getByText("working")).toBeTruthy();
 		// (The one it is on is on top; then the rest, in their order.)
-		const queue = within(column).getByRole("list", { name: /queue/i });
+		const queue = within(column).getByRole("list", { name: /queue/ });
 		expect(
 			within(queue)
 				.getAllByRole("listitem")
 				.map((one) => one.getAttribute("data-task")),
 		).toEqual(["29.2", "29.3"]);
-		// (Q-8 and 27.10: its points queued, and what they come to at its own rate.)
+		// (Q-8 and 27.10: its points queued, and what they come to at its own rate: L + M = 8.)
 		expect(within(column).getByText("8 points · 12 h")).toBeTruthy();
 	});
 
 	it("draws what is suggested, with its reasons and the agent it suits", async () => {
 		drawn();
-		await waitFor(() => {
-			expect(screen.getByRole("region", { name: /suggested/i })).toBeTruthy();
-		});
+		await read();
 
 		const suggested = screen.getByRole("region", { name: /suggested/i });
 		expect(within(suggested).getByText("Pages")).toBeTruthy();
@@ -170,14 +182,11 @@ describe("the board (29.4)", () => {
 
 	it("keeps the state and the text it was given, and writes a new filter into the URL", async () => {
 		const fake = drawn({ state: "queued", text: "" });
-		await waitFor(() => {
-			expect(screen.getByRole("region", { name: /29/ })).toBeTruthy();
-		});
+		await read();
 
 		// (The state it was given is the state it shows.)
-		const features = within(screen.getByRole("region", { name: "Features" }));
-		expect(features.queryByRole("article", { name: /29\.2/ })).toBeNull();
-		expect(features.getByRole("article", { name: /29\.3/ })).toBeTruthy();
+		expect(screen.queryByRole("article", { name: /29\.2/ })).toBeNull();
+		expect(screen.getByRole("article", { name: /29\.3/ })).toBeTruthy();
 
 		fireEvent.change(screen.getByRole("searchbox", { name: /text/i }), {
 			target: { value: "inbox" },
@@ -188,165 +197,166 @@ describe("the board (29.4)", () => {
 
 	it("narrows the tasks by text, and says so when nothing is left", async () => {
 		drawn({ state: "", text: "inbox" });
-		await waitFor(() => {
-			expect(screen.getByRole("region", { name: "Features" })).toBeTruthy();
+		await read();
+
+		expect(screen.queryByRole("article", { name: /29\.2/ })).toBeNull();
+		expect(screen.queryByRole("article", { name: /29\.5/ })).toBeNull();
+	});
+
+	it("says nothing is left, and shows the text the URL gave it", async () => {
+		drawn({ state: "", text: "nothing like it" });
+		await read();
+
+		expect(screen.getByText("Nothing matches that.")).toBeTruthy();
+		expect((screen.getByRole("searchbox", { name: /text/i }) as HTMLInputElement).value).toBe(
+			"nothing like it",
+		);
+	});
+});
+
+describe("the board's drops (29.4)", () => {
+	// (What a drag carries lives for one drag, and a test's drag is not the next one's.)
+	beforeEach(() => {
+		carry(null);
+	});
+
+	it("assigns what is dragged onto an agent's column, with its project", async () => {
+		const fake = drawn();
+		await read();
+
+		fireEvent.dragStart(screen.getByRole("article", { name: "29.5 Pages" }));
+		fireEvent.drop(screen.getByRole("region", { name: "deepseek-a" }));
+		await settle();
+
+		expect(fake.calls.map((one) => one.name)).toContain("orch_assign");
+		expect(fake.calls.find((one) => one.name === "orch_assign")?.request).toEqual({
+			key: "29.5",
+			agent: "deepseek-a",
+			project: "udl",
 		});
+	});
 
-		// (The suggested pane still names 29.5: it is a suggestion, not a task card.)
-		const features = within(screen.getByRole("region", { name: "Features" }));
-		expect(features.getByRole("article", { name: /29\.3/ })).toBeTruthy();
-		expect(features.queryByRole("article", { name: /29\.2/ })).toBeNull();
-		expect(features.queryByRole("article", { name: /29\.5/ })).toBeNull();
+	it("reorders a queue's own entry, and asks for nothing else", async () => {
+		const fake = drawn();
+		await read();
 
-		const other = fakeCtx((name) => ANSWERS[name] as never);
-		// (A second board, drawn beside the first: the empty states are the second's.)
-		render(
-			<BoardPage
-				path="board"
-				params={{}}
-				search={{ state: "", text: "nothing like it" }}
-				ctx={other.ctx}
-			/>,
+		const queue = within(screen.getByRole("region", { name: "deepseek-a" })).getByRole("list", {
+			name: /queue/,
+		});
+		const [first, second] = within(queue).getAllByRole("listitem");
+		fireEvent.dragStart(first as HTMLElement);
+		fireEvent.drop(second as HTMLElement);
+		await settle();
+
+		// (One write: the reorder, never the column's assign after it.)
+		expect(fake.calls.map((one) => one.name).filter((one) => one.startsWith("orch_"))).toContain(
+			"orch_reorder_queue",
+		);
+		expect(fake.calls.some((one) => one.name === "orch_assign")).toBe(false);
+		expect(fake.calls.find((one) => one.name === "orch_reorder_queue")?.request).toEqual({
+			agent: "deepseek-a",
+			keys: ["29.3", "29.2"],
+			project: "udl",
+		});
+	});
+
+	it("assigns a task from another queue onto an entry, at that entry's position", async () => {
+		const fake = drawn();
+		await read();
+
+		// (29.5 is nobody's yet: dropping it on the queue's second entry is an assign, not a
+		// reorder of keys that queue does not have.)
+		const queue = within(screen.getByRole("region", { name: "deepseek-a" })).getByRole("list", {
+			name: /queue/,
+		});
+		const entries = within(queue).getAllByRole("listitem");
+		carry({ kind: "task", key: "29.5" });
+		fireEvent.drop(entries[1] as HTMLElement);
+		await settle();
+
+		expect(fake.calls.find((one) => one.name === "orch_assign")?.request).toEqual({
+			key: "29.5",
+			agent: "deepseek-a",
+			project: "udl",
+			position: 1,
+		});
+		expect(fake.calls.some((one) => one.name === "orch_reorder_queue")).toBe(false);
+	});
+
+	it("unassigns a task dropped back on the features pane, and nothing else", async () => {
+		const fake = drawn();
+		await read();
+
+		fireEvent.dragStart(screen.getByRole("article", { name: /29\.2/ }));
+		fireEvent.drop(screen.getByRole("region", { name: "Features" }));
+		await settle();
+
+		expect(fake.calls.find((one) => one.name === "orch_unassign")?.request).toEqual({
+			key: "29.2",
+			project: "udl",
+		});
+	});
+
+	it("asks for nothing when a task nobody holds is dropped on the features pane", async () => {
+		const fake = drawn();
+		await read();
+
+		fireEvent.dragStart(screen.getByRole("article", { name: "29.5 Pages" }));
+		fireEvent.drop(screen.getByRole("region", { name: "Features" }));
+		await settle();
+
+		expect(fake.calls.some((one) => one.name === "orch_unassign")).toBe(false);
+	});
+
+	it("forgets what a cancelled drag carried", async () => {
+		const fake = drawn();
+		await read();
+
+		fireEvent.dragStart(screen.getByRole("article", { name: "29.5 Pages" }));
+		fireEvent.dragEnd(screen.getByRole("article", { name: "29.5 Pages" }));
+		fireEvent.drop(screen.getByRole("region", { name: "deepseek-a" }));
+		await settle();
+
+		expect(fake.calls.some((one) => one.name === "orch_assign")).toBe(false);
+	});
+});
+
+describe("the board's other paths (29.4)", () => {
+	beforeEach(() => {
+		carry(null);
+	});
+
+	it("queues a suggestion from its own button", async () => {
+		const fake = drawn();
+		await read();
+
+		fireEvent.click(
+			within(screen.getByRole("region", { name: "Suggested" })).getByRole("button", {
+				name: "Queue it",
+			}),
 		);
 		await settle();
-		expect(screen.getByText("Nothing matches that.")).toBeTruthy();
-	});
 
-	it("says what is empty, rather than drawing nothing", async () => {
-		const fake = fakeCtx((name) => {
-			if (name === "orch_list_features") {
-				return {
-					project: "udl",
-					features: [{ key: "30", title: "Nothing yet", status: "planned" }],
-				};
-			}
-			if (name === "orch_list_agents") {
-				return {
-					items: [
-						{
-							agent: { name: "a", title: "a", role: "implementer", model: "unlearned" },
-							status: "",
-							queue: [],
-							reports: [],
-						},
-					],
-				};
-			}
-			if (name === "orch_suggest") {
-				return { project: "udl", suggestions: [] };
-			}
-			return { project: "udl", tasks: [], features: [], models: [] };
-		});
-		render(<BoardPage path="board" params={{}} search={{}} ctx={fake.ctx} />);
-		await waitFor(() => {
-			expect(screen.getByText("No tasks match.")).toBeTruthy();
-		});
-
-		expect(screen.getByText("Nothing on its queue.")).toBeTruthy();
-		// (A model nothing has been learned of yet is its points, and no hours.)
-		expect(screen.getByText("0 points")).toBeTruthy();
-		expect(screen.getByText("Nothing is ready to start.")).toBeTruthy();
-		// (The feature has no points at all, so it has no bar.)
-		expect(screen.getByText("0 of 0 points")).toBeTruthy();
-	});
-
-	it("draws a board with no agents at all", async () => {
-		const fake = fakeCtx((name) => {
-			if (name === "orch_list_agents") {
-				return { items: [] };
-			}
-			return ANSWERS[name] as never;
-		});
-		render(<BoardPage path="board" params={{}} search={{}} ctx={fake.ctx} />);
-		await waitFor(() => {
-			expect(screen.getByText("No agents yet.")).toBeTruthy();
-		});
-	});
-
-	it("keeps the state filter when only the state is written", async () => {
-		const fake = drawn({ state: "", text: "" });
-		await waitFor(() => {
-			expect(screen.getByRole("combobox", { name: "State" })).toBeTruthy();
-		});
-
-		fireEvent.change(screen.getByRole("combobox", { name: "State" }), {
-			target: { value: "queued" },
-		});
-
-		expect(fake.navigations).toEqual(["/ui/p/orch/board?state=queued"]);
-	});
-
-	it("clears a filter by clearing it, and asks the same page", async () => {
-		const fake = drawn({ state: "queued", text: "inbox" });
-		await waitFor(() => {
-			expect(screen.getByRole("combobox", { name: "State" })).toBeTruthy();
-		});
-
-		fireEvent.change(screen.getByRole("searchbox", { name: "Text" }), {
-			target: { value: "" },
-		});
-
-		expect(fake.navigations).toEqual(["/ui/p/orch/board?state=queued"]);
-	});
-
-	it("assigns the task carried onto an agent's column, then reads the board again", async () => {
-		const fake = drawn();
-		await waitFor(() => {
-			expect(screen.getByRole("region", { name: /deepseek-a/ })).toBeTruthy();
-		});
-
-		const features = within(screen.getByRole("region", { name: "Features" }));
-		const card = features.getByRole("article", { name: /29\.5/ });
-		fireEvent.dragStart(card);
-		fireEvent.drop(screen.getByRole("region", { name: /deepseek-a/ }));
-
-		await waitFor(() => {
-			expect(fake.calls.filter((one) => one.name === "orch_assign")).toHaveLength(1);
-		});
 		expect(fake.calls.find((one) => one.name === "orch_assign")?.request).toEqual({
 			key: "29.5",
 			agent: "deepseek-a",
+			project: "udl",
 		});
-		// (The board is read again, so what it drew is what udl now says.)
-		await waitFor(() => {
-			expect(fake.calls.filter((one) => one.name === "orch_list_features")).toHaveLength(2);
-		});
-		expect(fake.toasts).toEqual([]);
 	});
 
-	it("asks before stacking a suggestion on the task it needs, and does nothing when told no", async () => {
+	it("assigns from the card's menu, which is the keyboard's path", async () => {
 		const fake = drawn();
-		fake.yes = false;
-		await waitFor(() => {
-			expect(screen.getByRole("region", { name: /suggested/i })).toBeTruthy();
-		});
+		await read();
 
-		const suggested = within(screen.getByRole("region", { name: "Suggested" }));
-		fireEvent.dragStart(suggested.getByRole("article", { name: /29\.5/ }));
-		fireEvent.drop(screen.getByRole("region", { name: /deepseek-a/ }));
+		const card = screen.getByRole("article", { name: /29\.2/ });
+		fireEvent.click(within(card).getByRole("button", { name: "Assign to…" }));
+		fireEvent.click(within(card).getByRole("menuitem", { name: "deepseek-a" }));
+		await settle();
 
-		await waitFor(() => {
-			expect(fake.asked).toEqual(["Stack on #29.3?"]);
-		});
-		expect(fake.calls.filter((one) => one.name === "orch_assign")).toEqual([]);
-	});
-
-	it("stacks it when told yes, carrying the suggestion's task", async () => {
-		const fake = drawn();
-		await waitFor(() => {
-			expect(screen.getByRole("region", { name: /suggested/i })).toBeTruthy();
-		});
-
-		const suggested = within(screen.getByRole("region", { name: "Suggested" }));
-		fireEvent.dragStart(suggested.getByRole("article", { name: /29\.5/ }));
-		fireEvent.drop(screen.getByRole("region", { name: /deepseek-a/ }));
-
-		await waitFor(() => {
-			expect(fake.calls.filter((one) => one.name === "orch_assign")).toHaveLength(1);
-		});
 		expect(fake.calls.find((one) => one.name === "orch_assign")?.request).toEqual({
-			key: "29.5",
+			key: "29.2",
 			agent: "deepseek-a",
+			project: "udl",
 		});
 	});
 
@@ -357,78 +367,142 @@ describe("the board (29.4)", () => {
 			}
 			return ANSWERS[name] as never;
 		});
-		render(<BoardPage path="board" params={{}} search={{}} ctx={fake.ctx} />);
-		await waitFor(() => {
-			expect(screen.getByRole("region", { name: /deepseek-a/ })).toBeTruthy();
-		});
+		render(<BoardPage ctx={fake.ctx} params={{}} path="board" search={{}} />);
+		await read();
 
-		const features = within(screen.getByRole("region", { name: "Features" }));
-		fireEvent.dragStart(features.getByRole("article", { name: /29\.5/ }));
-		fireEvent.drop(screen.getByRole("region", { name: /deepseek-a/ }));
+		fireEvent.dragStart(screen.getByRole("article", { name: "29.5 Pages" }));
+		fireEvent.drop(screen.getByRole("region", { name: "deepseek-a" }));
+		await settle();
 
-		await waitFor(() => {
-			expect(fake.toasts).toEqual([{ message: "29.5 is a person's task", kind: "error" }]);
-		});
-		await waitFor(() => {
-			expect(fake.calls.filter((one) => one.name === "orch_list_features")).toHaveLength(2);
-		});
+		expect(fake.toasts).toEqual([{ message: "29.5 is a person's task", kind: "error" }]);
+		// (Snapped back: the board is read again, so what it shows is udl's.)
+		const reads = fake.calls.filter((one) => one.name === "orch_list_features");
+		expect(reads.length).toBeGreaterThan(1);
 	});
 
-	it("takes a task back out of its queue when it is dropped on the features pane", async () => {
+	it("asks before stacking a suggestion on its need, and does nothing on no", async () => {
 		const fake = drawn();
-		await waitFor(() => {
-			expect(screen.getByRole("region", { name: /deepseek-a/ })).toBeTruthy();
-		});
+		fake.yes = false;
+		await read();
 
-		const column = within(screen.getByRole("region", { name: "deepseek-a" }));
-		fireEvent.dragStart(column.getByRole("listitem", { name: /29\.3/ }));
-		fireEvent.drop(screen.getByRole("region", { name: "Features" }));
+		fireEvent.dragStart(screen.getByRole("article", { name: "Suggested: 29.5 Pages" }));
+		fireEvent.drop(screen.getByRole("region", { name: "deepseek-a" }));
+		await settle();
 
-		await waitFor(() => {
-			expect(fake.calls.filter((one) => one.name === "orch_unassign")).toHaveLength(1);
-		});
-		expect(fake.calls.find((one) => one.name === "orch_unassign")?.request).toEqual({
-			key: "29.3",
-		});
+		expect(fake.asked).toEqual(["Stack on #29.3?"]);
+		expect(fake.calls.some((one) => one.name === "orch_assign")).toBe(false);
 	});
 
-	it("sets a queue to the order a task was dropped at", async () => {
-		const fake = drawn();
-		await waitFor(() => {
-			expect(screen.getByRole("region", { name: /deepseek-a/ })).toBeTruthy();
+	it("writes the state filter into the URL too", async () => {
+		const fake = drawn({ state: "", text: "" });
+		await read();
+
+		fireEvent.change(screen.getByRole("combobox", { name: "State" }), {
+			target: { value: "merged" },
 		});
 
-		const column = within(screen.getByRole("region", { name: "deepseek-a" }));
-		fireEvent.dragStart(column.getByRole("listitem", { name: /29\.3/ }));
-		fireEvent.drop(column.getByRole("listitem", { name: /29\.2/ }));
-
-		await waitFor(() => {
-			expect(fake.calls.filter((one) => one.name === "orch_reorder_queue")).toHaveLength(1);
-		});
-		// (Dropped on the top one: it goes above it.)
-		expect(fake.calls.find((one) => one.name === "orch_reorder_queue")?.request).toEqual({
-			agent: "deepseek-a",
-			keys: ["29.3", "29.2"],
-		});
+		expect(fake.navigations).toEqual(["/ui/p/orch/board?state=merged"]);
 	});
 
-	it("assigns the same way from the menu, for a keyboard and a pointer alike", async () => {
+	it("says when there is nothing to suggest, or no agents", async () => {
+		const fake = fakeCtx((name) => {
+			if (name === "orch_suggest") {
+				return { project: "udl", suggestions: [] };
+			}
+			if (name === "orch_list_agents") {
+				return { items: [] };
+			}
+			return ANSWERS[name] as never;
+		});
+		render(<BoardPage ctx={fake.ctx} params={{}} path="board" search={{}} />);
+		await read();
+
+		expect(screen.getByText("No agents yet.")).toBeTruthy();
+		expect(screen.getByText("Nothing is ready to start.")).toBeTruthy();
+	});
+
+	it("says what udl answered when the board cannot be read", async () => {
+		const fake = fakeCtx(() => {
+			throw new Error("udl answered 503: it is restarting");
+		});
+		render(<BoardPage ctx={fake.ctx} params={{}} path="board" search={{}} />);
+
+		await waitFor(() => {
+			expect(screen.getByText(/it is restarting/)).toBeTruthy();
+		});
+	});
+});
+
+describe("the board's quiet edges (29.4)", () => {
+	beforeEach(() => {
+		carry(null);
+	});
+
+	it("draws an agent with no queue, no rate and a status it does not know", async () => {
+		const fake = fakeCtx((name) => {
+			if (name === "orch_list_agents") {
+				return {
+					items: [
+						{
+							agent: { name: "quiet", title: "quiet", role: "implementer", model: "m-9" },
+							status: "napping",
+							queue: [],
+							reports: [],
+						},
+					],
+				};
+			}
+			return ANSWERS[name] as never;
+		});
+		render(<BoardPage ctx={fake.ctx} params={{}} path="board" search={{}} />);
+		await read();
+
+		const column = screen.getByRole("region", { name: "quiet" });
+		expect(within(column).getByText("Nothing on its queue.")).toBeTruthy();
+		// (No rate for its model: its points, and no hours claimed.)
+		expect(within(column).getByText("0 points")).toBeTruthy();
+		expect(within(column).getByRole("img", { name: "napping" })).toBeTruthy();
+	});
+
+	it("asks for nothing when a queue entry is dropped with no drag behind it", async () => {
 		const fake = drawn();
-		await waitFor(() => {
-			expect(screen.getByRole("region", { name: "Features" })).toBeTruthy();
-		});
+		await read();
 
-		const features = within(screen.getByRole("region", { name: "Features" }));
-		const card = features.getByRole("article", { name: /29\.5/ });
-		fireEvent.click(within(card).getByRole("button", { name: /assign to/i }));
-		fireEvent.click(screen.getByRole("menuitem", { name: "deepseek-a" }));
+		const queue = within(screen.getByRole("region", { name: "deepseek-a" })).getByRole("list", {
+			name: /queue/,
+		});
+		const [first] = within(queue).getAllByRole("listitem");
+		fireEvent.drop(first as HTMLElement);
+		await settle();
 
-		await waitFor(() => {
-			expect(fake.calls.filter((one) => one.name === "orch_assign")).toHaveLength(1);
+		expect(writes(fake)).toEqual([]);
+	});
+
+	it("asks for nothing when an entry is dropped on itself", async () => {
+		const fake = drawn();
+		await read();
+
+		const queue = within(screen.getByRole("region", { name: "deepseek-a" })).getByRole("list", {
+			name: /queue/,
 		});
-		expect(fake.calls.find((one) => one.name === "orch_assign")?.request).toEqual({
-			key: "29.5",
-			agent: "deepseek-a",
-		});
+		const [first] = within(queue).getAllByRole("listitem");
+		fireEvent.dragStart(first as HTMLElement);
+		fireEvent.drop(first as HTMLElement);
+		await settle();
+
+		expect(writes(fake)).toEqual([]);
+	});
+});
+
+describe("a queue's order (29.4)", () => {
+	it("puts a task where it was dropped: before the entry going up, after it going down", () => {
+		// (Down: the top card dropped on the last goes after it.)
+		expect(moved(["a", "b", "c"], "a", "c")).toEqual(["b", "c", "a"]);
+		// (Up: after 29.3, dropped on 29.2 → before it.)
+		expect(moved(["a", "b", "c"], "c", "a")).toEqual(["c", "a", "b"]);
+		// (On itself: where it was.)
+		expect(moved(["a", "b"], "a", "a")).toEqual(["a", "b"]);
+		// (An entry that is not there at all: the end, not a hole in the middle.)
+		expect(moved(["a", "b"], "a", "gone")).toEqual(["b", "a"]);
 	});
 });

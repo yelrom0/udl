@@ -43,17 +43,19 @@ async function seed(page: Page, run: string): Promise<Seeded> {
 	const feature = `e2e-${run}`;
 	const agent = `fake-${run}`;
 	const task = `${feature}.1`;
-	await call(page, "set_project", { name: "e2e", title: "The e2e project" });
-	await call(page, "set_feature", { project: "e2e", key: feature, title: "Screens" });
+	// (The one project the e2e server's other specs seed too: a second one would make "the only
+	// project" ambiguous for every operation that leaves it out.)
+	await call(page, "set_project", { name: "udl", title: "udl" });
+	await call(page, "set_feature", { project: "udl", key: feature, title: "Screens" });
 	await call(page, "set_agent", {
 		name: agent,
 		title: "Fake",
 		runner: "claude-code",
 		role: "implementer",
-		projects: ["e2e"],
+		projects: ["udl"],
 	});
 	await call(page, "set_task", {
-		project: "e2e",
+		project: "udl",
 		key: task,
 		feature,
 		title: "A thing worth doing",
@@ -73,7 +75,7 @@ test("a suggestion dragged onto an agent is assigned to it (29.4)", async ({ pag
 	await expect(named(page, "Suggested").getByText("A thing worth doing")).toBeVisible();
 
 	// (A drag carries the suggestion; the column is what takes it.)
-	await named(page, `${task} A thing worth doing`).dispatchEvent("dragstart");
+	await named(page, `Suggested: ${task} A thing worth doing`).dispatchEvent("dragstart");
 	await named(page, agent).dispatchEvent("drop");
 
 	// (The board is read again, and the queue it draws is udl's: the task is the agent's now.)

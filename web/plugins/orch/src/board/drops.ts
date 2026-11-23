@@ -26,11 +26,17 @@ export function carrying(): What | null {
 	return held;
 }
 
+/** The task a drag carries, whichever kind it is. */
+export function taskOf(what: What): string {
+	return what.kind === "task" ? what.key : what.suggestion.task;
+}
+
 /** What a drop asks udl to do, and what it says when udl refuses it. */
 export async function drop(
 	ctx: UIContext,
 	what: What | null,
 	target: Target,
+	project: string,
 	refresh: () => Promise<void>,
 ): Promise<void> {
 	if (what === null) {
@@ -44,13 +50,14 @@ export async function drop(
 				return;
 			}
 		}
-		const key = what.kind === "task" ? what.key : what.suggestion.task;
+		const key = taskOf(what);
 		if (target.kind === "features") {
-			await ctx.call("orch_unassign", { key });
+			await ctx.call("orch_unassign", { key, project });
 		} else {
 			await ctx.call("orch_assign", {
 				key,
 				agent: target.agent,
+				project,
 				...(target.position === undefined ? {} : { position: target.position }),
 			});
 		}
@@ -63,37 +70,33 @@ export async function drop(
 	}
 }
 
+/** A task put on an agent's queue by the menu or by "Queue it": the drop's own call, with no
+ * drag behind it. */
+export async function assigned(
+	ctx: UIContext,
+	key: string,
+	agent: string,
+	project: string,
+	refresh: () => Promise<void>,
+): Promise<void> {
+	carry({ kind: "task", key });
+	await drop(ctx, carrying(), { kind: "agent", agent }, project, refresh);
+}
+
 /** An agent's queue set to exactly these keys, in this order. */
 export async function reordered(
 	ctx: UIContext,
 	agent: string,
 	keys: readonly string[],
+	project: string,
 	refresh: () => Promise<void>,
 ): Promise<void> {
 	try {
-		await ctx.call("orch_reorder_queue", { agent, keys: [...keys] });
+		await ctx.call("orch_reorder_queue", { agent, keys: [...keys], project });
 	} catch (failure) {
 		ctx.toast(messageOf(failure), "error");
 	} finally {
+		held = null;
 		await refresh();
 	}
-}
-
-/** A task assigned to an agent at the end of its queue (the "Assign to…" menu's own call). */
-export async function assign(
-	ctx: UIContext,
-	key: string,
-	agent: string,
-	refresh: () => Promise<void>,
-): Promise<void> {
-	await drop(ctx, { kind: "task", key }, { kind: "agent", agent }, refresh);
-}
-
-/** A task taken out of its agent's queue, back to open (the features pane's own drop). */
-export async function unassign(
-	ctx: UIContext,
-	key: string,
-	refresh: () => Promise<void>,
-): Promise<void> {
-	await drop(ctx, { kind: "task", key }, { kind: "features" }, refresh);
 }

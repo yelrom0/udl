@@ -1,8 +1,9 @@
+import type { UIContext } from "@udl/ui-sdk";
 import { useState } from "react";
 import { LinkChip } from "../linkChip";
 import type { Agent, Feature, MergeList, Progress, Task } from "../model";
 import { SizeChip } from "../sizeChip";
-import { carry } from "./drops";
+import { carry, carrying, drop } from "./drops";
 
 /** Where a task's own page is (`29.5` draws it). */
 function pageOf(key: string): string {
@@ -83,6 +84,9 @@ function TaskCard({
 			aria-label={`${task.key} ${task.title}`}
 			className="flex flex-wrap items-center gap-2 rounded-lg border border-base-content/20 bg-base-100 p-2"
 			draggable
+			onDragEnd={() => {
+				carry(null);
+			}}
 			onDragStart={() => {
 				carry({ kind: "task", key: task.key });
 			}}
@@ -171,16 +175,20 @@ export function FeaturesPane({
 	merge,
 	progress,
 	agents,
+	ctx,
+	project,
+	refresh,
 	onAssign,
-	onDrop,
 }: {
 	readonly features: readonly Feature[];
 	readonly tasks: readonly Task[];
 	readonly merge: MergeList;
 	readonly progress: Progress;
 	readonly agents: readonly Agent[];
+	readonly ctx: UIContext;
+	readonly project: string;
+	readonly refresh: () => Promise<void>;
 	readonly onAssign: ((task: string, agent: string) => void) | undefined;
-	readonly onDrop: () => void;
 }) {
 	return (
 		<section
@@ -191,7 +199,21 @@ export function FeaturesPane({
 			}}
 			onDrop={(event) => {
 				event.preventDefault();
-				onDrop();
+				const what = carrying();
+				// (Back onto the features pane means "out of its agent's queue" — and only for a
+				// task that is on one: a suggestion, or a card released where it already is,
+				// asks udl for nothing.)
+				if (what === null || what.kind !== "task") {
+					return;
+				}
+				const onAQueue = agents.some((agent) =>
+					agent.queue.some((entry) => entry.key === what.key),
+				);
+				if (!onAQueue) {
+					carry(null);
+					return;
+				}
+				void drop(ctx, what, { kind: "features" }, project, refresh);
 			}}
 		>
 			{features.map((feature) => (
