@@ -132,6 +132,8 @@ class FakeShell(HostShell):
         self.writes_fail = False
         """Whether writing a file fails."""
         self.auths = "[]"
+        self.signed_out = False
+        """Whether `codex login status` says Not logged in (a runner that signs in with a key)."""
         """What `opencode auth list --format json` prints."""
         self.streams: list[tuple[list[str], str]] = []
         """Every argv it was asked to stream, and what it answered (an install's output)."""
@@ -171,6 +173,9 @@ class FakeShell(HostShell):
             return ProcessResult(returncode=0, stdout=f"{self.status}\n", stderr="")
         if argv[-1] == "--version":
             return ProcessResult(returncode=0, stdout="2.1.2\n", stderr="")
+        if argv[1:3] == ["login", "status"]:
+            said = "Not logged in" if self.signed_out else "Logged in using ChatGPT"
+            return ProcessResult(returncode=0, stdout=f"{said}\n", stderr="")
         if argv[0] == "sh" and "cat > " in argv[-1]:
             # (A file written through the shell: an agent file by its name, else by its path.)
             if self.writes_fail:

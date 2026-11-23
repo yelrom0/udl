@@ -221,6 +221,7 @@ async def test_a_setup_signs_codex_in_with_the_key(tmp_path: Path) -> None:
     """`orch_runner_setup` end to end for codex: udl has an OpenAI key, so the runner signs Codex
     in with it — `codex login --with-api-key`, the key on stdin and in no argv."""
     shell = FakeShell()
+    shell.signed_out = True  # (codex is not signed in: the fake says so, as the CLI does)
     registry = PluginRegistry.discover(builtin_only=True)
     registry.register(RUNNERS, _codex_against(shell))
     service = UDLService(
@@ -249,8 +250,7 @@ async def test_a_setup_signs_codex_in_with_the_key(tmp_path: Path) -> None:
     assert setup.files == ["~/.codex/rules/udl.rules"]
     [[argv, stdin]] = [given for given in shell.given if "--with-api-key" in given[0]]
     assert argv[-2:] == ["login", "--with-api-key"]
-    assert stdin is not None
-    assert stdin.decode().strip() == "sk-openai"
+    assert stdin == b"sk-openai"
     assert "sk-openai" not in " ".join(argv)
 
 

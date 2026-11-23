@@ -13,6 +13,7 @@ says whether udl's rules are on the host, and udl never opens Codex's own `auth.
 # System Imports
 import asyncio
 import json
+import logging
 import re
 import sys
 from collections.abc import AsyncIterator, Mapping, Sequence
@@ -254,9 +255,12 @@ def test_a_login_status_of_both_kinds_is_read() -> None:
     assert health.plan == "an api key"
 
 
-async def test_setup_signs_in_with_the_key_it_is_given(tmp_path: Path) -> None:
+async def test_setup_signs_in_with_the_key_it_is_given(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     """25.13: when udl has an OpenAI key and Codex is not signed in, the runner signs in with it
     — `codex login --with-api-key`, the key on **stdin**, never in an argv or a log line."""
+    caplog.set_level(logging.DEBUG)
     shell = HomeShell(tmp_path / "home", env={"CODEX_HARNESS_SIGNED_OUT": "1"})
     given = Codex(CodexOptions(cli=[sys.executable, str(CODEX)]), shell=shell, clock=FakeClock())
 
@@ -266,6 +270,7 @@ async def test_setup_signs_in_with_the_key_it_is_given(tmp_path: Path) -> None:
     assert argv == [sys.executable, str(CODEX), "login", "--with-api-key"]
     assert stdin == b"sk-s3cret"
     assert "sk-s3cret" not in " ".join(argv)
+    assert "sk-s3cret" not in caplog.text
 
 
 async def test_setup_does_not_replace_the_sign_in_the_user_made(tmp_path: Path) -> None:
@@ -297,6 +302,7 @@ async def test_a_key_codex_refuses_is_reported_without_the_key(
 ) -> None:
     """A sign-in Codex refuses is the failure it says (the CLI's own message), and the key is in
     no error text udl writes."""
+    caplog.set_level(logging.DEBUG)
     shell = HomeShell(
         tmp_path / "home",
         env={"CODEX_HARNESS_SIGNED_OUT": "1", "CODEX_HARNESS_KEY_REFUSED": "1"},
