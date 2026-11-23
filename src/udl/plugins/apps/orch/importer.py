@@ -433,7 +433,7 @@ def _kept_heading(
         for index, line in body:
             if _ANY_HEADING.match(line):
                 break
-            if index in taken or not line.strip():
+            if index in taken:
                 continue
             prose.append(line)
         said = "\n".join(prose).strip()

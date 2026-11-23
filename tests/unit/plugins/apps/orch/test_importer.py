@@ -273,6 +273,19 @@ def test_a_stars_and_a_paren_numbered_list_join_too() -> None:
     assert task_of(plan, "30.1").spec == "a star\na plus\na paren"
 
 
+def test_two_paragraphs_in_the_tracker_stay_two_paragraphs() -> None:
+    """The prose pass drops only the lines a task claimed, not the blank ones between its
+    paragraphs: two paragraphs in the tracker's prose stay two paragraphs."""
+    text = (
+        "# A plan\n\n## Progress tracker\n\n- [ ] **Phase 30: A phase**\n"
+        "  - [ ] 30.1 a task\n\nA first paragraph.\n\nA second paragraph.\n"
+    )
+
+    plan = parse_plan(text, source="plan.md")
+
+    assert feature_of(plan, "plan").spec == "A first paragraph.\n\nA second paragraph."
+
+
 def test_a_numbered_step_after_a_blank_line_is_the_plan_s_prose() -> None:
     """A blank line ends the task's sub-list (as `_read_tracker` says): a numbered item after it
     belongs to nobody, so it stays the tracker's prose rather than being dropped."""
