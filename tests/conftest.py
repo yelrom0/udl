@@ -29,8 +29,16 @@ from sqlalchemy.engine import make_url
 from support.antibot import AntiBotSite
 from support.fixture_site import FixtureSite
 from support.servers import MONGODB, POSTGRES, serving
+from udl.hosts.shell import REPO_VARIABLES
 
 TESTS_DIR = Path(__file__).parent
+
+# A git hook exports GIT_DIR, GIT_INDEX_FILE and the rest for the repo it runs in, and `make check`
+# runs under the pre-commit hook. A test that runs git with the environment it inherits would act on
+# that repo: on 23 Nov one ran `git init --bare` and `git add` with the plain `subprocess`, turned
+# the repo bare and wiped a worktree's index. So none of them reaches a test, however it runs git.
+for _name in REPO_VARIABLES:
+    os.environ.pop(_name, None)
 
 # Tests in these directories get these markers; `network` is deselected by default.
 _LAYER_MARKERS = {"integration": "integration", "smoke": "network"}
