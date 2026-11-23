@@ -185,6 +185,8 @@ def test_the_key_a_request_sends_is_read_from_either_header() -> None:
     assert api_key_of({"Authorization": "Bearer s3cret"}) == "s3cret"
     assert api_key_of({"authorization": "bearer s3cret"}) == "s3cret"
     assert api_key_of({"X-API-Key": "one", "Authorization": "Bearer two"}) == "one"
+    assert api_key_of({"x-api-key": "s3cret"}) == "s3cret"  # (either case: a plain mapping)
+    assert api_key_of({"AUTHORIZATION": "Bearer s3cret"}) == "s3cret"
     assert api_key_of({"Authorization": "Basic s3cret"}) is None
     assert api_key_of({}) is None
     assert api_key_of({"Authorization": "Bearer "}) is None

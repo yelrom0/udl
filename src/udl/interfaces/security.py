@@ -36,16 +36,23 @@ def api_key_of(headers: Mapping[str, str]) -> str | None:
     The bearer form is what a client that can only send one header uses (Codex's
     `bearer_token_env_var`); it is the same key — udl's own or an agent's — so the same rules
     hold, and the header wins when both are sent."""
-    given = headers.get(API_KEY_HEADER)
+    # (Both headers case-insensitively: a request's own headers are, and a plain mapping a test
+    # passes may spell either as it is written.)
+    given = _header(headers, API_KEY_HEADER)
     if given:
         return given
-    # (Case-insensitively: a request's own headers are, and a plain mapping a test passes may
-    # spell the header as it is written.)
-    sent = next((value for name, value in headers.items() if name.lower() == "authorization"), "")
-    scheme, _, token = sent.partition(" ")
+    scheme, _, token = _header(headers, "Authorization").partition(" ")
     if scheme.lower() == "bearer" and token.strip():
         return token.strip()
     return None
+
+
+def _header(headers: Mapping[str, str], name: str) -> str:
+    """A header's value, whatever case it is spelled in (a request's headers are read this way)."""
+    given = headers.get(name)
+    if given is not None:
+        return given
+    return next((value for key, value in headers.items() if key.lower() == name.lower()), "")
 
 
 AGENT_PREFIX: Final = "udl_agent_"
