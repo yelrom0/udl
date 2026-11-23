@@ -39,7 +39,7 @@ from starlette.routing import Route
 
 # Local Imports
 from udl.errors import PluginFailed
-from udl.hosts.shell import Host, HostShell, Interaction
+from udl.hosts.shell import Host, HostShell, Interaction, ResourceLimits
 from udl.process import CancelToken, ProcessResult
 
 
@@ -141,6 +141,16 @@ class FakeShell(HostShell):
         """Every argv it started as a sign-in."""
         self.interactions: list[FakeInteraction] = []
         """Every sign-in it started, in order."""
+        self.limits: list[ResourceLimits | None] = []
+        """Every memory cap it was asked for, in order (None: a run that was not capped)."""
+        self.unit: str | None = None
+        """The service's unit, when this host has one (27.12's cap is read from it)."""
+        self.cgroup: str = "/user.slice/opencode.service"
+        """The service unit's ControlGroup."""
+        self.capped: str | None = None
+        """What the service's cgroup says its memory limit is (`max`: no cap)."""
+        self.oom_policy: str | None = "continue"
+        """The service unit's `OOMPolicy`."""
 
     async def run(
         self,
@@ -154,9 +164,12 @@ class FakeShell(HostShell):
         cancel: CancelToken | None = None,
         check: bool = True,
         tail: bool = False,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> ProcessResult:
         self.runs.append(list(argv))
         self.given.append((list(argv), stdin))
+        self.limits.append(limits)
         answered = self._answer(argv, stdin=stdin)
         if answered.returncode != 0 and check:
             # (As the real shell does: a command that fails is PluginFailed, not a result.)
@@ -167,6 +180,18 @@ class FakeShell(HostShell):
 
     def _answer(self, argv: Sequence[str], *, stdin: bytes | None = None) -> ProcessResult:
         """What this fake says to `argv` (before the shell's own failure rule is applied)."""
+        if argv[0] == "systemctl" and "list-units" in argv:
+            said = f"{self.unit} loaded active running It\n" if self.unit else ""
+            return ProcessResult(returncode=0, stdout=said, stderr="")
+        if argv[0] == "systemctl" and "OOMPolicy" in argv:
+            said = f"{self.oom_policy}\n" if self.oom_policy else ""
+            return ProcessResult(returncode=0, stdout=said, stderr="")
+        if argv[0] == "systemctl" and argv[-1] == "--value":
+            return ProcessResult(returncode=0, stdout=f"{self.cgroup}\n", stderr="")
+        if argv[0] == "cat" and argv[-1].startswith("/sys/fs/cgroup"):
+            if self.capped is None:
+                return ProcessResult(returncode=1, stdout="", stderr="cat: No such file")
+            return ProcessResult(returncode=0, stdout=f"{self.capped}\n", stderr="")
         if argv[1:4] == ["auth", "list", "--format"]:
             return ProcessResult(returncode=0, stdout=self.auths, stderr="")
         # (Before the generic `status` below: `codex login status` ends in `status` too.)
@@ -223,8 +248,11 @@ class FakeShell(HostShell):
         secret_env: Mapping[str, str] | None = None,
         stdin: bytes | None = None,
         within: timedelta | None = None,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> AsyncIterator[bytes]:
         self.runs.append(list(argv))
+        self.limits.append(limits)
         said = next((text for found, text in self.streams if found == list(argv)), "")
         return _chunks(said)
 

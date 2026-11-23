@@ -29,6 +29,7 @@ from datetime import timedelta
 from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Any, ClassVar, Literal
+from uuid import uuid4
 
 # Package Imports
 from pydantic import (
@@ -45,7 +46,7 @@ from pydantic import (
 from udl.clock import Clock
 from udl.config import Duration
 from udl.errors import ErrorCode, PluginError, UDLError
-from udl.hosts.shell import HostShell, Interaction
+from udl.hosts.shell import HostShell, Interaction, ResourceLimits, unit_name
 from udl.plugins.requirements import Requirement
 from udl.plugins.ui.base import UIBundle
 
@@ -136,6 +137,24 @@ class SessionSpec(_Model):
     """Its environment, over the host's own."""
     secret_env: dict[str, SecretStr] = Field(default_factory=dict)
     """Secrets for its environment: never in an argv."""
+    memory: int | None = None
+    """The memory one of its turns may use, and no swap (27.12): a runaway in a turn is that
+    turn's failure, not the host's. None: no cap."""
+    unit: str | None = None
+    """What its turn's unit is named, as a prefix (27.12): `udl-session-<agent>`, then the turn's
+    own 8 hex. None: the runner's own name."""
+    own_settings: list[str] = Field(default_factory=list)
+    """The session's own arguments, passed to the harness as they are (27.11's chat: a person's
+    own harness and their own options)."""
+
+
+def turn_cap(spec: SessionSpec, runner: str) -> tuple[ResourceLimits | None, str | None]:
+    """The cap a turn of `spec` runs under, and the unit it is named (27.12): each turn its own
+    `udl-session-<agent>-<8 hex>`, so one turn's runaway is found and stopped as that turn's."""
+    if spec.memory is None:
+        return None, None
+    prefix = spec.unit or unit_name("udl-session", runner)
+    return ResourceLimits(memory=spec.memory), f"{prefix}-{uuid4().hex[:8]}"
 
 
 class SessionRef(_Model):
@@ -276,6 +295,13 @@ class RunnerHealth(_Model):
     """The plan its account is on, when the harness says."""
     limited_until: AwareDatetime | None = None
     """When its quota is back, if the dispatcher last saw it out of quota (27.7)."""
+    memory: int | None = None
+    """The memory its turns are capped to, in bytes (27.12): a runner that runs its turns in a
+    service of its own says the service's cap; one that runs them as processes says nothing here
+    (each turn's cap is the session's)."""
+    oom_policy: str | None = None
+    """Its service's `OOMPolicy`, when it runs its turns in one (27.12): `continue` keeps the
+    service up when a turn is killed at its cap, and anything else stops it with the turn."""
     guards: bool = False
     """Whether the deny policies are in place: always true for a runner that enforces them per
     session (25.9's `deny`), else whether 25.11's setup wrote them on the host."""

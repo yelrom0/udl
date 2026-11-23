@@ -15,10 +15,10 @@ remade: an agent's uncommitted work is never thrown away by asking where it work
 # System Imports
 import asyncio
 import contextlib
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import Final, Protocol, runtime_checkable
+from typing import Final, Literal, Protocol, runtime_checkable
 from uuid import uuid4
 
 # Package Imports
@@ -30,6 +30,7 @@ from udl.core.service import UDLService
 from udl.db.manager import DBManager
 from udl.errors import ConfigError, NotAllowed, PluginFailed, ToolUnavailable
 from udl.hosts import Host, HostName, HostShell
+from udl.hosts.shell import ResourceLimits, scope_of, unit_name
 from udl.interfaces.security import current_principal
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.links import pull_ref
@@ -200,16 +201,16 @@ async def _has_branch(shell: HostShell, checkout: str, branch: str) -> bool:
 
 
 class GateLane:
-    """One gate run at a time per host: a `Lease` named `orch-gate:<host>`, so two agents' test
-    runs on one machine never fight for it (and a run that dies still lets the next in, once its
-    lease expires).
+    """The gate runs of a host: `slots` of them at once (`gates_per_host`, 1 by default), each a
+    `Lease` named `orch-gate:<host>:<n>`, so two agents' test runs on one machine never fight for
+    a slot (and a run that dies still lets the next in, once its lease expires).
 
-    The lane is taken with `take()` (which waits for it) and given back with `release()`, or
-    both with `held()`, which gives it back however the gate ends."""
+    The lane is taken with `take()` (which waits for a free slot) and given back with
+    `release()`, or both with `held()`, which gives it back however the gate ends."""
 
     RETRY: Final = timedelta(seconds=2)
-    """How long to wait before asking for the lane again (a gate is minutes long: twice a
-    second would be noise on the database)."""
+    """How long to wait before asking for a slot again (a gate is minutes long: twice a second
+    would be noise on the database)."""
 
     def __init__(
         self,
@@ -219,17 +220,26 @@ class GateLane:
         holder: str,
         clock: Clock,
         ttl: timedelta = timedelta(minutes=5),
+        slots: int = 1,
     ) -> None:
+        if slots < 1:
+            raise ValueError(f"{slots!r} is not one slot or more")
         self._db = database
-        self._name = f"orch-gate:{host}"
+        self._names = [f"orch-gate:{host}:{number}" for number in range(slots)]
+        self._taken: str | None = None
         self._holder = holder
         self._clock = clock
         self._ttl = ttl
 
     @property
+    def names(self) -> list[str]:
+        """The leases its slots are (what a stuck gate's lane is, when it is looked for)."""
+        return list(self._names)
+
+    @property
     def name(self) -> str:
-        """The lease it takes (what a stuck gate's lane is, when it is looked for)."""
-        return self._name
+        """The lease it holds (the first slot's, before it holds one)."""
+        return self._taken or self._names[0]
 
     @property
     def holder(self) -> str:
@@ -238,21 +248,29 @@ class GateLane:
         return self._holder
 
     async def take(self) -> None:
-        """Wait until this lane is the holder's (however long the gate before it runs)."""
-        while await self._db.claim_lease(self._name, self._holder, self._ttl) is None:
+        """Wait until a slot of this lane is the holder's (however long the gates before it
+        run)."""
+        while True:
+            for name in self._names:
+                if await self._db.claim_lease(name, self._holder, self._ttl) is not None:
+                    self._taken = name
+                    return
             await pause(self._clock, self.RETRY)
 
     async def release(self) -> None:
-        """Give the lane back (nothing when it is not the holder's any more)."""
-        await self._db.release_lease(self._name, self._holder)
+        """Give the slot back (nothing when it is not the holder's any more)."""
+        if self._taken is not None:
+            await self._db.release_lease(self._taken, self._holder)
+            self._taken = None
 
     async def _renew(self) -> None:
-        """Keep the lane while a gate runs: a gate may take longer than the lease's ttl, and a
-        lane whose lease ran out is a lane another gate can take (27.5)."""
+        """Keep the slot while a gate runs: a gate may take longer than the lease's ttl, and a
+        slot whose lease ran out is a slot another gate can take (27.5)."""
         every = self._ttl / 3
         while True:
             await pause(self._clock, every)
-            await self._db.claim_lease(self._name, self._holder, self._ttl)
+            if self._taken is not None:
+                await self._db.claim_lease(self._taken, self._holder, self._ttl)
 
     @asynccontextmanager
     async def held(self) -> AsyncGenerator[None]:
@@ -280,6 +298,9 @@ async def push(
     title: str | None,
     body: str | None,
     within: timedelta,
+    memory: int | None = None,
+    cleanup: Sequence[str] | None = None,
+    slots: int = 1,
 ) -> PushResult:
     """Push `task`'s work: its branch to origin, then its pull request (27.5).
 
@@ -294,7 +315,12 @@ async def push(
     why.
 
     `title` and `body` are the pull's, and None leaves them as they are on a second push: what a
-    person wrote in the description is not a push's to wipe."""
+    person wrote in the description is not a push's to wipe.
+
+    `memory` caps the gate's memory and `slots` is how many gates the host runs at once (27.12):
+    a gate the kernel stops at the cap, or one udl stops at its time, pushes nothing and says
+    which it was; `cleanup` (the repo's own argv) runs in the worktree after either, and what it
+    says is added to the refusal."""
     if not task.worktree or not task.branch:
         raise NotAllowed(
             f"{task.key!r} has no worktree yet",
@@ -332,15 +358,41 @@ async def push(
         holder=f"{task.assignee or 'owner'}:{task.key}:{uuid4().hex[:8]}",
         clock=service.clock,
         ttl=within + GATE_MARGIN,
+        slots=slots,
     )
+    unit = unit_name("udl-gate", task.project, task.key, uuid4().hex[:8])
+    limits = ResourceLimits(memory=memory) if memory else None
     started = service.clock.now()
     async with lane.held():
-        gate = await _gate(shell, repo.gate, path, within=within, key=task.key)
+        gate = await _gate(
+            shell,
+            repo.gate,
+            path,
+            within=within,
+            key=task.key,
+            limits=limits,
+            unit=unit,
+            cleanup=cleanup,
+        )
+    stopped: Literal["memory", "timeout"] | None = None
+    if gate.returncode != 0 and _over_cap(gate, limits):
+        stopped = "memory"
+    output = _tails(gate.stdout, gate.stderr)
+    if stopped is not None and cleanup:
+        output = _said(output, await _cleanup(shell, cleanup, path))
     ran = GateRun(
         exit_code=gate.returncode,
-        output=_tails(gate.stdout, gate.stderr),
+        output=output,
         seconds=round((service.clock.now() - started).total_seconds(), 1),
+        stopped=stopped,
     )
+    if stopped == "memory":
+        raise NotAllowed(
+            f"the gate passed its memory cap of {limits.words}"
+            if limits
+            else "the gate was stopped",
+            hint=_stopped_hint("memory", ran.output),
+        )
     if gate.returncode != 0:
         raise NotAllowed(
             f"the gate failed with exit code {gate.returncode}",
@@ -491,17 +543,38 @@ async def _rebase(shell: HostShell, path: str, onto: str, *, key: str) -> None:
 
 
 async def _gate(
-    shell: HostShell, gate: list[str], path: str, *, within: timedelta, key: str
+    shell: HostShell,
+    gate: list[str],
+    path: str,
+    *,
+    within: timedelta,
+    key: str,
+    limits: ResourceLimits | None = None,
+    unit: str | None = None,
+    cleanup: Sequence[str] | None = None,
 ) -> ProcessResult:
     """Run the repo's gate in the worktree, and answer how it ended: a failing gate is an
     answer, not an error (its exit code and the end of its output are what the agent is told),
-    and one that runs past its time or is not installed is NotAllowed with what happened."""
+    and one that runs past its time or is not installed is NotAllowed with what happened.
+
+    A capped run (27.12) is a transient scope named `unit`, which is what udl stops when the
+    gate runs past its time (so the suite's own children go with it, rather than being left
+    running on a host nobody is watching); `cleanup` runs after either kind of stop."""
     try:
-        return await shell.run(gate, cwd=path, within=within, check=False, tail=True)
+        return await shell.run(
+            gate, cwd=path, within=within, check=False, tail=True, limits=limits, unit=unit
+        )
     except TimeoutError as slow:
+        said = await _stopped_gate(shell, unit, cleanup=cleanup, path=path)
         raise NotAllowed(
             f"the gate ran past the {within} it gets",
-            hint="Run it yourself, and fix what hangs, or raise [apps.orch] gate_minutes.",
+            hint=_said(
+                _stopped_hint("timeout", ""),
+                _said(
+                    "Run it yourself, and fix what hangs, or raise [apps.orch] gate_minutes.",
+                    said,
+                ),
+            ),
         ) from slow
     except ToolUnavailable as missing:
         raise NotAllowed(
@@ -511,6 +584,60 @@ async def _gate(
     except PluginFailed as failed:
         # (An ssh that could not reach the host: the gate never ran.)
         raise NotAllowed(f"the gate did not run: {failed.message}", hint=failed.hint) from failed
+
+
+STOP_GRACE: Final = timedelta(minutes=1)
+"""How long stopping a gate's unit gets: it is one call, but a host under a suite's load is
+slow to answer."""
+
+CLEANUP_GRACE: Final = timedelta(minutes=5)
+"""How long a repo's cleanup gets after a stopped gate (27.12): a container teardown, not a
+suite."""
+
+
+def _over_cap(gate: ProcessResult, limits: ResourceLimits | None) -> bool:
+    """Whether a gate ended because the kernel stopped it at its memory cap: SIGKILL (137, or -9
+    from a shell) on a run whose cap the host enforced, which udl did not stop itself (a timeout
+    stops the unit and says so, 27.12)."""
+    return limits is not None and gate.limits == "enforced" and gate.returncode in (137, -9)
+
+
+async def _stopped_gate(
+    shell: HostShell, unit: str | None, *, cleanup: Sequence[str] | None, path: str
+) -> str:
+    """Stop the gate's unit (so its children go too) and run the repo's cleanup: what a timeout
+    does before the agent is told, and what it says, when it says anything."""
+    if unit is not None:
+        await shell.run(
+            ["systemctl", "--user", "stop", scope_of(unit)], within=STOP_GRACE, check=False
+        )
+    if cleanup is None:
+        return ""
+    return await _cleanup(shell, cleanup, path)
+
+
+async def _cleanup(shell: HostShell, cleanup: Sequence[str], path: str) -> str:
+    """Run the repo's cleanup argv in the worktree, and answer the end of what it said (a
+    cleanup that fails is said, not raised: the gate's stop is what the agent is told)."""
+    try:
+        result = await shell.run(
+            list(cleanup), cwd=path, within=CLEANUP_GRACE, check=False, tail=True
+        )
+    except (TimeoutError, PluginFailed, ToolUnavailable) as failed:
+        return f"cleanup: {failed}"
+    return _tails(result.stdout, result.stderr)
+
+
+def _stopped_hint(reason: Literal["memory", "timeout"], said: str) -> str:
+    """What a stopped gate's refusal says first: which stop it was (`stopped: memory`, or
+    `stopped: timeout`), so an agent and a person read the same two words the result's field
+    has — then what the gate, or the cleanup, said."""
+    return _said(f"stopped: {reason}", said)
+
+
+def _said(first: str, second: str) -> str:
+    """Two things to say, the second only when it has something in it."""
+    return f"{first}\n{second}" if second.strip() else first
 
 
 async def _sha_of(shell: HostShell, path: str, ref: str) -> str:

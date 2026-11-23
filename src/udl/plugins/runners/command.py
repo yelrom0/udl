@@ -36,12 +36,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 # Local Imports
 from udl.clock import Clock
-from udl.errors import Cancelled, NotAllowed, PluginFailed, ToolUnavailable
+from udl.errors import Cancelled, NotAllowed, OverCap, PluginFailed, ToolUnavailable
 from udl.hosts.shell import HostShell
 from udl.plugins.requirements import Requirement
 from udl.plugins.runners.base import (
     AgentEvent,
     AgentRunner,
+    RunnerFailed,
     RunnerHealth,
     RunnerLimited,
     RunnerModel,
@@ -51,6 +52,7 @@ from udl.plugins.runners.base import (
     TextDelta,
     TurnEnded,
     TurnReason,
+    turn_cap,
     turn_too_long,
 )
 from udl.process import CancelToken
@@ -196,6 +198,7 @@ class CommandRunner(AgentRunner[CommandRunnerOptions]):
             return
         cancel = CancelToken()
         self._cancels[session.id] = cancel
+        limits, unit = turn_cap(spec, self.name)
         first = session.id not in self._sessions.sent
         try:
             result = await self.shell.run(
@@ -208,9 +211,16 @@ class CommandRunner(AgentRunner[CommandRunnerOptions]):
                 stdin=prompt.encode(),
                 within=self.options.turn_within,
                 cancel=cancel,
+                limits=limits,
+                unit=unit,
             )
         except Cancelled:
             yield TurnEnded(reason=TurnReason.STOPPED, text="The session was stopped.")
+            return
+        except OverCap as capped:
+            # (The turn was stopped at its memory cap: that is the turn's failure, said as one.)
+            yield RunnerFailed(message=str(capped))
+            yield TurnEnded(reason=TurnReason.ERROR, text=str(capped))
             return
         except TimeoutError:
             # (The turn ran past its turn_within: say so, rather than raising out of send().)

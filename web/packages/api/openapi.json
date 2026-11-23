@@ -3213,6 +3213,7 @@
           "config_error",
           "plugin_error",
           "plugin_failed",
+          "over_cap",
           "database_error",
           "duplicate_key",
           "download_error",
@@ -5077,6 +5078,22 @@
             "description": "How long it took, in seconds.",
             "title": "Seconds",
             "type": "number"
+          },
+          "stopped": {
+            "anyOf": [
+              {
+                "enum": [
+                  "memory",
+                  "timeout"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why udl or the kernel stopped it, when one did (27.12): at its memory cap, or at its time\n(None: it ended on its own).",
+            "title": "Stopped"
           }
         },
         "required": [
@@ -9743,6 +9760,22 @@
             "title": "Gate",
             "type": "array"
           },
+          "gate_cleanup": {
+            "anyOf": [
+              {
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An argv run in the worktree after a gate that was stopped (by its memory cap or its time,\n27.12): what such a run leaves behind is cleared before the agent is told. None: nothing.",
+            "title": "Gate Cleanup"
+          },
           "github": {
             "description": "Its GitHub repository: owner/repo.",
             "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$",
@@ -10684,6 +10717,30 @@
             ],
             "description": "When its quota is back, if the dispatcher last saw it out of quota (27.7).",
             "title": "Limited Until"
+          },
+          "memory": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The memory its turns are capped to, in bytes (27.12): a runner that runs its turns in a\nservice of its own says the service's cap; one that runs them as processes says nothing here\n(each turn's cap is the session's).",
+            "title": "Memory"
+          },
+          "oom_policy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its service's `OOMPolicy`, when it runs its turns in one (27.12): `continue` keeps the\nservice up when a turn is killed at its cap, and anything else stops it with the turn.",
+            "title": "Oom Policy"
           },
           "plan": {
             "anyOf": [

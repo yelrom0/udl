@@ -1380,3 +1380,77 @@ async def test_the_password_is_in_no_log_line(
 
     assert PASSWORD not in caplog.text
     assert PASSWORD not in json.dumps(service.calls)
+
+
+# ---------------------------------------------------------------------------------------------
+# Its service's memory cap (27.12)
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_health_says_the_memory_its_service_is_capped_to(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """(A turn runs in the service's process, so a turn's cap is the service's: the unit's
+    `MemoryMax`, which an ExecStart drop-in sets.)"""
+    shell.unit = "opencode.service"
+    shell.capped = str(20 * 1024**3)
+
+    health = await _runner(service, shell).health()
+
+    assert health.memory == 20 * 1024**3
+
+
+async def test_a_service_with_no_cap_says_none(service: FakeOpenCode, shell: FakeShell) -> None:
+    """(cgroup v2 says `max` for no cap: not a number, so no cap.)"""
+    shell.unit = "opencode.service"
+    shell.capped = "max"
+
+    health = await _runner(service, shell).health()
+
+    assert health.memory is None
+
+
+async def test_a_host_with_no_service_unit_says_none(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    health = await _runner(service, shell).health()
+
+    assert health.memory is None
+
+
+async def test_health_warns_when_the_service_s_oom_policy_would_stop_it(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    """(An OOM kill would otherwise stop the whole service, and every agent with it.)"""
+    shell.unit = "opencode.service"
+    shell.capped = str(20 * 1024**3)
+    shell.oom_policy = "stop"
+
+    health = await _runner(service, shell).health()
+
+    assert health.oom_policy == "stop"
+    assert any("OOMPolicy=stop" in problem for problem in health.problems)
+
+
+async def test_health_warns_when_the_service_has_no_cap(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    shell.unit = "opencode.service"
+    shell.capped = "max"
+    shell.oom_policy = "continue"
+
+    health = await _runner(service, shell).health()
+
+    assert any("no MemoryMax" in problem for problem in health.problems)
+
+
+async def test_a_capped_service_with_continue_says_nothing_is_wrong(
+    service: FakeOpenCode, shell: FakeShell
+) -> None:
+    shell.unit = "opencode.service"
+    shell.capped = str(20 * 1024**3)
+    shell.oom_policy = "continue"
+
+    health = await _runner(service, shell).health()
+
+    assert health.problems == []

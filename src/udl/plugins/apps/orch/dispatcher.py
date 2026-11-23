@@ -48,6 +48,7 @@ from udl.db.manager import DBManager
 from udl.db.models import JsonObject
 from udl.errors import DoesNotExist, PluginError, UDLError
 from udl.hosts.models import HostRequest
+from udl.hosts.shell import unit_name
 from udl.plugins.apps.base import AppContext, AppEvent, AppEvents, AppRecords
 from udl.plugins.apps.orch import managers
 from udl.plugins.apps.orch import questions as asked
@@ -868,6 +869,8 @@ class Dispatcher:
             instructions=instructions(project, agent),
             mcp=await self._mcp(agent),
             deny=list(self._settings.deny),
+            memory=self._settings.session_memory,
+            unit=unit_name("udl-session", agent.name),
         )
         runner = await self._harnesses.runner(agent.host, agent.runner)
         ref = await runner.start(spec)

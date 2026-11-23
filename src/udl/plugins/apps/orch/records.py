@@ -161,6 +161,8 @@ class Repo(Record):
     """The branch PRs go into."""
     gate: Gate = Field(default_factory=lambda: ["make", "check"])
     """The argv that is its gate, run before a push (e.g. ["make", "check"])."""
+    gate_cleanup: Gate | None = None
+    """An argv run in the worktree after a gate that was stopped (27.12)."""
     checkouts: dict[HostName, str] = Field(default_factory=dict)
     """Host name → the main checkout's path there."""
     branch_pattern: CheckedBranchPattern = "{type}/{key}-{slug}"
