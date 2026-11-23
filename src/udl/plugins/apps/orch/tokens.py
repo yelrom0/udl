@@ -33,7 +33,7 @@ from udl.db.records import Name
 from udl.errors import DoesNotExist, NotAllowed, PluginError, UDLError
 from udl.interfaces.security import AGENT_PREFIX, Principal, PrincipalKind
 from udl.plugins.apps.base import AppRecords
-from udl.plugins.apps.orch.agents import AgentRole, ManagerPowers
+from udl.plugins.apps.orch.agents import AgentRole, ManagerPowers, SessionState
 from udl.plugins.apps.orch.chat import chat_secret_ref
 from udl.plugins.apps.orch.managers import switched_on
 from udl.plugins.apps.orch.records import (
@@ -279,17 +279,27 @@ class OrchTokens:
             if chat is None:
                 await self._records.delete(ChatToken, kept.id)  # (the chat went: so does it)
                 return None
-            if self._clock.now() - chat.updated_at > await self._chat_idle():
-                # (27.11: a token outlives its chat being untouched by `chat_idle` hours. It is
-                # taken away as it is refused, with what carried it — the secret, and the file
-                # its harness reads it from — so a chat someone comes back to starts again.)
+            idle = await self._chat_idle()
+            if self._clock.now() - chat.updated_at > idle:
+                # (27.11: a token outlives its chat being untouched by `chat_idle` hours. The
+                # chat is over then — its harness is told so, its token goes with the secret
+                # that carried it, and a person who comes back starts a chat again.)
+                await self._records.save(
+                    chat.model_copy(
+                        update={
+                            "state": SessionState.ENDED,
+                            "last_error": (
+                                f"Untouched for {idle.total_seconds() / 3600:g} hours, so udl "
+                                "ended it."
+                            ),
+                        }
+                    )
+                )
                 await self._records.delete(ChatToken, kept.id)
                 if self._service is not None:
                     with contextlib.suppress(UDLError, PluginError):
                         await self._service.secrets.delete(chat_secret_ref(chat.id))
-                log.info(
-                    "refused the chat %s's token: untouched since %s", chat.id, chat.updated_at
-                )
+                log.info("ended the chat %s: untouched since %s", chat.id, chat.updated_at)
                 return None
             log.info("a call with the chat %s's token, for %s", chat.id, chat.owner)
             return Principal(kind=PrincipalKind.CHAT, name=kept.owner, chat=kept.chat)

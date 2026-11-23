@@ -688,7 +688,7 @@ class Chats:
                 hint="Ask the harness what it is doing now.",
             )
         allow = request.decision is not ChatDecision.DENY
-        remember = request.decision is ChatDecision.ALLOW_CHAT and _rememberable(
+        remember = request.decision is ChatDecision.ALLOW_CHAT and rememberable(
             asked.tool, asked.input
         )
         await self._records.save(
@@ -706,7 +706,7 @@ class Chats:
         """Whether the person allowed this exact request (that tool, that exact input) for the
         rest of `chat` (27.11: nothing is matched by prefix, and a shell command that chains or
         nests others is never remembered)."""
-        if not _rememberable(tool, given):
+        if not rememberable(tool, given):
             return False
         for asked in await stored.ChatRecords(self._records).permissions(chat.id):
             if (
@@ -831,7 +831,7 @@ _ASSIGNED: Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 """What a shell command's leading assignments look like (`VAR=x bash …`)."""
 
 
-def _rememberable(tool: str, given: JsonObject) -> bool:
+def rememberable(tool: str, given: JsonObject) -> bool:
     """Whether `tool` with `given` may be allowed for the rest of a chat: the same tool and the
     same exact input, never a prefix — and never a shell command that chains or nests others, or
     runs a shell (27.11)."""

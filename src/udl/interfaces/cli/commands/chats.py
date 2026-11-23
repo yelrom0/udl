@@ -71,7 +71,7 @@ def chat(
         raise typer.BadParameter("Give --chat <id>, or --new to start one, and not both.")
 
     async def talk(service: UDLService) -> None:
-        await _talk(
+        await talk_loop(
             service,
             chat_id=chat_id,
             new=new,
@@ -85,7 +85,7 @@ def chat(
     run(ctx, talk)
 
 
-async def _talk(
+async def talk_loop(
     service: UDLService,
     *,
     chat_id: str | None,
@@ -122,8 +122,8 @@ async def _talk(
         while True:
             found = await _read(service, str(found.id), limit=200)
             seen = shown(found, seen=seen)
-            if found.permission is not None and found.permission.id != asked:
-                asked = found.permission.id
+            asked, fresh = waiting(asked, found)
+            if fresh:
                 _prompted(found)
             if found.state.value in ("failed", "ended"):
                 stdout().print(
@@ -141,7 +141,12 @@ async def _talk(
             if not line.strip():
                 continue
             if asked is not None:
-                await _answered(service, found, asked, line)
+                # (A prompt answered elsewhere, or gone, is not answered again: the line is what
+                # it looks like — a message — and udl's own refusal never ends the loop.)
+                try:
+                    await _answered(service, found, asked, line)
+                except UDLError as error:
+                    stdout().print(f"({error})")
                 asked = None
                 continue
             await service.call(
@@ -171,13 +176,24 @@ def _said(event: AnAgentEvent) -> None:
         stdout().print(event.text, end="")
 
 
+def waiting(asked: UUID | None, found: ChatInfo) -> tuple[UUID | None, bool]:
+    """The prompt the loop is waiting on, and whether it is a new one to show.
+
+    A prompt that is gone — answered in the web UI, timed out, or its chat ended — is not waited
+    on any more, so the next line the person types is a message and never a second answer."""
+    pending = found.permission
+    if pending is None:
+        return None, False
+    return pending.id, pending.id != asked
+
+
 def _prompted(found: ChatInfo) -> None:
     """What the harness wants to do, shown as it asks (the person's next line answers it)."""
     asked = found.permission
     if asked is None:
         return
     stdout().print(f"\n[{asked.tool}] {asked.input}")
-    stdout().print("allow [o]nce, for this [c]hat, or [d]eny?")
+    stdout().print("allow (o)nce, for this (c)hat, or (d)eny?")
 
 
 async def _answered(service: UDLService, found: ChatInfo, request: UUID, line: str) -> None:

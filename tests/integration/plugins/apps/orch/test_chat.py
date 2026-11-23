@@ -66,7 +66,7 @@ from udl.plugins.apps.orch.records import (
     ChatTokenRecords,
     SessionEvent,
 )
-from udl.plugins.apps.orch.tokens import tokens_for
+from udl.plugins.apps.orch.tokens import OrchTokens, tokens_for
 from udl.plugins.registry import APPS, RUNNERS, PluginRegistry
 from udl.plugins.runners.base import AgentEvent, SessionRef, TextDelta, TurnEnded, TurnReason
 from udl.plugins.runners.manage import Harnesses
@@ -532,6 +532,78 @@ async def test_a_token_of_a_chat_that_is_gone_is_unknown(service: UDLService) ->
 
     with pytest.raises(Unauthorized):
         await authenticate(service.settings, token.get_secret_value(), tokens=orch_tokens(service))
+
+
+async def test_a_chat_left_alone_for_a_day_ends_and_loses_its_token(
+    service: UDLService,
+) -> None:
+    """(The card's `chat_idle`: a chat untouched for 24 hours is over — its token is refused and
+    taken away with its secret, and its harness is told the chat has ended.)"""
+    chat = await started(service)
+    token = await service.secrets.get(chat_secret(chat))
+    assert token is not None
+
+    # (A day later: the clock starts 25 hours after the chat was last touched.)
+    clock = FakeClock(chat.updated_at + timedelta(hours=25))
+    book = OrchTokens(AppRecords(service.db), service=service, clock=clock)
+
+    from udl.errors import Unauthorized
+
+    with pytest.raises(Unauthorized):
+        await authenticate(service.settings, token.get_secret_value(), tokens=book)
+    assert await service.secrets.get(chat_secret(chat)) is None, "the secret goes with it"
+
+    read = await service.call("orch_chat_get", {"chat": chat.id})
+    assert isinstance(read, ChatInfo)
+    assert read.state is SessionState.ENDED
+    assert "Untouched for 24 hours" in (read.last_error or "")
+
+
+async def test_a_chat_s_token_cannot_change_an_account_or_an_agent(service: UDLService) -> None:
+    """(Admin operations are out of a chat's reach as a whole, not one by one.)"""
+    chat = await started(service)
+    caller = current_principal.set(
+        Principal(kind=PrincipalKind.CHAT, name=chat.owner, chat=chat.id)
+    )
+    try:
+        for name, request in (
+            ("orch_set_agent", {"name": "claude", "on": False}),
+            ("set_onepassword_token", {"token": "x"}),
+        ):
+            with pytest.raises(NotAllowed):
+                await service.call(name, request)
+    finally:
+        current_principal.reset(caller)
+
+
+async def test_only_a_chat_s_harness_asks_a_permission(service: UDLService) -> None:
+    """(The owner, or an agent, calling the prompt tool is refused: it is the harness's.)"""
+    chat = await started(service)
+
+    with pytest.raises(NotAllowed):
+        await service.call(
+            "orch_chat_ask_permission", {"tool_name": "Bash", "input": {"command": "ls"}}
+        )
+    assert chat.id  # (the chat is there; it is the caller that is not its harness)
+
+
+async def test_a_chat_that_is_over_leaves_nothing_of_udl_s_in_the_folder(
+    service: UDLService, tmp_path: Path
+) -> None:
+    """(The card's token file: a chat writes it for its harness, and takes it away when it is
+    stopped or forgotten.)"""
+    folder = tmp_path / ".udl"
+    folder.mkdir()
+    (folder / "mcp.json").write_text("{}")
+    (folder / "settings.json").write_text("{}")
+
+    chat = await started(service, directory=str(tmp_path))
+    assert (folder / "mcp.json").exists(), "the harness's file is written where it works"
+
+    stopped = await service.call("orch_chat_stop", {"chat": chat.id})
+    assert isinstance(stopped, ChatInfo)
+    assert not (folder / "mcp.json").exists()
+    assert not (folder / "settings.json").exists()
 
 
 async def test_the_chat_s_stream_is_one_chat_s(service: UDLService) -> None:
