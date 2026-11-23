@@ -15,7 +15,8 @@ invented, because a harness signed in with a plan needs none.
 
 # System Imports
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping, Sequence
+from datetime import timedelta
 from pathlib import Path
 from typing import Final
 
@@ -40,11 +41,13 @@ from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.plugin import Orch
 from udl.plugins.apps.orch.settings import OrchSettings
 from udl.plugins.registry import RUNNERS, PluginRegistry
+from udl.plugins.runners.codex import Codex, CodexOptions, CodexSessions
 from udl.plugins.runners.manage import SetupRunnerRequest
 from udl.plugins.runners.opencode import OpenCode, OpenCodeOptions
 from udl.plugins.secrets.base import SecretRef, SecretStore
 from udl.plugins.secrets.memory import MemorySecretStore
 from udl.plugins.secrets.resolvers import ResolvingStore
+from udl.process import CancelToken, ProcessResult
 
 OPENROUTER_REF: Final = "ai/providers/openrouter/api_key"
 """Where a connection's options hold OpenRouter's key."""
@@ -202,6 +205,90 @@ def _opencode_against(fake: FakeOpenCode) -> type[OpenCode]:
             )
 
     return Runner
+
+
+class _CodexShell(FakeShell):
+    """The fake shell, recording what each command was given on stdin (a sign-in's key)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.given: list[tuple[list[str], bytes | None]] = []
+        """Every argv, with what was written to it, in order."""
+
+    async def run(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        secret_env: Mapping[str, str] | None = None,
+        stdin: bytes | None = None,
+        within: timedelta | None = None,
+        cancel: CancelToken | None = None,
+        check: bool = True,
+        tail: bool = False,
+    ) -> ProcessResult:
+        self.given.append((list(argv), stdin))
+        return await super().run(
+            argv,
+            cwd=cwd,
+            env=env,
+            secret_env=secret_env,
+            stdin=stdin,
+            within=within,
+            cancel=cancel,
+            check=check,
+            tail=tail,
+        )
+
+
+def _codex_against(fake_shell: FakeShell) -> type[Codex]:
+    """The real `codex` runner, on a fake shell (its host's programs are a test's)."""
+
+    class Runner(Codex):
+        def __init__(self, options: CodexOptions, *, shell: HostShell, clock: Clock) -> None:
+            super().__init__(
+                options, shell=fake_shell, clock=clock, sessions=CodexSessions(specs={})
+            )
+
+    return Runner
+
+
+async def test_a_setup_signs_codex_in_with_the_key(tmp_path: Path) -> None:
+    """`orch_runner_setup` end to end for codex: udl has an OpenAI key, so the runner signs Codex
+    in with it — `codex login --with-api-key`, the key on stdin and in no argv."""
+    shell = _CodexShell()
+    registry = PluginRegistry.discover(builtin_only=True)
+    registry.register(RUNNERS, _codex_against(shell))
+    service = UDLService(
+        settings(tmp_path),
+        registry=registry,
+        clock=FakeClock(),
+        secrets=MemorySecretStore(SecretsSettings()),
+    )
+
+    def shell_for(found: Host) -> FakeShell:
+        return shell
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("udl.hosts.manager.shell_for", shell_for)
+        async with service:
+            await service.db.upsert_record(Host.local("/w"))
+            await connection(service.db, name="oa", plugin="openai", ref=OPENAI_REF)
+            await service.secrets.set(SecretRef(OPENAI_REF), SecretStr("sk-openai"))
+            app = await service.apps.get("orch")
+            assert isinstance(app, Orch)
+
+            setup = await app.runner_setup(
+                SetupRunnerRequest(host="local", runner="codex"), service=service
+            )
+
+    assert setup.files == ["~/.codex/rules/udl.rules"]
+    [[argv, stdin]] = [given for given in shell.given if "--with-api-key" in given[0]]
+    assert argv[-2:] == ["login", "--with-api-key"]
+    assert stdin is not None
+    assert stdin.decode().strip() == "sk-openai"
+    assert "sk-openai" not in " ".join(argv)
 
 
 async def test_a_setup_gives_the_harness_the_keys_and_no_argv(tmp_path: Path) -> None:

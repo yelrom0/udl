@@ -88,6 +88,8 @@ _EPOCH: Final = re.compile(r"(\d{10})")
 _METADATA: Final = "model metadata"
 """The warning a real turn's stream opens with (an `error` item that is only a warning)."""
 
+OPENAI_API_KEY: Final = "OPENAI_API_KEY"
+"""The environment variable udl's OpenAI key is given in (`orch_runner_setup`'s `env`)."""
 _RULES: Final = ".codex/rules/udl.rules"
 """Where 25.11's setup writes the deny list, under the user's home (Codex reads it itself)."""
 _DEFAULT_DENY: Final = ("git push", "gh pr merge")
@@ -250,10 +252,14 @@ class Codex(AgentRunner[CodexOptions]):
         roles: Sequence[str] = (),
         env: Mapping[str, str] | None = None,
     ) -> list[str]:
-        """Write udl's deny list where Codex reads it (`~/.codex/rules/udl.rules`), and give the
-        file it wrote. `roles` and `env` are the other harnesses': Codex has no per-role file, and
-        a provider's key is its own config's (`env_key`)."""
-        del roles, env  # (Codex's rules are the same for every role, and its key is its own)
+        """Write udl's deny list where Codex reads it (`~/.codex/rules/udl.rules`), sign in with
+        the OpenAI key when udl has one (25.13), and give the file it wrote.
+
+        A provider's key is otherwise Codex's own (`env_key`, read from its environment at run
+        time); but a sign-in by API key is a command of the CLI's own — `codex login
+        --with-api-key`, the key on **stdin** — and `roles` is the other harnesses': Codex has no
+        per-role file."""
+        del roles  # (Codex's rules are the same for every role)
         rules = "".join(_rule(pattern) for pattern in _DEFAULT_DENY)
         said = f"# udl's rules: never a push or a merge from an agent.\n{rules}"
         # (Written through the shell with the path relative to the home: `$HOME` is expanded
@@ -268,6 +274,10 @@ class Codex(AgentRunner[CodexOptions]):
             ],
             stdin=said.encode(),
         )
+        if key := (env or {}).get(OPENAI_API_KEY):
+            # (The key on stdin: it is never an argv, a log line or a record. Idempotent: signing
+            # in again with the same key is what it does.)
+            await self.shell.run([*self.options.cli, "login", "--with-api-key"], stdin=key.encode())
         return [f"~/{_RULES}"]
 
     # -- a session -----------------------------------------------------------------------------

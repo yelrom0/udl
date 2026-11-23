@@ -252,6 +252,33 @@ def test_a_login_status_of_both_kinds_is_read() -> None:
     assert health.plan == "an api key"
 
 
+async def test_setup_signs_in_with_the_key_it_is_given(tmp_path: Path) -> None:
+    """25.13: when udl has an OpenAI key, the codex runner signs in with it — `codex login
+    --with-api-key`, the key on **stdin**, never in an argv, a log or a record."""
+    shell = HomeShell(tmp_path / "home")
+    given = Codex(CodexOptions(cli=[sys.executable, str(CODEX)]), shell=shell, clock=FakeClock())
+
+    await given.setup(env={"OPENAI_API_KEY": "sk-s3cret"})
+
+    [[argv, stdin]] = [call for call in shell.calls if call[0][-1] == "--with-api-key"]
+    assert argv == [sys.executable, str(CODEX), "login", "--with-api-key"]
+    assert stdin is not None
+    assert stdin.decode().strip() == "sk-s3cret"
+    assert "sk-s3cret" not in " ".join(argv)
+
+
+async def test_setup_leaves_the_plans_sign_in_alone(tmp_path: Path) -> None:
+    """A harness signed in with a plan needs no key: udl does not invent one, and does not sign
+    in behind the user's back."""
+    shell = HomeShell(tmp_path / "home")
+    given = Codex(CodexOptions(cli=[sys.executable, str(CODEX)]), shell=shell, clock=FakeClock())
+
+    await given.setup(env={"OPENROUTER_API_KEY": "or-s3cret"})
+
+    assert [call for call in shell.calls if "--with-api-key" in call[0]] == []
+    assert not any("or-s3cret" in (stdin or b"").decode() for _, stdin in shell.calls)
+
+
 def test_a_signed_out_login_status_is_read_from_stderr() -> None:
     """Signed out, it says so on stderr and exits 1: the runner must read it as "not signed in",
     not as a harness that is not there."""
