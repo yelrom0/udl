@@ -133,20 +133,20 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 27.6 PR readiness: CI, the review bot's verdict, mergeability, stacks, holds
   - [x] 27.7 The dispatcher: start, prompt, nudge, resume and stop agent sessions; limits and crashes
   - [x] 27.8 Managers: a manager agent's duties over its reports, each one switchable
-  - [~] 27.9 Operations (agents, queues, sessions, suggestions) via CLI, API and MCP
+  - [x] 27.9 Operations (agents, queues, sessions, suggestions) via CLI, API and MCP
   - [x] 27.10 Working time, hours per point learned per model, forecasts: `orch_progress`
   - [ ] 27.11 Chat sessions: Claude Code or Codex as the user, its permission prompts relayed to the web UI, a token per chat
 - [ ] **Phase 28: Human comms: Q&A, Ready to merge, To action**
   - [x] 28.1 `Question` records and their thread; an answer reaches the agent and is written into the tasks it concerns
   - [x] 28.2 `HumanAction` records ("To action") with a result
   - [x] 28.3 Ready to merge: ready now (in merge order), coming soon, held, done; merging and what follows a merge
-  - [~] 28.4 `orch_inbox`: the three sections in one call; `udl orch inbox`
+  - [x] 28.4 `orch_inbox`: the three sections in one call; `udl orch inbox`
   - [ ] 28.5 Events for all of it, and a `notify` example
   - [ ] 28.6 End to end on fakes: task → agent → question → answer → PR → ready → merged
-  - [~] 28.7 Auto merge: a project's merger (a reviewer or manager agent) merges its ready PRs after its own review
+  - [x] 28.7 Auto merge: a project's merger (a reviewer or manager agent) merges its ready PRs after its own review
 - [ ] **Phase 29: Screens (Google Stitch) and the `orch` UI plugin**
   - [x] 29.1 **(Claude)** A new Stitch project: design system from the shell's daisyUI themes; every screen below, desktop and phone, light and dark ([web/plugins/orch/design/](web/plugins/orch/design/README.md)); the user's changes (Q-8) made
-  - [~] 29.2 The `orch` UI plugin's skeleton: manifest, routes, stores, live data
+  - [x] 29.2 The `orch` UI plugin's skeleton: manifest, routes, stores, live data
   - [ ] 29.3 Inbox (home)
   - [ ] 29.4 Board: features and tasks, agents' queues, the suggested list, drag to assign
   - [ ] 29.5 Feature and task pages (specs, notes, links)
