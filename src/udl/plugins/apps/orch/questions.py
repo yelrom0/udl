@@ -20,16 +20,24 @@ to the humans at the top. `close()` is for a question nobody answers, with what 
 """
 
 # System Imports
+import logging
 from collections.abc import Sequence
-from datetime import datetime
+
+# Package Imports
+from pydantic import BaseModel
 
 # Local Imports
 from udl.clock import Clock
-from udl.db.models import utcnow
 from udl.db.records import Record
 from udl.errors import DoesNotExist, InUse, NotAllowed
 from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch import transitions
+from udl.plugins.apps.orch.events import (
+    QUESTION_ANSWERED,
+    QUESTION_ASKED,
+    QuestionAnswered,
+    QuestionAsked,
+)
 from udl.plugins.apps.orch.models import (
     BLOCKED,
     QUEUED,
@@ -51,7 +59,6 @@ from udl.plugins.apps.orch.records import (
     ProjectRecords,
     Question,
     QuestionRecords,
-    StateChange,
     Task,
     TaskRecords,
     move_note,
@@ -68,6 +75,8 @@ __all__ = [
     "reply",
     "route",
 ]
+
+log = logging.getLogger(__name__)
 
 QUESTIONS = "Q-"
 """What a question's key is counted from (`Q-1`, `Q-2` …)."""
@@ -129,16 +138,46 @@ async def ask(
         blocking=blocking,
         task=task,
     )
-    batch: list[Record] = [
+    also: list[Record] = [
         asked,
         Message(question=asked.id, text=text or title, author=asked_by or "udl"),
         _link(asked, OwnerKind.TASK, task, title=asked_in.title),
         *(_link(asked, kind, one.key, title=one.title) for kind, one in named),
     ]
     if blocking:
-        batch.extend(_blocking(asked_in, asked, asked_by=asked_by, at=_now(clock)))
-    saved = await questions.records.save_all(batch)
-    return next(one for one in saved if isinstance(one, Question))
+        # (The move goes through the tasks' own save, so the question and the block are still one
+        # write, and the move is published and in the history as any other move is.)
+        moved, note = _blocking(asked_in, asked, asked_by=asked_by)
+        await TaskRecords(questions.records, clock=clock).save_all([moved], also=[*also, note])
+    else:
+        await questions.records.save_all(also)
+    await _told(
+        questions,
+        QUESTION_ASKED.name,
+        QuestionAsked(
+            project=asked.project,
+            question=asked.key,
+            task=asked.task or "",
+            blocking=asked.blocking,
+            asked_by=asked.asked_by,
+            to=asked.to,
+        ),
+        key=f"question.asked:{asked.id}",
+    )
+    return asked
+
+
+async def _told(questions: QuestionRecords, event_type: str, data: BaseModel, *, key: str) -> None:
+    """Publish `data` as `event_type` once (28.5), when these records publish at all: a question
+    is how a person hears of what an agent needs, and an event that cannot be published is not
+    worth failing the question for."""
+    events = questions.records.events
+    if events is None:
+        return
+    try:
+        await events.emit(event_type, data, dedupe_key=key)
+    except Exception:
+        log.warning("The %s event could not be published", event_type, exc_info=True)
 
 
 async def block(
@@ -192,16 +231,32 @@ async def answer(
         )
     who = (by.who if by is not None else "") or "human"
     said = f"{found.key}, answered by {who}: {answer}"
-    batch: list[Record] = [
-        found.model_copy(
-            update={"state": QuestionState.ANSWERED, "answer": answer, "answered_by": who}
-        ),
+    answered = found.model_copy(
+        update={"state": QuestionState.ANSWERED, "answer": answer, "answered_by": who}
+    )
+    also: list[Record] = [
+        answered,
         Message(question=found.id, text=answer, author=who),
         *await _decisions(questions, found, text=said, author=who),
-        *await _unblocked(questions, found, at=_now(clock)),
     ]
-    saved = await questions.records.save_all(batch)
-    return next(one for one in saved if isinstance(one, Question))
+    moved, notes = await _unblocked(questions, found)
+    if moved:
+        await TaskRecords(questions.records, clock=clock).save_all(moved, also=[*also, *notes])
+    else:
+        await questions.records.save_all(also)
+    await _told(
+        questions,
+        QUESTION_ANSWERED.name,
+        QuestionAnswered(
+            project=answered.project,
+            question=answered.key,
+            task=answered.task or "",
+            by=answered.answered_by or "",
+            answer=answered.answer or "",
+        ),
+        key=f"question.answered:{answered.id}",
+    )
+    return answered
 
 
 async def reply(
@@ -313,16 +368,16 @@ async def _up_from(questions: QuestionRecords, agent: Agent | None) -> str:
     return HUMANS
 
 
-def _blocking(task: Task, question: Question, *, asked_by: str, at: datetime) -> list[Record]:
+def _blocking(task: Task, question: Question, *, asked_by: str) -> tuple[Task, Record]:
     """`task` moved to `blocked`, waiting on `question`, and the note that says so — planned here
-    so the question and the block are one write."""
+    so the question and the block are one write (the history is the save's, as for any move)."""
     who = (
         Principal(kind="agent", name=asked_by, role="block")
         if asked_by and task.assignee == asked_by
         else Principal(kind="system", role="block")
     )
     moved = transitions.move(task, BLOCKED, by=who, note=question.key)
-    return [moved, move_note(task, moved, who), _change(task, moved, at=at, by=who.who)]
+    return moved, move_note(task, moved, who)
 
 
 async def block_with(
@@ -353,24 +408,24 @@ async def block_with(
         if said:
             await questions.records.save_all(said)
         return found
-    saved = await questions.records.save_all(
-        [*_blocking(found, question, asked_by=asked_by, at=_now(clock)), *said]
-    )
-    return next(one for one in saved if isinstance(one, Task))
+    moved, note = _blocking(found, question, asked_by=asked_by)
+    saved = await TaskRecords(questions.records, clock=clock).save_all([moved], also=[*said, note])
+    return next(one for one in saved if one.id == moved.id)
 
 
 async def _unblocked(
-    questions: QuestionRecords, question: Question, *, at: datetime
-) -> list[Record]:
+    questions: QuestionRecords, question: Question
+) -> tuple[list[Task], list[Record]]:
     """What answering `question` writes besides the answer: its task, when it is blocked on this
-    question, back to `queued` at the front of its agent's queue (the rest renumbered)."""
+    question, back to `queued` at the front of its agent's queue (the rest renumbered) — the
+    tasks to save, and the notes that say so."""
     if question.task is None:
-        return []
+        return [], []
     tasks = TaskRecords(questions.records)
     found = await tasks.task(question.project, question.task)
     if found is None or found.state != BLOCKED or found.blocked_on != question.key:
         # (Not blocked on this question: it was answered mid-work, or it has moved on since.)
-        return []
+        return [], []
     who = Principal(kind="system", role="assign")
     placed = transitions.move(found, QUEUED, by=who).model_copy(update={"position": 0})
     others = [
@@ -383,23 +438,7 @@ async def _unblocked(
     renumbered = [
         one.model_copy(update={"position": number + 1}) for number, one in enumerate(others)
     ]
-    return [
-        placed,
-        *renumbered,
-        move_note(found, placed, who),
-        _change(found, placed, at=at, by=who.who),
-    ]
-
-
-def _now(clock: Clock | None) -> datetime:
-    """When a move is written: the app's clock when it was given one, else the wall clock."""
-    return clock.now() if clock is not None else utcnow()
-
-
-def _change(before: Task, after: Task, *, at: datetime, by: str) -> StateChange:
-    """The history entry a move writes when it is planned in a batch of its own (27.10: every
-    move has one, `TaskRecords.save_all`'s or this)."""
-    return StateChange(task=before.id, from_state=before.state, to_state=after.state, at=at, by=by)
+    return [placed, *renumbered], [move_note(found, placed, who)]
 
 
 async def _decisions(

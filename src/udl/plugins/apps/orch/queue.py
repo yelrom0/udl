@@ -43,6 +43,7 @@ from udl.plugins.apps.orch.models import (
 )
 from udl.plugins.apps.orch.records import (
     AgentRecords,
+    HumanAction,
     Note,
     Task,
     TaskRecords,
@@ -190,6 +191,7 @@ async def _assign(
         ]
         writes += _renumbered(left, was=left)
         also.append(_stopped(placed, stopped=stopped, agent=agent))
+    said: list[HumanAction] = []
     if placed.task_kind == "human":
         # (A person's task is something only they can do: it is their action from the moment it
         # is theirs, 28.2. The action is planned here and written in the same batch, so a task
@@ -198,8 +200,11 @@ async def _assign(
             actions.ActionRecords(tasks.records), placed, assignee=agent
         )
         also.append(action)
+        said.append(action)
     also.extend(moved_notes)
     saved = await tasks.save_all(writes, also=also)
+    for action in said:
+        await actions.ActionRecords(tasks.records).say_needed(action)
     return next((one for one in saved if one.id == placed.id), placed)
 
 

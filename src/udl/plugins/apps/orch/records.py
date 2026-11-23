@@ -58,7 +58,14 @@ from udl.plugins.apps.orch.agents import (
     ManagerPowers,
     SessionState,
 )
+from udl.plugins.apps.orch.events import (
+    TASK_BLOCKED,
+    TASK_CHANGED,
+    TaskBlocked,
+    TaskChanged,
+)
 from udl.plugins.apps.orch.models import (
+    BLOCKED,
     CANCELLED,
     DONE,
     IN_PROGRESS,
@@ -1162,7 +1169,46 @@ class TaskRecords:
         followed = await self._follow_all(tasks)
         batch: list[Record] = [*tasks, *followed, *changes, *also]
         saved = await self._records.save_all(batch)
+        await self._published(tasks, changes)
         return [one for one in saved[: len(tasks)] if isinstance(one, Task)]
+
+    async def _published(self, tasks: Sequence[Task], changes: Sequence[StateChange]) -> None:
+        """Publish each change in `changes` as it happened (28.5): the task's move, and what only
+        that move is — `blocked` on what it waits on, `merged`.
+
+        It is the batch's own history that is published, keyed by it, so a move is one event
+        however many paths write it, and a save that changes no state says nothing. An event
+        that cannot be published is logged and does not undo the write: the record is the
+        truth, the event is how something hears of it."""
+        events = self._records.events
+        if events is None or not changes:
+            return
+        by_id = {one.id: one for one in tasks}
+        for change in changes:
+            task = by_id.get(change.task)
+            if task is None:
+                continue
+            try:
+                await events.emit(
+                    TASK_CHANGED.name,
+                    TaskChanged(
+                        project=task.project,
+                        task=task.key,
+                        **{"from": change.from_state, "to": change.to_state},
+                        by=change.by,
+                    ),
+                    dedupe_key=f"task.changed:{change.id}",
+                    occurred_at=change.at,
+                )
+                if change.to_state == BLOCKED:
+                    await events.emit(
+                        TASK_BLOCKED.name,
+                        TaskBlocked(project=task.project, task=task.key, on=task.blocked_on or ""),
+                        dedupe_key=f"task.blocked:{change.id}",
+                        occurred_at=change.at,
+                    )
+            except Exception:
+                log.warning("The move of %s could not be published", task.key, exc_info=True)
 
     async def import_all(self, records: Sequence[Record]) -> list[Record]:
         """Store an import's records — its features and its tasks — as one write, all or none.

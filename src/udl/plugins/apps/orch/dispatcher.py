@@ -55,6 +55,7 @@ from udl.plugins.apps.orch import queue as queues
 from udl.plugins.apps.orch import records as stored
 from udl.plugins.apps.orch import workspace as space
 from udl.plugins.apps.orch.agents import AnAgentEvent, SessionState, an_event
+from udl.plugins.apps.orch.events import AGENT_IDLE, AgentIdle
 from udl.plugins.apps.orch.models import (
     BLOCKED,
     CANCELLED,
@@ -283,6 +284,14 @@ class Dispatcher:
             database=ctx.service.db,
         )
         self._prepare = prepare if prepare is not None else self._prepared
+        self._idle: set[str] = set()
+        """The agents already told they have nothing to do (28.5), for this stretch of it."""
+        self._idle_stretches: dict[str, int] = {}
+        """How many idle stretches each agent has had: what makes each one's event its own."""
+        self._run = uuid4().hex[:8]
+        """This dispatcher's own id: an event's key is unique for good, so a stretch is named by
+        the run it happened in as well as by its number — else a restarted udl's first stretches
+        would look like ones it had already said."""
         self._tick = tick
         self._wakes: dict[str, asyncio.Event] = {}
         """One wake per agent: an event that may concern it, or its tick."""
@@ -388,9 +397,12 @@ class Dispatcher:
         finally:
             for task in waiting:
                 task.cancel()
-            for task in waiting:
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+            await asyncio.gather(*waiting, return_exceptions=True)
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                # (A stop that landed on one of the two waits is not one to swallow in ending
+                # them: the loop must end here, not rest again on a clock nobody moves.)
+                raise asyncio.CancelledError
 
     # -- one step ------------------------------------------------------------------------------
 
@@ -409,6 +421,7 @@ class Dispatcher:
                 return
         if current is not None and current.state is SessionState.RUNNING:
             # (udl restarted mid-turn: the harness still has the session, the card's 7.)
+            self._idle.discard(agent.name)
             task = await self._task_of(current)
             if task is None:
                 await self._end(agent, current)
@@ -416,17 +429,39 @@ class Dispatcher:
             await self._work(agent, task, current, resume=True)
             return
         if await self._managing(agent):
+            self._idle.discard(agent.name)
             return
         if await self._merging(agent):
             return
         task = await self._pick(agent)
         if task is None:
+            await self._idle_told(agent)
             return
+        self._idle.discard(agent.name)
         task = await self._started(agent, task)
         session = await self._session_for(agent, task)
         if session is None or session.state in (SessionState.FAILED, SessionState.LIMITED):
             return
         await self._work(agent, task, session, resume=False)
+
+    async def _idle_told(self, agent: stored.Agent) -> None:
+        """Say that `agent` has nothing on its queue (28.5), once per idle stretch: the loop
+        ticks every 30 seconds, and an agent that is idle is idle all of them. It says so again
+        the next time it runs out of work, since that is news again."""
+        if agent.name in self._idle:
+            return
+        self._idle.add(agent.name)
+        made = self._idle_stretches.get(agent.name, 0) + 1
+        self._idle_stretches[agent.name] = made
+        project = (await self._projects_of(agent) or [""])[0]
+        try:
+            await self._events.emit(
+                AGENT_IDLE.name,
+                AgentIdle(agent=agent.name, project=project),
+                dedupe_key=f"agent.idle:{agent.name}:{self._run}:{made}",
+            )
+        except Exception:
+            log.warning("The %s event could not be published", AGENT_IDLE.name, exc_info=True)
 
     async def _managing(self, agent: stored.Agent) -> bool:
         """One manager's turn, when its reports need something (27.8): what they need is the
