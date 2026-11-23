@@ -173,7 +173,7 @@ describe("a task's page (29.5)", () => {
 		expect(screen.queryByRole("link", { name: "human:owner" })).toBeNull();
 	});
 
-	it("links the question it waits on, and leaves a line of text as text", async () => {
+	it("links the question it waits on", async () => {
 		const fake = fakeCtx((name) => {
 			if (name === "orch_get_task") {
 				return {
@@ -197,6 +197,30 @@ describe("a task's page (29.5)", () => {
 		expect(within(waiting).getByRole("link", { name: "Q-8" }).getAttribute("href")).toBe(
 			"/ui/p/orch/questions/Q-8",
 		);
+	});
+
+	it("leaves a line of text it waits on as text", async () => {
+		const fake = fakeCtx((name) => {
+			if (name === "orch_get_task") {
+				return {
+					...(ANSWERS.orch_get_task as object),
+					task: {
+						key: "29.2",
+						feature: "29",
+						title: "Blocked",
+						state: "blocked",
+						blocked_on: "CI",
+					},
+				};
+			}
+			return ANSWERS[name] as never;
+		});
+		render(<TaskPage ctx={fake.ctx} params={{ key: "29.2" }} path="tasks/$key" search={{}} />);
+		await read();
+
+		const waiting = screen.getByLabelText("Waiting on");
+		expect(waiting.textContent).toBe("Waiting on CI");
+		expect(within(waiting).queryByRole("link")).toBeNull();
 	});
 
 	it("says why it is held", async () => {
