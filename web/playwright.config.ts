@@ -28,6 +28,13 @@ const port = process.env.UDL_E2E_PORT ? Number(process.env.UDL_E2E_PORT) : await
 process.env.UDL_E2E_PORT = String(port);
 const url = `http://127.0.0.1:${port}`;
 
+// The harness's control API (what a test asks a fake to answer with next), on a port of its own:
+// 29.12's chat writes the turns a scripted harness runs, so a spec reaches it directly.
+const controls = process.env.UDL_E2E_CONTROLS
+	? Number(process.env.UDL_E2E_CONTROLS)
+	: await freePort();
+process.env.UDL_E2E_CONTROLS = String(controls);
+
 // Playwright's version is pinned to the Python Playwright's (uv.lock: 1.63.0), so both use the
 // one Chromium in ~/.cache/ms-playwright.
 export default defineConfig({
@@ -57,7 +64,7 @@ export default defineConfig({
 		// it must reach the server itself, not the `uv` in front of it. An absolute path, since
 		// the venv compares its `sys.prefix` against it; `cwd` is the repo root, where the
 		// server's udl runs.)
-		command: `PYTHONPATH=tests ${resolve(repo, ".venv/bin/python")} -u -m support.e2e --port ${port}`,
+		command: `PYTHONPATH=tests ${resolve(repo, ".venv/bin/python")} -u -m support.e2e --port ${port} --controls ${controls}`,
 		url: `${url}/docs`,
 		cwd: repo,
 		// (Always: a server Playwright did not start is not the one under test. The harness's

@@ -63,6 +63,20 @@ export function registerPlugin(info: UIPluginInfo): void {
 			entry: widget.id,
 		});
 	}
+	// (29.12: what the navbar opens at the right of the page, by `<plugin>/<id>`.)
+	for (const panel of contributes.panels ?? []) {
+		shellRegistry.point("panels").add(`${info.name}/${panel.id}`, {
+			plugin: identity,
+			key: `${info.name}/${panel.id}`,
+			id: panel.id,
+			entry: panel.id,
+			title: panel.title,
+			...(panel.icon === null || panel.icon === undefined ? {} : { icon: panel.icon }),
+			...(panel.shortcut === null || panel.shortcut === undefined
+				? {}
+				: { shortcut: panel.shortcut }),
+		});
+	}
 	// (24.7: what it replaces in the page udl generates, by the operation's name or a prefix.)
 	for (const name of contributes.operationViews ?? []) {
 		shellRegistry.point("operationViews").add(name, { plugin: identity, key: name, entry: name });

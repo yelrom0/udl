@@ -7,7 +7,8 @@ import { BASE } from "./router";
 import { routeTree } from "./routeTree.gen";
 import { setGenerated } from "./stores/generated";
 import { clear, pushEvent, setRun } from "./stores/live";
-import { plugins, setNavCount, setPlugins } from "./stores/plugins";
+import { DEFAULT_WIDTH, panels } from "./stores/panels";
+import { plugins, setNavCount, setPlugins, type UIPluginInfo } from "./stores/plugins";
 import { session } from "./stores/session";
 import { QuietEventSource, startFakingMatchMedia, stopFakingMatchMedia } from "./test-setup";
 
@@ -68,8 +69,28 @@ vi.mock("./plugins/load", () => ({
 				return bundle.page(target, props, ctx);
 			},
 		},
+		panels: {
+			chat: (target: HTMLElement) => {
+				target.innerHTML = "<p>The chat, drawn by its plugin</p>";
+				return { update: () => {}, unmount: () => {} };
+			},
+		},
 	}),
 }));
+
+/** A UI plugin with a panel, as udl lists one (`/ui/plugins.json`). */
+const CHAT: UIPluginInfo = {
+	name: "orch",
+	version: "0.1.0",
+	base_url: "/ui/plugins/orch/",
+	entry_url: "/ui/plugins/orch/index.js",
+	styles: [],
+	isolation: "shadow",
+	contributes: {
+		panels: [{ id: "chat", title: "Chat", icon: "message-square", shortcut: "Ctrl+J" }],
+	},
+	plugin: "orch",
+};
 
 /** The page at `path` (`/ui` is its base, as udl serves it). */
 function draw(path: string) {
@@ -602,5 +623,70 @@ describe("the shell", () => {
 		draw("/ui/");
 
 		expect(await screen.findByText("udl has downloaded nothing yet.")).toBeTruthy();
+	});
+});
+
+/** What a panel's slot drew: a plugin's shadow root, which the DOM's queries do not see into. */
+async function drewInPanel(key: string, text: string): Promise<void> {
+	// (The query is inside: the page draws its frame and its panel a turn after the route.)
+	await waitFor(() =>
+		expect(
+			document.querySelector(`[data-panel="${key}"] .udl-plugin-slot`)?.shadowRoot?.textContent ??
+				"",
+		).toContain(text),
+	);
+}
+
+describe("the page's panels (29.12)", () => {
+	beforeEach(() => {
+		localStorage.clear();
+		panels.setState({ open: [], width: DEFAULT_WIDTH });
+		registerPlugins([CHAT]);
+		setPlugins([CHAT], []);
+	});
+
+	it("puts a button in the navbar for each panel, and opens it", async () => {
+		udl();
+		draw("/ui/");
+
+		const button = await screen.findByRole("button", { name: "Chat" });
+		expect(button.getAttribute("title")).toBe("Chat (Ctrl+J)");
+		fireEvent.click(button);
+
+		expect(await screen.findByRole("complementary", { name: "Chat" })).toBeTruthy();
+		await drewInPanel("orch/chat", "The chat, drawn by its plugin");
+	});
+
+	it("opens and closes the chat with Ctrl+J", async () => {
+		udl();
+		draw("/ui/");
+		// (The page is drawn before its keys are listened to.)
+		await screen.findByRole("button", { name: "Chat" });
+
+		fireEvent.keyDown(document, { key: "j", ctrlKey: true });
+		await drewInPanel("orch/chat", "The chat, drawn by its plugin");
+
+		fireEvent.keyDown(document, { key: "j", ctrlKey: true });
+		await waitFor(() => expect(screen.queryByRole("complementary", { name: "Chat" })).toBeNull());
+	});
+
+	it("draws only the panel in its own window, and closes it there", async () => {
+		udl();
+		const closed = vi.spyOn(window, "close").mockImplementation(() => {});
+		draw("/ui/panel/orch/chat");
+
+		await drewInPanel("orch/chat", "The chat, drawn by its plugin");
+		// (A window of its own is the panel: no nav, no signing out.)
+		expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
+		expect(screen.queryByRole("link", { name: "udl" })).toBeNull();
+
+		expect(closed).not.toHaveBeenCalled();
+	});
+
+	it("says so when the panel's plugin is not there", async () => {
+		udl();
+		draw("/ui/panel/nobody/chat");
+
+		expect(await screen.findByText(/nobody/)).toBeTruthy();
 	});
 });

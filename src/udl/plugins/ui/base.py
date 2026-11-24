@@ -64,6 +64,8 @@ POINTS: Final = frozenset(
         "actionEditors",
         "widgets",
         "themes",
+        # (29.12: what the navbar opens at the right of the page.)
+        "panels",
         # (24.7: what a plugin replaces in the page udl generates.)
         "operationViews",
         "resultViews",
@@ -102,6 +104,19 @@ class Widget(_Frozen):
     """Which of the plugin's widgets it is (what its entry's `widgets` is keyed by)."""
 
 
+class Panel(_Frozen):
+    """Something the shell opens at the right of the page, from its own button (29.12)."""
+
+    id: str = Field(min_length=1)
+    """Which of the plugin's panels it is (what its entry's `panels` is keyed by)."""
+    title: str = Field(min_length=1)
+    """What its button in the navbar says."""
+    icon: str | None = None
+    """The icon's name (the shell maps it to lucide's)."""
+    shortcut: str | None = None
+    """The key that opens and closes it (`Ctrl+J`), when it has one."""
+
+
 TABS: Final = ("operations", "settings", "accounts", "events")
 """The tabs a generated page has, in the order udl lists them."""
 
@@ -130,6 +145,8 @@ class Contributions(_Frozen):
     """What it puts in the shell's slots."""
     themes: list[str] = Field(default_factory=list[str])
     """The daisyUI themes it adds."""
+    panels: list[Panel] = Field(default_factory=list[Panel])
+    """What it opens at the right of the page (29.12)."""
     operation_views: list[str] = Field(default_factory=list[str], alias="operationViews")
     """The operations whose panel it replaces (a mount of its own)."""
     result_views: list[str] = Field(default_factory=list[str], alias="resultViews")

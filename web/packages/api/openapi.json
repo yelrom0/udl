@@ -1981,6 +1981,7 @@
                 "mapping": {
                   "runner_failed": "#/components/schemas/RunnerFailed",
                   "runner_limited": "#/components/schemas/RunnerLimited",
+                  "said": "#/components/schemas/Said",
                   "text_delta": "#/components/schemas/TextDelta",
                   "tool_finished": "#/components/schemas/ToolFinished",
                   "tool_started": "#/components/schemas/ToolStarted",
@@ -2010,6 +2011,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/RunnerFailed"
+                },
+                {
+                  "$ref": "#/components/schemas/Said"
                 }
               ]
             },
@@ -11488,6 +11492,28 @@
         "title": "RuntimeStatus",
         "type": "object"
       },
+      "Said": {
+        "additionalProperties": false,
+        "description": "What the person said to a chat (29.12): their own words, the first line of its turn's\ntranscript, so a page that draws a chat draws both sides of it.",
+        "properties": {
+          "kind": {
+            "const": "said",
+            "default": "said",
+            "title": "Kind",
+            "type": "string"
+          },
+          "text": {
+            "description": "What they said.",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "Said",
+        "type": "object"
+      },
       "Scalar": {
         "anyOf": [
           {
@@ -12051,6 +12077,7 @@
               "mapping": {
                 "runner_failed": "#/components/schemas/RunnerFailed",
                 "runner_limited": "#/components/schemas/RunnerLimited",
+                "said": "#/components/schemas/Said",
                 "text_delta": "#/components/schemas/TextDelta",
                 "tool_finished": "#/components/schemas/ToolFinished",
                 "tool_started": "#/components/schemas/ToolStarted",
@@ -12080,6 +12107,9 @@
               },
               {
                 "$ref": "#/components/schemas/RunnerFailed"
+              },
+              {
+                "$ref": "#/components/schemas/Said"
               }
             ],
             "title": "Event"

@@ -49,6 +49,9 @@ from support.fixture_site import FixtureSite
 ROOT: Final[Path] = Path(__file__).resolve().parents[2]
 # Local plugins loaded by the e2e config (the fakes, as plugins).
 E2E_PLUGINS: Final[Path] = Path(__file__).resolve().parent / "e2e_plugins"
+# 28.6's scripted runner, and 29.12's chat: a harness whose turns are a script in a file, so a
+# browser test drives a chat end to end without a model or a harness installed.
+ORCH_E2E_PLUGINS: Final[Path] = Path(__file__).resolve().parent / "orch_e2e_plugins"
 # The UI plugins the shell loads in the e2e run: a working one and one that throws (18.9).
 E2E_UI_PLUGINS: Final[Path] = Path(__file__).resolve().parent / "e2e_ui_plugins"
 # 18.10's proof: the shadcn/ui example plugin, as `make web` builds it (a folder of bundles).
@@ -73,10 +76,12 @@ JSON = "application/json"
 # A control call's body: an object (a mail, a Slack message) or a list of strings (the AI's).
 _MAIL: Final = TypeAdapter(dict[str, object])
 _AI: Final = TypeAdapter(list[str])
+# A scripted runner's turns: a list of objects (29.12's chat, and 28.6's orchestration).
+_TURNS: Final = TypeAdapter(list[dict[str, object]])
 
 CONFIG: Final[str] = """\
 download_dir = "{downloads}"
-plugin_dirs = ["{plugins}"]
+plugin_dirs = ["{plugins}", "{orch_plugins}"]
 probe_order = ["http"]
 
 [[db.connections]]
@@ -99,6 +104,9 @@ ui_plugin_dirs = {ui}
 
 [automations]
 enabled = false
+
+[integrations.scripted]
+dir = "{root}"
 """
 
 
@@ -138,6 +146,8 @@ def write_config(root: Path, port: int) -> Path:
             downloads=root / "downloads",
             database=root / "udl.db",
             plugins=E2E_PLUGINS,
+            orch_plugins=ORCH_E2E_PLUGINS,
+            root=root,
             ui=json.dumps([str(one) for one in ui_dirs]),
             port=port,
             key=API_KEY,
@@ -154,7 +164,8 @@ def write_config(root: Path, port: int) -> Path:
 class Control:
     """What e2e tests can ask the fakes to do while udl runs."""
 
-    def __init__(self) -> None:
+    def __init__(self, root: Path | None = None) -> None:
+        self.root = root
         self.lock = threading.Lock()
         self.mails: list[dict[str, object]] = []
         self.messages: list[dict[str, object]] = []
@@ -172,6 +183,13 @@ class Control:
         with self.lock:
             self.ai.extend(answers)
 
+    def script_turns(self, turns: list[dict[str, object]]) -> None:
+        """Write the scripted runner's turns: what its next turn does (29.12's chat reads it)."""
+        if self.root is None:
+            raise ValueError("this control has no folder to script a turn in")
+        with self.lock:
+            (self.root / "turns.json").write_text(json.dumps(turns))
+
     def next_ai(self) -> str:
         """The next answer the fake AI gives (a default one when nothing is scripted)."""
         with self.lock:
@@ -183,7 +201,7 @@ def handler_for(control: Control) -> type[BaseHTTPRequestHandler]:
     kept on the class the server was built with."""
 
     class Handler(BaseHTTPRequestHandler):
-        """POST /mail, /slack and /ai: each adds what a fake should answer with next."""
+        """POST /mail, /slack, /ai and /turns: each adds what a fake should answer with next."""
 
         def do_POST(self) -> None:
             length = int(self.headers.get("Content-Length") or 0)
@@ -200,11 +218,16 @@ def handler_for(control: Control) -> type[BaseHTTPRequestHandler]:
                     control.post(dict(_MAIL.validate_python(body)))
                 elif path == "/ai":
                     control.script(*_AI.validate_python(body))
+                elif path == "/turns":
+                    control.script_turns(list(_TURNS.validate_python(body)))
                 else:
                     self.fail(404, "no such control")
                     return
             except ValidationError as e:
                 self.fail(400, "; ".join(error["msg"] for error in e.errors()))
+                return
+            except ValueError as e:
+                self.fail(400, str(e))
                 return
             self.send_response(204)
             self.end_headers()
@@ -225,9 +248,9 @@ def handler_for(control: Control) -> type[BaseHTTPRequestHandler]:
 
 
 @contextmanager
-def serving(control: Control) -> Generator[int]:
-    """The control API, answering on a free port while the block runs."""
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(control))
+def serving(control: Control, port: int = 0) -> Generator[int]:
+    """The control API, answering on `port` (a free one when it is 0) while the block runs."""
+    server = ThreadingHTTPServer(("127.0.0.1", port), handler_for(control))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -298,16 +321,21 @@ def environment(config: Path, home: Path) -> dict[str, str]:
     return env
 
 
-def port_from(argv: list[str] | None, default: int | None) -> int | None:
-    """The port the command line asks for (`--port N`), else `default` (`None` when the caller
-    has none, and `main()` then picks a free one)."""
+def port_for(argv: list[str] | None, flag: str, default: int | None) -> int | None:
+    """The port the command line asks for (`--port N`, `--controls N`), else `default` (`None`
+    when the caller has none, and `main()` then picks a free one)."""
     given = list(argv or ())
     for index, arg in enumerate(given):
-        if arg == "--port" and index + 1 < len(given):
+        if arg == flag and index + 1 < len(given):
             return int(given[index + 1])
-        if arg.startswith("--port="):
+        if arg.startswith(f"{flag}="):
             return int(arg.split("=", 1)[1])
     return default
+
+
+def port_from(argv: list[str] | None, default: int | None) -> int | None:
+    """The port the command line asks for (`--port N`), else `default`."""
+    return port_for(argv, "--port", default)
 
 
 def free_port() -> int:
@@ -321,6 +349,7 @@ def free_port() -> int:
 def main(
     *,
     port: int | None = None,
+    controls: int | None = None,
     self_stop: float = SELF_STOP,
     make_site: Callable[[], AbstractContextManager[object]] | None = None,
     argv: list[str] | None = None,
@@ -328,10 +357,10 @@ def main(
     port = port_from(argv, port)
     if port is None:
         port = free_port()
+    controls = port_for(argv, "--controls", controls)
     if (wrong := half_built()) is not None:
         print(f"e2e: {wrong}", file=sys.stderr, flush=True)  # noqa: T201
         return 1
-    control = Control()
     stopping = threading.Event()
 
     def by_signal(signum: int, frame: FrameType | None) -> None:
@@ -342,40 +371,38 @@ def main(
     signal.signal(signal.SIGTERM, by_signal)
     signal.signal(signal.SIGINT, by_signal)
 
-    with (
-        tempfile.TemporaryDirectory(prefix="udl-e2e-") as work,
-        serving(control) as controls,
-        (make_site or FixtureSite.serve)(),
-    ):
-        # (A port somebody else holds is said, not fought over: Playwright passes the free one
-        # it picked in web/playwright.config.ts, so a taken one was taken since.)
-        with socket.socket() as sock:
-            if sock.connect_ex(("127.0.0.1", port)) == 0:
-                print(f"e2e: {port} is taken", file=sys.stderr, flush=True)  # noqa: T201
-                return 1
+    with tempfile.TemporaryDirectory(prefix="udl-e2e-") as work:
         home = Path(work)
-        config = write_config(home, port)
-        udl = subprocess.Popen(
-            [sys.executable, "-m", "udl", "serve"],
-            cwd=ROOT,
-            env=environment(config, home),
-            stdout=subprocess.DEVNULL,
-        )
-        # (udl answers /docs whether or not the UI is built, so it is what says it is up; the
-        # shell's own /ui/ comes with 18.3, and until then a test asks for it and gets a 404.)
-        url = f"http://127.0.0.1:{port}/docs"
-        # (Both lines are printed before waiting: a server that is up must say so even if its
-        # /docs never answers, or the test would only time out.)
-        print(f"e2e: udl serve on {url}", file=sys.stdout, flush=True)  # noqa: T201
-        print(f"e2e: controls on :{controls}", flush=True)  # noqa: T201
-        try:
-            wait_until(url, udl)
-            stopping.wait(self_stop)  # (Playwright's webServer kills after a few minutes)
-        except TimeoutError as e:
-            print(f"e2e: {e}", file=sys.stderr, flush=True)  # noqa: T201
-            return 1
-        finally:
-            stop(udl)
+        control = Control(home)
+        with serving(control, controls or 0) as controls_port, (make_site or FixtureSite.serve)():
+            # (A port somebody else holds is said, not fought over: Playwright passes the free one
+            # it picked in web/playwright.config.ts, so a taken one was taken since.)
+            with socket.socket() as sock:
+                if sock.connect_ex(("127.0.0.1", port)) == 0:
+                    print(f"e2e: {port} is taken", file=sys.stderr, flush=True)  # noqa: T201
+                    return 1
+            config = write_config(home, port)
+            udl = subprocess.Popen(
+                [sys.executable, "-m", "udl", "serve"],
+                cwd=ROOT,
+                env=environment(config, home),
+                stdout=subprocess.DEVNULL,
+            )
+            # (udl answers /docs whether or not the UI is built, so it is what says it is up; the
+            # shell's own /ui/ comes with 18.3, and until then a test asks for it and gets a 404.)
+            url = f"http://127.0.0.1:{port}/docs"
+            # (Both lines are printed before waiting: a server that is up must say so even if its
+            # /docs never answers, or the test would only time out.)
+            print(f"e2e: udl serve on {url}", file=sys.stdout, flush=True)  # noqa: T201
+            print(f"e2e: controls on :{controls_port}", flush=True)  # noqa: T201
+            try:
+                wait_until(url, udl)
+                stopping.wait(self_stop)  # (Playwright's webServer kills after a few minutes)
+            except TimeoutError as e:
+                print(f"e2e: {e}", file=sys.stderr, flush=True)  # noqa: T201
+                return 1
+            finally:
+                stop(udl)
     return 0
 
 

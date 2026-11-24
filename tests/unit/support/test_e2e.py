@@ -41,6 +41,8 @@ from support.e2e import (
 from udl.config import APISettings
 
 E2E_PLUGINS = Path(__file__).resolve().parents[2] / "support" / "e2e_plugins"
+# (28.6's scripted runner, which 29.12's chat runs its turns on.)
+ORCH_E2E_PLUGINS = Path(__file__).resolve().parents[2] / "support" / "orch_e2e_plugins"
 # (The module under test runs `udl` from the checkout; tests start it as a module.)
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -85,7 +87,9 @@ def test_the_config_is_what_the_server_reads(tmp_path: Path) -> None:
     # (Its own SQLite database and downloads, under the temp dir: never the user's.)
     assert f'url = "sqlite+aiosqlite:///{tmp_path / "udl.db"}"' in text
     assert f'download_dir = "{tmp_path / "downloads"}"' in text
-    assert f'plugin_dirs = ["{E2E_PLUGINS}"]' in text
+    assert f'plugin_dirs = ["{E2E_PLUGINS}", "{ORCH_E2E_PLUGINS}"]' in text
+    # (29.12's chat: the scripted runner, whose turns are a file in this test's folder.)
+    assert f'[integrations.scripted]\ndir = "{tmp_path}"' in text
     # (Secrets are the memory store, so no keyring is opened; the web UI is served — a browser is
     # what most e2e tests are — and its plugins are the fixtures the repo has, not the user's
     # ~/.config/udl/ui-plugins: a working one, and one that throws, for 18.9's plugin host.)
@@ -200,6 +204,27 @@ def test_the_control_api_says_no_to_what_it_does_not_take() -> None:
         refuses(port, "/what", {"anything": 1}, 404)
 
     assert (control.mails, control.messages, control.ai) == ([], [], [])
+
+
+def test_the_control_api_scripts_a_turn_in_its_own_folder(tmp_path: Path) -> None:
+    """(29.12: a chat's turn is what a test wrote, in the folder the scripted runner reads.)"""
+    control = Control(tmp_path)
+
+    with serving(control) as port:
+        post(port, "/turns", [{"when": "what is stuck?", "steps": [{"wait": 0}]}])
+
+    assert json.loads((tmp_path / "turns.json").read_text()) == [
+        {"when": "what is stuck?", "steps": [{"wait": 0}]}
+    ]
+
+
+def test_a_control_with_no_folder_refuses_a_turn() -> None:
+    control = Control()
+
+    with serving(control) as port:
+        refuses(port, "/turns", [{"steps": [{"wait": 0}]}], 400)
+
+    assert control.root is None
 
 
 def test_the_queues_of_one_control_are_not_another_s() -> None:

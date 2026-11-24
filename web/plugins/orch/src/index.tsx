@@ -9,6 +9,7 @@ import type { Mount, RouteProps } from "@udl/ui-sdk";
 import { defineUIPlugin } from "@udl/ui-sdk";
 import { react } from "@udl/ui-sdk/react";
 import "./index.css";
+import { ChatPanel } from "./chat/chat";
 import { pages } from "./pages";
 import { Widget } from "./widget";
 
@@ -18,8 +19,9 @@ for (const [route, Page] of Object.entries(pages)) {
 	routes[route] = react(Page);
 }
 
-/** The plugin itself: its routes and its widget. */
+/** The plugin itself: its routes, its widget and its chat (29.12's panel). */
 export default defineUIPlugin({
 	routes,
 	widgets: { orch: react(Widget) },
+	panels: { chat: react(ChatPanel) },
 });

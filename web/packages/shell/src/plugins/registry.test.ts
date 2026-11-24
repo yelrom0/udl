@@ -9,6 +9,7 @@ import type {
 	EventViewProps,
 	FilterEditorProps,
 	Mount,
+	PanelProps,
 	PluginIdentity,
 	RouteProps,
 	SettingsProps,
@@ -143,6 +144,16 @@ describe("the contribution registry", () => {
 		expect(keyOf("widgets", widget)).toEqual({ key: "dashboard" });
 	});
 
+	it("looks a panel up by the key its plugin gave it (29.12)", () => {
+		const props: PanelProps = { open: true, close: () => {}, popOut: () => {} };
+		const registry = new Registry();
+		const chat = contribution<PanelProps>(GMAIL, "gmail/chat");
+		registry.point("panels").add("gmail/chat", chat);
+
+		expect(keyOf("panels", props, "gmail/chat")).toEqual({ key: "gmail/chat" });
+		expect(registry.point("panels").at("gmail/chat")).toEqual([chat]);
+	});
+
 	it("forgets everything when it is cleared", () => {
 		const registry = new Registry();
 		registry.point("settings").add("gmail", contribution<SettingsProps>(GMAIL, "gmail"));
@@ -160,6 +171,7 @@ describe("the contribution registry", () => {
 			"filterEditors",
 			"actionEditors",
 			"widgets",
+			"panels",
 		] as const) {
 			expect(registry.point(point).every()).toEqual([]);
 		}

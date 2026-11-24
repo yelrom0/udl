@@ -86,6 +86,26 @@ export type Widgets = Widget[];
  */
 export type Themes = string[];
 /**
+ * Which of the plugin's panels it is (what its entry's `panels` is keyed by).
+ */
+export type Id1 = string;
+/**
+ * What its button in the navbar says.
+ */
+export type Title1 = string;
+/**
+ * The icon's name (the shell maps it to lucide's).
+ */
+export type Icon1 = string | null;
+/**
+ * The key that opens and closes it (`Ctrl+J`), when it has one.
+ */
+export type Shortcut = string | null;
+/**
+ * What it opens at the right of the page (29.12).
+ */
+export type Panels = Panel[];
+/**
  * The operations whose panel it replaces (a mount of its own).
  */
 export type Operationviews = string[];
@@ -104,11 +124,11 @@ export type Nav1 = GeneratedNav | false | null;
 /**
  * What it says.
  */
-export type Title1 = string;
+export type Title2 = string;
 /**
  * The icon's name (the shell maps it to lucide's).
  */
-export type Icon1 = string | null;
+export type Icon2 = string | null;
 /**
  * Which tabs stay, in this order (all of them, as udl lists them, when this is empty).
  */
@@ -151,6 +171,7 @@ export interface Contributions {
   actionEditors?: Actioneditors;
   widgets?: Widgets;
   themes?: Themes;
+  panels?: Panels;
   operationViews?: Operationviews;
   resultViews?: Resultviews;
   fieldWidgets?: Fieldwidgets;
@@ -171,6 +192,15 @@ export interface Widget {
   id: Id;
 }
 /**
+ * Something the shell opens at the right of the page, from its own button (29.12).
+ */
+export interface Panel {
+  id: Id1;
+  title: Title1;
+  icon?: Icon1;
+  shortcut?: Shortcut;
+}
+/**
  * How a UI plugin guides the page udl generates for its plugin (24.7): everything here is
  * optional, and what it does not say stays as udl answered it.
  */
@@ -186,8 +216,8 @@ export interface Generated {
  * What the drawer's entry for its plugin says, when the page is generated (24.7).
  */
 export interface GeneratedNav {
-  title: Title1;
-  icon?: Icon1;
+  title: Title2;
+  icon?: Icon2;
 }
 /**
  * The operations to move under a group of this name (the group's own order is the dict's).

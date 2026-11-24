@@ -29,6 +29,7 @@ const RECORDS: {
 	filterEditors: (spec) => spec.filterEditors,
 	actionEditors: (spec) => spec.actionEditors,
 	widgets: (spec) => spec.widgets,
+	panels: (spec) => spec.panels,
 	operationViews: (spec) => spec.operationViews,
 	resultViews: (spec) => spec.resultViews,
 	fieldWidgets: (spec) => spec.fieldWidgets,
@@ -41,13 +42,13 @@ export type PluginSlotProps<P extends Point> = {
 	/** The props that point's contributions take (a route's path, a widget's slot...). */
 	readonly props: Points[P];
 	/** Where the contributions come from (the page's own registry, unless a test has one). */
-	readonly registry?: Registry;
+	readonly registry?: Registry | undefined;
 	/** The plugin a route belongs to, or the integration an editor is for. */
-	readonly lookup?: string;
+	readonly lookup?: string | undefined;
 	/** How a bundle is imported (the browser's `import()`, unless a test has its own). */
-	readonly importer?: Importer;
+	readonly importer?: Importer | undefined;
 	/** What to draw when nothing is registered for the key (the page's own, before 24.7). */
-	readonly fallback?: ReactNode;
+	readonly fallback?: ReactNode | undefined;
 	/** How the key matches: itself (the default), or a manifest's `*` prefix too (24.7's
 	 * `resultViews`). */
 	readonly match?: "exact" | "prefix";

@@ -91,60 +91,57 @@ export function QuestionThreadView({ ctx, found, project, refresh }: ThreadProps
 				<p className="text-sm opacity-80">{`Closed: ${question.outcome}`}</p>
 			)}
 
-			{open && (
-				<>
-					{question.options.length > 0 ? (
-						<div className="flex flex-wrap items-center gap-2">
-							{question.options.map((option) => (
-								<button
-									className="btn btn-sm btn-outline"
-									disabled={busy}
-									key={option}
-									onClick={() => {
-										answer(question, option);
-									}}
-									type="button"
-								>
-									{option}
-								</button>
-							))}
+			{open &&
+				(question.options.length > 0 ? (
+					<div className="flex flex-wrap items-center gap-2">
+						{question.options.map((option) => (
+							<button
+								className="btn btn-sm btn-outline"
+								disabled={busy}
+								key={option}
+								onClick={() => {
+									answer(question, option);
+								}}
+								type="button"
+							>
+								{option}
+							</button>
+						))}
+						{busy && <span className="text-xs opacity-70">Answering…</span>}
+					</div>
+				) : (
+					// (A question that offers no options is answered in its own words: the same
+					// `orch_answer`, with what was typed.)
+					<form
+						className="flex flex-col gap-2"
+						onSubmit={(event) => {
+							event.preventDefault();
+							const said = typed ?? "";
+							if (said.trim() === "" || busy) {
+								return;
+							}
+							answer(question, said.trim());
+						}}
+					>
+						<label className="text-sm">
+							Answer
+							<textarea
+								className="textarea textarea-bordered w-full"
+								rows={3}
+								value={typed ?? ""}
+								onChange={(event) => {
+									setTyped(event.target.value);
+								}}
+							/>
+						</label>
+						<div className="flex items-center gap-2">
+							<button className="btn btn-sm" disabled={busy} type="submit">
+								Answer
+							</button>
 							{busy && <span className="text-xs opacity-70">Answering…</span>}
 						</div>
-					) : (
-						// (A question that offers no options is answered in its own words: the same
-						// `orch_answer`, with what was typed.)
-						<form
-							className="flex flex-col gap-2"
-							onSubmit={(event) => {
-								event.preventDefault();
-								const said = typed ?? "";
-								if (said.trim() === "" || busy) {
-									return;
-								}
-								answer(question, said.trim());
-							}}
-						>
-							<label className="text-sm">
-								Answer
-								<textarea
-									className="textarea textarea-bordered w-full"
-									rows={3}
-									value={typed ?? ""}
-									onChange={(event) => {
-										setTyped(event.target.value);
-									}}
-								/>
-							</label>
-							<div className="flex items-center gap-2">
-								<button className="btn btn-sm" disabled={busy} type="submit">
-									Answer
-								</button>
-								{busy && <span className="text-xs opacity-70">Answering…</span>}
-							</div>
-						</form>
-					)}
-				</>
-			)}
+					</form>
+				))}
 
 			{refused !== null && (
 				<p className="alert alert-error alert-soft text-sm" role="alert">

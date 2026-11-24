@@ -5,6 +5,8 @@ import {
 	asSize,
 	boardOf,
 	chainOf,
+	chatOf,
+	chatsOf,
 	durationOf,
 	estimateOf,
 	featureInfoOf,
@@ -576,5 +578,79 @@ describe("an agent's page (29.6)", () => {
 		expect(chainOf(tree, "nobody")).toEqual([]);
 		expect(isAbove(tree, "boss", "deepseek-a")).toBe(true);
 		expect(isAbove(tree, "deepseek-a", "boss")).toBe(false);
+	});
+});
+
+describe("a chat", () => {
+	it("reads a chat, its permission and its transcript", () => {
+		const chat = chatOf({
+			id: "0b9a1f8e-0000-0000-0000-000000000001",
+			owner: "human:claude",
+			runner: "claude-code",
+			model: "claude-opus-5-5",
+			permission_mode: "manual",
+			host: "local",
+			directory: "/work/udl",
+			state: "idle",
+			title: "why is the queue stuck?",
+			turns: 1,
+			tokens_in: 1200,
+			tokens_out: 300,
+			cost: "0.42",
+			last_error: "",
+			last_text: "Hello.",
+			pending: 1,
+			created_at: "2026-11-24T10:00:00Z",
+			updated_at: "2026-11-24T10:05:00Z",
+			permission: {
+				id: "7c1e0000-0000-0000-0000-000000000002",
+				tool: "Bash",
+				input: { command: "git rebase origin/main" },
+				state: "pending",
+				message: "",
+				allowed_for_chat: false,
+				asked_at: "2026-11-24T10:04:00Z",
+			},
+			events: [{ kind: "said", text: "why is the queue stuck?" }],
+			total: 1,
+		});
+
+		expect(chat.id).toBe("0b9a1f8e-0000-0000-0000-000000000001");
+		expect(chat.runner).toBe("claude-code");
+		expect(chat.model).toBe("claude-opus-5-5");
+		expect(chat.cost).toBe(0.42);
+		expect(chat.pending).toBe(1);
+		expect(chat.permission?.tool).toBe("Bash");
+		expect(chat.permission?.input).toEqual({ command: "git rebase origin/main" });
+		expect(chat.events.map((one) => one.kind)).toEqual(["said"]);
+	});
+
+	it("reads a chat with nothing waiting on a person", () => {
+		const chat = chatOf({ id: "one", state: "running" });
+
+		expect(chat.permission).toBeNull();
+		expect(chat.cost).toBeNull();
+		expect(chat.events).toEqual([]);
+		expect(chat.title).toBe("");
+	});
+
+	it("reads no chat at all from nothing", () => {
+		const chat = chatOf(undefined);
+
+		expect(chat.id).toBe("");
+		expect(chat.state).toBe("");
+		expect(chat.permission).toBeNull();
+		expect(chatsOf(undefined)).toEqual([]);
+	});
+
+	it("reads the chats a person has, most recent first as udl sends them", () => {
+		const chats = chatsOf({
+			items: [
+				{ id: "b", title: "the second", state: "idle" },
+				{ id: "a", title: "the first", state: "ended" },
+			],
+		});
+
+		expect(chats.map((one) => one.id)).toEqual(["b", "a"]);
 	});
 });
