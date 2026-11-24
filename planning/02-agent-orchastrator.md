@@ -1754,7 +1754,7 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 - Done when: its e2e test, on a `FakeRunner` chat, sends a message, allows a permission, and sees the result in the transcript and on the Board.
 - **Screens (29.1, Google Stitch):** **The chat sidebar**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=77e7e5da0d184db7a599dc178b3dbc67) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=4292c722ab044c828fa5bd11a2571099), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=2d8de97f1b714b84be450766032c5d1e) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=858586079f6c4119b1421a44832db6b0); `web/plugins/orch/design/chat-{light,dark}-{desktop,phone}.png`.
 
-- **Built (deepseek-a, 24 Nov 2026, PR #N):** the `panels` point and the chat. The shell gained a
+- **Built (deepseek-a, 24 Nov 2026, PR #108):** the `panels` point and the chat. The shell gained a
   `panels` contribution point (`PanelProps`: `open`, `close()`, `popOut()`), a navbar button per
   panel (with its shortcut, Ctrl+J for the chat), `<PanelHost>` (400 px over the page, docked beside
   it from 1600 px, a full-height sheet on a phone, a keyboard-resizable edge, and a popped-out
@@ -1773,7 +1773,11 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
   harness's turns are posted. Two bugs the e2e found and the unit tests had hidden: a read that
   answered after the person asked for a new chat put the old chat back on show, and the composer's
   keys were read from `items`, which no list operation answers (the fakes said `items`). The
-  board's e2e on a phone width, and the panel's placement there, wait for 29.10.
+  board's e2e on a phone width, and the panel's placement there, wait for 29.10. Two more the CI
+  found: 29.6's spec filled the agent editor's harness as text, which the e2e host no longer offers
+  as text now that this branch gives it a harness of its own (it picks the first one offered, and
+  still types when none is), and the popped-out chat's assertions now allow a new window the 30 s
+  it takes to load the shell and the bundle again.
 - **Asked… (deepseek-a, 24 Nov 2026):** nothing.
 
 **Phase 29 is done when:** with `udl serve` on real connections, the user assigns a task by dragging it, answers the agent's question, and merges its PR, all from `/ui/p/orch/`.
