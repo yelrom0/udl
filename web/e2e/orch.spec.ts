@@ -5,6 +5,8 @@ import { expect, type Page, test } from "@playwright/test";
  * built by Vite into `src/udl/plugins/apps/orch/ui` (the folder *is* the bundle, so the orch app
  * plugin serves it with itself). Every route its manifest contributes draws a page, in the
  * plugin's own shadow root; its nav is in the shell's drawer; and its widget is on the dashboard.
+ * (29.5's task page and 29.7's Q&A pages draw their own headings; a question's thread is 29.7's,
+ * and reads the question — with nothing seeded here it says so, under the Q&A heading.)
  */
 
 /** The routes the manifest contributes, and the heading each draws. */
@@ -19,7 +21,7 @@ const PAGES: [string, string][] = [
 	["features/29", "Feature 29"],
 	["tasks/29.2", "Task 29.2"],
 	["agents/claude", "claude"],
-	["questions/Q-8", "Question Q-8"],
+	["questions/Q-8", "Q&A"],
 ];
 
 /** The nav the manifest contributes, in the order it contributes it (Q-8: Progress after Board). */
