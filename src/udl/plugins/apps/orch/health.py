@@ -21,6 +21,7 @@ the one human action per issue.
 # System Imports
 import asyncio
 import logging
+import shlex
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime, timedelta
 from typing import Final
@@ -364,7 +365,8 @@ def _balance(disks: Sequence[DiskHealth], what: str) -> str:
     """What a person runs to free btrfs space on `disks`: one balance per mount, since a mount
     is what it is run on."""
     mounts = ", then ".join(
-        f"`sudo btrfs balance start {what} {disk.mount or disk.path}`" for disk in disks
+        f"`sudo btrfs balance start {what} {shlex.quote(disk.mount or disk.path)}`"
+        for disk in disks
     )
     return f"A balance frees it: {mounts}, which needs root, so a person runs it."
 

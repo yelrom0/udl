@@ -306,6 +306,27 @@ async def test_two_paths_on_one_mount_are_one_issue_and_two_mounts_are_said_in_o
     assert "-dusage=10 /data`" in issue.hint
 
 
+async def test_a_balance_names_its_mount_quoted(service: UDLService) -> None:
+    """(A mount with a space in it is one argument to `btrfs balance`: the hint quotes it, so
+    what a person copies runs.)"""
+    one = _health(
+        disks=[
+            {
+                "path": "/a",
+                "mount": "/data disk",
+                "filesystem": "btrfs",
+                "free": 500 * 1024**3,
+                "size": 1000 * 1024**3,
+                "unallocated": 0,
+            }
+        ]
+    )
+
+    (issue,) = issues_of(one, HealthSettings())
+
+    assert "`sudo btrfs balance start -dusage=10 '/data disk'`" in issue.hint
+
+
 async def test_a_host_with_no_checkout_raises_its_action_in_the_only_project(
     service: UDLService,
 ) -> None:
