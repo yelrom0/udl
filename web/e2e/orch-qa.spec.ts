@@ -76,12 +76,18 @@ test("the Q&A page shows a question asked while it is open, answers it, and the 
 	expect(found.question?.state).toBe("answered");
 	expect(found.question?.answer).toBe("A decision note");
 
-	// (And the decision is on the task, where an agent that comes back to it will read it: read
-	// through `orch_get_task`'s notes, since 29.5's task page is not built yet.)
+	// (And the decision is on the task, where an agent that comes back to it will read it: both
+	// as udl answers it and on 29.5's task page, which draws the task's notes.)
 	const task = (await call(page, "get_task", { key: "29.7" })) as {
 		notes?: { note_kind: string; text: string; author: string }[];
 	};
 	const decision = (task.notes ?? []).find((one) => one.note_kind === "decision");
 	expect(decision, "a decision note on the task").toBeTruthy();
 	expect(decision?.text).toContain("A decision note");
+
+	await page.goto("/ui/p/orch/tasks/29.7");
+	const notes = page.getByRole("list", { name: "Notes" });
+	// (The note names the question it answers, so a retry's earlier question is not this one.)
+	await expect(notes.getByText(`${key}, answered by`, { exact: false }).first()).toBeVisible();
+	await expect(notes.getByText(/A decision note/).first()).toBeVisible();
 });
