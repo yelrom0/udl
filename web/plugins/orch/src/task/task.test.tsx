@@ -56,7 +56,7 @@ const ANSWERS: Record<string, unknown> = {
 			{
 				agent: { name: "deepseek-a" },
 				status: "working",
-				session: { agent: "deepseek-a", task: "29.2", ref: { id: "s-1" }, state: "running" },
+				session: { id: "s-1", agent: "deepseek-a", task: "29.2", state: "running" },
 			},
 		],
 	},

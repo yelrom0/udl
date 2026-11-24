@@ -1,10 +1,13 @@
 import type { UIContext } from "@udl/ui-sdk";
 import { useCallback, useEffect, useState } from "react";
-import { mergeListOf, progressOf } from "./model";
+import { mergeListOf, progressOf, type Session } from "./model";
+import { type AgentState, type AgentsState, agentStore, agentsStore } from "./stores/agents";
 import { type BoardState, boardStore } from "./stores/board";
 import { type FeatureState, featureStore } from "./stores/feature";
 import { type InboxState, inboxStore, type Loaded } from "./stores/inbox";
 import { type QuestionsState, questionsStore } from "./stores/questions";
+import { type RunnersState, runnersStore } from "./stores/runners";
+import { type SessionsState, sessionsStore } from "./stores/sessions";
 import { type TaskState, taskStore } from "./stores/task";
 
 /** The inbox before it is read: nothing yet, and nothing failed. */
@@ -15,6 +18,29 @@ export type Refreshable<T> = T & { refresh(): Promise<void> };
 
 /** The questions before they are read. */
 const NO_QUESTIONS: QuestionsState = { project: "", questions: null, error: null };
+
+/** The agents' page before it is read. */
+const NO_AGENTS: AgentsState = { items: [], loaded: false, error: null };
+
+/** An agent's page before it is read. */
+const NO_AGENT: AgentState = {
+	info: null,
+	agents: [],
+	tasks: [],
+	merge: mergeListOf(undefined),
+	progress: progressOf(undefined),
+	loaded: false,
+	error: null,
+};
+
+/** The harnesses before they are read. */
+const NO_RUNNERS: RunnersState = {
+	items: [],
+	problems: [],
+	answered: false,
+	loaded: false,
+	error: null,
+};
 
 /** The board before it is read. */
 const NO_BOARD: BoardState = {
@@ -100,4 +126,46 @@ export function useQuestions(ctx: UIContext): Refreshable<QuestionsState> {
 /** The board's four lists (29.4). */
 export function useBoard(ctx: UIContext): Refreshable<BoardState> {
 	return useLoaded(ctx, boardStore, NO_BOARD);
+}
+
+/** The harnesses an agent may be given (29.6, 25.11). */
+export function useRunners(ctx: UIContext): Refreshable<RunnersState> {
+	return useLoaded(ctx, runnersStore, NO_RUNNERS);
+}
+
+/** Every agent (29.6). */
+export function useAgents(ctx: UIContext): Refreshable<AgentsState> {
+	return useLoaded(ctx, agentsStore, NO_AGENTS);
+}
+
+/** One agent, its queue and its project's rates (29.6). */
+export function useAgent(ctx: UIContext, name: string): Refreshable<AgentState> {
+	const make = useCallback((inner: UIContext) => agentStore(inner, name), [name]);
+	return useLoaded(ctx, make, NO_AGENT);
+}
+
+/** A session before it is read. */
+const NO_SESSION: SessionsState = { sessions: {}, error: null };
+
+/** What a page showing one session is given: that session, and the store's state beside it. */
+export type SessionView = Refreshable<SessionsState> & { readonly session: Session | null };
+
+/**
+ * One session (29.6), read when the page is drawn and again as its runner streams: the shell
+ * publishes a line per event, and the store coalesces them into one read at a time.
+ */
+export function useSession(ctx: UIContext, session: string): SessionView {
+	const make = useCallback(
+		(inner: UIContext) => {
+			const store = sessionsStore(inner);
+			// (A page opened before its agent is read has no id yet: nothing to ask for.)
+			if (session !== "") {
+				void store.read(session);
+			}
+			return store;
+		},
+		[session],
+	);
+	const loaded = useLoaded(ctx, make, NO_SESSION);
+	return { ...loaded, session: loaded.sessions[session] ?? null };
 }

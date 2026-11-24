@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 # Package Imports
 from pydantic import BaseModel, SecretStr, ValidationError
@@ -95,11 +95,13 @@ from udl.plugins.apps.orch.checkout import follow as follow_checkouts
 from udl.plugins.apps.orch.dispatcher import Dispatcher, Outcome, Turns
 from udl.plugins.apps.orch.events import (
     ACTION_NEEDED,
+    AGENT_CHANGED,
     AGENT_IDLE,
     QUESTION_ANSWERED,
     QUESTION_ASKED,
     TASK_BLOCKED,
     TASK_CHANGED,
+    AgentChanged,
 )
 from udl.plugins.apps.orch.importer import (
     PLAN_KEY,
@@ -499,6 +501,7 @@ class Orch(AppPlugin[OrchSettings]):
             ACTION_NEEDED,
             AGENT_LIMITED,
             AGENT_IDLE,
+            AGENT_CHANGED,
             SESSION_STARTED,
             SESSION_EVENT,
             SESSION_ENDED,
@@ -1087,12 +1090,17 @@ class Orch(AppPlugin[OrchSettings]):
             found = found.model_copy(update=given)
         if request.manager is not None:
             found = found.model_copy(update={"manager": request.manager or None})
-        return as_shape(Agent, await agents.save_agent(found))
+        saved = await agents.save_agent(found)
+        await self._agent_changed(saved.name)
+        return as_shape(Agent, saved)
 
     async def delete_agent(self, request: DeleteAgentRequest) -> Deleted:
         """Delete an agent, its sessions and its tokens (admin). Raises InUse while it manages
         another agent, or while it has a task that is not finished."""
-        return Deleted(deleted=await stored.AgentRecords(self.records).delete_agent(request.name))
+        deleted = await stored.AgentRecords(self.records).delete_agent(request.name)
+        if deleted:
+            await self._agent_changed(request.name)
+        return Deleted(deleted=deleted)
 
     async def pause_agent(self, request: PauseAgentRequest) -> Agent:
         """Pause an agent: nothing is dispatched to it until it is resumed, and its running
@@ -1189,11 +1197,30 @@ class Orch(AppPlugin[OrchSettings]):
             )
         return Sent(session=found.id, turn=ran.turn)
 
+    async def _agent_changed(self, name: str) -> None:
+        """Publish that an agent itself changed (29.6): a tree, and a page showing it, read again.
+
+        The event is what every tab sees, so one page's edit is another's: it names the agent and
+        nothing else, since a page reads the agent it is about rather than trust a payload."""
+        service = self.service
+        if service is None:
+            return
+        events = AppEvents(service.bus, self.name, self.event_types())
+        await events.emit(
+            AGENT_CHANGED.name,
+            AgentChanged(agent=name),
+            # ((type, dedupe_key) is unique for good, so the key must be: two changes in one
+            # instant — a pause and a resume under a clock that does not move — are two events.)
+            dedupe_key=f"{name}:{uuid4()}",
+        )
+
     async def _set_paused(self, name: str, *, paused: bool) -> Agent:
         """`name`'s agent, paused or resumed, as an operation answers with it."""
         agents = stored.AgentRecords(self.records)
         found = await self._require_agent(name)
-        return as_shape(Agent, await agents.save_agent(found.model_copy(update={"paused": paused})))
+        saved = await agents.save_agent(found.model_copy(update={"paused": paused}))
+        await self._agent_changed(saved.name)
+        return as_shape(Agent, saved)
 
     async def _require_agent(self, name: str) -> stored.Agent:
         """The agent called `name`, or DoesNotExist."""

@@ -194,6 +194,8 @@ class AgentSession(_Model):
     """A session an agent is in: the harness's own session (its ref), where it got to, what it
     has used, and what it last said."""
 
+    id: UUID
+    """Its id (what `orch_get_session` and `orch_stop_session` take)."""
     agent: Name
     """The agent whose session it is."""
     task: str = ""

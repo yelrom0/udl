@@ -29,9 +29,11 @@ import pytest
 from support.clock import FakeClock
 from support.engine import registry, settings
 from support.runners import SharedRunner
+from udl.automations.events import EventRecord
 from udl.core.models import Deleted
 from udl.core.operations import OperationHints
 from udl.core.service import UDLService
+from udl.db.records import RecordQuery
 from udl.errors import DoesNotExist, InUse, NotAllowed, PluginFailed
 from udl.interfaces.security import Principal, PrincipalKind, current_principal
 from udl.plugins.apps.base import AppEvents, AppRecords
@@ -842,3 +844,75 @@ async def reports_to(records: AppRecords, name: str, manager: str) -> None:
 def stored_event(session: AgentSession, *, turn: int, event: AgentEvent) -> SessionEvent:
     """One thing said in `session`, as its transcript keeps it."""
     return SessionEvent(agent=session.agent, session=session.id, turn=turn, event=an_event(event))
+
+
+async def test_an_agents_session_says_which_session_it_is(service: UDLService) -> None:
+    """A page that shows an agent's session links to it, so the answer carries udl's own id —
+    what `orch_get_session` and `orch_stop_session` take — not the harness's (`ref.id`), which
+    names nothing udl can look up (29.6)."""
+    found = await a_session(service)
+
+    info = await service.call("orch_get_agent", {"name": "ernie-c"})
+
+    assert isinstance(info, AgentInfo)
+    assert info.session is not None
+    assert info.session.id == found.id
+    read = await service.call("orch_get_session", {"session": str(info.session.id)})
+    assert isinstance(read, SessionInfo)
+    assert read.agent == "ernie-c"
+
+
+async def test_a_move_to_the_humans_and_back_is_read_back(service: UDLService) -> None:
+    """The tree's drag writes who an agent reports to, twice in a row: what `orch_get_agent`
+    answers afterwards is the last of them (29.6)."""
+    await service.call(
+        "orch_set_agent", {"name": "boss", "title": "Boss", "runner": "fake", "role": "manager"}
+    )
+    await service.call(
+        "orch_set_agent",
+        {"name": "doer", "title": "Doer", "runner": "fake", "manager": "boss"},
+    )
+
+    await service.call("orch_set_agent", {"name": "doer", "manager": ""})
+    await service.call("orch_set_agent", {"name": "doer", "manager": "boss"})
+
+    found = await service.call("orch_get_agent", {"name": "doer"})
+    assert isinstance(found, AgentInfo)
+    assert found.agent.manager == "boss"
+
+
+async def test_a_pause_and_a_resume_in_one_instant_are_two_events(tmp_path: Path) -> None:
+    """29.6: an event's key must not be its clock. Two changes to one agent in the same instant —
+    a pause and a resume, under a clock that does not move — are two pieces of news, and a key of
+    (type, dedupe_key) is unique for good, so the second must not be dropped."""
+    clock = FakeClock()
+    async with UDLService(settings(tmp_path), registry=orch_registry(), clock=clock) as service:
+        await service.call("orch_set_agent", {"name": "doer", "title": "Doer", "runner": "fake"})
+        # (The clock never moves: both changes carry the same `at`.)
+        await service.call("orch_pause_agent", {"name": "doer"})
+        await service.call("orch_resume_agent", {"name": "doer"})
+
+        found = await service.db.list_records(
+            EventRecord, RecordQuery(where={"type": "orch.agent.changed"})
+        )
+    assert len(found) == 3
+
+
+async def test_an_agent_s_own_change_is_published(service: UDLService) -> None:
+    """29.6: making, editing, pausing, resuming and deleting an agent is news every page that
+    draws one reads again — including another tab's, which the page that made it tells nothing."""
+    await service.call(
+        "orch_set_agent", {"name": "boss", "title": "Boss", "runner": "fake", "role": "manager"}
+    )
+    await service.call(
+        "orch_set_agent", {"name": "doer", "title": "Doer", "runner": "fake", "manager": "boss"}
+    )
+    await service.call("orch_pause_agent", {"name": "doer"})
+    await service.call("orch_resume_agent", {"name": "doer"})
+    await service.call("orch_delete_agent", {"name": "doer"})
+
+    found = await service.db.list_records(
+        EventRecord, RecordQuery(where={"type": "orch.agent.changed"})
+    )
+    published = [one.data.get("agent") for one in sorted(found, key=lambda one: one.occurred_at)]
+    assert published == ["boss", "doer", "doer", "doer", "doer"]
