@@ -866,6 +866,50 @@ async def test_a_merge_takes_the_worktree_and_the_branch_away(
     assert (after.worktree, after.branch) == (None, None)
 
 
+async def test_a_merge_follows_the_checkout_to_the_merge_commit(
+    working: UDLService, a_repo: Path
+) -> None:
+    """28.8's Done when: after a merge, the host's checkout is at `origin/main`'s head, and the
+    merge's own event is out. The fake's merge moves `origin/main` (a real merge does), so the
+    checkout — clean, on `main` — fast-forwards to it."""
+    checkout = a_repo / "checkout"
+    seed = a_repo / "seed"
+    git("clone", str(a_repo / "origin.git"), str(seed), cwd=a_repo)
+    (seed / "new.txt").write_text("new\n")
+    git("add", "new.txt", cwd=seed)
+    git("commit", "-m", "new", cwd=seed)
+    git("push", "origin", "main", cwd=seed)
+    before = git("rev-parse", "HEAD", cwd=checkout)
+
+    found = await merged(working, key="F-1.1", confirm="yelrom0/udl#1")
+
+    assert found.state == DONE
+    after = git("rev-parse", "HEAD", cwd=checkout)
+    assert after == git("rev-parse", "origin/main", cwd=checkout)
+    assert after != before
+
+
+async def test_a_checkout_left_behind_after_a_merge_says_so(
+    working: UDLService, a_repo: Path
+) -> None:
+    """A checkout that cannot follow is named in a `system` note and an
+    `orch.checkout.behind` event — through the merge, not only through `follow`."""
+    repos = RepoRecords(AppRecords(working.db))
+    repo = await repos.repo("udl", "udl")
+    assert repo is not None
+    checkout = a_repo / "checkout"
+    (checkout / "dirty.txt").write_text("work\n")
+    await repos.save_repo(repo.model_copy(update={"checkouts": repo.checkouts}))
+
+    await merged(working, key="F-1.1", confirm="yelrom0/udl#1")
+
+    assert any("did not follow" in one for one in await notes_of(working))
+    behind = await working.db.list_records(
+        EventRecord, RecordQuery(where={"type": "orch.checkout.behind"})
+    )
+    assert len(behind) == 1
+
+
 async def test_a_worktree_that_cannot_be_taken_away_keeps_the_merge(
     working: UDLService,
 ) -> None:

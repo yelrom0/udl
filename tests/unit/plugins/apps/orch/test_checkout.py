@@ -274,6 +274,8 @@ async def test_an_unknown_host_is_named_as_such(service: UDLService, repo: Path)
 
     lost = next(one for one in behind if one.host == "elsewhere")
     assert "not known" in lost.why
+    # (The reachable one still followed: one bad host never stops the others.)
+    assert git(repo, "rev-parse", "HEAD") == git(repo, "rev-parse", "origin/main")
 
 
 async def test_each_pass_names_a_checkout_left_behind_again(
