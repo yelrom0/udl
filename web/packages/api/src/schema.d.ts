@@ -4851,6 +4851,12 @@ export interface components {
              */
             metadata_used?: number | null;
             /**
+             * Mount
+             * @description The mount point it is on, when the host says: two paths on one mount are one disk, and a
+             *     btrfs balance is run on the mount.
+             */
+            mount?: string | null;
+            /**
              * Path
              * @description The path udl uses there (a host's work directory, or a repo's checkout).
              */

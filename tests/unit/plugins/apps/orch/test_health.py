@@ -328,6 +328,25 @@ def test_a_host_that_only_says_a_metadata_ratio_says_no_metadata_sizes(tmp_path:
     assert (disk.metadata_used, disk.metadata_total) == (None, None)
 
 
+def test_a_path_the_host_cannot_read_is_no_disk_of_its_own(tmp_path: Path) -> None:
+    """(df says nothing for a path that is not there, and nothing is not a disk with 0 B free:
+    the dispatcher's host is read before its work dir is made.)"""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _fake(bin_dir, "df", "exit 1")
+    work = tmp_path / "work"
+
+    ran = subprocess.run(  # noqa: S603
+        ["sh", "-c", MEASURES, "udl-health", "1", str(work)],  # noqa: S607
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert parse(ran.stdout).disks == []
+
+
 def test_the_script_reads_what_a_host_s_commands_print(tmp_path: Path) -> None:
     """(The awk over df, stat, btrfs and systemctl is what the 23 Nov incident depends on: it is
     run here as a host runs it, with the commands printing what a host printed.)"""
@@ -359,6 +378,7 @@ def test_the_script_reads_what_a_host_s_commands_print(tmp_path: Path) -> None:
     found = parse(ran.stdout)
     (disk,) = found.disks
     assert (disk.path, disk.filesystem) == (str(work), "btrfs")
+    assert disk.mount == "/home"
     assert (disk.free, disk.size) == (121640516 * 1024, 975712964 * 1024)
     assert disk.unallocated == 112743944192
     # (btrfs prints `Metadata ratio:` too, which is not a size: only the profile's line counts)

@@ -83,10 +83,13 @@ seen=0
 while [ "$seen" -lt "$count" ]; do
   path=$1; shift
   seen=$((seen + 1))
-  sizes=$(df -Pk -- "$path" 2>/dev/null | tail -n 1 | awk '{printf "%d\t%d", $4 * 1024, $2 * 1024}')
-  [ -z "$sizes" ] && continue
+  said=$(df -Pk -- "$path" 2>/dev/null | tail -n 1)
+  [ -z "$said" ] && continue  # (a path df cannot read is no disk of this host's)
+  sizes=$(printf '%s\n' "$said" | awk '{printf "%d\t%d", $4 * 1024, $2 * 1024}')
+  mount=$(printf '%s\n' "$said" |
+          awk '{mount = $6; for (i = 7; i <= NF; i++) mount = mount " " $i; print mount}')
   filesystem=$(stat -f -c %T -- "$path" 2>/dev/null)
-  printf 'disk\t%s\t%s\t%s\n' "$path" "$sizes" "$filesystem"
+  printf 'disk\t%s\t%s\t%s\t%s\n' "$path" "$sizes" "$filesystem" "$mount"
   if [ "$filesystem" = btrfs ] && command -v btrfs >/dev/null 2>&1; then
     btrfs filesystem usage -b -- "$path" 2>/dev/null | awk -v path="$path" '
       {line = $0; sub(/^[ \t]+/, "", line)
@@ -180,10 +183,16 @@ def parse(said: str) -> Measures:
             swap_used, swap_total = _number(fields[1]), _number(fields[2])
         elif measure == "io" and len(fields) == 2:
             pressure = _share(fields[1])
-        elif measure == "disk" and len(fields) == 5:
+        elif measure == "disk" and len(fields) >= 5:
             free, size = _number(fields[2]), _number(fields[3])
             disks.append(
-                DiskHealth(path=fields[1], filesystem=_filesystem(fields), free=free, size=size)
+                DiskHealth(
+                    path=fields[1],
+                    filesystem=_filesystem(fields),
+                    free=free,
+                    size=size,
+                    mount=_mount(fields),
+                )
             )
         elif measure == "btrfs" and len(fields) == 5:
             disks = [
@@ -210,6 +219,12 @@ def parse(said: str) -> Measures:
 def _filesystem(fields: Sequence[str]) -> str | None:
     """The filesystem a disk line names (None when the host could not say)."""
     said = fields[4].strip() if len(fields) > 4 else ""
+    return said or None
+
+
+def _mount(fields: Sequence[str]) -> str | None:
+    """The mount point a disk line names (None when the host could not say)."""
+    said = fields[5].strip() if len(fields) > 5 else ""
     return said or None
 
 
@@ -258,13 +273,14 @@ def issues_of(health: HostHealth, settings: HealthSettings) -> list[HealthIssue]
                 "and restart it.",
             )
         )
-    seen: set[tuple[HealthKind, tuple[int | None, ...]]] = set()
-    """The disk issues already said: a `HostIssue` is one per host and kind, so two paths on one
-    filesystem (which give the same numbers) are one issue, and two disks are one line each."""
-    by_kind: dict[HealthKind, HealthIssue] = {}
-    """The disk issues, one per kind, with the ones of other disks said after the first."""
+    breached: dict[HealthKind, list[tuple[DiskHealth, str]]] = {}
+    """The disks that break a threshold, by kind: a `HostIssue` is one per host and kind, so the
+    disks of one kind are said in one issue."""
     order: list[HealthKind] = []
     """The kinds in the order they were first found, so the list reads as it is built."""
+    seen: dict[HealthKind, set[str]] = {}
+    """The disks already said for a kind, by mount (or path, when a host cannot say its mount):
+    two paths on one mount are one disk, and a balance on it runs once."""
     if health.io_pressure is not None and health.io_pressure > settings.io_pressure_max:
         found.append(
             _issue(
@@ -277,41 +293,26 @@ def issues_of(health: HostHealth, settings: HealthSettings) -> list[HealthIssue]
             )
         )
     for disk in health.disks:
-        for issue, figures in _disk_issues(host, disk, settings):
-            if (issue.kind, figures) in seen:
-                # (two paths on one filesystem say the same numbers: the same disk, said once)
+        for kind, said in _breaches_of(disk, settings):
+            if (disk.mount or disk.path) in seen.setdefault(kind, set()):
                 continue
-            seen.add((issue.kind, figures))
-            if issue.kind not in order:
-                order.append(issue.kind)
-            known = by_kind.get(issue.kind)
-            by_kind[issue.kind] = (
-                issue
-                if known is None
-                else known.model_copy(update={"detail": f"{known.detail}; {issue.detail}"})
-            )
-    found.extend(by_kind[kind] for kind in order if kind in by_kind)
+            seen[kind].add(disk.mount or disk.path)
+            breached.setdefault(kind, []).append((disk, said))
+            if kind not in order:
+                order.append(kind)
+    found.extend(_one_of(host, kind, breached[kind]) for kind in order if kind in breached)
     return found
 
 
-def _disk_issues(
-    host: str, disk: DiskHealth, settings: HealthSettings
-) -> list[tuple[HealthIssue, tuple[int | None, ...]]]:
-    """What `disk`'s numbers make (27.13), each with the figures that make it: two paths on one
-    filesystem give the same ones, and are one issue."""
-    found: list[tuple[HealthIssue, tuple[int | None, ...]]] = []
+def _breaches_of(disk: DiskHealth, settings: HealthSettings) -> list[tuple[HealthKind, str]]:
+    """The thresholds `disk`'s numbers break (27.13), each with what it says about them."""
+    broke: list[tuple[HealthKind, str]] = []
     if disk.free is not None and disk.free < settings.disk_min:
-        found.append(
+        broke.append(
             (
-                _issue(
-                    host,
-                    HealthKind.DISK,
-                    f"{disk.path} has {size_words(disk.free)} free, under the "
-                    f"{size_words(settings.disk_min)} it needs",
-                    "udl removes a task's worktree after its merge: look for the ones of tasks "
-                    "that are done, and for anything else that grew.",
-                ),
-                (disk.free, disk.size),
+                HealthKind.DISK,
+                f"{disk.path} has {size_words(disk.free)} free, under the "
+                f"{size_words(settings.disk_min)} it needs",
             )
         )
     if (
@@ -319,19 +320,12 @@ def _disk_issues(
         and disk.unallocated is not None
         and disk.unallocated < settings.btrfs_unallocated_min
     ):
-        found.append(
+        broke.append(
             (
-                _issue(
-                    host,
-                    HealthKind.BTRFS_UNALLOCATED,
-                    f"{disk.path} can allocate {size_words(disk.unallocated)}, under the "
-                    f"{size_words(settings.btrfs_unallocated_min)} it needs: writes fail with "
-                    "No space left on device, whatever df says",
-                    "A data balance frees it: "
-                    f"`sudo btrfs balance start -dusage=10 {disk.path}`, which needs root, so a "
-                    "person runs it.",
-                ),
-                (disk.unallocated,),
+                HealthKind.BTRFS_UNALLOCATED,
+                f"{disk.path} can allocate {size_words(disk.unallocated)}, under the "
+                f"{size_words(settings.btrfs_unallocated_min)} it needs: writes fail with No "
+                "space left on device, whatever df says",
             )
         )
     if (
@@ -340,21 +334,39 @@ def _disk_issues(
         and disk.metadata_total
         and disk.metadata_used > disk.metadata_total * settings.btrfs_metadata_max_ratio
     ):
-        found.append(
+        broke.append(
             (
-                _issue(
-                    host,
-                    HealthKind.BTRFS_METADATA,
-                    f"{disk.path} has {size_words(disk.metadata_used)} of "
-                    f"{size_words(disk.metadata_total)} metadata used",
-                    "A metadata balance frees it: "
-                    f"`sudo btrfs balance start -musage=10 {disk.path}`, which needs root, so a "
-                    "person runs it.",
-                ),
-                (disk.metadata_used, disk.metadata_total),
+                HealthKind.BTRFS_METADATA,
+                f"{disk.path} has {size_words(disk.metadata_used)} of "
+                f"{size_words(disk.metadata_total)} metadata used",
             )
         )
-    return found
+    return broke
+
+
+def _one_of(host: str, kind: HealthKind, disks: Sequence[tuple[DiskHealth, str]]) -> HealthIssue:
+    """The one issue `disks` make of `kind` (27.13): what each said, and a hint that names every
+    mount a person would run it on."""
+    said = "; ".join(one for _, one in disks)
+    if kind is HealthKind.DISK:
+        return _issue(
+            host,
+            kind,
+            said,
+            "udl removes a task's worktree after its merge: look for the ones of tasks that are "
+            "done, and for anything else that grew.",
+        )
+    what = "-dusage=10" if kind is HealthKind.BTRFS_UNALLOCATED else "-musage=10"
+    return _issue(host, kind, said, _balance([disk for disk, _ in disks], what))
+
+
+def _balance(disks: Sequence[DiskHealth], what: str) -> str:
+    """What a person runs to free btrfs space on `disks`: one balance per mount, since a mount
+    is what it is run on."""
+    mounts = ", then ".join(
+        f"`sudo btrfs balance start {what} {disk.mount or disk.path}`" for disk in disks
+    )
+    return f"A balance frees it: {mounts}, which needs root, so a person runs it."
 
 
 class Health:

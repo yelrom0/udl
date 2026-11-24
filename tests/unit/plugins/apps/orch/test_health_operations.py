@@ -246,15 +246,17 @@ async def test_a_breach_that_comes_back_is_said_again(service: UDLService) -> No
     assert [one.host for one in said] == ["jeff-wiggle", "jeff-wiggle"]
 
 
-async def test_two_paths_on_one_disk_are_one_issue_and_two_disks_are_said_in_one(
+async def test_two_paths_on_one_mount_are_one_issue_and_two_mounts_are_said_in_one(
     service: UDLService,
 ) -> None:
-    """(A `HostIssue` is one per host and kind: two paths on one filesystem give the same numbers,
-    and are one disk; two disks are one line that names each, so the balance names a real one.)"""
+    """(A `HostIssue` is one per host and kind: two paths on one mount are one disk, said once —
+    and a balance runs once there — while two mounts are one issue that names each, so the
+    balance names the one it needs.)"""
     one = _health(
         disks=[
             {
                 "path": "/a",
+                "mount": "/",
                 "filesystem": "btrfs",
                 "free": 500 * 1024**3,
                 "size": 1000 * 1024**3,
@@ -262,6 +264,7 @@ async def test_two_paths_on_one_disk_are_one_issue_and_two_disks_are_said_in_one
             },
             {
                 "path": "/b",
+                "mount": "/",
                 "filesystem": "btrfs",
                 "free": 500 * 1024**3,
                 "size": 1000 * 1024**3,
@@ -272,22 +275,26 @@ async def test_two_paths_on_one_disk_are_one_issue_and_two_disks_are_said_in_one
     (issue,) = issues_of(one, HealthSettings())
     assert issue.kind is HealthKind.BTRFS_UNALLOCATED
     assert "/b" not in issue.detail
+    assert issue.hint.count("sudo btrfs balance") == 1
 
+    # (the 23 Nov case: two filesystems that are both fully allocated say the same number)
     two = _health(
         disks=[
             {
                 "path": "/a",
+                "mount": "/",
                 "filesystem": "btrfs",
                 "free": 500 * 1024**3,
                 "size": 1000 * 1024**3,
-                "unallocated": 1,
+                "unallocated": 0,
             },
             {
                 "path": "/b",
+                "mount": "/data",
                 "filesystem": "btrfs",
                 "free": 500 * 1024**3,
                 "size": 1000 * 1024**3,
-                "unallocated": 2,
+                "unallocated": 0,
             },
         ]
     )
@@ -295,6 +302,8 @@ async def test_two_paths_on_one_disk_are_one_issue_and_two_disks_are_said_in_one
     assert issue.kind is HealthKind.BTRFS_UNALLOCATED
     assert "/a" in issue.detail
     assert "/b" in issue.detail
+    assert "-dusage=10 /`" in issue.hint
+    assert "-dusage=10 /data`" in issue.hint
 
 
 async def test_a_host_with_no_checkout_raises_its_action_in_the_only_project(

@@ -3002,6 +3002,18 @@
             "description": "On btrfs: metadata allocated, in bytes.",
             "title": "Metadata Used"
           },
+          "mount": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The mount point it is on, when the host says: two paths on one mount are one disk, and a\nbtrfs balance is run on the mount.",
+            "title": "Mount"
+          },
           "path": {
             "description": "The path udl uses there (a host's work directory, or a repo's checkout).",
             "title": "Path",

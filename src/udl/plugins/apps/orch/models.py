@@ -1504,6 +1504,9 @@ class DiskHealth(_Model):
     """The path udl uses there (a host's work directory, or a repo's checkout)."""
     filesystem: str | None = None
     """Its filesystem (`ext4`, `btrfs`, `apfs`), when the host says."""
+    mount: str | None = None
+    """The mount point it is on, when the host says: two paths on one mount are one disk, and a
+    btrfs balance is run on the mount."""
     free: int | None = None
     """Bytes free to udl (`df`)."""
     size: int | None = None
