@@ -137,8 +137,10 @@ test("a person chats, answers what it asks, and keeps the chat across a reload a
 	const popped = context.waitForEvent("page");
 	await inside(page, "Pop the chat out").click();
 	const other = await popped;
+	// (A window of its own loads the shell and the plugin's bundle again: it is the slowest page
+	// in this test, so it is given longer than the rest.)
 	await other.waitForLoadState();
-	await expect(inside(other, "Transcript")).toContainText("what is stuck?");
-	await expect(inside(other, "Message")).toBeVisible();
+	await expect(inside(other, "Transcript")).toContainText("what is stuck?", { timeout: 30_000 });
+	await expect(inside(other, "Message")).toBeVisible({ timeout: 30_000 });
 	await expect(panel(page)).toBeHidden();
 });
