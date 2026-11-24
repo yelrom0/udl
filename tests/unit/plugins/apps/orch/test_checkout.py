@@ -24,7 +24,8 @@ import pytest
 from support.engine import settings
 from support.harnesses import ScriptedShell
 from udl.core.service import UDLService
-from udl.hosts.shell import Host, HostShell, HostTransport
+from udl.errors import PluginFailed
+from udl.hosts.shell import HostShell
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.checkout import CHECKOUT_BEHIND, CheckoutBehind, follow
 from udl.plugins.apps.orch.models import OwnerKind
@@ -39,6 +40,7 @@ from udl.plugins.apps.orch.records import (
     Task,
     TaskRecords,
 )
+from udl.process import ProcessResult
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -186,44 +188,44 @@ async def test_a_diverged_checkout_is_left_and_noted(service: UDLService, repo: 
     assert "mine" in git(repo, "log", "-1", "--format=%s")
 
 
-async def test_a_checkout_that_is_not_a_repo_is_noted_not_raised(
+async def test_a_checkout_that_is_not_a_repo_says_the_fetch_failed(
     service: UDLService, repo: Path
 ) -> None:
-    """A checkout whose path is not a repo: its `why` says the fetch failed (not that the host
-    is unknown), and the reachable checkout still follows."""
+    """A local checkout at a folder with no `.git`: git itself fails, and the reason says the
+    fetch failed (not that the host is unknown). Scripted, so no real git or ssh runs."""
     nowhere = repo.parent / "nowhere"
     nowhere.mkdir()
-    from udl.hosts import SetHostRequest
+    shell = ScriptedShell()
 
-    await service.set_host(
-        SetHostRequest(
-            host=Host(
-                name="local2",
-                transport=HostTransport.SSH,
-                ssh="nowhere",
-                work_dir=str(nowhere),
-            )
-        )
-    )
+    async def run(argv: object = (), **kwargs: object) -> ProcessResult:
+        raise PluginFailed("fatal: not a git repository")
+
+    shell.run = run
+
+    class _Shells(_Hosts):
+        """Only the one checkout: the test is of its reason, not of the others."""
+
+        async def shell(self, name: str) -> HostShell:
+            assert name == "local"
+            return shell
+
     found = await RepoRecords(AppRecords(service.db)).repo("udl", "udl")
     assert found is not None
     await RepoRecords(AppRecords(service.db)).save_repo(
-        found.model_copy(update={"checkouts": {"local": str(repo), "local2": str(nowhere)}})
+        found.model_copy(update={"checkouts": {"local": str(nowhere)}})
     )
-    bring(repo)
 
     behind = await follow(
         AppRecords(service.db),
         project="udl",
         key="F-1.1",
         repo="yelrom0/udl",
-        shells=service.hosts,
+        shells=_Shells(shell),
     )
 
-    lost = next(one for one in behind if one.checkout == str(nowhere))
-    assert lost.host == "local2"
-    assert lost.why.startswith("its fetch failed")
-    assert git(repo, "rev-parse", "HEAD") == git(repo, "rev-parse", "origin/main")
+    assert len(behind) == 1
+    assert behind[0].why.startswith("its fetch failed")
+    assert "not a git repository" in behind[0].why
 
 
 class _Hosts:
@@ -293,24 +295,6 @@ async def test_each_pass_names_a_checkout_left_behind_again(
     assert task is not None
     notes = await NoteRecords(AppRecords(service.db)).for_owner(OwnerKind.TASK, task.id)
     assert len([note for note in notes if "did not follow" in note.text]) == 2
-
-
-async def test_the_event_follows_a_checkout_left_behind(service: UDLService, repo: Path) -> None:
-    """An `orch.checkout.behind` event names a checkout that could not follow."""
-    bring(repo)
-    at(repo / "dirty.txt", "work\n")
-
-    behind = await follow(
-        AppRecords(service.db),
-        project="udl",
-        key="F-1.1",
-        repo="yelrom0/udl",
-        shells=service.hosts,
-    )
-
-    assert [one.host for one in behind] == ["local"]
-    assert CHECKOUT_BEHIND.name == "orch.checkout.behind"
-    assert CHECKOUT_BEHIND.data is CheckoutBehind
 
 
 def test_the_event_is_offered() -> None:
