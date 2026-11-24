@@ -3,7 +3,7 @@ import { expect, type Page, test } from "@playwright/test";
 /**
  * 29.7's proof, in a real browser: a question asked while the page is open arrives on the Q&A
  * page, answering it there leaves, and the decision is on the task — read through
- * `orch_get_task`'s notes, since the task's own page is 29.5's and is not built yet.
+ * `orch_get_task`'s notes, and then seen on 29.5's task page, which draws them.
  */
 
 /** A write from outside the page: the session's cookie, the CSRF header and the page's origin. */
@@ -75,6 +75,30 @@ test("the Q&A page shows a question asked while it is open, answers it, and the 
 	};
 	expect(found.question?.state).toBe("answered");
 	expect(found.question?.answer).toBe("A decision note");
+
+	// (A question that offers no options is answered in the box: the same `orch_answer`, with
+	// what was typed.)
+	const openResponse = await page.request.post("/plugins/orch/ask", {
+		headers: { "X-UDL-CSRF": "1", Origin: new URL(page.url()).origin },
+		data: {
+			task: "29.7",
+			title: "Which colour should a blocking card be?",
+			text: "Say what it should be.",
+			options: [],
+			blocking: false,
+		},
+	});
+	const open = (await openResponse.json()) as { key?: string };
+	expect([200, 201]).toContain(openResponse.status());
+	await page.goto("/ui/p/orch/questions");
+	const free = page.getByRole("region", { name: "Being asked" });
+	const freeRow = free
+		.locator("li")
+		.filter({ has: page.getByRole("link", { name: open.key ?? "" }) });
+	await freeRow.getByRole("link", { name: "Which colour should a blocking card be?" }).click();
+	await page.getByLabel("Answer").fill("the blue one");
+	await page.getByRole("button", { name: "Answer" }).click();
+	await expect(page.getByText("the blue one")).toBeVisible();
 
 	// (And the decision is on the task, where an agent that comes back to it will read it: both
 	// as udl answers it and on 29.5's task page, which draws the task's notes.)

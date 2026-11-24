@@ -14,11 +14,13 @@ const WHAT = "What agents are asking, and what was decided: the blocking ones fi
  *
  * It reads the same questions as the inbox (29.3), through a store that watches 28.5's
  * `orch.question.asked` and `orch.question.answered`, so a question asked while the page is open
-    arrives without a reload. Answering is 29.3's handler, shared: `orch_answer`, then a read.
+ * arrives without a reload. Answering is 29.3's handler, shared: `orch_answer`, then a read.
  */
 export const QaPage: Component<RouteProps> = ({ ctx }) => {
-	const { questions, error, refresh } = useQuestions(ctx);
-	const { answering, refused, answer } = useAnswer(ctx, projectOf(questions), refresh);
+	const { project, questions, error, refresh } = useQuestions(ctx);
+	// (29.3's handler, shared with the inbox: one place decides what answering does. The project
+	// is the store's own, from the answer — never the first question's.)
+	const { answering, refused, answer } = useAnswer(ctx, project, refresh);
 
 	if (error !== null) {
 		return (
@@ -26,6 +28,14 @@ export const QaPage: Component<RouteProps> = ({ ctx }) => {
 				<p className="text-error" role="alert">
 					{error}
 				</p>
+			</Page>
+		);
+	}
+	if (questions === null) {
+		return (
+			<Page title="Q&A">
+				<Said>{WHAT}</Said>
+				<Said>Reading what is being asked…</Said>
 			</Page>
 		);
 	}
@@ -52,8 +62,3 @@ export const QaPage: Component<RouteProps> = ({ ctx }) => {
 		</Page>
 	);
 };
-
-/** The project every question is in (they are all in the one project udl has, while it has one). */
-function projectOf(questions: readonly { project: string }[]): string {
-	return questions[0]?.project ?? "";
-}

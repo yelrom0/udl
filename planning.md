@@ -155,7 +155,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [~] 29.4 Board: features and tasks, agents' queues, the suggested list, drag to assign
   - [~] 29.5 Feature and task pages (specs, notes, links)
   - [ ] 29.6 Agents: the hierarchy, assigning models to models, an agent's page with its live session
-  - [ ] 29.7 Q&A
+  - [~] 29.7 Q&A
   - [ ] 29.8 Ready to merge and To action
   - [ ] 29.9 Connections and import (generated pages, guided by the manifest)
   - [ ] 29.10 End to end (Playwright) on fakes, both themes

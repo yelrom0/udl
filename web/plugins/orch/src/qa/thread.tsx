@@ -15,16 +15,39 @@ export interface ThreadProps {
 	refresh(): Promise<void>;
 }
 
-/** A question's own thread (29.7): what it asks, what it is about, what has been said, and what
- * it was answered with — with the answer, the follow-ups and the outcome in one place. */
+/**
+ * A question's own thread (29.7): what it asks, what it is about, what has been said, and what
+ * it was answered with — with the answer, the follow-ups and the outcome in one place.
+ */
 export function QuestionThreadView({ ctx, found, project, refresh }: ThreadProps) {
 	const { question, thread, tasks, features } = found;
 	const { answering, refused, answer } = useAnswer(ctx, project, refresh);
-	const [saying, setSaying] = useState<string | null>(null);
-	const [said, setSaid] = useState<string | null>(null);
-	const [closing, setClosing] = useState<string | null>(null);
+	const [typing, setTyping] = useState<string | null>(null);
+	const [typed, setTyped] = useState<string | null>(null);
+	const [replyFailed, setReplyFailed] = useState<string | null>(null);
+	const [outcome, setOutcome] = useState<string | null>(null);
+	const [closeFailed, setCloseFailed] = useState<string | null>(null);
+	const [closing, setClosing] = useState(false);
 
 	const open = question.state === "open";
+	const busy = answering.has(question.key);
+
+	/** A write of the page's: whether it worked, and a refusal is said, not swallowed. */
+	const write = async (
+		name: string,
+		body: Record<string, string>,
+		failed: (said: string) => void,
+	): Promise<boolean> => {
+		try {
+			await ctx.call(name, { project, key: question.key, ...body });
+			failed("");
+			await refresh();
+			return true;
+		} catch (failure) {
+			failed(messageOf(failure));
+			return false;
+		}
+	};
 
 	return (
 		<article className="flex flex-col gap-4">
@@ -45,7 +68,7 @@ export function QuestionThreadView({ ctx, found, project, refresh }: ThreadProps
 
 			{question.text !== "" && <Markdown text={question.text} />}
 
-			<About tasks={tasks} features={features} task={question.task} />
+			<About features={features} task={question.task} tasks={tasks} />
 
 			{question.answer !== null && question.answer !== "" && (
 				<section
@@ -67,23 +90,59 @@ export function QuestionThreadView({ ctx, found, project, refresh }: ThreadProps
 				<p className="text-sm opacity-80">{`Closed: ${question.outcome}`}</p>
 			)}
 
-			{question.options.length > 0 && open && (
-				<div className="flex flex-wrap items-center gap-2">
-					{question.options.map((option) => (
-						<button
-							className="btn btn-sm btn-outline"
-							disabled={answering.has(question.key)}
-							key={option}
-							onClick={() => {
-								answer(question, option);
+			{open && (
+				<>
+					{question.options.length > 0 ? (
+						<div className="flex flex-wrap items-center gap-2">
+							{question.options.map((option) => (
+								<button
+									className="btn btn-sm btn-outline"
+									disabled={busy}
+									key={option}
+									onClick={() => {
+										answer(question, option);
+									}}
+									type="button"
+								>
+									{option}
+								</button>
+							))}
+							{busy && <span className="text-xs opacity-70">Answering…</span>}
+						</div>
+					) : (
+						// (A question that offers no options is answered in its own words: the same
+						// `orch_answer`, with what was typed.)
+						<form
+							className="flex flex-col gap-2"
+							onSubmit={(event) => {
+								event.preventDefault();
+								const said = typed ?? "";
+								if (said.trim() === "" || busy) {
+									return;
+								}
+								answer(question, said.trim());
 							}}
-							type="button"
 						>
-							{option}
-						</button>
-					))}
-					{answering.has(question.key) && <span className="text-xs opacity-70">Answering…</span>}
-				</div>
+							<label className="text-sm">
+								Answer
+								<textarea
+									className="textarea textarea-bordered w-full"
+									rows={3}
+									value={typed ?? ""}
+									onChange={(event) => {
+										setTyped(event.target.value);
+									}}
+								/>
+							</label>
+							<div className="flex items-center gap-2">
+								<button className="btn btn-sm" disabled={busy} type="submit">
+									Answer
+								</button>
+								{busy && <span className="text-xs opacity-70">Answering…</span>}
+							</div>
+						</form>
+					)}
+				</>
 			)}
 
 			{refused !== null && (
@@ -113,23 +172,14 @@ export function QuestionThreadView({ ctx, found, project, refresh }: ThreadProps
 						className="flex flex-col gap-2"
 						onSubmit={(event) => {
 							event.preventDefault();
-							const text = saying ?? "";
-							if (text.trim() === "") {
+							const said = typing ?? "";
+							if (said.trim() === "") {
 								return;
 							}
-							setSaying(null);
 							void (async () => {
-								setSaid(null);
-								try {
-									await ctx.call("orch_reply", {
-										project,
-										key: question.key,
-										text,
-									});
-								} catch (failure) {
-									setSaid(messageOf(failure));
+								if (await write("orch_reply", { text: said }, setReplyFailed)) {
+									setTyping(null);
 								}
-								await refresh();
 							})();
 						}}
 					>
@@ -138,15 +188,15 @@ export function QuestionThreadView({ ctx, found, project, refresh }: ThreadProps
 							<textarea
 								className="textarea textarea-bordered w-full"
 								rows={3}
-								value={saying ?? ""}
+								value={typing ?? ""}
 								onChange={(event) => {
-									setSaying(event.target.value);
+									setTyping(event.target.value);
 								}}
 							/>
 						</label>
-						{said !== null && (
+						{replyFailed !== null && replyFailed !== "" && (
 							<p className="text-sm text-error" role="alert">
-								{said}
+								{replyFailed}
 							</p>
 						)}
 						<button className="btn btn-sm" type="submit">
@@ -158,23 +208,16 @@ export function QuestionThreadView({ ctx, found, project, refresh }: ThreadProps
 						className="flex flex-col gap-2"
 						onSubmit={(event) => {
 							event.preventDefault();
-							const outcome = closing ?? "";
-							if (outcome.trim() === "") {
+							const said = outcome ?? "";
+							if (said.trim() === "") {
 								return;
 							}
-							setClosing(null);
+							setClosing(true);
 							void (async () => {
-								setSaid(null);
-								try {
-									await ctx.call("orch_close_question", {
-										project,
-										key: question.key,
-										outcome,
-									});
-								} catch (failure) {
-									setSaid(messageOf(failure));
+								if (await write("orch_close_question", { outcome: said }, setCloseFailed)) {
+									setOutcome(null);
 								}
-								await refresh();
+								setClosing(false);
 							})();
 						}}
 					>
@@ -182,14 +225,19 @@ export function QuestionThreadView({ ctx, found, project, refresh }: ThreadProps
 							Close with outcome
 							<input
 								className="input input-bordered w-full"
-								value={closing ?? ""}
+								value={outcome ?? ""}
 								onChange={(event) => {
-									setClosing(event.target.value);
+									setOutcome(event.target.value);
 								}}
 							/>
 						</label>
-						<button className="btn btn-sm btn-outline" type="submit">
-							Close
+						{closeFailed !== null && closeFailed !== "" && (
+							<p className="text-sm text-error" role="alert">
+								{closeFailed}
+							</p>
+						)}
+						<button className="btn btn-sm btn-outline" disabled={closing} type="submit">
+							{closing ? "Closing…" : "Close"}
 						</button>
 					</form>
 				</>
@@ -204,7 +252,8 @@ export function QuestionThreadView({ ctx, found, project, refresh }: ThreadProps
 	);
 }
 
-/** What a question is about: the tasks and features it names, and the task it was asked in. */
+/** What a question is about: the task it was asked in, the other tasks it names, and the
+ * features it is about — each a link to its own page. */
 function About({
 	tasks,
 	features,
@@ -214,19 +263,17 @@ function About({
 	readonly features: readonly string[];
 	readonly task: string | null;
 }) {
-	const anything = task !== null || tasks.length > 0 || features.length > 0;
-	if (!anything) {
+	if (task === null && tasks.length === 0 && features.length === 0) {
 		return null;
 	}
+	const others = tasks.filter((one) => one !== task);
 	return (
 		<div className="flex flex-wrap items-center gap-2 text-xs opacity-70">
 			<span>about</span>
-			{tasks.includes(task ?? "") && task !== null && <KeyLink kind="tasks" keyName={task} />}
-			{tasks
-				.filter((one) => one !== task)
-				.map((one) => (
-					<KeyLink key={`t-${one}`} kind="tasks" keyName={one} />
-				))}
+			{task !== null && <KeyLink kind="tasks" keyName={task} />}
+			{others.map((one) => (
+				<KeyLink key={`t-${one}`} kind="tasks" keyName={one} />
+			))}
 			{features.map((one) => (
 				<KeyLink key={`f-${one}`} kind="features" keyName={one} />
 			))}

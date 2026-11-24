@@ -184,6 +184,53 @@ describe("a question's thread (29.7)", () => {
 		expect(screen.queryByLabelText("Close with outcome")).toBeNull();
 	});
 
+	it("answers a question that offers no options, in its own words", async () => {
+		const fake = await draw((name) => {
+			if (name === "orch_reply" || name === "orch_close_question") {
+				throw new Error(`unexpected call ${name}`);
+			}
+			return found({
+				question: {
+					key: "Q-8",
+					project: "udl",
+					title: "Which colour should the badge be?",
+					text: "Say what it should be.",
+					asked_by: "deepseek-b",
+					to: "humans",
+					state: "open",
+					task: null,
+					options: [],
+					blocking: false,
+					answer: null,
+					answered_by: null,
+					outcome: null,
+					escalated: false,
+				},
+			});
+		});
+
+		// (No options: the answer box is what there is, and it calls the same `orch_answer`.)
+		expect(screen.queryByRole("button", { name: "Keep it" })).toBeNull();
+		await act(async () => {
+			fireEvent.change(screen.getByLabelText("Answer"), { target: { value: "the blue one" } });
+		});
+		await act(async () => {
+			fireEvent.click(screen.getByRole("button", { name: "Answer" }));
+			await settle();
+		});
+
+		const called = fake.calls.find((one) => one.name === "orch_answer");
+		expect(called?.request).toEqual({ project: "udl", key: "Q-8", answer: "the blue one" });
+	});
+
+	it("links the task it was asked in, even when it is the only one named", async () => {
+		// (The task a question is asked in is what it is about: its link never depends on the
+		// record also listing it among the tasks it names.)
+		await draw(() => found({ tasks: [] }));
+
+		expect(screen.getAllByRole("link", { name: "27.3" }).length).toBeGreaterThan(0);
+	});
+
 	it("says a follow-up it could not add, and keeps the box", async () => {
 		const fake = await draw((name) => {
 			if (name === "orch_reply") {
@@ -204,6 +251,10 @@ describe("a question's thread (29.7)", () => {
 
 		expect(fake.calls.some((one) => one.name === "orch_reply")).toBe(true);
 		expect(screen.getByRole("alert").textContent).toContain("not yours to reply on");
+		// (What was typed is still there: a refusal is not a reason to make the reader say it again.)
+		expect((screen.getByLabelText("Follow up") as HTMLTextAreaElement).value).toBe(
+			"A worktree is cheap.",
+		);
 	});
 
 	it("says a close it could not make", async () => {
@@ -226,6 +277,9 @@ describe("a question's thread (29.7)", () => {
 
 		expect(fake.calls.some((one) => one.name === "orch_close_question")).toBe(true);
 		expect(screen.getByRole("alert").textContent).toContain("already answered");
+		expect((screen.getByLabelText("Close with outcome") as HTMLInputElement).value).toBe(
+			"Patched it by hand",
+		);
 	});
 
 	it("takes an empty follow-up or an empty outcome as nothing to say", async () => {

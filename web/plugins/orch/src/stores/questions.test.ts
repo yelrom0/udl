@@ -1,7 +1,9 @@
 import type { JsonObject } from "@udl/ui-sdk";
 import { describe, expect, it } from "vitest";
+import type { StoreApi } from "zustand/vanilla";
+import type { Question } from "../model";
 import { fakeCtx, settle } from "../testing/fake";
-import { questionsStore } from "./questions";
+import { type QuestionsState, questionsStore } from "./questions";
 
 /** A question as `orch_list_questions` sends one (28.1). */
 function question(key: string, over: JsonObject = {}): JsonObject {
@@ -31,11 +33,12 @@ describe("the questions store (29.7)", () => {
 		const { store, stop } = questionsStore(fake.ctx);
 		await settle();
 
-		expect(store.getState().questions.map((one) => one.key)).toEqual(["Q-1"]);
+		expect(questions(store).map((one) => one.key)).toEqual(["Q-1"]);
 		expect(store.getState().error).toBeNull();
 		// (Every state: the answered ones are the point of the page, and the operation's default
 		// is the open ones alone.)
 		expect(fake.calls[0]?.request).toEqual({ state: null });
+		expect(store.getState().project).toBe("udl");
 		stop();
 	});
 
@@ -48,17 +51,17 @@ describe("the questions store (29.7)", () => {
 
 		const { store, stop } = questionsStore(fake.ctx);
 		await settle();
-		expect(store.getState().questions.map((one) => one.key)).toEqual(["Q-1"]);
+		expect(questions(store).map((one) => one.key)).toEqual(["Q-1"]);
 
 		await actEmit(fake, "orch.question.asked");
-		expect(store.getState().questions.map((one) => one.key)).toEqual(["Q-2"]);
+		expect(questions(store).map((one) => one.key)).toEqual(["Q-2"]);
 
 		await actEmit(fake, "orch.question.answered");
-		expect(store.getState().questions.map((one) => one.key)).toEqual(["Q-3"]);
+		expect(questions(store).map((one) => one.key)).toEqual(["Q-3"]);
 
 		// (And nothing else moves it: another event is not a question's.)
 		await actEmit(fake, "orch.task.ready");
-		expect(store.getState().questions.map((one) => one.key)).toEqual(["Q-3"]);
+		expect(questions(store).map((one) => one.key)).toEqual(["Q-3"]);
 		stop();
 	});
 
@@ -70,7 +73,8 @@ describe("the questions store (29.7)", () => {
 		const { store, stop } = questionsStore(fake.ctx);
 		await settle();
 
-		expect(store.getState().questions).toEqual([]);
+		expect(store.getState().questions).toBeNull();
+		expect(store.getState().error).toContain("the database is closed");
 		expect(store.getState().error).toContain("the database is closed");
 		stop();
 	});
@@ -80,13 +84,22 @@ describe("the questions store (29.7)", () => {
 
 		const { store, stop } = questionsStore(fake.ctx);
 		await settle();
-		stop();
 		const before = store.getState().questions;
+		const reads = fake.calls.filter((one) => one.name === "orch_list_questions").length;
+		stop();
 
 		await actEmit(fake, "orch.question.asked");
 		expect(store.getState().questions).toBe(before);
+		expect(fake.calls.filter((one) => one.name === "orch_list_questions")).toHaveLength(reads);
 	});
 });
+
+/** The questions as the store holds them (null until the first read lands). */
+function questions(store: StoreApi<QuestionsState>): readonly Question[] {
+	const found = store.getState().questions;
+	expect(found, "the questions have been read").not.toBeNull();
+	return found ?? [];
+}
 
 /** Publish an event and let the read it starts settle. */
 async function actEmit(fake: ReturnType<typeof fakeCtx>, type: string): Promise<void> {

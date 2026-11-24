@@ -14,7 +14,7 @@ const NO_INBOX: InboxState = { inbox: null, error: null };
 export type Refreshable<T> = T & { refresh(): Promise<void> };
 
 /** The questions before they are read. */
-const NO_QUESTIONS: QuestionsState = { questions: [], error: null };
+const NO_QUESTIONS: QuestionsState = { project: "", questions: null, error: null };
 
 /** The board before it is read. */
 const NO_BOARD: BoardState = {

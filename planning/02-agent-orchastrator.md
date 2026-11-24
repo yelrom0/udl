@@ -1750,6 +1750,10 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 
 **Phase 29 is done when:** with `udl serve` on real connections, the user assigns a task by dragging it, answers the agent's question, and merges its PR, all from `/ui/p/orch/`.
 
+**Decisions made while building 29:**
+
+- **The nav's question count is not built (29.7, 24 Nov 2026).** The Q&A page says the counts (open · blocking · answered), but the nav link does not carry a number. The SDK's `NavItem` is `title`/`route`/`icon`, and the shell builds the nav from manifests at load time (`web/packages/shell/src/plugins/list.ts`), so a live count needs a shell-side change — a follow-up, not part of 29.7.
+
 ---
 
 ## Phase 30: Moving in, docs and the live check

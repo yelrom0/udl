@@ -50,7 +50,7 @@ export function Answered({ questions }: { readonly questions: readonly Question[
 /**
  * The open questions (29.7): the blocking ones pinned first, then the rest in one card, then
  * what has been answered. The question components are 29.3's (the inbox draws the same ones), so
-    a question is drawn once in the plugin.
+ * a question is drawn once in the plugin.
  */
 export function OpenQuestions({
 	questions,

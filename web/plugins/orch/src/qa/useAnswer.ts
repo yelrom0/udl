@@ -12,14 +12,14 @@ export interface Answering {
 	/** A refusal, as udl said it (the question stays, and so does the reason). */
 	readonly refused: string | null;
 	/** Answer `question` with `choice`: `orch_answer`, then a read so the page shows it at once
-    (rather than when `orch.question.answered` arrives). */
+	 * (rather than when `orch.question.answered` arrives). */
 	answer(question: Question, choice: string): void;
 }
 
 /**
  * Answering a question (29.3's handler, shared with 29.7): each question's own answer, so one
-    landing does not take the "Answering…" off another that is still out — two different
-    questions may be answered at once.
+ * landing does not take the "Answering…" off another that is still out — two different questions
+ * may be answered at once.
  */
 export function useAnswer(
 	ctx: UIContext,

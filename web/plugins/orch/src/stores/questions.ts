@@ -1,22 +1,16 @@
 import type { UIContext } from "@udl/ui-sdk";
-import { createStore, type StoreApi } from "zustand/vanilla";
-import { asArray, asObject, messageOf } from "../json";
+import { createStore } from "zustand/vanilla";
+import { asArray, asObject, asText, messageOf } from "../json";
 import { type Question, questionOf } from "../model";
+import type { Loaded } from "./inbox";
 import { coalesced, on } from "./once";
 
-/** What the questions store holds: every question, or what reading them failed with. */
+/** What the questions store holds: the project they are in, every question (null until the first
+ * read lands), and what reading them failed with. */
 export interface QuestionsState {
-	readonly questions: readonly Question[];
+	readonly project: string;
+	readonly questions: readonly Question[] | null;
 	readonly error: string | null;
-}
-
-/** A store, and what stops it listening. */
-export interface Loaded<T> {
-	readonly store: StoreApi<T>;
-	/** Read again now: what a page asks after it changed something, to see it without waiting for
-	 * the event that says so. */
-	refresh(): Promise<void>;
-	stop(): void;
 }
 
 /**
@@ -32,7 +26,7 @@ const WATCHED: readonly string[] = ["orch.question.asked", "orch.question.answer
  * arrives: one read at a time, so a burst is one read rather than one per event.
  */
 export function questionsStore(ctx: UIContext): Loaded<QuestionsState> {
-	const store = createStore<QuestionsState>(() => ({ questions: [], error: null }));
+	const store = createStore<QuestionsState>(() => ({ project: "", questions: null, error: null }));
 	let stopped = false;
 	const reads = coalesced(
 		async () => {
@@ -40,8 +34,10 @@ export function questionsStore(ctx: UIContext): Loaded<QuestionsState> {
 			// point of it. The operation's default is the open ones alone.)
 			const value = await ctx.call("orch_list_questions", { state: null });
 			if (!stopped) {
+				const body = asObject(value);
 				store.setState({
-					questions: asArray(asObject(value).questions).map(questionOf),
+					project: asText(body.project),
+					questions: asArray(body.questions).map(questionOf),
 					error: null,
 				});
 			}
