@@ -134,6 +134,12 @@ function Layout() {
 								}}
 							>
 								{page.title}
+								{page.count !== undefined && page.count > 0 && (
+									<span className="badge badge-sm" data-testid="nav-count">
+										{page.count}
+										<span className="sr-only"> waiting</span>
+									</span>
+								)}
 							</Link>
 						</li>
 					))}

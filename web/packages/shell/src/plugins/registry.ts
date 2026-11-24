@@ -76,6 +76,11 @@ export interface NavEntry {
 	readonly title: string;
 	/** Where it goes (a plugin's is `/p/<name>/<route>`). */
 	readonly to: string;
+	/** The plugin's own route, as its manifest declares it (the shell's own pages have none):
+	 * what a live count is matched by (29.7). */
+	readonly route?: string;
+	/** The live count its plugin set, if it set one (drawn as a badge). */
+	readonly count?: number;
 	/** The icon's name (the shell maps it to lucide's). */
 	readonly icon?: string;
 }

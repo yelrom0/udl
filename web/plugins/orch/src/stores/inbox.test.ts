@@ -49,6 +49,8 @@ describe("the inbox store", () => {
 		expect(fake.calls.map((one) => one.name)).toEqual(["orch_inbox"]);
 		expect(store.getState().inbox?.project).toBe("udl");
 		expect(store.getState().error).toBeNull();
+		// (And the drawer's question count (29.7's follow-up): what is still open.)
+		expect(fake.navCounts).toContainEqual({ route: "questions", count: INBOX.questions.length });
 		stop();
 	});
 

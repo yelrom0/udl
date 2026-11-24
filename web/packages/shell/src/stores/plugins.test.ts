@@ -1,7 +1,32 @@
 import { renderHook } from "@testing-library/react";
 import { act } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
-import { addError, plugins, setPlugins, usePluginErrors, usePlugins } from "./plugins";
+import { ownNav } from "../plugins/own";
+import { Registry } from "../plugins/registry";
+import {
+	addError,
+	navWithCounts,
+	plugins,
+	setNavCount,
+	setPlugins,
+	usePluginErrors,
+	usePlugins,
+} from "./plugins";
+
+/** The identity a plugin's nav entry carries. */
+const identity = { name: "orch", version: "0.1.0", baseUrl: "/ui/plugins/orch/" };
+
+/** The registry with one plugin's page in it. */
+function withPage(): Registry {
+	const registry = new Registry();
+	registry.nav.push({
+		plugin: identity,
+		title: "Q&A",
+		to: "/p/orch/questions",
+		route: "questions",
+	});
+	return registry;
+}
 
 const GMAIL = {
 	name: "gmail",
@@ -15,7 +40,7 @@ const GMAIL = {
 };
 
 beforeEach(() => {
-	plugins.setState({ manifests: [], problems: [], errors: [] });
+	plugins.setState({ manifests: [], problems: [], errors: [], nav: ownNav(), counts: {} });
 });
 
 describe("the plugins store", () => {
@@ -76,5 +101,42 @@ describe("the plugins store", () => {
 	it("starts with the shell's own pages in the navigation", () => {
 		expect(plugins.getState().nav.map((item) => item.to)).toContain("/sites");
 		expect(plugins.getState().nav[0]).toMatchObject({ title: "Dashboard", to: "/" });
+	});
+});
+
+describe("the nav's live counts (29.7)", () => {
+	it("puts a count on the entry the plugin named", () => {
+		const nav = withPage().nav;
+
+		const found = navWithCounts(nav, { "orch:questions": 3 });
+
+		expect(found[0]?.count).toBe(3);
+	});
+
+	it("leaves the entries nobody counted alone", () => {
+		const nav = withPage().nav;
+
+		const found = navWithCounts([...ownNav(), ...nav], { "orch:questions": 3 });
+
+		// (The shell's own pages are never counted, and a plugin's page with no count is not.)
+		expect(found.filter((entry) => entry.count !== undefined).map((entry) => entry.count)).toEqual([
+			3,
+		]);
+	});
+
+	it("takes a count off again", () => {
+		setNavCount("orch", "questions", 3);
+		expect(plugins.getState().counts["orch:questions"]).toBe(3);
+
+		setNavCount("orch", "questions", null);
+
+		expect(plugins.getState().counts["orch:questions"]).toBeUndefined();
+	});
+
+	it("keeps one plugin's count from another's", () => {
+		setNavCount("orch", "questions", 1);
+		setNavCount("other", "questions", 9);
+
+		expect(plugins.getState().counts).toEqual({ "orch:questions": 1, "other:questions": 9 });
 	});
 });

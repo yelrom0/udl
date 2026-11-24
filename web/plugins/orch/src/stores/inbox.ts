@@ -52,7 +52,14 @@ export function inboxStore(ctx: UIContext): Loaded<InboxState> {
 		async () => {
 			const value = await ctx.call("orch_inbox", {});
 			if (!stopped) {
-				store.setState({ inbox: inboxOf(value), error: null });
+				const inbox = inboxOf(value);
+				store.setState({ inbox, error: null });
+				// (The drawer's question count (29.7's follow-up): what is still being asked. The
+				// inbox is the page a person reads first, and it re-reads on 28.5's question
+				// events, so the badge moves as questions are asked and answered — and there is
+				// none while nothing waits.)
+				const open = inbox.questions.filter((one) => one.state === "open").length;
+				ctx.setNavCount("questions", open === 0 ? null : open);
 			}
 		},
 		(error) => {

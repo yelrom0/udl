@@ -5,6 +5,7 @@
  */
 
 import type { Contributions, Generated } from "@udl/ui-sdk";
+import { useMemo } from "react";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import { ownNav } from "../plugins/own";
@@ -49,7 +50,10 @@ export const plugins = createStore<{
 	errors: readonly PluginError[];
 	/** The navigation's pages: the shell's own, then each plugin's (18.9's registry fills it). */
 	nav: readonly NavEntry[];
-}>(() => ({ manifests: [], problems: [], errors: [], nav: ownNav() }));
+	/** A live count per nav entry, by `<plugin>:<route>`: what a plugin said with
+	 * `ctx.setNavCount` (29.7's question count). */
+	counts: Readonly<Record<string, number>>;
+}>(() => ({ manifests: [], problems: [], errors: [], nav: ownNav(), counts: {} }));
 
 /** Replace what the page knows about the plugins (after `GET /ui/plugins.json`). */
 export function setPlugins(
@@ -75,8 +79,42 @@ export const usePlugins = () => useStore(plugins, (state) => state.manifests);
 /** The bundles udl refused, as a hook. */
 export const useProblems = () => useStore(plugins, (state) => state.problems);
 
-/** The navigation's pages, as a hook. */
-export const useNav = () => useStore(plugins, (state) => state.nav);
+/** The key a plugin's nav entry is counted under: its own route, as its manifest declares it. */
+function countKey(entry: NavEntry): string | null {
+	return entry.route === undefined ? null : `${entry.plugin.name}:${entry.route}`;
+}
+
+/** The pages with the live counts their plugins set, if they set one (the shell's own pages are
+ * never counted: nothing sets a count for them). */
+export function navWithCounts(
+	nav: readonly NavEntry[],
+	counts: Readonly<Record<string, number>>,
+): readonly NavEntry[] {
+	return nav.map((entry) => {
+		const key = countKey(entry);
+		const count = key === null ? undefined : counts[key];
+		return count === undefined ? entry : { ...entry, count };
+	});
+}
+
+/** The navigation's pages, as a hook: each with the live count its plugin set, if it set one. */
+export function useNav(): readonly NavEntry[] {
+	const nav = useStore(plugins, (state) => state.nav);
+	const counts = useStore(plugins, (state) => state.counts);
+	return useMemo(() => navWithCounts(nav, counts), [nav, counts]);
+}
+
+/** Say a plugin's live count on one of its nav entries (`null` takes it off). */
+export function setNavCount(plugin: string, route: string, count: number | null): void {
+	plugins.setState(({ counts }) => {
+		const key = `${plugin}:${route}`;
+		if (count === null) {
+			const { [key]: gone, ...rest } = counts;
+			return { counts: rest };
+		}
+		return { counts: { ...counts, [key]: count } };
+	});
+}
 
 /** The bundles that would not load, as a hook. */
 export const usePluginErrors = () => useStore(plugins, (state) => state.errors);

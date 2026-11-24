@@ -89,6 +89,9 @@ export type UIContext = {
 	/** The shell's stores, by name (`runs`, `downloads`, `plugins`, `toasts`). */
 	stores: Readonly<Record<string, Store>>;
 	navigate(to: string): void;
+	/** Put a live count on one of this plugin's own nav entries, or take it off with `null`
+	 * (29.7's question count). `route` is the route as its manifest declares it. */
+	setNavCount(route: string, count: number | null): void;
 	toast(message: string, kind?: "info" | "success" | "warning" | "error"): void;
 	confirm(question: string, options?: { ok?: string; cancel?: string }): Promise<boolean>;
 	/** The plugin this contribution belongs to. */
