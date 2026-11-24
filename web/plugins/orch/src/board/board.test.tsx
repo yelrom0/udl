@@ -411,6 +411,21 @@ describe("the board's other paths (29.4)", () => {
 		expect(fake.navigations).toEqual(["/ui/p/orch/board?text=pages"]);
 	});
 
+	it("writes what the box holds when it is left, even if the board read again first", async () => {
+		// (29.4-flake: a keystroke and a blur can be split by a re-render — a store's read landing
+		// between them — and the box must still be what the browser holds when it is left.)
+		const fake = drawn({ state: "", text: "inbox" });
+		await read();
+
+		const box = screen.getByRole("searchbox", { name: /text/i }) as HTMLInputElement;
+		box.value = "pages";
+		fake.emit("orch.task.changed", { key: "29.2" });
+		await settle();
+		fireEvent.blur(box);
+
+		expect(fake.navigations).toEqual(["/ui/p/orch/board?text=pages"]);
+	});
+
 	it("writes the state filter into the URL too", async () => {
 		const fake = drawn({ state: "", text: "" });
 		await read();
