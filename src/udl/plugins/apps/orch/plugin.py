@@ -2796,20 +2796,8 @@ class Orch(AppPlugin[OrchSettings]):
         # (28.8, after the merge's own event and result, and still before `Merged` comes back:
         # several hosts times a few git commands each is a slow tail on `orch_merge`, but it is
         # behind the merge, so a checkout that hangs delays the answer, never the merge itself.
-        # It catches its own failures and notes them: a checkout must not fail a merge.)
-        try:
-            await self._follow_checkout(service, project=project, key=task.key, repo=repo)
-        except (PluginError, UDLError, TimeoutError) as error:
-            found = await stored.TaskRecords(self.records).task(project, task.key)
-            if found is not None:
-                await stored.NoteRecords(self.records).add(
-                    stored.Note(
-                        owner_kind=OwnerKind.TASK,
-                        owner=found.id,
-                        note_kind=NoteKind.SYSTEM,
-                        text=f"The checkouts could not be followed after this merge: {error}",
-                    )
-                )
+        # One guard, over the follow and its emit: a checkout must not fail a merge.)
+        await self._follow_checkout(service, project=project, key=task.key, repo=repo)
         return Merged(task=task.key, url=link, sha=pull.head_sha, state=moved.state)
 
     async def _follow_checkout(
@@ -2831,8 +2819,20 @@ class Orch(AppPlugin[OrchSettings]):
                 shells=service.hosts,
                 clock=self.clock,
             )
+            if not behind:
+                return
+            events = AppEvents(service.bus, self.name, self.event_types())
+            merged = await stored.TaskRecords(self.records).task(project, key)
+            stamp = merged.updated_at.isoformat() if merged is not None else ""
+            for one in behind:
+                await events.emit(
+                    CHECKOUT_BEHIND.name,
+                    one,
+                    dedupe_key=f"{one.project}:{one.host}:{one.checkout}:{stamp}:{one.why}",
+                )
         except (PluginError, UDLError, TimeoutError) as error:
-            behind = []
+            # (One guard over the follow and its emit: a checkout must not fail a merge, and a
+            # failure here is named on the task rather than raised.)
             task = await stored.TaskRecords(self.records).task(project, key)
             if task is not None:
                 await stored.NoteRecords(self.records).add(
@@ -2843,17 +2843,6 @@ class Orch(AppPlugin[OrchSettings]):
                         text=f"The checkouts could not be followed after this merge: {error}",
                     )
                 )
-        if not behind:
-            return
-        events = AppEvents(service.bus, self.name, self.event_types())
-        merged = await stored.TaskRecords(self.records).task(project, key)
-        stamp = merged.updated_at.isoformat() if merged is not None else ""
-        for one in behind:
-            await events.emit(
-                CHECKOUT_BEHIND.name,
-                one,
-                dedupe_key=f"{one.project}:{one.host}:{one.checkout}:{stamp}:{one.why}",
-            )
 
     async def _removed(self, service: UDLService, task: stored.Task, *, by: str) -> stored.Task:
         """`task` with its worktree and its branch taken away, now that it is merged (27.5's

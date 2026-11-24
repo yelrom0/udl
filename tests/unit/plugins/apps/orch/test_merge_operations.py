@@ -982,20 +982,26 @@ async def test_a_three_pr_stack_leaves_the_checkout_at_the_last_merge(
 async def test_a_follow_that_raises_still_leaves_the_merge(
     working: UDLService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`_follow_checkout`'s `except` branch: a checkout step that raises (a bug, not a checkout
-    that cannot follow) is a `system` note, and the merge still stands."""
+    """`_follow_checkout`'s own `except` branch: a checkout step that raises (a bug, not a
+    checkout that cannot follow) is a `system` note, no event, and the merge still stands."""
     from udl.plugins.apps.orch import plugin as plugin_module
 
-    async def boom(self: Orch, service: UDLService, **kwargs: object) -> None:
+    async def boom(*args: object, **kwargs: object) -> object:
         raise PluginFailed("the hosts are gone")
 
-    monkeypatch.setattr(plugin_module.Orch, "_follow_checkout", boom)
+    monkeypatch.setattr(plugin_module, "follow_checkouts", boom)
 
     found = await merged(working, key="F-1.1", confirm="yelrom0/udl#1")
 
     assert found.state == DONE
     assert any("could not be followed" in one for one in await notes_of(working))
     assert [one.data["task"] for one in await merged_events(working)] == ["F-1.1"]
+    assert (
+        await working.db.list_records(
+            EventRecord, RecordQuery(where={"type": "orch.checkout.behind"})
+        )
+        == []
+    )
 
 
 async def test_a_worktree_that_cannot_be_taken_away_keeps_the_merge(
