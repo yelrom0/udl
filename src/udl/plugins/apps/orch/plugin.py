@@ -2795,8 +2795,21 @@ class Orch(AppPlugin[OrchSettings]):
             )
         # (28.8, after the merge's own event and result, and still before `Merged` comes back:
         # several hosts times a few git commands each is a slow tail on `orch_merge`, but it is
-        # behind the merge, so a checkout that hangs delays the answer, never the merge itself.)
-        await self._follow_checkout(service, project=project, key=task.key, repo=repo)
+        # behind the merge, so a checkout that hangs delays the answer, never the merge itself.
+        # It catches its own failures and notes them: a checkout must not fail a merge.)
+        try:
+            await self._follow_checkout(service, project=project, key=task.key, repo=repo)
+        except (PluginError, UDLError, TimeoutError) as error:
+            found = await stored.TaskRecords(self.records).task(project, task.key)
+            if found is not None:
+                await stored.NoteRecords(self.records).add(
+                    stored.Note(
+                        owner_kind=OwnerKind.TASK,
+                        owner=found.id,
+                        note_kind=NoteKind.SYSTEM,
+                        text=f"The checkouts could not be followed after this merge: {error}",
+                    )
+                )
         return Merged(task=task.key, url=link, sha=pull.head_sha, state=moved.state)
 
     async def _follow_checkout(
