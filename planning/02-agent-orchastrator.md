@@ -1717,6 +1717,7 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 - Build: `web/e2e/orch.spec.ts`: 28.6's story through the web UI only, with `tests/support/e2e.py` extended to start `FakeGitHub`, a `FakeRunner` plugin and a temp git repo.
 - Done when: `make e2e` passes in both themes.
 - **Q-8 (user, 21 Nov 2026):** it covers 29.11 and 29.12 too: the Progress page for a fixture history, and a chat that allows a permission and assigns a task.
+- **Moved here from 29.6 (deepseek-a, 24 Nov 2026, PR #103):** an agent's page watched for a fake session stream, because a session is started by the dispatcher and the e2e config leaves automations off. This card's `FakeRunner` is the harness that starts one: the e2e opens an agent's page, sends it a task through `orch_assign`, and sees the transcript grow line by line in both themes.
 
 **29.11 Progress** · needs 29.2, 27.10 · size L (O-D14)
 - Build: the route `progress`, with a "Progress" nav item after Board.
