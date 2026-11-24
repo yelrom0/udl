@@ -942,14 +942,22 @@ async def test_two_merges_name_the_checkout_twice(working: UDLService, a_repo: P
 async def test_a_three_pr_stack_leaves_the_checkout_at_the_last_merge(
     working: UDLService, a_repo: Path
 ) -> None:
-    """The card's Done when, as far as 28.8 owns it: three tasks, each merged in turn (a stack
-    goes bottom first), and after the last the host's checkout is at `origin/main`'s head."""
+    """The card's Done when: three tasks stacked one on the next, each merged in turn (a stack
+    goes bottom first), and after each merge the checkout is at that merge's commit — so the
+    test would fail if only the first one followed."""
     checkout = a_repo / "checkout"
     tasks = TaskRecords(AppRecords(working.db))
     for number in (2, 3):
         key = f"F-1.{number}"
         await tasks.save_task(
-            Task(project="udl", feature="F-1", key=key, title=f"Task {number}", repo="udl")
+            Task(
+                project="udl",
+                feature="F-1",
+                key=key,
+                title=f"Task {number}",
+                repo="udl",
+                needs=[f"F-1.{number - 1}"],
+            )
         )
         found = await tasks.task("udl", key)
         assert found is not None
@@ -968,15 +976,16 @@ async def test_a_three_pr_stack_leaves_the_checkout_at_the_last_merge(
         await tasks.move(ready, READY, by=Principal(kind="system", role="ready"))
     seed = a_repo / "seed"
     git("clone", str(a_repo / "origin.git"), str(seed), cwd=a_repo)
-    (seed / "new.txt").write_text("new\n")
-    git("add", "new.txt", cwd=seed)
-    git("commit", "-m", "new", cwd=seed)
-    git("push", "origin", "main", cwd=seed)
 
     for number in (1, 2, 3):
+        # (A commit per merge: each merge has something of its own to fast-forward to.)
+        (seed / f"new-{number}.txt").write_text(f"{number}\n")
+        git("add", f"new-{number}.txt", cwd=seed)
+        git("commit", "-m", f"new {number}", cwd=seed)
+        git("push", "origin", "main", cwd=seed)
+        last = git("rev-parse", "HEAD", cwd=seed)
         await merged(working, key=f"F-1.{number}", confirm=f"yelrom0/udl#{number}")
-
-    assert git("rev-parse", "HEAD", cwd=checkout) == git("rev-parse", "origin/main", cwd=checkout)
+        assert git("rev-parse", "HEAD", cwd=checkout) == last
 
 
 async def test_a_follow_that_raises_still_leaves_the_merge(
