@@ -26,6 +26,7 @@ from udl.plugins.ai.base import (
     ChatMessage,
     ChatRequest,
     ChatRole,
+    KeyStatus,
     ModelInfo,
     ModelPricing,
     ProviderHealth,
@@ -181,7 +182,36 @@ async def test_its_health_says_its_labels_usage_and_limit() -> None:
         ok=True,
         detail="deepseek-b: used 1.25 of 10 USD (8.75 left)",
         credit_left=Decimal("8.75"),
+        key=KeyStatus(
+            label="deepseek-b",
+            spent=Decimal("1.25"),
+            limit=Decimal("10"),
+            left=Decimal("8.75"),
+            is_free_tier=False,
+        ),
     )
+
+
+async def test_its_health_carries_the_key_as_a_key_status() -> None:
+    """(27.14: the key's own fields, beside credit_left: what it has spent, its limit, what
+    is left, what it spent today, and whether the account is on the free tier.)"""
+    health = await provider(FakeOpenRouter()).health()
+
+    assert health.key is not None
+    assert health.key.label == "deepseek-b"
+    assert health.key.spent == Decimal("1.25")
+    assert health.key.limit == Decimal("10")
+    assert health.key.left == Decimal("8.75")
+    assert health.key.is_free_tier is False
+
+
+async def test_a_free_tier_key_says_so() -> None:
+    fake = FakeOpenRouter(used=None, limit=None)
+
+    health = await provider(fake).health()
+
+    assert health.key is not None
+    assert health.key.is_free_tier is True
 
 
 async def test_a_key_that_resets_says_what_is_left_now() -> None:

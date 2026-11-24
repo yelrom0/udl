@@ -232,6 +232,24 @@ class ModelInfo(_Model):
     """What it costs, when the provider charges for it (OpenRouter does)."""
 
 
+class KeyStatus(_Model):
+    """A provider key as its provider describes it (25.3, 27.14): what it is called, what it
+    has spent, its limit and what is left. Never the key itself."""
+
+    label: str = ""
+    """The provider's own label for the key."""
+    spent: Decimal | None = None
+    """What it has spent, in USD, when the provider says."""
+    limit: Decimal | None = None
+    """What it may spend, in USD (None: no limit)."""
+    left: Decimal | None = None
+    """What is left, in USD (the provider's `limit_remaining`, else `limit - spent`)."""
+    spent_today: Decimal | None = None
+    """What it has spent today, in USD, when the provider says (`usage_daily`)."""
+    is_free_tier: bool | None = None
+    """Whether the account is on the free tier (OpenRouter's `is_free_tier`)."""
+
+
 class ProviderHealth(_Model):
     """Whether a provider answers, as checking it found."""
 
@@ -243,6 +261,9 @@ class ProviderHealth(_Model):
     """What it says of itself (its version, its key's label and limit), shown as it is."""
     credit_left: Decimal | None = None
     """What is left to spend, in USD, when the provider says (OpenRouter's key does)."""
+    key: KeyStatus | None = None
+    """Its key's own fields (label, spent, limit, left, spent_today, free_tier), when it says
+    them; None for a provider that has no key to describe (27.14)."""
 
 
 class PullProgress(_Model):

@@ -33,10 +33,17 @@ from udl.core.operations import CLISpec, Operation, OperationHints
 from udl.db.manager import DBManager
 from udl.db.models import JsonObject
 from udl.db.records import Record, RecordQuery
-from udl.errors import ConfigError, DoesNotExist, NotAllowed, PluginError, UDLError
+from udl.errors import (
+    ConfigError,
+    DoesNotExist,
+    NotAllowed,
+    PluginError,
+    SecretStoreError,
+    UDLError,
+)
 from udl.hosts import LOCAL, Host
 from udl.interfaces import security
-from udl.plugins.ai.base import AIProviderConnection
+from udl.plugins.ai.base import AIProviderConnection, ProviderHealth
 from udl.plugins.apps.base import (
     AppContext,
     AppEvent,
@@ -265,6 +272,13 @@ from udl.plugins.apps.orch.tokens import (
 from udl.plugins.apps.orch.tokens import (
     issue_token as issue,
 )
+from udl.plugins.apps.orch.usage import (
+    UsageList,
+    UsageRequest,
+    provider_of,
+    usage_of_all,
+)
+from udl.plugins.registry import AI
 from udl.plugins.runners.manage import (
     Harnesses,
     InstallRunnerRequest,
@@ -861,6 +875,12 @@ class Orch(AppPlugin[OrchSettings]):
                 cli=CLISpec(path=_AGENTS, options={"project": "--project"}),
             ),
             cls.operation(
+                "usage",
+                title="What each agent has left",
+                hints=OperationHints(read_only=True),
+                cli=CLISpec(path=(*_AGENTS, "usage"), options={"agent": "--agent"}),
+            ),
+            cls.operation(
                 "get_agent",
                 title="An agent, its queue and its session",
                 hints=OperationHints(read_only=True),
@@ -1087,13 +1107,78 @@ class Orch(AppPlugin[OrchSettings]):
         found = await stored.AgentRecords(self.records).agents()
         if request.project is not None:
             found = [one for one in found if not one.projects or request.project in one.projects]
+        # (No usage line here: a list is polled, and the line costs a transcript read. `orch_usage`
+        # is the operation for the whole list, and `orch_get_agent` fills the one agent's line.)
         return Agents(
             items=[await self._agent_info(one) for one in sorted(found, key=lambda one: one.name)]
         )
 
     async def get_agent(self, request: GetAgentRequest) -> AgentInfo:
-        """One agent, with its queue, its current session and the agents that report to it."""
-        return await self._agent_info(await self._require_agent(request.name))
+        """One agent, with its queue, its current session and the agents that report to it.
+
+        Its usage line is the one `orch_usage` gives (27.14): the same per-provider health and
+        the same account-wide `left`, so the two never disagree."""
+        found = await self._require_agent(request.name)
+        service = self.service
+        lines: dict[str, str] = {}
+        if service is not None:
+            shapes = [
+                as_shape(Agent, one) for one in await stored.AgentRecords(self.records).agents()
+            ]
+            health_for = {
+                prefix: await self._provider_health(service, model=prefix)
+                for prefix in {provider_of(one.model) for one in shapes}
+            }
+            rows = await usage_of_all(self.records, shapes, health_for=health_for, clock=self.clock)
+            lines = {
+                one.agent: ("" if one.line == "nothing to measure" else one.line) for one in rows
+            }
+        return await self._agent_info(found, line=lines.get(found.name, ""))
+
+    async def usage(self, request: UsageRequest, *, service: UDLService) -> UsageList:
+        """What each agent has left (27.14): a paid key's money, or a free model's requests
+        today with its reset. Never the key itself."""
+        agents = await stored.AgentRecords(self.records).agents()
+        if request.agent is not None:
+            agents = [one for one in agents if one.name == request.agent]
+        if not agents:
+            return UsageList()
+        shapes = [as_shape(Agent, one) for one in sorted(agents, key=lambda one: one.name)]
+        health_for = {
+            prefix: await self._provider_health(service, model=prefix)
+            for prefix in {provider_of(one.model) for one in shapes}
+        }
+        return UsageList(
+            items=await usage_of_all(self.records, shapes, health_for=health_for, clock=self.clock)
+        )
+
+    async def _provider_health(
+        self, service: UDLService, *, model: str = ""
+    ) -> ProviderHealth | None:
+        """The enabled AI provider connection's `health()` (27.14): what the account's key has.
+        The connection is the one whose name is `model`'s provider prefix (`openrouter-ds-a/…`
+        → `openrouter-ds-a`), else the one whose plugin is, else the first enabled one (a model
+        with no prefix, or one that names no connection, runs the runner's default). None when
+        udl has no provider set up, or it does not answer — a provider that is down is not this
+        call's failure (its own health operation says so)."""
+        connections = await service.db.list_records(AIProviderConnection, RecordQuery())
+        connection = pick_connection(connections, provider_of(model))
+        if connection is None:
+            return None
+        try:
+            provider = service.registry.get(AI, connection.plugin)
+            made = provider(
+                await load_secrets(
+                    provider.options_model.model_validate(connection.options),
+                    service.secrets,
+                ),
+                http=service.http,
+                clock=self.clock,
+            )
+            return await made.health()
+        except (UDLError, PluginError, ValidationError, SecretStoreError) as error:
+            log.warning("orch could not read the provider %s: %s", connection.plugin, error)
+            return None
 
     async def set_agent(self, request: SetAgentRequest) -> Agent:
         """Create or edit an agent, by its name: what is not given is kept, a new one needs a
@@ -1257,9 +1342,19 @@ class Orch(AppPlugin[OrchSettings]):
             )
         return found
 
-    async def _agent_info(self, agent: stored.Agent) -> AgentInfo:
+    async def _agent_info(
+        self,
+        agent: stored.Agent,
+        *,
+        line: str = "",
+    ) -> AgentInfo:
         """`agent`, as the operations answer with it: its status, its session, its queue (in
-        every project: a task's key is only unique within one) and its reports."""
+        every project: a task's key is only unique within one) and its reports.
+
+        `line` is the agent's usage as one line (27.14), read by the caller: a list of agents
+        is polled and leaves it empty (the line costs a transcript read — `orch_usage` is the
+        operation for the whole list), while `orch_get_agent` passes the line `orch_usage`
+        gives, so the two never disagree."""
         sessions = stored.SessionRecords(self.records)
         session = await sessions.current(agent.name)
         assigned = await self.records.list(stored.Task, RecordQuery(where={"assignee": agent.name}))
@@ -1278,6 +1373,7 @@ class Orch(AppPlugin[OrchSettings]):
             reports=[
                 one.name for one in await stored.AgentRecords(self.records).reports(agent.name)
             ],
+            usage=line,
         )
 
     async def _session_info(
@@ -3564,6 +3660,21 @@ def _action(found: stored.HumanAction) -> Action:
         state=found.state,
         result=found.result,
     )
+
+
+def pick_connection(
+    connections: list[AIProviderConnection], wanted: str
+) -> AIProviderConnection | None:
+    """The connection `wanted` names (27.14): by name first (one key per agent, as the ERNIE
+    setup has), then by plugin, then the first enabled one when nothing matches."""
+    enabled = [one for one in connections if one.enabled]
+    for one in enabled:
+        if wanted and one.name == wanted:
+            return one
+    for one in enabled:
+        if wanted and one.plugin == wanted:
+            return one
+    return enabled[0] if enabled else None
 
 
 def _entry(task: stored.Task) -> QueueEntry:

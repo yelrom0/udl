@@ -890,6 +890,12 @@
           "status": {
             "$ref": "#/components/schemas/AgentStatus",
             "description": "What it is doing now (derived: never stored)."
+          },
+          "usage": {
+            "default": "",
+            "description": "What it has left, in one line (27.14: `$3.36 of $8 left`, or `412 of 1,000 requests\nleft, resets 11:00`); empty for an agent with nothing to measure.",
+            "title": "Usage",
+            "type": "string"
           }
         },
         "required": [
@@ -1083,6 +1089,108 @@
         ],
         "title": "AgentStatus",
         "type": "string"
+      },
+      "AgentUsage": {
+        "additionalProperties": false,
+        "description": "What one agent has left (27.14).",
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The agent it is of."
+          },
+          "cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What its turns cost today, when its harness says.",
+            "title": "Cost"
+          },
+          "free": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FreeUsage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its free allowance's usage, for a free model (None: a paid one)."
+          },
+          "limited_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When its harness's quota is back, when its session says (27.7).",
+            "title": "Limited Until"
+          },
+          "model": {
+            "default": "",
+            "description": "The model it runs (empty: its runner's default).",
+            "title": "Model",
+            "type": "string"
+          },
+          "paid": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KeyUsage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its provider key's usage, for a paid model (None: a free one, or no provider)."
+          },
+          "requests_today": {
+            "default": 0,
+            "description": "The requests its sessions sent today, whatever it runs.",
+            "title": "Requests Today",
+            "type": "integer"
+          },
+          "runner": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The runner it runs."
+          },
+          "state": {
+            "default": "ok",
+            "description": "Where its usage is: ok, low, or out.",
+            "enum": [
+              "ok",
+              "low",
+              "out"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "tokens_in": {
+            "default": 0,
+            "description": "The tokens it was given today.",
+            "title": "Tokens In",
+            "type": "integer"
+          },
+          "tokens_out": {
+            "default": 0,
+            "description": "The tokens it wrote today.",
+            "title": "Tokens Out",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "agent",
+          "runner"
+        ],
+        "title": "AgentUsage",
+        "type": "object"
       },
       "Agents": {
         "additionalProperties": false,
@@ -5171,6 +5279,41 @@
         "title": "ForecastInfo",
         "type": "object"
       },
+      "FreeUsage": {
+        "additionalProperties": false,
+        "description": "A free model's allowance: what the account has, what this agent has sent, and when the\nallowance resets.",
+        "properties": {
+          "allowance": {
+            "default": 50,
+            "description": "What the account may send a day: 50, or 1,000 once it has bought credits.",
+            "title": "Allowance",
+            "type": "integer"
+          },
+          "left": {
+            "default": 0,
+            "description": "What is left of the allowance today (the account's, shared by every agent on it).",
+            "title": "Left",
+            "type": "integer"
+          },
+          "requests_today": {
+            "default": 0,
+            "description": "The requests this agent's sessions sent today (each `Usage` event is one).",
+            "title": "Requests Today",
+            "type": "integer"
+          },
+          "resets_at": {
+            "description": "When the allowance resets (00:00 UTC).",
+            "format": "date-time",
+            "title": "Resets At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "resets_at"
+        ],
+        "title": "FreeUsage",
+        "type": "object"
+      },
       "GateRun": {
         "additionalProperties": false,
         "description": "The gate a push ran: how it ended, and the end of what it printed.",
@@ -6799,6 +6942,80 @@
         "type": "object"
       },
       "JsonValue": {},
+      "KeyUsage": {
+        "additionalProperties": false,
+        "description": "What a provider key has left, as its provider says (25.3's `ProviderHealth.key`).",
+        "properties": {
+          "free_tier": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whether the account is on the free tier (OpenRouter's `is_free_tier`); None when the\nprovider does not say.",
+            "title": "Free Tier"
+          },
+          "label": {
+            "default": "",
+            "description": "The provider's own label for the key (never the key itself).",
+            "title": "Label",
+            "type": "string"
+          },
+          "left": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What is left, in USD (the provider's `limit_remaining`, or `limit - spent`).",
+            "title": "Left"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What it may spend, in USD (None: no limit).",
+            "title": "Limit"
+          },
+          "spent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What it has spent, in USD, when the provider says.",
+            "title": "Spent"
+          },
+          "spent_today": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What it has spent today, when the provider says (`usage_daily`).",
+            "title": "Spent Today"
+          }
+        },
+        "title": "KeyUsage",
+        "type": "object"
+      },
       "Length": {
         "$ref": "#/components/schemas/Duration-Input"
       },
@@ -15462,6 +15679,41 @@
         "title": "Usage",
         "type": "object"
       },
+      "UsageList": {
+        "additionalProperties": false,
+        "description": "What each agent has left (27.14), as `orch_usage` answers.",
+        "properties": {
+          "items": {
+            "description": "One row per agent, by name.",
+            "items": {
+              "$ref": "#/components/schemas/AgentUsage"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "UsageList",
+        "type": "object"
+      },
+      "UsageRequest": {
+        "additionalProperties": false,
+        "description": "Who to report usage for (27.14): one agent, or every agent.",
+        "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only this agent (None: every agent udl has)."
+          }
+        },
+        "title": "UsageRequest",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -22960,7 +23212,7 @@
     },
     "/plugins/orch/get_agent": {
       "post": {
-        "description": "One agent, with its queue, its current session and the agents that report to it.",
+        "description": "One agent, with its queue, its current session and the agents that report to it.\n\nIts usage line is the one `orch_usage` gives (27.14): the same per-provider health and\nthe same account-wide `left`, so the two never disagree.",
         "operationId": "orch_get_agent",
         "requestBody": {
           "content": {
@@ -28074,6 +28326,103 @@
           }
         ],
         "summary": "Take a task out of its agent's queue: it is open again, and nobody's.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/usage": {
+      "post": {
+        "description": "What each agent has left (27.14): a paid key's money, or a free model's requests\ntoday with its reset. Never the key itself.",
+        "operationId": "orch_usage",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UsageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "What each agent has left (27.14): a paid key's money, or a free model's requests",
         "tags": [
           "orch"
         ]
