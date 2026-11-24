@@ -1,5 +1,7 @@
 import type { RouteProps } from "@udl/ui-sdk";
 import type { Component } from "@udl/ui-sdk/react";
+import { AgentPage } from "./agents/agent";
+import { AgentsPage } from "./agents/agents";
 import { BoardPage } from "./board/board";
 import { FeaturePage } from "./feature/feature";
 import { InboxPage } from "./inbox/inbox";
@@ -12,20 +14,6 @@ import { TaskPage } from "./task/task";
 const ProgressPage: Component<RouteProps> = () => (
 	<Page title="Progress">
 		<Said>Points merged, the burn-up, and when each feature is likely done.</Said>
-	</Page>
-);
-
-/** The agents (29.6's page): the hierarchy, each one's status and queue. */
-const AgentsPage: Component<RouteProps> = () => (
-	<Page title="Agents">
-		<Said>Who reports to whom, what each is doing, and the tasks queued for it.</Said>
-	</Page>
-);
-
-/** An agent (29.6's page): its queue, its session and its transcript. */
-const AgentPage: Component<RouteProps> = ({ params }) => (
-	<Page title={params.name ?? "Agent"}>
-		<Said>Its status, its queue, its session and what its runner is saying.</Said>
 	</Page>
 );
 

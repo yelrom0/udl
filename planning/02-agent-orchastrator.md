@@ -1409,53 +1409,6 @@ Run by Claude on 22 Nov 2026 against `main` at `2858d25` (throwaway data dirs, a
   - on the fakes, all of the above;
   - on jeff-wiggle, an opt-in `-m host` test whose gate allocates past a 256 MiB cap is stopped and reported `memory` while the machine stays up. Claude runs it.
 
-- **Built (`deepseek-b`, 24 Nov 2026, PR #101):** the caps, the lanes and the cleanup, as the card
-  asked, with a few places the build reads the card differently.
-  - **What is there:** `HostShell.run()`/`stream()` take `limits: ResourceLimits | None` and a
-    `unit`; a host is probed once (`systemd-run --user --scope -q true`) and the answer is kept by
-    host name in the map a service's shells share (a shell is made per call, so keeping it in one
-    shell would probe before every gate and every turn), and a capped run is a transient user
-    scope with `MemoryMax` and `MemorySwapMax=0`. Where
-    the probe fails, the run goes ahead and its result says `limits="unenforced"`. `ProcessResult`
-    carries that state, and a capped run ending on 137/-9 that udl did not stop raises `OverCap`
-    ("passed its memory cap of 4 GiB"). A stop ends the push, so the reason is in the `NotAllowed`
-    (`hint` starts `stopped: memory` or `stopped: timeout`, then the gate's or the cleanup's own
-    output) rather than in a `PushResult` that is never returned, so no field records a stop that
-    nothing ever reads. A timeout `systemctl --user stop <unit>.scope`s the unit, so the suite's
-    children go with it — only where the host really enforces caps (elsewhere there is no unit,
-    and a stop that fails is said in the hint instead of raised), and `gate_cleanup` runs after
-    either stop — not after a gate that failed on its own. `OrchSettings` has `gates_per_host`, `gate_memory` (4 GiB) and
-    `session_memory` (20 GiB), all `ByteSize | None` but `gates_per_host`; `Repo` has
-    `gate_cleanup`. The lane takes one of `gates_per_host` leases (`orch-gate:<host>:<n>`), and a
-    push with slots waits as before.
-  - **Sessions:** `SessionSpec` gains `memory` and `unit` (a prefix), and `command`, `codex` and
-    `claude-code` run each turn as `udl-session-<agent>-<8 hex>`; an `OverCap` from the shell is
-    that turn's `RunnerFailed` and `TurnEnded(ERROR)`; a person's chat (27.11) is capped the same
-    way, as `udl-session-chat-<8 hex>`. Over SSH a capped run is wrapped so the shell waits for it
-    and exits with its code (`reports_status`): a shell that `exec`s a program the kernel kills
-    dies with it, and sshd then reports a signal, so the client exits 255 — "the host was not
-    reached" — instead of 137. `opencode` runs its turns in its service, so
-    its health reports the unit's `MemoryMax` and `OOMPolicy`, and `problems` says when there is no
-    cap or when `OOMPolicy` is not `continue`.
-  - **Read differently:** the unit name is `unit_name(prefix, *parts)` — udl's own prefix stays
-    literal, and only the parts go through `escaped()` (`systemd-escape`'s rules, except that a `-`
-    inside a part is kept: it is how the parts are joined, and `deepseek-b` reads better than
-    `deepseek\x2db`; a leading `-` is still escaped). So the gate's unit is
-    `udl-gate-udl-27.3a-0a1b2c3d` and a turn's `udl-session-deepseek-b-0a1b2c3d`.
-  - **Left out:** `udl hosts check` does not yet say whether a host has user systemd (the gate's
-    own result says `unenforced` instead, which is where a person meets it). The card's second
-    done-when is the `-m host` test on jeff-wiggle, which Claude runs: `pyproject.toml` gains a
-    `host` marker, deselected by default like `network`, and `tests/integration/test_host_caps.py`
-    is `pytest -m host`.
-  - **Tests:** `tests/unit/test_host_limits.py` (names, the argv, the words of a cap, the probe
-    asked once per host), `tests/integration/test_host_caps.py` (a real scope's own `memory.max`,
-    no systemd, a 1 GiB allocation stopped at 256 MiB, and a capped run through the remote line
-    arriving as 137 and never 255), `tests/integration/plugins/apps/orch/test_gate_caps.py`
-    (memory, timeout, a timeout where the host caps nothing, a stop that fails, cleanup only
-    after a stop, 137 unenforced, the unit's name), `test_gate_lane.py` (two slots, a third
-    waiting), `test_chat.py` (a chat's turn is capped), and the runners' own files (the cap and
-    unit each turn gets, `RunnerFailed` at the cap, `opencode`'s `MemoryMax`/`OOMPolicy`).
-
 **27.13 Host health, and what udl does about it** · needs 27.12, 28.2, 25.11 · size L (the user, 23 Nov 2026)
 - Why: on 23 Nov btrfs ran out of unallocated space. `df` still showed 116 GiB free, but metadata couldn't grow, so every commit failed with "No space left on device". Later, five full suites at once took disk I/O pressure to 50%. Claude caught both by hand every half hour. This makes it udl's.
 - Build: `orch/health.py`.
@@ -1637,7 +1590,6 @@ This is human-comms.md as data. Its three sections become three lists with the s
   - one on another branch is left, and noted;
   - one that diverged is left, and noted.
 - Done when: on the fakes, after a three-PR stack merges, the host's checkout is at the last merge.
-- **Built (`ernie-c`, 23 Nov 2026, PR #97):** `checkout.py` — after a merge, for each host in `Repo.checkouts`, `git -C <checkout> fetch origin <base>`, then `git merge --ff-only origin/<base>` when the checkout is on `<base>`, clean and can take it. A checkout on another branch, with uncommitted changes, diverged, or on an unreachable host is left as it is, with a `system` note on the merged task and an `orch.checkout.behind` event naming the checkout and why; it never fails the merge. `Orch._follow_checkout` calls it from `_merge_now` (so every merge — a person's, an agent's own, the watcher's and auto merge's — follows), and it uses the merged pull's own repo and that repo's base. Tests, written first, in `tests/unit/plugins/apps/orch/test_checkout.py` (9), and five through a real merge in `test_merge_operations.py` (a merge moves the checkout; a left-behind one gets its note and event through the merge; two merges give two events; a three-PR stack, merged one after another, leaves the checkout at the last merge — the card's Done when; and a follow that raises leaves a note and the merge still stands): a clean checkout moves to the merge commit; a dirty one, one on another branch and one that diverged are left and noted; a host the records do not have is named `not known`, a path that is not a repo is `its fetch failed`, a fetch that runs out of time is `timed out`, and one bad host never stops the others. A real merge through `orch_merge` moves the host's checkout to the merge commit, a checkout left behind gets its `system` note and its `orch.checkout.behind` event through the merge, two merges give two events, a three-PR stack merged in turn leaves the checkout at the last merge, and a follow that raises leaves a note with the merge still standing.
 
 **Phase 28 is done when:** that test passes, and `udl orch inbox` during it shows each stage.
 
@@ -1741,6 +1693,7 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 - **Screens (29.1, Google Stitch):** **Agents**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=7791ff8dfd96441a8f407efbda0f23b5) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=d17fed4e665c45a880b2114968ccdcb3), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=ddefdd0cfbfb4718a0a6d7650b5754f1) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=0e287012078b43938fff6f0b4b492fa8); `web/plugins/orch/design/agents-{light,dark}-{desktop,phone}.png`; **Agent**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=da1624bace6c4b98a0d64c45d05165a0) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=fa261cca352745de8be29520980348ed), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=e4a4d6e0423e4ce989f0222376cac769) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=27ecbc8414ca40a091f73a3dac131dc2); `web/plugins/orch/design/agent-{light,dark}-{desktop,phone}.png`.
 - **Q-8 (user, 21 Nov 2026):** on an agent's page, the queue shows each task's size, the current task's open PR as a chip, and the queue's points.
 - **Usage (27.14, the user, 23 Nov 2026):** the Agents page and each agent's page show its usage left (`AgentInfo.usage`, and the fuller `orch_usage` on the agent's page: money left of its key's cap, or free requests left today with the reset time, with `low` and `out` coloured), and the inbox's agents strip shows each `AgentLine.usage`. It refreshes on `orch.usage.*` events.
+- **Built (deepseek-a, 24 Nov 2026, PR #103):** both pages, in `web/plugins/orch/src/agents/` (`agents.tsx` the tree, `agent.tsx` one agent, `editor.tsx`, `queue.tsx`, `transcript.tsx`, `tree.ts` the drag's rules, the chain and the roots) with their stores (`stores/agents.ts` the list and one agent, `stores/sessions.ts` a session by id, `stores/runners.ts` the harnesses an editor offers), and `model.ts` gains `AgentInfo`, `QueueEntry`, `Said`, `SessionRef`, `SessionSummary`, `Session` and `Runner`. **The tree:** the humans at the root (always drawn, and the drop target that gives an agent back to them), a card per agent with its status, what it runs on, what it is on and where it sits (the whole chain from the top, `top › boss`); a drag onto a manager writes `manager` with `orch_set_agent`, refused with a reason for a cycle or a non-manager and with udl's own reason when it refuses, then read again. An agent whose manager is not in the list is drawn at the humans: a name that is not there is not a place to hide one. **The editor** (New agent, Edit): title, runner (a select from `orch_list_runners`, or a box to type in when no host answered), model (its host's list for that runner, and its own model even when no host lists it), host (the hosts that answered, and its own), role, brief, and a manager's four powers as switches. It has no projects field and no manager field: the manager is the tree's drag (a form would let it name a loop), and the card does not ask for projects. **An agent's page:** its status, pause and resume (`orch_pause_agent`/`orch_resume_agent`), stop (`orch_stop_session`), its token (`orch_issue_token`, shown once), its queue in udl's order with each task's size and the current task's open pull (Q-8) and the queue's points and hours at its model's rate, draggable to reorder (`orch_reorder_queue`, within the project the drop is in: a queue that spans two projects is reordered one at a time), and its session: the transcript from `orch_get_session`, read again when `orch.session.event` names it, a tool call on one line, what a turn cost, how it ended, and a box to send it a message (owner only, and only the current session). A session a task's page sent it to (`?session=`) is drawn, says it is not the current one, and offers no Send. **Reads:** the page reads the tasks, the merge list and the rates of every project its queue spans, and a read beside the page that udl refuses (no GitHub account, say) leaves its own card unsaid rather than dropping the page; a running session's every line is the session's own read, so the page does not read everything again for each. **Two Python changes:** `agents.AgentSession` gains `id`, because `orch_get_session` and `orch_stop_session` take a session's id and an agent's own answer did not carry it (only `test_agents.py` builds that shape; the four tests that build `records.AgentSession` already had one, so they are untouched), and `orch.agent.changed` is a new event, published by `orch_set_agent`, `orch_pause_agent`, `orch_resume_agent` and `orch_delete_agent`, so another tab's edit is this page's news (the stores watched it before it existed, which is what the review caught: they now watch a real one). The OpenAPI schema and `schema.d.ts` are regenerated. **Left out:** the card's usage (27.14 is not merged): `AgentInfo.usage` and `orch_usage` are not drawn. **The card's e2e "watches a fake session stream" is not met, and cannot be in this harness:** a session is started by the dispatcher, and the e2e config leaves automations off, so no runner ever starts one (the page test proves the stream instead: a live `orch.session.event` makes the page read the session again and draw the new line). 29.10 plans exactly the harness this needs — "`tests/support/e2e.py` extended to start `FakeGitHub`, a `FakeRunner` plugin and a temp git repo" — so the streaming e2e belongs there. **Moved to 29.10 (Claude, 24 Nov):** its `FakeRunner` is the harness that starts a session, so the streaming e2e is written there. **What the e2e harness taught:** `orch_list_runners` answers with no items there, so the editor takes the runner's name as text when the list is empty; a read straight after a write can see the state before it, so the e2e polls `orch_get_agent` for udl's answer rather than reading once. **Tests:** 321 Vitest in the plugin (91.4 % branches), 9 e2e for the spec in both themes; `e2e/orch-agents.spec.ts` drags a report to the humans and back and reads `orch_get_agent` back, drags two reports onto one manager, draws an agent's page with its queue, its size and its points, and makes an agent through the form and pauses it.
 
 **29.7 Q&A** · needs 29.2
 - Build: open questions (blocking first) and answered ones with their outcomes; a thread view with the question, what it is about (link chips), option buttons or a markdown answer box, follow-ups, "Close with outcome". New questions appear live, with a count in the nav.
@@ -1764,6 +1717,7 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 - Build: `web/e2e/orch.spec.ts`: 28.6's story through the web UI only, with `tests/support/e2e.py` extended to start `FakeGitHub`, a `FakeRunner` plugin and a temp git repo.
 - Done when: `make e2e` passes in both themes.
 - **Q-8 (user, 21 Nov 2026):** it covers 29.11 and 29.12 too: the Progress page for a fixture history, and a chat that allows a permission and assigns a task.
+- **Moved here from 29.6 (deepseek-a, 24 Nov 2026, PR #103):** an agent's page watched for a fake session stream, because a session is started by the dispatcher and the e2e config leaves automations off. This card's `FakeRunner` is the harness that starts one: the e2e opens an agent's page, sends it a task through `orch_assign`, and sees the transcript grow line by line in both themes.
 
 **29.11 Progress** · needs 29.2, 27.10 · size L (O-D14)
 - Build: the route `progress`, with a "Progress" nav item after Board.

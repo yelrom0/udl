@@ -98,6 +98,7 @@ def session(**fields: object) -> AgentSession:
     """A session of fake-a, as a test changes it."""
     return AgentSession.model_validate(
         {
+            "id": str(uuid4()),
             "agent": "fake-a",
             "task": "27.1",
             "ref": SessionRef(runner="fake", id="s-1", cwd="/work", host="local"),

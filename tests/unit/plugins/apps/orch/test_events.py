@@ -9,7 +9,8 @@ A type is declared (so `udl events types` lists it with its schema and example),
 that happens publishes it once — a task's move (`orch.task.changed`, and `blocked`/`merged` when
 that is what it moved to), a question (`orch.question.asked`, `orch.question.answered`) and a
 person's action (`orch.action.needed`). The session, ready and link events are asserted where
-they are published (27.6, 27.7, 26.4), and `orch.agent.idle` in the dispatcher's own test.
+they are published (27.6, 27.7, 26.4), `orch.agent.idle` in the dispatcher's own test, and
+`orch.agent.changed` in the agents' own (29.6).
 """
 
 # System Imports
@@ -43,6 +44,7 @@ THE_CARD_S_TYPES: Final = frozenset(
         "orch.action.needed",
         "orch.agent.limited",
         "orch.agent.idle",
+        "orch.agent.changed",
         "orch.session.started",
         "orch.session.ended",
         "orch.link.changed",

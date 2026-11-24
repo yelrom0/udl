@@ -136,7 +136,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 27.9 Operations (agents, queues, sessions, suggestions) via CLI, API and MCP
   - [x] 27.10 Working time, hours per point learned per model, forecasts: `orch_progress`
   - [~] 27.11 Chat sessions: Claude Code or Codex as the user, its permission prompts relayed to the web UI, a token per chat
-  - [~] 27.12 Resource limits: gates and sessions under a memory cap; `gates_per_host` (default 1)
+  - [ ] 27.12 Resource limits: gates and sessions under a memory cap; `gates_per_host` (default 1)
   - [ ] 27.13 Host health (memory, swap, disk and btrfs, I/O pressure, harness services) and what udl does about it (`on_breach`, default act and tell)
   - [ ] 27.14 Usage left per agent: a paid key's money left, a free tier's requests left (counted), on the CLI, API, MCP and web
 - [ ] **Phase 28: Human comms: Q&A, Ready to merge, To action**
@@ -147,14 +147,14 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [~] 28.5 Events for all of it, and a `notify` example
   - [~] 28.6 End to end on fakes: task → agent → question → answer → PR → ready → merged
   - [x] 28.7 Auto merge: a project's merger (a reviewer or manager agent) merges its ready PRs after its own review
-  - [~] 28.8 The checkout follows `main`: after a merge, each host's checkout of the repo fast-forwards to it
+  - [ ] 28.8 The checkout follows `main`: after a merge, each host's checkout of the repo fast-forwards to it
 - [ ] **Phase 29: Screens (Google Stitch) and the `orch` UI plugin**
   - [x] 29.1 **(Claude)** A new Stitch project: design system from the shell's daisyUI themes; every screen below, desktop and phone, light and dark ([web/plugins/orch/design/](web/plugins/orch/design/README.md)); the user's changes (Q-8) made
   - [x] 29.2 The `orch` UI plugin's skeleton: manifest, routes, stores, live data
   - [~] 29.3 Inbox (home)
   - [~] 29.4 Board: features and tasks, agents' queues, the suggested list, drag to assign
   - [~] 29.5 Feature and task pages (specs, notes, links)
-  - [ ] 29.6 Agents: the hierarchy, assigning models to models, an agent's page with its live session
+  - [~] 29.6 Agents: the hierarchy, assigning models to models, an agent's page with its live session
   - [~] 29.7 Q&A
   - [ ] 29.8 Ready to merge and To action
   - [ ] 29.9 Connections and import (generated pages, guided by the manifest)
