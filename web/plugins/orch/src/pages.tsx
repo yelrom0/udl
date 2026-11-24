@@ -5,6 +5,8 @@ import { FeaturePage } from "./feature/feature";
 import { InboxPage } from "./inbox/inbox";
 import { Page, Said } from "./page";
 import { TaskPage } from "./task/task";
+import { QuestionPageView } from "./qa/page";
+import { QaPage } from "./qa/qa";
 
 /** Progress (29.11's page): what is merged, the burn-up and the forecast (27.10). */
 const ProgressPage: Component<RouteProps> = () => (
@@ -27,18 +29,12 @@ const AgentPage: Component<RouteProps> = ({ params }) => (
 	</Page>
 );
 
-/** The questions (29.8's page): what agents are asking, and the thread of each. */
-const QuestionsPage: Component<RouteProps> = () => (
-	<Page title="Q&A">
-		<Said>Every question an agent asked, the blocking ones first.</Said>
-	</Page>
-);
+/** The questions (29.7's page): what agents are asking, and what was decided. */
+const QuestionsPage: Component<RouteProps> = (props) => <QaPage {...props} />;
 
-/** A question (29.8's page): its thread, and the answer. */
-const QuestionPage: Component<RouteProps> = ({ params }) => (
-	<Page title={`Question ${params.key ?? ""}`}>
-		<Said>What was asked, what has been said, and the answer.</Said>
-	</Page>
+/** A question (29.7's page): its thread, the answer, the follow-ups and the outcome. */
+const QuestionPage: Component<RouteProps> = ({ ctx, params }) => (
+	<QuestionPageView ctx={ctx} questionKey={params.key ?? ""} />
 );
 
 /** Ready to merge (29.9's page): what is ready, coming, held, and what merged lately. */

@@ -4,13 +4,17 @@ import { mergeListOf, progressOf } from "./model";
 import { type BoardState, boardStore } from "./stores/board";
 import { type FeatureState, featureStore } from "./stores/feature";
 import { type InboxState, inboxStore, type Loaded } from "./stores/inbox";
+import { type QuestionsState, questionsStore } from "./stores/questions";
 import { type TaskState, taskStore } from "./stores/task";
+
+/** The inbox before it is read: nothing yet, and nothing failed. */
+const NO_INBOX: InboxState = { inbox: null, error: null };
 
 /** What a page that can change what it read is given: the state, and a way to read it again. */
 export type Refreshable<T> = T & { refresh(): Promise<void> };
 
-/** The inbox before it is read: nothing yet, and nothing failed. */
-const NO_INBOX: InboxState = { inbox: null, error: null };
+/** The questions before they are read. */
+const NO_QUESTIONS: QuestionsState = { questions: [], error: null };
 
 /** The board before it is read. */
 const NO_BOARD: BoardState = {
@@ -86,6 +90,11 @@ export function useFeature(ctx: UIContext, key: string): Refreshable<FeatureStat
 export function useTask(ctx: UIContext, key: string): Refreshable<TaskState> {
 	const make = useCallback((inner: UIContext) => taskStore(inner, key), [key]);
 	return useLoaded(ctx, make, NO_TASK);
+}
+
+/** Every question, as the Q&A page reads them (29.7). */
+export function useQuestions(ctx: UIContext): Refreshable<QuestionsState> {
+	return useLoaded(ctx, questionsStore, NO_QUESTIONS);
 }
 
 /** The board's four lists (29.4). */

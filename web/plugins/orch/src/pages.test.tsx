@@ -96,7 +96,8 @@ describe("every route the manifest contributes", () => {
 		);
 
 		const headings = screen.getAllByRole("heading", { level: 1 }).map((one) => one.textContent);
-		expect(headings).toEqual(["Task ", "Feature ", "Question ", "Agent"]);
+		// (The question's page is 29.7's: it reads the question, and its heading is the page's.)
+		expect(headings).toEqual(["Task ", "Feature ", "Q&A", "Agent"]);
 	});
 
 	it("says what failed, on the inbox and on the board", async () => {
@@ -134,15 +135,39 @@ describe("every route the manifest contributes", () => {
 		expect(screen.getByText("Reading what waits on a person…")).toBeTruthy();
 	});
 
-	it("draws a question's heading, from its key", () => {
+	it("draws a question's thread, from its key", async () => {
 		const Page = pages["questions/$key"];
 		expect(Page).toBeDefined();
 		if (Page === undefined) {
 			return;
 		}
 
-		render(<Page {...given("questions/Q-8", { key: "Q-8" })} />);
+		const fake = fakeCtx(() => ({
+			question: {
+				key: "Q-8",
+				project: "udl",
+				title: "Which colour?",
+				text: "",
+				asked_by: "deepseek-b",
+				to: "humans",
+				state: "open",
+				task: null,
+				options: [],
+				blocking: false,
+				answer: null,
+				answered_by: null,
+				outcome: null,
+				escalated: false,
+			},
+			thread: [],
+			tasks: [],
+			features: [],
+		}));
 
-		expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Question Q-8");
+		render(<Page {...{ ...given("questions/Q-8", { key: "Q-8" }), ctx: fake.ctx }} />);
+		await settle();
+
+		expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Q&A");
+		expect(screen.getByRole("heading", { level: 2, name: "Which colour?" })).toBeTruthy();
 	});
 });
