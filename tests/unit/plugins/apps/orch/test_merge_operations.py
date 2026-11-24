@@ -30,7 +30,7 @@ from udl.automations.events import EventRecord
 from udl.core.operations import OperationHints
 from udl.core.service import UDLService
 from udl.db.records import RecordQuery
-from udl.errors import ConfigError, DoesNotExist, NotAllowed, PluginError
+from udl.errors import ConfigError, DoesNotExist, NotAllowed, PluginError, PluginFailed
 from udl.hosts import Host
 from udl.interfaces.security import Principal as Caller
 from udl.interfaces.security import PrincipalKind, current_principal
@@ -864,6 +864,153 @@ async def test_a_merge_takes_the_worktree_and_the_branch_away(
     assert git("branch", "--list", branch, cwd=a_repo / "checkout") == ""
     after = await the_task(working)
     assert (after.worktree, after.branch) == (None, None)
+
+
+async def test_a_merge_follows_the_checkout_to_the_merge_commit(
+    working: UDLService, a_repo: Path
+) -> None:
+    """After a merge, the host's checkout is at `origin/main`'s head. The test itself moves
+    `origin/main` (a real merge does; the fake's `merge_pull` only records), and the checkout —
+    clean, on `main` — fast-forwards to it."""
+    checkout = a_repo / "checkout"
+    seed = a_repo / "seed"
+    git("clone", str(a_repo / "origin.git"), str(seed), cwd=a_repo)
+    (seed / "new.txt").write_text("new\n")
+    git("add", "new.txt", cwd=seed)
+    git("commit", "-m", "new", cwd=seed)
+    git("push", "origin", "main", cwd=seed)
+    before = git("rev-parse", "HEAD", cwd=checkout)
+
+    found = await merged(working, key="F-1.1", confirm="yelrom0/udl#1")
+
+    assert found.state == DONE
+    after = git("rev-parse", "HEAD", cwd=checkout)
+    assert after == git("rev-parse", "origin/main", cwd=checkout)
+    assert after != before
+
+
+async def test_a_checkout_left_behind_after_a_merge_says_so(
+    working: UDLService, a_repo: Path
+) -> None:
+    """A checkout that cannot follow is named in a `system` note and an
+    `orch.checkout.behind` event — through the merge, not only through `follow`."""
+    checkout = a_repo / "checkout"
+    (checkout / "dirty.txt").write_text("work\n")
+
+    await merged(working, key="F-1.1", confirm="yelrom0/udl#1")
+
+    assert any("did not follow" in one for one in await notes_of(working))
+    behind = await working.db.list_records(
+        EventRecord, RecordQuery(where={"type": "orch.checkout.behind"})
+    )
+    assert len(behind) == 1
+
+
+async def test_two_merges_name_the_checkout_twice(working: UDLService, a_repo: Path) -> None:
+    """The event's key carries the merge's own stamp: a checkout left behind after a second
+    merge is said again, not swallowed by the first one's key."""
+    checkout = a_repo / "checkout"
+    (checkout / "dirty.txt").write_text("work\n")
+    await merged(working, key="F-1.1", confirm="yelrom0/udl#1")
+    tasks = TaskRecords(AppRecords(working.db))
+    await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.2", title="Two", repo="udl"))
+    found = await tasks.task("udl", "F-1.2")
+    assert found is not None
+    await tasks.move(found, IN_PROGRESS, by=Principal(kind="system", role="start"))
+    started = await tasks.task("udl", "F-1.2")
+    assert started is not None
+    await LinkRecords(AppRecords(working.db)).add(
+        project="udl",
+        owner_kind=OwnerKind.TASK,
+        owner="F-1.2",
+        kind="pull",
+        url="https://github.com/yelrom0/udl/pull/2",
+    )
+    ready = await tasks.task("udl", "F-1.2")
+    assert ready is not None
+    await tasks.move(ready, READY, by=Principal(kind="system", role="ready"))
+
+    await merged(working, key="F-1.2", confirm="yelrom0/udl#2")
+
+    behind = await working.db.list_records(
+        EventRecord, RecordQuery(where={"type": "orch.checkout.behind"})
+    )
+    assert len(behind) == 2
+    assert len({one.dedupe_key for one in behind}) == 2
+
+
+async def test_a_three_pr_stack_leaves_the_checkout_at_the_last_merge(
+    working: UDLService, a_repo: Path
+) -> None:
+    """The card's Done when: three tasks stacked one on the next, each merged in turn (a stack
+    goes bottom first), and after each merge the checkout is at that merge's commit — so the
+    test would fail if only the first one followed."""
+    checkout = a_repo / "checkout"
+    tasks = TaskRecords(AppRecords(working.db))
+    for number in (2, 3):
+        key = f"F-1.{number}"
+        await tasks.save_task(
+            Task(
+                project="udl",
+                feature="F-1",
+                key=key,
+                title=f"Task {number}",
+                repo="udl",
+                needs=[f"F-1.{number - 1}"],
+            )
+        )
+        found = await tasks.task("udl", key)
+        assert found is not None
+        await tasks.move(found, IN_PROGRESS, by=Principal(kind="system", role="start"))
+        started = await tasks.task("udl", key)
+        assert started is not None
+        await LinkRecords(AppRecords(working.db)).add(
+            project="udl",
+            owner_kind=OwnerKind.TASK,
+            owner=key,
+            kind="pull",
+            url=f"https://github.com/yelrom0/udl/pull/{number}",
+        )
+        ready = await tasks.task("udl", key)
+        assert ready is not None
+        await tasks.move(ready, READY, by=Principal(kind="system", role="ready"))
+    seed = a_repo / "seed"
+    git("clone", str(a_repo / "origin.git"), str(seed), cwd=a_repo)
+
+    for number in (1, 2, 3):
+        # (A commit per merge: each merge has something of its own to fast-forward to.)
+        (seed / f"new-{number}.txt").write_text(f"{number}\n")
+        git("add", f"new-{number}.txt", cwd=seed)
+        git("commit", "-m", f"new {number}", cwd=seed)
+        git("push", "origin", "main", cwd=seed)
+        last = git("rev-parse", "HEAD", cwd=seed)
+        await merged(working, key=f"F-1.{number}", confirm=f"yelrom0/udl#{number}")
+        assert git("rev-parse", "HEAD", cwd=checkout) == last
+
+
+async def test_a_follow_that_raises_still_leaves_the_merge(
+    working: UDLService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_follow_checkout`'s own `except` branch: a checkout step that raises (a bug, not a
+    checkout that cannot follow) is a `system` note, no event, and the merge still stands."""
+    from udl.plugins.apps.orch import plugin as plugin_module
+
+    async def boom(*args: object, **kwargs: object) -> object:
+        raise PluginFailed("the hosts are gone")
+
+    monkeypatch.setattr(plugin_module, "follow_checkouts", boom)
+
+    found = await merged(working, key="F-1.1", confirm="yelrom0/udl#1")
+
+    assert found.state == DONE
+    assert any("could not be followed" in one for one in await notes_of(working))
+    assert [one.data["task"] for one in await merged_events(working)] == ["F-1.1"]
+    assert (
+        await working.db.list_records(
+            EventRecord, RecordQuery(where={"type": "orch.checkout.behind"})
+        )
+        == []
+    )
 
 
 async def test_a_worktree_that_cannot_be_taken_away_keeps_the_merge(
