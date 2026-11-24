@@ -51,6 +51,7 @@ export interface MergeList {
 /** A question an agent asked (28.1). */
 export interface Question {
 	readonly key: string;
+	readonly project: string;
 	readonly title: string;
 	readonly text: string;
 	readonly asked_by: string;
@@ -59,6 +60,26 @@ export interface Question {
 	readonly task: string | null;
 	readonly options: readonly string[];
 	readonly blocking: boolean;
+	/** What was answered, by whom, and what was done instead when it was closed unanswered. */
+	readonly answer: string | null;
+	readonly answered_by: string | null;
+	readonly outcome: string | null;
+	readonly escalated: boolean;
+}
+
+/** One thing said on a question's thread (28.1). */
+export interface Message {
+	readonly text: string;
+	readonly author: string;
+	readonly at: string;
+}
+
+/** A question with its thread and what it names (`orch_get_question`, 28.1). */
+export interface QuestionThread {
+	readonly question: Question;
+	readonly thread: readonly Message[];
+	readonly tasks: readonly string[];
+	readonly features: readonly string[];
 }
 
 /** What only a person can do (28.2). */
@@ -319,11 +340,12 @@ export function mergeListOf(value: JsonValue | undefined): MergeList {
 	};
 }
 
-/** A question, as `orch_list_questions` sends it. */
-function questionOf(value: JsonValue): Question {
+/** A question, as `orch_list_questions` and `orch_inbox` send it. */
+export function questionOf(value: JsonValue): Question {
 	const one = asObject(value);
 	return {
 		key: asText(one.key),
+		project: asText(one.project),
 		title: asText(one.title),
 		text: asText(one.text),
 		asked_by: asText(one.asked_by),
@@ -332,7 +354,28 @@ function questionOf(value: JsonValue): Question {
 		task: typeof one.task === "string" ? one.task : null,
 		options: asArray(one.options).map((option) => asText(option)),
 		blocking: asFlag(one.blocking),
+		answer: typeof one.answer === "string" ? one.answer : null,
+		answered_by: typeof one.answered_by === "string" ? one.answered_by : null,
+		outcome: typeof one.outcome === "string" ? one.outcome : null,
+		escalated: asFlag(one.escalated),
 	};
+}
+
+/** A question with everything about it, as `orch_get_question` answers it. */
+export function questionThreadOf(value: JsonValue | undefined): QuestionThread {
+	const one = asObject(value);
+	return {
+		question: questionOf(one.question ?? null),
+		thread: asArray(one.thread).map(messageOf),
+		tasks: asArray(one.tasks).map((task) => asText(task)),
+		features: asArray(one.features).map((feature) => asText(feature)),
+	};
+}
+
+/** One thing said on a thread, as `orch_get_question` sends it. */
+function messageOf(value: JsonValue): Message {
+	const one = asObject(value);
+	return { text: asText(one.text), author: asText(one.author), at: asText(one.at) };
 }
 
 /** An action, as `orch_list_actions` sends it. */
