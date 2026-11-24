@@ -1,5 +1,5 @@
 import type { UIContext } from "@udl/ui-sdk";
-import { useEffect, useState } from "react";
+import { useEffect, useRef } from "react";
 import { BOARD, filterPath, filtersOf } from "./filters";
 
 /** The states a task can be filtered by, as the board offers them (the Concepts table's). */
@@ -23,12 +23,15 @@ export function Filters({
 	readonly navigate?: UIContext["navigate"] | undefined;
 }) {
 	const { state, text } = filtersOf(search);
-	// (The box is typed into freely, and the URL is written when the typing is done: one history
-	// entry per search, not one per letter.)
-	const [typed, setTyped] = useState(text);
-	// (The URL is the truth: Back and Forward put the query's text back in the box.)
+	const box = useRef<HTMLInputElement>(null);
+	// (The URL is the truth: Back and Forward give the box its text again. It is written only when
+	// it differs from what the box holds, so a search the box itself made — Enter, or leaving it —
+	// leaves the node alone, and the focus and caret stay where the person put them.)
 	useEffect(() => {
-		setTyped(text);
+		const node = box.current;
+		if (node !== null && node.value !== text) {
+			node.value = text;
+		}
 	}, [text]);
 	const go = (change: Parameters<typeof filterPath>[2]): void => {
 		navigate?.(filterPath(BOARD, search, change));
@@ -58,15 +61,17 @@ export function Filters({
 				<input
 					aria-label="Text"
 					className="input input-sm input-bordered"
+					// (The box is the browser's own, and the URL is written when the typing is done:
+					// one history entry per search, not one per letter. It is not a React value,
+					// because a keystroke and the blur that follows can be split by a render — a
+					// store's read landing between them — and a value React owns would be put back
+					// to the last render's text, losing what the person typed.)
+					defaultValue={text}
+					ref={box}
 					onBlur={(event) => {
-						// (The box's own value, not the last render's: a keystroke and a blur can
-						// arrive in the same tick.)
 						if (event.target.value !== text) {
 							go({ text: event.target.value });
 						}
-					}}
-					onChange={(event) => {
-						setTyped(event.target.value);
 					}}
 					onKeyDown={(event) => {
 						if (event.key === "Enter" && event.currentTarget.value !== text) {
@@ -75,7 +80,6 @@ export function Filters({
 					}}
 					placeholder="in a task's title"
 					type="search"
-					value={typed}
 				/>
 			</label>
 		</div>

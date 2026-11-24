@@ -411,6 +411,65 @@ describe("the board's other paths (29.4)", () => {
 		expect(fake.navigations).toEqual(["/ui/p/orch/board?text=pages"]);
 	});
 
+	it("writes what the box holds when it is left, even if the board read again first", async () => {
+		// (What this pins: the box keeps a value React never saw. It is the browser's own box, so a
+		// render landing between the typing and the leaving cannot put the last render's text back
+		// over it — which is how 29.4's flake failed on #99's and #102's CI.)
+		const fake = drawn({ state: "", text: "inbox" });
+		await read();
+
+		const box = screen.getByRole("searchbox", { name: /text/i }) as HTMLInputElement;
+		box.value = "pages";
+		fake.emit("orch.task.changed", { key: "29.2" });
+		await settle();
+		fireEvent.blur(box);
+
+		expect(fake.navigations).toEqual(["/ui/p/orch/board?text=pages"]);
+	});
+
+	it("keeps the focus in the box after Enter, with the URL's text now its own", async () => {
+		const fake = fakeCtx((name) => ANSWERS[name] as never);
+		const props = (search: Record<string, string>) => ({
+			path: "board",
+			params: {},
+			search,
+			ctx: fake.ctx,
+		});
+		const { rerender } = render(<BoardPage {...props({ state: "", text: "" })} />);
+		await read();
+
+		const box = screen.getByRole("searchbox", { name: /text/i }) as HTMLInputElement;
+		// (A person clicked into it first: the focus is what a remount would take away.)
+		box.focus();
+		fireEvent.change(box, { target: { value: "inbox" } });
+		fireEvent.keyDown(box, { key: "Enter" });
+		expect(fake.navigations).toEqual(["/ui/p/orch/board?text=inbox"]);
+
+		// (The URL now says what the box says: the page is given it again, and the box is the one
+		// that had the focus — refining the search needs no second click.)
+		rerender(<BoardPage {...props({ state: "", text: "inbox" })} />);
+		expect(box.value).toBe("inbox");
+		expect(document.activeElement).toBe(box);
+	});
+
+	it("gives the box the URL's text when Back or Forward changes it", async () => {
+		const fake = fakeCtx((name) => ANSWERS[name] as never);
+		const props = (search: Record<string, string>) => ({
+			path: "board",
+			params: {},
+			search,
+			ctx: fake.ctx,
+		});
+		const { rerender } = render(<BoardPage {...props({ state: "", text: "inbox" })} />);
+		await read();
+		const box = screen.getByRole("searchbox", { name: /text/i }) as HTMLInputElement;
+		expect(box.value).toBe("inbox");
+
+		rerender(<BoardPage {...props({ state: "", text: "pages" })} />);
+
+		expect(box.value).toBe("pages");
+	});
+
 	it("writes the state filter into the URL too", async () => {
 		const fake = drawn({ state: "", text: "" });
 		await read();
