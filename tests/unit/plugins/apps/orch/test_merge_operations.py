@@ -894,12 +894,8 @@ async def test_a_checkout_left_behind_after_a_merge_says_so(
 ) -> None:
     """A checkout that cannot follow is named in a `system` note and an
     `orch.checkout.behind` event — through the merge, not only through `follow`."""
-    repos = RepoRecords(AppRecords(working.db))
-    repo = await repos.repo("udl", "udl")
-    assert repo is not None
     checkout = a_repo / "checkout"
     (checkout / "dirty.txt").write_text("work\n")
-    await repos.save_repo(repo.model_copy(update={"checkouts": repo.checkouts}))
 
     await merged(working, key="F-1.1", confirm="yelrom0/udl#1")
 
@@ -908,6 +904,39 @@ async def test_a_checkout_left_behind_after_a_merge_says_so(
         EventRecord, RecordQuery(where={"type": "orch.checkout.behind"})
     )
     assert len(behind) == 1
+
+
+async def test_two_merges_name_the_checkout_twice(working: UDLService, a_repo: Path) -> None:
+    """The event's key carries the merge's own stamp: a checkout left behind after a second
+    merge is said again, not swallowed by the first one's key."""
+    checkout = a_repo / "checkout"
+    (checkout / "dirty.txt").write_text("work\n")
+    await merged(working, key="F-1.1", confirm="yelrom0/udl#1")
+    tasks = TaskRecords(AppRecords(working.db))
+    await tasks.save_task(Task(project="udl", feature="F-1", key="F-1.2", title="Two", repo="udl"))
+    found = await tasks.task("udl", "F-1.2")
+    assert found is not None
+    await tasks.move(found, IN_PROGRESS, by=Principal(kind="system", role="start"))
+    started = await tasks.task("udl", "F-1.2")
+    assert started is not None
+    await LinkRecords(AppRecords(working.db)).add(
+        project="udl",
+        owner_kind=OwnerKind.TASK,
+        owner="F-1.2",
+        kind="pull",
+        url="https://github.com/yelrom0/udl/pull/2",
+    )
+    ready = await tasks.task("udl", "F-1.2")
+    assert ready is not None
+    await tasks.move(ready, READY, by=Principal(kind="system", role="ready"))
+
+    await merged(working, key="F-1.2", confirm="yelrom0/udl#2")
+
+    behind = await working.db.list_records(
+        EventRecord, RecordQuery(where={"type": "orch.checkout.behind"})
+    )
+    assert len(behind) == 2
+    assert len({one.dedupe_key for one in behind}) == 2
 
 
 async def test_a_worktree_that_cannot_be_taken_away_keeps_the_merge(
