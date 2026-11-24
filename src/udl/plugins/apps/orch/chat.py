@@ -332,6 +332,7 @@ class Chats:
         harnesses: Harnesses,
         clock: Clock,
         permission_minutes: int = 10,
+        memory: int | None = None,
     ) -> None:
         self._service = service
         self._records = records
@@ -339,6 +340,9 @@ class Chats:
         self._harnesses = harnesses
         self._clock = clock
         self._permission_minutes = permission_minutes
+        self._memory = memory
+        """What a chat's turn may use (27.12): a chat is a harness running a person's work, and a
+        runaway in it is that turn's failure, not the host's."""
         self._turns: dict[UUID, asyncio.Task[None]] = {}
         """The turn each chat is in, when one is (so a stop can end it, and a second turn is
         refused)."""
@@ -372,6 +376,8 @@ class Chats:
                     # the one thing udl adds is its MCP server, whose permission prompt is udl's.)
                     own_settings=True,
                     permission_tool=PERMISSION_TOOL,
+                    memory=self._memory,
+                    unit="udl-session-chat",  # (its turn is named for the chat, not an agent)
                     mcp=McpEndpoint(url=self._mcp_url(), token=token),
                 )
             )

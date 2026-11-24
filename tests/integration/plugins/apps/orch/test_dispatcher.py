@@ -630,6 +630,18 @@ async def test_the_worktree_is_made_and_the_task_is_in_progress_before_the_turn(
     assert every["F-1.1"].branch == "feat/F-1.1-It 1"
 
 
+async def test_a_session_is_started_under_its_memory_cap_and_its_own_unit(
+    service: UDLService,
+) -> None:
+    """(27.12: a runaway in a turn is that turn's failure, not the host's — each turn its own
+    `udl-session-<agent>-<8 hex>`, and the cap the settings give.)"""
+    await ran(service, clock=FakeClock())
+
+    spec = next(iter(STORE.specs.values()))
+    assert spec.memory == OrchSettings().session_memory
+    assert spec.unit == f"udl-session-{AGENT}"
+
+
 async def test_the_instructions_are_the_rules_the_project_and_the_brief(
     service: UDLService,
 ) -> None:

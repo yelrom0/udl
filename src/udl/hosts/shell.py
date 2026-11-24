@@ -31,6 +31,7 @@ from collections.abc import (
     AsyncIterator,
     Awaitable,
     Mapping,
+    MutableMapping,
     Sequence,
 )
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -39,14 +40,15 @@ from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
-from typing import IO, ClassVar, Final, Protocol, Self
+from typing import IO, ClassVar, Final, Literal, Protocol, Self
+from uuid import uuid4
 
 # Package Imports
 from pydantic import Field, model_validator
 
 # Local Imports
 from udl.db.records import Name, Record
-from udl.errors import PluginFailed, ToolUnavailable
+from udl.errors import OverCap, PluginFailed, ToolUnavailable
 from udl.plugins.requirements import Requirement
 from udl.process import CancelToken, ProcessResult, run_process
 
@@ -74,6 +76,12 @@ GRACE: Final = timedelta(seconds=2)
 END: Final = timedelta(seconds=5)
 # How long an SSH tunnel gets to be ready before it is called a failure.
 FORWARD_WAIT: Final = timedelta(seconds=15)
+# How a capped run is started (27.12): a transient user scope, quiet, then the program.
+SYSTEMD: Final = ("systemd-run", "--user", "--scope", "-q")
+# How long the probe for user systemd gets: a host without it answers at once.
+PROBE: Final = timedelta(seconds=10)
+# How long stopping a unit gets (a scope that is already gone says so, quickly).
+STOPPING: Final = timedelta(seconds=30)
 
 # The SSH command's own options: the user gives a ~/.ssh/config host name, never a command line.
 _SSH_OPTIONS: Final = (
@@ -242,10 +250,17 @@ class HostShell(Protocol):
         cancel: CancelToken | None = None,
         check: bool = True,
         tail: bool = False,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> Awaitable[ProcessResult]:
         """Run a program to completion: its exit code and what it printed (the start of its
         stdout and the end of its stderr, when it printed more than udl keeps; with `tail`, the
         end of its stdout too).
+
+        `limits` is the memory cap the run is under (27.12): where the host has user systemd it
+        runs in a transient scope of that cap and no swap, named `unit`, and the result says
+        `limits="enforced"`; elsewhere it runs as it is and the result says `unenforced`, never
+        silently. A checked run that the kernel stopped at its cap raises OverCap.
 
         `cwd` is the folder it runs in, `env` its environment (over the host's), `secret_env`
         secrets for its environment (never in an argv), `stdin` what it reads, `within` how long
@@ -267,9 +282,12 @@ class HostShell(Protocol):
         secret_env: Mapping[str, str] | None = None,
         stdin: bytes | None = None,
         within: timedelta | None = None,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> AsyncIterator[bytes]:
         """Run a program and give its output as it comes (what a harness prints while it works):
-        the arguments run() takes, but for cancel."""
+        the arguments run() takes, but for cancel and check. A capped run the kernel stopped
+        raises OverCap once its output ends (27.12)."""
         ...
 
     def interact(
@@ -294,6 +312,110 @@ class HostShell(Protocol):
 
 
 # ---------------------------------------------------------------------------------------------
+# A run under a memory cap (27.12)
+# ---------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ResourceLimits:
+    """What a program may use: its memory, and no swap at all (a cap that spills to swap is not
+    a cap: the point is that a runaway ends, not that the machine starts thrashing)."""
+
+    memory: int
+    """Its cap, in bytes."""
+
+    def __post_init__(self) -> None:
+        if self.memory <= 0:
+            raise ValueError(f"{self.memory!r} is not more than nothing")
+
+    @property
+    def words(self) -> str:
+        """The cap as a person reads it (`4 GiB`)."""
+        return size_words(self.memory)
+
+
+def size_words(size: int) -> str:
+    """A number of bytes as a person reads it: `4 GiB`, `1536 MiB`, `500 B`."""
+    for unit in ("GiB", "MiB", "KiB"):
+        size_of = 1024 ** {"GiB": 3, "MiB": 2, "KiB": 1}[unit]
+        if size and size % size_of == 0:
+            return f"{size // size_of} {unit}"
+    return f"{size} B"
+
+
+def escaped(part: str) -> str:
+    """One part of a unit's name, escaped the way `systemd-escape` escapes it: an ASCII letter, a
+    digit or `:`, `_`, `.`, `-` stays (a `-` is how udl joins the parts, so `deepseek-b` stays
+    readable), a `/` becomes a `-`, and anything else becomes an `x` escape, byte by byte (a
+    unit name is ASCII only, so `é` is `\\xc3\\xa9` and not a letter). A `-` at the start is
+    escaped, since a unit name cannot begin with one."""
+    kept: list[str] = []
+    for index, char in enumerate(part):
+        if (char.isascii() and char.isalnum()) or char in ":_." or (char == "-" and index > 0):
+            kept.append(char)
+        elif char == "/":
+            kept.append("-")
+        else:
+            kept.append("".join(f"\\x{byte:02x}" for byte in char.encode()))
+    return "".join(kept)
+
+
+def unit_name(prefix: str, *parts: str) -> str:
+    """A unit's name: udl's own `prefix`, then each part escaped as `systemd-escape` escapes it,
+    so a project with a slash in it and a key like `27.3a` both make a valid name
+    (`udl-gate-yelrom0-udl-27.3a-0a1b2c3d`)."""
+    return "-".join([prefix, *(escaped(part) for part in parts)])
+
+
+def scope_of(unit: str) -> str:
+    """The unit as `systemctl` names it: a scope is always named with its suffix (a bare name
+    means `.service`)."""
+    return f"{unit}.scope"
+
+
+def capped(
+    argv: Sequence[str], limits: ResourceLimits, *, unit: str | None = None
+) -> tuple[str, ...]:
+    """`argv` as a capped run: a transient user scope with the memory cap and no swap, named
+    `unit` (or `udl-<8 hex>` when the caller has no name of its own)."""
+    return (
+        *SYSTEMD,
+        f"--unit={unit or unit_name('udl', uuid4().hex[:8])}",
+        "-p",
+        f"MemoryMax={limits.memory}",
+        "-p",
+        "MemorySwapMax=0",
+        "--",
+        *argv,
+    )
+
+
+class Probe:
+    """Whether a host runs a capped program under user systemd: asked once, and kept until the
+    host changes (27.12).
+
+    A shell is made on every call (`Hosts.shell()`), so the answer is kept in the map a service's
+    hosts share (`Hosts`' own), by host name: a host is probed once, not before every gate and
+    every turn."""
+
+    def __init__(self, shell: HostShell, seen: MutableMapping[str, bool] | None = None) -> None:
+        self._shell = shell
+        self._seen: MutableMapping[str, bool] = seen if seen is not None else {}
+        """The answers hosts have already given, by name (shared by one service's shells)."""
+
+    async def there(self) -> bool:
+        """Whether `systemd-run --user --scope` works here."""
+        name = self._shell.host.name
+        if name not in self._seen:
+            try:
+                result = await self._shell.run([*SYSTEMD, "true"], within=PROBE, check=False)
+                self._seen[name] = result.returncode == 0
+            except PluginFailed, ToolUnavailable, TimeoutError:
+                self._seen[name] = False
+        return self._seen[name]
+
+
+# ---------------------------------------------------------------------------------------------
 # What a shell is asked to run
 # ---------------------------------------------------------------------------------------------
 
@@ -313,6 +435,11 @@ class Command:
     """Secrets for its environment: never in an argv, but read from the command's stdin."""
     stdin: bytes | None = None
     """What it reads on stdin (after the secrets, which come first, a line each)."""
+    reports_status: bool = False
+    """Whether the remote shell waits for the program and exits with its code, instead of
+    `exec`ing it (27.12). A capped run needs it: a shell that execs a program the kernel kills at
+    its cap dies with it, so sshd reports a signal and the ssh client exits 255 — "the host was
+    not reached" — instead of 137, which is what a cap looks like."""
 
     def __post_init__(self) -> None:
         for name in self.secret_env:
@@ -348,14 +475,19 @@ def remote_command(command: Command) -> str:
     # (Exported, not just assigned: a plain `NAME=value command` would reach the program, but a
     # NAME=value line of its own only sets a shell variable, so export them all.)
     parts += [f"export {name}={shlex.quote(value)}" for name, value in sorted(command.env.items())]
-    parts.append("exec " + " ".join(shlex.quote(part) for part in command.argv))
+    program = " ".join(shlex.quote(part) for part in command.argv)
+    parts.append(program if command.reports_status else "exec " + program)
     body = " && ".join(parts)
-    if command.cwd is None:
-        return body
-    # (Joined with `&&`: a folder that is not there, or a secret line that never comes, stops the
-    # whole command, so the program never runs with an empty secret or somewhere else. Local
-    # run() refuses the same cases, so the shells agree.)
-    return f"cd -- {shlex.quote(command.cwd)} && {{ {body}; }}"
+    if command.cwd is not None:
+        # (Joined with `&&`: a folder that is not there, or a secret line that never comes, stops
+        # the whole command, so the program never runs with an empty secret or somewhere else.
+        # Local run() refuses the same cases, so the shells agree.)
+        body = f"cd -- {shlex.quote(command.cwd)} && {{ {body}; }}"
+    if command.reports_status:
+        # (Waiting for it is what turns a kill into an exit code: the shell is still there to
+        # say 128+9, where an exec'd program's signal would be sshd's "exit-signal".)
+        body += "; exit $?"
+    return body
 
 
 def _secrets(command: Command) -> bytes | None:
@@ -703,13 +835,51 @@ class _Interaction:
 # ---------------------------------------------------------------------------------------------
 
 
+async def _limited(
+    probe: Probe, command: Command, limits: ResourceLimits | None, unit: str | None
+) -> tuple[Command, Literal["enforced", "unenforced"] | None]:
+    """`command` as the run it will be: wrapped in a capped scope when it is capped and the host
+    has user systemd, as it is otherwise (and the state its result says)."""
+    if limits is None:
+        return command, None
+    if await probe.there():
+        return (
+            replace(command, argv=capped(command.argv, limits, unit=unit), reports_status=True),
+            "enforced",
+        )
+    return command, "unenforced"
+
+
+def _stateful(
+    result: ProcessResult, state: Literal["enforced", "unenforced"] | None
+) -> ProcessResult:
+    """`result` saying whether the cap it was given was enforced."""
+    return result if state is None else result.model_copy(update={"limits": state})
+
+
+def _over_cap(
+    result: ProcessResult,
+    limits: ResourceLimits | None,
+    *,
+    state: Literal["enforced", "unenforced"] | None = None,
+    what: str = "The program",
+) -> None:
+    """Raise OverCap when a capped run was stopped at its cap by the kernel (SIGKILL: exit 137,
+    or -9 from a shell), which is the one thing a run this size ends on that udl did not do."""
+    enforced = (state or result.limits) == "enforced"
+    if limits is None or not enforced or result.returncode not in (137, -9):
+        return
+    raise OverCap(f"{what} passed its memory cap of {limits.words}")
+
+
 class LocalShell:
     """A shell on this machine: udl.process."""
 
-    def __init__(self, host: Host) -> None:
+    def __init__(self, host: Host, seen: MutableMapping[str, bool] | None = None) -> None:
         if host.transport is not HostTransport.LOCAL:
             raise ValueError(f"{host.name!r} is not this machine")
         self.host = host
+        self.probe = Probe(self, seen)
 
     def run(
         self,
@@ -723,9 +893,17 @@ class LocalShell:
         cancel: CancelToken | None = None,
         check: bool = True,
         tail: bool = False,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> Awaitable[ProcessResult]:
         return self._run(
-            _command(argv, cwd, env, secret_env, stdin), within, cancel, check=check, tail=tail
+            _command(argv, cwd, env, secret_env, stdin),
+            within,
+            cancel,
+            check=check,
+            tail=tail,
+            limits=limits,
+            unit=unit,
         )
 
     async def _run(
@@ -736,8 +914,12 @@ class LocalShell:
         *,
         check: bool = True,
         tail: bool = False,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> ProcessResult:
         _check_cwd(command)
+        program = command.argv[0]
+        command, state = await _limited(self.probe, command, limits, unit)
         result = await _timed(
             run_process(
                 command.argv,
@@ -751,7 +933,10 @@ class LocalShell:
             ),
             within,
         )
-        return _checked(result, program=command.argv[0]) if check else result
+        result = _stateful(result, state)
+        if check:
+            _over_cap(result, limits)
+        return _checked(result, program=program) if check else result
 
     def stream(
         self,
@@ -762,15 +947,23 @@ class LocalShell:
         secret_env: Mapping[str, str] | None = None,
         stdin: bytes | None = None,
         within: timedelta | None = None,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> AsyncGenerator[bytes]:
-        return self._stream(_command(argv, cwd, env, secret_env, stdin), within)
+        return self._stream(
+            _command(argv, cwd, env, secret_env, stdin), within, limits=limits, unit=unit
+        )
 
     async def _stream(
         self,
         command: Command,
         within: timedelta | None,
+        *,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> AsyncGenerator[bytes]:
         _check_cwd(command)
+        command, state = await _limited(self.probe, command, limits, unit)
         process = await _started(
             *command.argv,
             stdin=command.stdin,
@@ -781,6 +974,11 @@ class LocalShell:
             await _feed(process, command.stdin)
             async for chunk in _output(process, within):
                 yield chunk
+            _over_cap(
+                ProcessResult(returncode=process.returncode or 0, stdout="", stderr=""),
+                limits,
+                state=state,
+            )
         finally:
             await _stopped(process)
 
@@ -819,10 +1017,11 @@ class SshShell:
     requires: ClassVar[tuple[Requirement, ...]] = (Requirement.binary("ssh"),)
     """ssh has to be on the machine udl runs on (not on the host: it is reached with ssh)."""
 
-    def __init__(self, host: Host) -> None:
+    def __init__(self, host: Host, seen: MutableMapping[str, bool] | None = None) -> None:
         if host.transport is not HostTransport.SSH:
             raise ValueError(f"{host.name!r} is not reached over SSH")
         self.host = host
+        self.probe = Probe(self, seen)
 
     def run(
         self,
@@ -836,9 +1035,17 @@ class SshShell:
         cancel: CancelToken | None = None,
         check: bool = True,
         tail: bool = False,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> Awaitable[ProcessResult]:
         return self._run(
-            _command(argv, cwd, env, secret_env, stdin), within, cancel, check=check, tail=tail
+            _command(argv, cwd, env, secret_env, stdin),
+            within,
+            cancel,
+            check=check,
+            tail=tail,
+            limits=limits,
+            unit=unit,
         )
 
     async def _run(
@@ -849,7 +1056,11 @@ class SshShell:
         *,
         check: bool = True,
         tail: bool = False,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> ProcessResult:
+        program = command.argv[0]
+        command, state = await _limited(self.probe, command, limits, unit)
         result = await _timed(
             run_process(
                 ssh_argv(self.host, command),
@@ -861,7 +1072,10 @@ class SshShell:
             ),
             within,
         )
-        return _checked(result, program=command.argv[0], via_ssh=True) if check else result
+        result = _stateful(result, state)
+        if check:
+            _over_cap(result, limits)
+        return _checked(result, program=program, via_ssh=True) if check else result
 
     def stream(
         self,
@@ -872,14 +1086,22 @@ class SshShell:
         secret_env: Mapping[str, str] | None = None,
         stdin: bytes | None = None,
         within: timedelta | None = None,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> AsyncGenerator[bytes]:
-        return self._stream(_command(argv, cwd, env, secret_env, stdin), within)
+        return self._stream(
+            _command(argv, cwd, env, secret_env, stdin), within, limits=limits, unit=unit
+        )
 
     async def _stream(
         self,
         command: Command,
         within: timedelta | None,
+        *,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> AsyncGenerator[bytes]:
+        command, state = await _limited(self.probe, command, limits, unit)
         process = await _started(
             *ssh_argv(self.host, command), stdin=remote_stdin(command), env=None, cwd=None
         )
@@ -887,6 +1109,11 @@ class SshShell:
             await _feed(process, remote_stdin(command))
             async for chunk in _output(process, within):
                 yield chunk
+            _over_cap(
+                ProcessResult(returncode=process.returncode or 0, stdout="", stderr=""),
+                limits,
+                state=state,
+            )
         finally:
             await _stopped(process)
 
@@ -914,8 +1141,26 @@ class SshShell:
         return _forwarded_ssh(self.host, port)
 
 
-def shell_for(host: Host) -> HostShell:
-    """The shell that acts on `host`: LocalShell for this machine, SshShell for another."""
+async def enforces(shell: HostShell) -> bool:
+    """Whether a capped run on this host really is a unit, which is what a gate that ran past its
+    time has to stop (27.12).
+
+    A shell of ours is asked its own `probe`, the answer kept per host, so a gate costs no second
+    probe; one that is not (a test's fake) is asked the way a shell asks — with a probe run."""
+    if isinstance(shell, (LocalShell, SshShell)):
+        return await shell.probe.there()
+    try:
+        said = await shell.run([*SYSTEMD, "true"], within=PROBE, check=False)
+    except PluginFailed, ToolUnavailable, TimeoutError:
+        return False
+    return said.returncode == 0
+
+
+def shell_for(host: Host, seen: MutableMapping[str, bool] | None = None) -> HostShell:
+    """The shell that acts on `host`: LocalShell for this machine, SshShell for another.
+
+    `seen` is where the caps probe keeps its answer per host (27.12), shared by one service's
+    shells so a host is asked once."""
     if host.transport is HostTransport.LOCAL:
-        return LocalShell(host)
-    return SshShell(host)
+        return LocalShell(host, seen)
+    return SshShell(host, seen)

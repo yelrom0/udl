@@ -1409,6 +1409,53 @@ Run by Claude on 22 Nov 2026 against `main` at `2858d25` (throwaway data dirs, a
   - on the fakes, all of the above;
   - on jeff-wiggle, an opt-in `-m host` test whose gate allocates past a 256 MiB cap is stopped and reported `memory` while the machine stays up. Claude runs it.
 
+- **Built (`deepseek-b`, 24 Nov 2026, PR #101):** the caps, the lanes and the cleanup, as the card
+  asked, with a few places the build reads the card differently.
+  - **What is there:** `HostShell.run()`/`stream()` take `limits: ResourceLimits | None` and a
+    `unit`; a host is probed once (`systemd-run --user --scope -q true`) and the answer is kept by
+    host name in the map a service's shells share (a shell is made per call, so keeping it in one
+    shell would probe before every gate and every turn), and a capped run is a transient user
+    scope with `MemoryMax` and `MemorySwapMax=0`. Where
+    the probe fails, the run goes ahead and its result says `limits="unenforced"`. `ProcessResult`
+    carries that state, and a capped run ending on 137/-9 that udl did not stop raises `OverCap`
+    ("passed its memory cap of 4 GiB"). A stop ends the push, so the reason is in the `NotAllowed`
+    (`hint` starts `stopped: memory` or `stopped: timeout`, then the gate's or the cleanup's own
+    output) rather than in a `PushResult` that is never returned, so no field records a stop that
+    nothing ever reads. A timeout `systemctl --user stop <unit>.scope`s the unit, so the suite's
+    children go with it — only where the host really enforces caps (elsewhere there is no unit,
+    and a stop that fails is said in the hint instead of raised), and `gate_cleanup` runs after
+    either stop — not after a gate that failed on its own. `OrchSettings` has `gates_per_host`, `gate_memory` (4 GiB) and
+    `session_memory` (20 GiB), all `ByteSize | None` but `gates_per_host`; `Repo` has
+    `gate_cleanup`. The lane takes one of `gates_per_host` leases (`orch-gate:<host>:<n>`), and a
+    push with slots waits as before.
+  - **Sessions:** `SessionSpec` gains `memory` and `unit` (a prefix), and `command`, `codex` and
+    `claude-code` run each turn as `udl-session-<agent>-<8 hex>`; an `OverCap` from the shell is
+    that turn's `RunnerFailed` and `TurnEnded(ERROR)`; a person's chat (27.11) is capped the same
+    way, as `udl-session-chat-<8 hex>`. Over SSH a capped run is wrapped so the shell waits for it
+    and exits with its code (`reports_status`): a shell that `exec`s a program the kernel kills
+    dies with it, and sshd then reports a signal, so the client exits 255 — "the host was not
+    reached" — instead of 137. `opencode` runs its turns in its service, so
+    its health reports the unit's `MemoryMax` and `OOMPolicy`, and `problems` says when there is no
+    cap or when `OOMPolicy` is not `continue`.
+  - **Read differently:** the unit name is `unit_name(prefix, *parts)` — udl's own prefix stays
+    literal, and only the parts go through `escaped()` (`systemd-escape`'s rules, except that a `-`
+    inside a part is kept: it is how the parts are joined, and `deepseek-b` reads better than
+    `deepseek\x2db`; a leading `-` is still escaped). So the gate's unit is
+    `udl-gate-udl-27.3a-0a1b2c3d` and a turn's `udl-session-deepseek-b-0a1b2c3d`.
+  - **Left out:** `udl hosts check` does not yet say whether a host has user systemd (the gate's
+    own result says `unenforced` instead, which is where a person meets it). The card's second
+    done-when is the `-m host` test on jeff-wiggle, which Claude runs: `pyproject.toml` gains a
+    `host` marker, deselected by default like `network`, and `tests/integration/test_host_caps.py`
+    is `pytest -m host`.
+  - **Tests:** `tests/unit/test_host_limits.py` (names, the argv, the words of a cap, the probe
+    asked once per host), `tests/integration/test_host_caps.py` (a real scope's own `memory.max`,
+    no systemd, a 1 GiB allocation stopped at 256 MiB, and a capped run through the remote line
+    arriving as 137 and never 255), `tests/integration/plugins/apps/orch/test_gate_caps.py`
+    (memory, timeout, a timeout where the host caps nothing, a stop that fails, cleanup only
+    after a stop, 137 unenforced, the unit's name), `test_gate_lane.py` (two slots, a third
+    waiting), `test_chat.py` (a chat's turn is capped), and the runners' own files (the cap and
+    unit each turn gets, `RunnerFailed` at the cap, `opencode`'s `MemoryMax`/`OOMPolicy`).
+
 **27.13 Host health, and what udl does about it** · needs 27.12, 28.2, 25.11 · size L (the user, 23 Nov 2026)
 - Why: on 23 Nov btrfs ran out of unallocated space. `df` still showed 116 GiB free, but metadata couldn't grow, so every commit failed with "No space left on device". Later, five full suites at once took disk I/O pressure to 50%. Claude caught both by hand every half hour. This makes it udl's.
 - Build: `orch/health.py`.
@@ -1679,6 +1726,7 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
   - Carried with it: the shell's `{}` body fix for a POST whose request is all optional (29.3's, kept as one copy after the rebase) and `refresh` on the board's store, which had none.
   - **The card's "Done when" differs in one word:** the e2e drags a suggestion onto an agent and the task lands `queued`, not `in_progress`, because the e2e server runs with `[automations] enabled = false` and no dispatcher — 27.7's dispatcher is what moves it on. `web/e2e/orch-board.spec.ts` says so in its docstring; its second case is the URL filters. Its seed uses the one `udl` project (a second one would make "the only project" ambiguous for every other spec), with a feature and an agent per theme.
   - Tests: 139 Vitest in the plugin (98.2 % statements, 92.5 % branches), 451 in the shell, and the whole e2e suite (53, both themes).
+  - **Fixed (deepseek-a, 24 Nov 2026, PR #104):** the text box's flake — it failed on #99's and #102's CI, never locally. The box was a React value (`value={typed}`), so a keystroke and the blur that follows could be split by a render (a store's read landing between them) and the last render's text was put back over what was typed, leaving the blur nothing to write. It is the browser's own box now (`defaultValue={text}` with a ref and an effect that writes the URL's text only when the box holds something else, so Back and Forward reach it and a search the box made itself leaves the node — and the focus and caret — alone), and three tests pin it: the box is typed into, the board reads again, and leaving it writes what it holds; Enter keeps the focus in the box; and a re-render with another query's text gives the box that text. `board.test.tsx`'s 28 tests pass shuffled under one core, and 206 Vitest in the plugin (91.4 % branches).
 
 **29.5 Feature and task pages** · needs 29.2, 26.8, 27.10
 - Build: **Feature:** spec (markdown, editable), its tasks in order with states, links, notes, "Add task", "Split". **Task:** breadcrumb back to its feature, spec, state with the moves this user may make, assignee, needs and what it unblocks (as links), every link by kind, the PR's readiness with its blockers, notes as a timeline with an "Add note" box, its questions, its session (a link to the agent's page at that session).
@@ -1697,6 +1745,8 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 **29.7 Q&A** · needs 29.2
 - Build: open questions (blocking first) and answered ones with their outcomes; a thread view with the question, what it is about (link chips), option buttons or a markdown answer box, follow-ups, "Close with outcome". New questions appear live, with a count in the nav.
 - Done when: its e2e test sees a question arrive, answers it, and finds the decision on the task's page.
+- **Built (`ernie-d`, 2026-11-24, PR #102):** the Q&A page and the question's thread (`web/plugins/orch/src/qa/`), drawn from the 29.1 screen and reusing 29.3's question components (`inbox/questions.tsx`) rather than drawing them again — the blocking ones pinned, the rest in a card, and the answered ones with what was decided and by whom. It reads every question through a store of its own (`stores/questions.ts`, watching 28.5's `orch.question.asked`/`orch.question.answered`, so a question asked while the page is open arrives) — **`state: null`, because the operation's default is the open ones alone** and the answered ones are the point. The thread (`qa/page.tsx` + `qa/thread.tsx`) reads `orch_get_question`: what it asks, its link chips (the tasks and features it names), its options or a markdown answer box, its thread, a follow-up box (`orch_reply`) and "Close with outcome" (`orch_close_question`). 29.3's answer handler became `qa/useAnswer.ts` and is used by both pages, so answering behaves the same on each. **The nav badge the card asks for is not built:** the SDK's `NavItem` is `title`/`route`/`icon` and the shell builds the nav from manifests at load, so a live count would be a shell change; the page says the counts (open/blocking/answered) instead.
+- Tests: 29 Vitest against `FakeUdl` — the page (`qa/qa.test.tsx`: the blocking first, the answered card with its outcome, the count, one-click answering and the read after it, a refusal kept and said, a re-read on 28.5's two events, a read that failed), the thread (`qa/thread.test.tsx`, 10: the question, its links, the options, the answer and who gave it, a follow-up and its refusal, closing with an outcome and its refusal, the empty boxes, and a failed read), the store (`stores/questions.test.ts`, 4: the read, the two events, a failure, and nothing read after `stop()`), and `pages.test.tsx`'s question case moved from the placeholder's heading to the real thread. `web/e2e/orch-qa.spec.ts` (light and dark): a question asked while the page is open, answered there, and the decision read back through **`orch_get_task`'s notes** and then on **29.5's task page** (merged meanwhile), which draws the task's notes.
 - **Screens (29.1, Google Stitch):** **Q&A**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=47ac5610e253455c9b7f4ad2b27f6828) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=bcb6abba194a4d818f16dbbf0488fcf2), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=efa3ed1403154b6faf6f655196af030b) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=cb6281e6a610495a94e0ac79aabf46cf); `web/plugins/orch/design/qa-{light,dark}-{desktop,phone}.png`; **Q&A thread**: phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=39735072e25c4bf08794d011655189f8) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=046e8294e25c40b9b1c3ff330ec361db); `web/plugins/orch/design/qa-thread-{light,dark}-phone.png`.
 
 **29.8 Ready to merge, To action** · needs 29.2, 28.7
@@ -1748,6 +1798,10 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 - **Screens (29.1, Google Stitch):** **The chat sidebar**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=77e7e5da0d184db7a599dc178b3dbc67) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=4292c722ab044c828fa5bd11a2571099), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=2d8de97f1b714b84be450766032c5d1e) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=858586079f6c4119b1421a44832db6b0); `web/plugins/orch/design/chat-{light,dark}-{desktop,phone}.png`.
 
 **Phase 29 is done when:** with `udl serve` on real connections, the user assigns a task by dragging it, answers the agent's question, and merges its PR, all from `/ui/p/orch/`.
+
+**Decisions made while building 29:**
+
+- **The nav's question count is not built (29.7, 24 Nov 2026).** The Q&A page says the counts (open · blocking · answered), but the nav link does not carry a number. The SDK's `NavItem` is `title`/`route`/`icon`, and the shell builds the nav from manifests at load time (`web/packages/shell/src/plugins/list.ts`), so a live count needs a shell-side change — a follow-up, not part of 29.7.
 
 ---
 

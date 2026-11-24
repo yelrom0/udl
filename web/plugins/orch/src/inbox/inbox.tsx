@@ -1,10 +1,8 @@
 import type { RouteProps } from "@udl/ui-sdk";
 import type { Component } from "@udl/ui-sdk/react";
-import { useState } from "react";
 import { useInbox } from "../hooks";
-import { messageOf } from "../json";
-import type { Question } from "../model";
 import { Page, Said } from "../page";
+import { useAnswer } from "../qa/useAnswer";
 import { ActionsCard } from "./actions";
 import { AgentsStrip } from "./agents";
 import { ago } from "./ago";
@@ -28,10 +26,9 @@ const WHAT = "What needs you: questions, PRs ready to merge, and things only a p
 export const InboxPage: Component<RouteProps> = ({ ctx }) => {
 	const { inbox, error, refresh } = useInbox(ctx);
 	const now = useNow();
-	// (Each question's own answer, so one landing does not take the "Answering…" off another
-	// that is still out — two different questions may be answered at once.)
-	const [answering, setAnswering] = useState<ReadonlySet<string>>(() => new Set());
-	const [refused, setRefused] = useState<string | null>(null);
+	// (29.3's handler, shared with 29.7's page: one place decides what answering does. It is
+	// called before the early returns below — a hook is called every draw or none.)
+	const { answering, refused, answer } = useAnswer(ctx, inbox?.project ?? "", refresh);
 
 	if (error !== null) {
 		return (
@@ -49,33 +46,6 @@ export const InboxPage: Component<RouteProps> = ({ ctx }) => {
 			</Page>
 		);
 	}
-
-	const project = inbox.project;
-	const answer = (question: Question, choice: string): void => {
-		setAnswering((was) => new Set(was).add(question.key));
-		setRefused(null);
-		void (async () => {
-			try {
-				await ctx.call("orch_answer", {
-					project,
-					key: question.key,
-					answer: choice,
-				});
-			} catch (failure) {
-				// (A refusal is udl's, and it says why: the question stays, and the reason does too.)
-				setRefused(messageOf(failure));
-			}
-			// (The read comes before the button is taken back: a second click while it is out would
-			// answer a question that is already answered. `orch.question.answered` would read it
-			// too, but the button would wait for the event to arrive.)
-			await refresh();
-			setAnswering((was) => {
-				const left = new Set(was);
-				left.delete(question.key);
-				return left;
-			});
-		})();
-	};
 
 	const blocking = inbox.questions.filter((one) => one.blocking);
 	const rest = inbox.questions.filter((one) => !one.blocking);

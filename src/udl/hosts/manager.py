@@ -43,6 +43,9 @@ class Hosts:
 
     def __init__(self, service: UDLService) -> None:
         self._service = service
+        self._caps: dict[str, bool] = {}
+        """Whether each host runs a capped program under user systemd, by name (27.12): a host is
+        probed once, not before every gate and every turn (a shell is made per call)."""
 
     # -- reading -------------------------------------------------------------------------------
 
@@ -73,7 +76,7 @@ class Hosts:
 
     async def shell(self, name: str) -> HostShell:
         """The shell that acts on the host called `name` (its own, or an SSH one)."""
-        return shell_for(await self.get(name))
+        return shell_for(await self.get(name), self._caps)
 
     def shown(self, host: Host) -> HostInfo:
         return HostInfo.of(host)

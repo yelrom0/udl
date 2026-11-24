@@ -126,12 +126,13 @@ minversion = "9.0"
 testpaths = ["tests"]
 # Shared test helpers live in tests/support and are imported as `support.*`.
 pythonpath = ["tests"]
-addopts = ["--import-mode=importlib", "-ra", "-m", "not network"]
+addopts = ["--import-mode=importlib", "-ra", "-m", "not network and not host"]
 strict = true
 filterwarnings = ["error"]
 markers = [
     "integration: real tools or the local fixture site (auto-applied to tests/integration)",
     "network: talks to real sites, opt-in with `pytest -m network` (auto-applied to tests/smoke)",
+    "host: runs on this machine's own user systemd, opt-in with `pytest -m host` (a machine without it skips)",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

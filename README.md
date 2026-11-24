@@ -421,6 +421,29 @@ udl hosts rm thevault
 Remote commands run in a login shell, with every argument quoted, and a secret is passed on the
 command's stdin, never in its arguments.
 
+### Memory, and what gets what
+
+A runaway is stopped before it takes the machine with it, and what is stopped is the thing that ran
+away: a gate is `udl-gate-<project>-<key>-<8 hex>`, a turn is `udl-session-<agent>-<8 hex>`, each
+its own transient user scope under `systemd-run --user --scope`, with `MemoryMax` and no swap. The
+cap is a setting: `[orch] gate_memory`, `session_memory` and `gates_per_host` (4 GiB, 20 GiB and 1
+by default; `null` turns a cap off), and a repo says how to clean up after a gate that was stopped
+(`Repo.gate_cleanup`: the containers, the temp files, whatever a suite leaves behind).
+
+| What runs it | Its cap | Why |
+| --- | --- | --- |
+| A gate (a task's `make check`, in `push`) | `gate_memory`, one per host (`gates_per_host`) | It is the biggest thing udl runs: a suite of its own |
+| A turn of `command`, `codex` or `claude-code` | `session_memory` | The harness is a process of its own, so a turn can be capped |
+| A turn of `opencode` | Its service's own | The turn runs in the `opencode serve` process, so the cap is that unit's (`MemoryMax` in an ExecStart drop-in); `udl orch runners` reports it |
+| udl itself (`udl serve`) | Nothing | It is the thing that must not be stopped: a runaway it started is in a scope of its own |
+
+A gate or a turn stopped at its cap pushes nothing, and says so (`stopped: memory` on the gate's
+result; `RunnerFailed` and `TurnEnded` with the reason on a turn). A gate stopped by its time is
+stopped too (its unit is `systemctl --user stop`ped, so the suite's own children go with it), and
+the repo's `gate_cleanup` runs after either — not after a gate that simply failed, where the agent
+reads its failure in the worktree. Where the host has no user systemd, the cap cannot be enforced:
+the gate runs as it did before, and its result says `limits: unenforced` rather than `enforced`.
+
 ## Plugins
 
 udl has six kinds of plugin: databases, downloaders, site plugins, secret stores, kinds of action, and

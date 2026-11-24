@@ -19,7 +19,7 @@ from datetime import timedelta
 from typing import ClassVar
 
 # Local Imports
-from udl.hosts.shell import Host, HostShell, Interaction
+from udl.hosts.shell import Host, HostShell, Interaction, ResourceLimits
 from udl.plugins.requirements import Requirement
 from udl.process import CancelToken, ProcessResult
 
@@ -111,6 +111,8 @@ class ScriptedShell(HostShell):
         cancel: CancelToken | None = None,
         check: bool = True,
         tail: bool = False,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> ProcessResult:
         self.runs.append(list(argv))
         self.secret_envs.append(dict(secret_env or {}))
@@ -144,6 +146,8 @@ class ScriptedShell(HostShell):
         secret_env: Mapping[str, str] | None = None,
         stdin: bytes | None = None,
         within: timedelta | None = None,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> AsyncIterator[bytes]:
         self.runs.append(list(argv))
         said = self.answers.get(" ".join(argv))

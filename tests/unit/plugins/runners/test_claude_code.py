@@ -27,12 +27,13 @@ from pydantic import SecretStr
 
 # Local Imports
 from support.clock import FakeClock
-from udl.errors import PluginFailed, ToolUnavailable
-from udl.hosts.shell import Host, Interaction, LocalShell
+from udl.errors import OverCap, PluginFailed, ToolUnavailable
+from udl.hosts.shell import Host, Interaction, LocalShell, ResourceLimits
 from udl.plugins.requirements import Requirement
 from udl.plugins.runners.base import (
     AgentEvent,
     McpEndpoint,
+    RunnerFailed,
     RunnerLimited,
     SessionRef,
     SessionSpec,
@@ -61,6 +62,10 @@ class FakeShell:
         self.streams: list[tuple[list[str], bytes | None, Mapping[str, str]]] = []
         self.stream_withins: list[timedelta | None] = []
         """How long each stream it was asked for got (a turn's `within`, never the default)."""
+        self.stream_limits: list[ResourceLimits | None] = []
+        """The cap each stream was given (27.12)."""
+        self.stream_units: list[str | None] = []
+        """The unit each stream was asked to run under (27.12)."""
         self.files: dict[str, str] = {}
         self.answers: dict[str, str] = {}
         self.timeouts: set[str] = set()
@@ -78,6 +83,8 @@ class FakeShell:
         cancel: CancelToken | None = None,
         check: bool = True,
         tail: bool = False,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> ProcessResult:
         self.runs.append((list(argv), stdin))
         if argv[0] == "sh" and "umask 077" in argv[2]:
@@ -102,9 +109,13 @@ class FakeShell:
         secret_env: Mapping[str, str] | None = None,
         stdin: bytes | None = None,
         within: timedelta | None = None,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> AsyncIterator[bytes]:
         self.streams.append((list(argv), stdin, dict(secret_env or {})))
         self.stream_withins.append(within)
+        self.stream_limits.append(limits)
+        self.stream_units.append(unit)
 
         async def chunks() -> AsyncIterator[bytes]:
             if self.timeout:
@@ -963,3 +974,64 @@ async def test_a_local_shell_runs_the_fake_harness(
     assert TextDelta(text="You said: hello") in events
     assert isinstance(events[-1], TurnEnded)
     assert events[-1].reason is TurnReason.DONE
+
+
+# ---------------------------------------------------------------------------------------------
+# Its memory cap (27.12)
+# ---------------------------------------------------------------------------------------------
+
+
+class Capped(FakeShell):
+    """A shell whose turn is stopped at its memory cap (what the kernel does, without one)."""
+
+    def stream(self, *args: object, **kwargs: object) -> AsyncIterator[bytes]:
+        async def chunks() -> AsyncIterator[bytes]:
+            raise OverCap("The program passed its memory cap of 20 GiB")
+            yield b""  # pragma: no cover - (a generator needs a statement after raise)
+
+        return chunks()
+
+
+async def test_a_turn_is_run_under_its_session_s_cap_and_its_own_unit(
+    spec: SessionSpec,
+) -> None:
+    shell = FakeShell(_stream(INIT, _said("hi"), _result()))
+    runner = _runner(shell)
+    capped = spec.model_copy(update={"memory": 20 * 1024**3, "unit": "udl-session-deepseek-b"})
+    session = await runner.start(capped)
+
+    await _turn(runner, session, "hello")
+
+    assert shell.stream_limits == [ResourceLimits(memory=20 * 1024**3)]
+    unit = shell.stream_units[0]
+    assert unit is not None
+    assert unit.startswith("udl-session-deepseek-b-")
+    assert len(unit.rsplit("-", 1)[1]) == 8
+
+
+async def test_a_turn_stopped_at_its_memory_cap_is_that_turn_s_failure(
+    spec: SessionSpec,
+) -> None:
+    """(The card's done-when, for the harness that streams: RunnerFailed, then TurnEnded(ERROR),
+    and nothing raises out of send().)"""
+    runner = _runner(Capped())
+    session = await runner.start(spec.model_copy(update={"memory": 20 * 1024**3}))
+
+    events = await _turn(runner, session, "hello")
+
+    assert isinstance(events[0], RunnerFailed)
+    assert events[0].message == "The program passed its memory cap of 20 GiB"
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.ERROR
+    assert events[-1].text == "The program passed its memory cap of 20 GiB"
+
+
+async def test_a_session_with_no_cap_asks_for_none(spec: SessionSpec) -> None:
+    shell = FakeShell(_stream(INIT, _said("hi"), _result()))
+    runner = _runner(shell)
+    session = await runner.start(spec)
+
+    await _turn(runner, session, "hello")
+
+    assert shell.stream_limits == [None]
+    assert shell.stream_units == [None]
