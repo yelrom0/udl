@@ -12,10 +12,15 @@ as "not measured", never as zero.
 """
 
 # System Imports
+import os
+import subprocess
 from datetime import UTC, datetime
+from pathlib import Path
 
 # Local Imports
-from udl.plugins.apps.orch.health import Measures, issues_of, parse
+from support.harnesses import ScriptedShell
+from udl.clock import SystemClock
+from udl.plugins.apps.orch.health import MEASURES, Measures, issues_of, parse, read
 from udl.plugins.apps.orch.models import HealthKind, HostHealth
 from udl.plugins.apps.orch.settings import HealthSettings
 
@@ -248,3 +253,143 @@ def test_a_reading_with_nothing_in_it_is_all_not_measured() -> None:
     found = parse("")
 
     assert found == Measures()
+
+
+# ---------------------------------------------------------------------------------------------
+# The script itself: what a host's own commands print, through its shell (27.13)
+# ---------------------------------------------------------------------------------------------
+
+DF = """\
+Filesystem     1024-blocks      Used Available Capacity Mounted on
+/dev/nvme0n1p2   975712964 849473916 121640516      88% /home
+"""
+
+BTRFS_SAID = """\
+WARNING: cannot read detailed chunk info, per-device usage will not be shown, run as root
+Overall:
+    Device size:\t\t      999130075136
+    Device allocated:\t\t      886386130944
+    Device unallocated:\t\t      112743944192
+    Device missing:\t\t                 0
+    Device slack:\t\t              3584
+    Used:\t\t\t      869324419072
+    Free (estimated):\t\t      124560941056\t(min: 68188968960)
+    Free (statfs, df):\t\t      124559888384
+    Data ratio:\t\t              1.00
+    Metadata ratio:\t\t              2.00
+    Global reserve:\t\t         536870912\t(used: 0)
+    Multiple profiles:\t\t                no
+
+Data,single: Size:871336968192, Used:859519971328 (98.64%)
+
+Metadata,DUP: Size:7516192768, Used:4902109184 (65.22%)
+
+System,DUP: Size:8388608, Used:114688 (1.37%)
+"""
+
+
+def _fake(bin_dir: Path, name: str, script: str) -> None:
+    """A command a host has, printing `script`."""
+    path = bin_dir / name
+    path.write_text(f"#!/bin/sh\n{script}\n")
+    path.chmod(0o755)
+
+
+RATIO_ONLY = """\
+Overall:
+    Device size:\t\t              999130075136
+    Device unallocated:\t\t      112743944192
+    Metadata ratio:\t\t              2.00
+"""
+
+
+def test_a_host_that_only_says_a_metadata_ratio_says_no_metadata_sizes(tmp_path: Path) -> None:
+    """(btrfs prints `Metadata ratio:` in its summary and `Metadata,DUP: Size:…` for each
+    profile: only the profile's line is a size, and a host with no profile line has none to
+    give — not zero.)"""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _fake(bin_dir, "df", f"cat <<'EOF'\n{DF}EOF")
+    _fake(bin_dir, "stat", "echo btrfs")
+    _fake(bin_dir, "btrfs", f"cat <<'EOF'\n{RATIO_ONLY}EOF")
+    work = tmp_path / "work"
+    work.mkdir()
+
+    ran = subprocess.run(  # noqa: S603
+        ["sh", "-c", MEASURES, "udl-health", "1", str(work)],  # noqa: S607
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    (disk,) = parse(ran.stdout).disks
+    assert disk.unallocated == 112743944192
+    assert (disk.metadata_used, disk.metadata_total) == (None, None)
+
+
+def test_the_script_reads_what_a_host_s_commands_print(tmp_path: Path) -> None:
+    """(The awk over df, stat, btrfs and systemctl is what the 23 Nov incident depends on: it is
+    run here as a host runs it, with the commands printing what a host printed.)"""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _fake(bin_dir, "df", f"cat <<'EOF'\n{DF}EOF")
+    _fake(bin_dir, "stat", "echo btrfs")
+    _fake(bin_dir, "btrfs", f"cat <<'EOF'\n{BTRFS_SAID}EOF")
+    _fake(
+        bin_dir,
+        "systemctl",
+        'case "$*" in\n'
+        '  *list-units*) echo "udl-opencode-deepseek-b.service loaded active running OpenCode" ;;\n'
+        "  *show*) printf 'MemoryCurrent=1073741824\\nMemoryMax=4294967296\\n' ;;\n"
+        "esac",
+    )
+    work = tmp_path / "work"
+    work.mkdir()
+
+    # (a script of udl's own, and fakes of a host's commands: nothing a person typed)
+    ran = subprocess.run(  # noqa: S603
+        ["sh", "-c", MEASURES, "udl-health", "1", str(work)],  # noqa: S607
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    found = parse(ran.stdout)
+    (disk,) = found.disks
+    assert (disk.path, disk.filesystem) == (str(work), "btrfs")
+    assert (disk.free, disk.size) == (121640516 * 1024, 975712964 * 1024)
+    assert disk.unallocated == 112743944192
+    # (btrfs prints `Metadata ratio:` too, which is not a size: only the profile's line counts)
+    assert (disk.metadata_used, disk.metadata_total) == (4902109184, 7516192768)
+    (harness,) = found.harnesses
+    assert harness.unit == "udl-opencode-deepseek-b.service"
+    assert (harness.memory_current, harness.memory_max) == (1073741824, 4294967296)
+    # (memory, swap and PSI come from this machine's /proc, which the script reads for real: a
+    # host that has them says numbers, and one that does not says nothing.)
+    assert found.memory_available is None or found.memory_available > 0
+    assert found.io_pressure is None or found.io_pressure >= 0
+
+
+async def test_a_reading_asks_the_shell_for_the_script_the_paths_and_its_clock() -> None:
+    shell = ScriptedShell()
+    shell.answer(
+        ["sh", "-c", MEASURES, "udl-health", "2", "/w", "/home/checkout"],
+        stdout="memory\t1024\ndisk\t/w\t2048\t4096\text4\n",
+    )
+
+    found = await read(
+        "jeff-wiggle",
+        shell=shell,
+        paths=["/w", "/home/checkout"],
+        clock=SystemClock(),
+        gates_running=1,
+        gates_allowed=3,
+    )
+
+    assert shell.runs == [["sh", "-c", MEASURES, "udl-health", "2", "/w", "/home/checkout"]]
+    assert found.host == "jeff-wiggle"
+    assert found.memory_available == 1024
+    assert [(one.path, one.free, one.size) for one in found.disks] == [("/w", 2048, 4096)]
+    assert (found.gates_running, found.gates_allowed) == (1, 3)

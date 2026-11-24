@@ -1494,7 +1494,6 @@ class HealthKind(StrEnum):
     DISK = "disk"  # a disk udl uses is nearly full
     BTRFS_UNALLOCATED = "btrfs_unallocated"  # btrfs cannot allocate: every write fails
     BTRFS_METADATA = "btrfs_metadata"  # btrfs metadata is nearly all used
-    GATES = "gates"  # every gate slot of the host is taken for a long time
 
 
 class DiskHealth(_Model):

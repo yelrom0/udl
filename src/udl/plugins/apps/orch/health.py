@@ -92,12 +92,14 @@ while [ "$seen" -lt "$count" ]; do
       {line = $0; sub(/^[ \t]+/, "", line)
        if (line ~ /^Device unallocated:/) {
          split(line, part, ":"); held = part[2]; gsub(/[ \t]/, "", held)}
-       else if (line ~ /^Metadata/) {
+       else if (line ~ /^Metadata,/) {
          size = line; sub(/.*Size:/, "", size); sub(/,.*/, "", size); gsub(/[ \t]/, "", size)
          total += size
          use = line; sub(/.*Used:/, "", use); sub(/[ \t].*/, "", use); gsub(/[ \t]/, "", use)
          used += use}}
-      END {if (held != "") printf "btrfs\t%s\t%s\t%d\t%d\n", path, held, used, total}'
+      END {if (held == "") exit
+           if (total) printf "btrfs\t%s\t%s\t%d\t%d\n", path, held, used, total
+           else printf "btrfs\t%s\t%s\t\t\n", path, held}'
   fi
 done
 if command -v systemctl >/dev/null 2>&1; then
@@ -119,10 +121,6 @@ measure it could not take is one line it did not print, which is how "not measur
 MEASURE_TIMEOUT: Final = timedelta(seconds=30)
 """How long a health check's script gets: it reads files and runs two commands, and a host that
 cannot answer in this is a host that is in trouble anyway."""
-
-GATE_SLOW: Final = timedelta(hours=2)
-"""How long a gate slot being taken is worth saying (27.13): a suite is minutes, and one that
-has held its host's only slot for two hours is one nobody is watching."""
 
 
 class Measures(BaseModel):
@@ -260,6 +258,13 @@ def issues_of(health: HostHealth, settings: HealthSettings) -> list[HealthIssue]
                 "and restart it.",
             )
         )
+    seen: set[tuple[HealthKind, tuple[int | None, ...]]] = set()
+    """The disk issues already said: a `HostIssue` is one per host and kind, so two paths on one
+    filesystem (which give the same numbers) are one issue, and two disks are one line each."""
+    by_kind: dict[HealthKind, HealthIssue] = {}
+    """The disk issues, one per kind, with the ones of other disks said after the first."""
+    order: list[HealthKind] = []
+    """The kinds in the order they were first found, so the list reads as it is built."""
     if health.io_pressure is not None and health.io_pressure > settings.io_pressure_max:
         found.append(
             _issue(
@@ -272,8 +277,32 @@ def issues_of(health: HostHealth, settings: HealthSettings) -> list[HealthIssue]
             )
         )
     for disk in health.disks:
-        if disk.free is not None and disk.free < settings.disk_min:
-            found.append(
+        for issue, figures in _disk_issues(host, disk, settings):
+            if (issue.kind, figures) in seen:
+                # (two paths on one filesystem say the same numbers: the same disk, said once)
+                continue
+            seen.add((issue.kind, figures))
+            if issue.kind not in order:
+                order.append(issue.kind)
+            known = by_kind.get(issue.kind)
+            by_kind[issue.kind] = (
+                issue
+                if known is None
+                else known.model_copy(update={"detail": f"{known.detail}; {issue.detail}"})
+            )
+    found.extend(by_kind[kind] for kind in order if kind in by_kind)
+    return found
+
+
+def _disk_issues(
+    host: str, disk: DiskHealth, settings: HealthSettings
+) -> list[tuple[HealthIssue, tuple[int | None, ...]]]:
+    """What `disk`'s numbers make (27.13), each with the figures that make it: two paths on one
+    filesystem give the same ones, and are one issue."""
+    found: list[tuple[HealthIssue, tuple[int | None, ...]]] = []
+    if disk.free is not None and disk.free < settings.disk_min:
+        found.append(
+            (
                 _issue(
                     host,
                     HealthKind.DISK,
@@ -281,14 +310,17 @@ def issues_of(health: HostHealth, settings: HealthSettings) -> list[HealthIssue]
                     f"{size_words(settings.disk_min)} it needs",
                     "udl removes a task's worktree after its merge: look for the ones of tasks "
                     "that are done, and for anything else that grew.",
-                )
+                ),
+                (disk.free, disk.size),
             )
-        if (
-            disk.filesystem == "btrfs"
-            and disk.unallocated is not None
-            and disk.unallocated < settings.btrfs_unallocated_min
-        ):
-            found.append(
+        )
+    if (
+        disk.filesystem == "btrfs"
+        and disk.unallocated is not None
+        and disk.unallocated < settings.btrfs_unallocated_min
+    ):
+        found.append(
+            (
                 _issue(
                     host,
                     HealthKind.BTRFS_UNALLOCATED,
@@ -298,15 +330,18 @@ def issues_of(health: HostHealth, settings: HealthSettings) -> list[HealthIssue]
                     "A data balance frees it: "
                     f"`sudo btrfs balance start -dusage=10 {disk.path}`, which needs root, so a "
                     "person runs it.",
-                )
+                ),
+                (disk.unallocated,),
             )
-        if (
-            disk.filesystem == "btrfs"
-            and disk.metadata_used is not None
-            and disk.metadata_total
-            and disk.metadata_used > disk.metadata_total * settings.btrfs_metadata_max_ratio
-        ):
-            found.append(
+        )
+    if (
+        disk.filesystem == "btrfs"
+        and disk.metadata_used is not None
+        and disk.metadata_total
+        and disk.metadata_used > disk.metadata_total * settings.btrfs_metadata_max_ratio
+    ):
+        found.append(
+            (
                 _issue(
                     host,
                     HealthKind.BTRFS_METADATA,
@@ -315,8 +350,10 @@ def issues_of(health: HostHealth, settings: HealthSettings) -> list[HealthIssue]
                     "A metadata balance frees it: "
                     f"`sudo btrfs balance start -musage=10 {disk.path}`, which needs root, so a "
                     "person runs it.",
-                )
+                ),
+                (disk.metadata_used, disk.metadata_total),
             )
+        )
     return found
 
 
@@ -442,7 +479,11 @@ class Health:
                     ],
                 ),
                 dedupe=(
-                    f"host.unhealthy:{health.host}:" + ",".join(sorted(one.issue for one in opened))
+                    # (each opening is its own news: event dedupe is unique on type and key, so a
+                    # breach that clears and comes back would otherwise say nothing the second
+                    # time)
+                    f"host.unhealthy:{health.host}:{now.isoformat()}:"
+                    + ",".join(sorted(one.issue for one in opened))
                 ),
             )
         for record in cleared:

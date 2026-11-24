@@ -300,8 +300,8 @@ class Dispatcher:
         """The hosts' health (27.13), when the app has one: a host with an open issue is held
         while `on_breach` says to act, so no new turn starts there."""
         self._held: set[str] = set()
-        """The hosts already told they are held, for this stretch of it: a loop ticks every 30
-        seconds, and a host that is in trouble is in trouble all of them."""
+        """The agents already told they are held, for this stretch of it: a loop ticks every 30
+        seconds, and an agent on a host that is in trouble is in trouble all of them."""
         self._wakes: dict[str, asyncio.Event] = {}
         """One wake per agent: an event that may concern it, or its tick."""
 
@@ -438,14 +438,6 @@ class Dispatcher:
             return
         if agent.offline:
             return  # (until its host answers again: see `_reaching`)
-        if self._health is not None:
-            await self._health.freshly(agent.host)  # (a stale check is no check: refresh it)
-        if self._health is not None and await self._health.held(agent.host):
-            if agent.name not in self._held:
-                self._held.add(agent.name)
-                log.info("holding %s: its host %s is in trouble", agent.name, agent.host)
-            return
-        self._held.discard(agent.name)
         sessions = stored.SessionRecords(self._records)
         current = await sessions.current(agent.name)
         if current is not None:
@@ -461,6 +453,19 @@ class Dispatcher:
                 return
             await self._work(agent, task, current, resume=True)
             return
+        # (A host in trouble holds what would *start* here: a turn the harness is still running
+        # is resumed above, since the card holds new turns and lets what runs finish.)
+        if self._health is not None:
+            try:
+                await self._health.freshly(agent.host)  # (a stale check is no check)
+            except Exception:  # (a check that failed is no reason to hold the agent)
+                log.warning("checking %s before a turn", agent.host, exc_info=True)
+            if await self._health.held(agent.host):
+                if agent.name not in self._held:
+                    self._held.add(agent.name)
+                    log.info("holding %s: its host %s is in trouble", agent.name, agent.host)
+                return
+        self._held.discard(agent.name)
         if await self._managing(agent):
             self._idle.discard(agent.name)
             return

@@ -3323,9 +3323,13 @@ class _AHost:
     def __init__(self, health: HostHealth) -> None:
         self.health = health
         self.asked = 0
+        self.fails = False
+        """Whether the read raises, as a host whose `df` is missing does."""
 
     async def __call__(self, name: str) -> HostHealth:
         self.asked += 1
+        if self.fails:
+            raise RuntimeError("df: not found")
         return self.health
 
 
@@ -3361,6 +3365,71 @@ async def test_a_host_in_trouble_holds_its_agent_s_turn(service: UDLService) -> 
     assert STORE.turns == 0
     assert PROMPTS == []
     assert said.asked >= 1
+
+
+async def test_a_check_that_fails_does_not_hold_the_agent(service: UDLService) -> None:
+    """(A read that raises says nothing about the host: the agent goes by the issues stored, so a
+    broken `df` on a healthy machine cannot stop every turn there.)"""
+
+    said = _AHost(_a_host(io=1.0))
+    said.fails = True
+
+    await scripted(service, "F-1.1")
+    clock = FakeClock()
+    found, _ = await dispatcher(
+        service, clock=clock, health=_health_over(service, said, on_breach="act")
+    )
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(6):
+            if STORE.turns:
+                break
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert STORE.turns >= 1
+
+
+async def test_a_turn_the_harness_is_running_is_resumed_even_on_a_held_host(
+    service: UDLService,
+) -> None:
+    """(The card holds *new* turns and lets what runs finish: a session udl restarted mid-turn is
+    resumed, not stranded, even if the host has since been found in trouble.)"""
+    sessions = SessionRecords(AppRecords(service.db))
+    made = await sessions.save_session(
+        AgentSession(
+            agent=AGENT,
+            task="F-1.1",
+            ref=SessionRef(runner="fake", id="fake-9", cwd="/work/F-1.1", host="local"),
+            state=SessionState.RUNNING,
+            turns=2,
+        )
+    )
+    STORE.specs["fake-9"] = SessionSpec(cwd="/work/F-1.1")
+    said = _AHost(_a_host(io=90.0))
+    check = _health_over(service, said, on_breach="act")
+    await check.check(["local"])
+    assert await check.held("local") is True
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock, health=check)
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(6):
+            if PROMPTS:
+                break
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert PROMPTS[0] == "udl restarted; continue where you were."
+    again = await sessions.session(made.id)
+    assert again is not None
+    assert again.turns == 3
 
 
 async def test_a_host_that_gets_better_lets_its_agent_go(service: UDLService) -> None:

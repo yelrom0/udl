@@ -5795,8 +5795,7 @@
           "io",
           "disk",
           "btrfs_unallocated",
-          "btrfs_metadata",
-          "gates"
+          "btrfs_metadata"
         ],
         "title": "HealthKind",
         "type": "string"

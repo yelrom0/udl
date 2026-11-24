@@ -68,7 +68,7 @@ class HostUnhealthy(_Model):
     host: str
     """The host."""
     issues: list[HostIssueSaid] = Field(default_factory=list[HostIssueSaid])
-    """Every issue it has now."""
+    """The issues this check opened (the ones already open are not news again)."""
 
 
 class HostHealthy(_Model):

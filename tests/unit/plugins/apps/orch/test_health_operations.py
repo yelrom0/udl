@@ -32,7 +32,7 @@ from udl.plugins.apps.orch.events import (
     HostHealthy,
     HostUnhealthy,
 )
-from udl.plugins.apps.orch.health import Health
+from udl.plugins.apps.orch.health import Health, issues_of
 from udl.plugins.apps.orch.models import (
     ActionState,
     HealthKind,
@@ -229,6 +229,72 @@ async def test_a_host_that_breaks_says_what_and_one_that_clears_says_so(
     assert len(cleared) == 1
     over = HostHealthy.model_validate(cleared[0].data)
     assert [one.kind for one in over.cleared] == ["io"]
+
+
+async def test_a_breach_that_comes_back_is_said_again(service: UDLService) -> None:
+    """(Event dedupe is unique on its type and key, so a key that is only the host and the kind
+    would keep the second opening from ever being published.)"""
+    broken = _health_of(service, Reader(_health(io_pressure=90.0)))
+
+    await broken.check(["jeff-wiggle"])
+    await _health_of(service, Reader(_health())).check(["jeff-wiggle"])
+    await broken.check(["jeff-wiggle"])
+
+    said = [
+        HostUnhealthy.model_validate(one.data) for one in await _said(service, HOST_UNHEALTHY.name)
+    ]
+    assert [one.host for one in said] == ["jeff-wiggle", "jeff-wiggle"]
+
+
+async def test_two_paths_on_one_disk_are_one_issue_and_two_disks_are_said_in_one(
+    service: UDLService,
+) -> None:
+    """(A `HostIssue` is one per host and kind: two paths on one filesystem give the same numbers,
+    and are one disk; two disks are one line that names each, so the balance names a real one.)"""
+    one = _health(
+        disks=[
+            {
+                "path": "/a",
+                "filesystem": "btrfs",
+                "free": 500 * 1024**3,
+                "size": 1000 * 1024**3,
+                "unallocated": 1,
+            },
+            {
+                "path": "/b",
+                "filesystem": "btrfs",
+                "free": 500 * 1024**3,
+                "size": 1000 * 1024**3,
+                "unallocated": 1,
+            },
+        ]
+    )
+    (issue,) = issues_of(one, HealthSettings())
+    assert issue.kind is HealthKind.BTRFS_UNALLOCATED
+    assert "/b" not in issue.detail
+
+    two = _health(
+        disks=[
+            {
+                "path": "/a",
+                "filesystem": "btrfs",
+                "free": 500 * 1024**3,
+                "size": 1000 * 1024**3,
+                "unallocated": 1,
+            },
+            {
+                "path": "/b",
+                "filesystem": "btrfs",
+                "free": 500 * 1024**3,
+                "size": 1000 * 1024**3,
+                "unallocated": 2,
+            },
+        ]
+    )
+    (issue,) = issues_of(two, HealthSettings())
+    assert issue.kind is HealthKind.BTRFS_UNALLOCATED
+    assert "/a" in issue.detail
+    assert "/b" in issue.detail
 
 
 async def test_a_host_with_no_checkout_raises_its_action_in_the_only_project(

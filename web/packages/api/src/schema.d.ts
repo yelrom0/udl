@@ -6322,7 +6322,7 @@ export interface components {
          * @description What is wrong with a host (27.13): one issue per kind, while it lasts.
          * @enum {string}
          */
-        HealthKind: "memory" | "swap" | "io" | "disk" | "btrfs_unallocated" | "btrfs_metadata" | "gates";
+        HealthKind: "memory" | "swap" | "io" | "disk" | "btrfs_unallocated" | "btrfs_metadata";
         /**
          * Host
          * @description A machine agents run on: this one (local), or another reached over SSH.
