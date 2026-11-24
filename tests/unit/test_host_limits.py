@@ -10,16 +10,21 @@ such as `27.3a` and a project with a slash in it both make a valid name), and it
 with its `.scope` suffix: a bare name means `.service` to `systemctl`.
 """
 
+# System Imports
+from pathlib import Path
+
 # Package Imports
 import pytest
 
 # Local Imports
-from tests.support.harnesses import ScriptedShell
-
+from support.harnesses import ScriptedShell
 from udl.hosts.shell import (
+    Host,
+    LocalShell,
     Probe,
     ResourceLimits,
     capped,
+    enforces,
     escaped,
     scope_of,
     size_words,
@@ -102,14 +107,10 @@ def test_a_cap_must_be_more_than_nothing() -> None:
         ResourceLimits(memory=0)
 
 
-class _Shell(ScriptedShell):
-    """A shell that answers every argv with exit 0, and counts what it was asked."""
-
-
 async def test_the_caps_probe_is_asked_once_a_host() -> None:
     """(A shell is made on every call — `Hosts.shell()` — so the answer is kept by host name, in
     the map a service's hosts share: a host is probed once, not before every gate and turn.)"""
-    shell = _Shell()
+    shell = ScriptedShell()
     shell.answer(["systemd-run", "--user", "--scope", "-q", "true"], code=0)
     seen: dict[str, bool] = {}
 
@@ -117,3 +118,30 @@ async def test_the_caps_probe_is_asked_once_a_host() -> None:
     assert await Probe(shell, seen).there() is True
 
     assert len([argv for argv in shell.runs if argv[:2] == ["systemd-run", "--user"]]) == 1
+
+
+class _Said(Probe):
+    """A probe that says one thing, and counts how often it is asked."""
+
+    def __init__(self, shell: LocalShell, said: bool) -> None:
+        super().__init__(shell)
+        self.said = said
+        self.times = 0
+
+    async def there(self) -> bool:
+        self.times += 1
+        return self.said
+
+
+async def test_a_gate_that_ran_past_its_time_asks_the_probe_the_shell_already_made(
+    tmp_path: Path,
+) -> None:
+    """(The stop needs to know whether the run was a unit at all, and the shell has already
+    asked: a second `systemd-run` before every timed-out gate would be a probe per timeout.)"""
+    shell = LocalShell(Host.local(str(tmp_path)))
+    said = _Said(shell, True)
+    shell.probe = said
+
+    assert await enforces(shell) is True
+
+    assert said.times == 1

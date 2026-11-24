@@ -46,7 +46,7 @@ class NoSystemd(LocalShell):
 
     def __init__(self, host: Host) -> None:
         super().__init__(host)
-        self._probe = _Never(self)
+        self.probe = _Never(self)
 
 
 @pytest.fixture

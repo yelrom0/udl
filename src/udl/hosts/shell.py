@@ -878,7 +878,7 @@ class LocalShell:
         if host.transport is not HostTransport.LOCAL:
             raise ValueError(f"{host.name!r} is not this machine")
         self.host = host
-        self._probe = Probe(self, seen)
+        self.probe = Probe(self, seen)
 
     def run(
         self,
@@ -918,7 +918,7 @@ class LocalShell:
     ) -> ProcessResult:
         _check_cwd(command)
         program = command.argv[0]
-        command, state = await _limited(self._probe, command, limits, unit)
+        command, state = await _limited(self.probe, command, limits, unit)
         result = await _timed(
             run_process(
                 command.argv,
@@ -962,7 +962,7 @@ class LocalShell:
         unit: str | None = None,
     ) -> AsyncGenerator[bytes]:
         _check_cwd(command)
-        command, state = await _limited(self._probe, command, limits, unit)
+        command, state = await _limited(self.probe, command, limits, unit)
         process = await _started(
             *command.argv,
             stdin=command.stdin,
@@ -1020,7 +1020,7 @@ class SshShell:
         if host.transport is not HostTransport.SSH:
             raise ValueError(f"{host.name!r} is not reached over SSH")
         self.host = host
-        self._probe = Probe(self, seen)
+        self.probe = Probe(self, seen)
 
     def run(
         self,
@@ -1059,7 +1059,7 @@ class SshShell:
         unit: str | None = None,
     ) -> ProcessResult:
         program = command.argv[0]
-        command, state = await _limited(self._probe, command, limits, unit)
+        command, state = await _limited(self.probe, command, limits, unit)
         result = await _timed(
             run_process(
                 ssh_argv(self.host, command),
@@ -1100,7 +1100,7 @@ class SshShell:
         limits: ResourceLimits | None = None,
         unit: str | None = None,
     ) -> AsyncGenerator[bytes]:
-        command, state = await _limited(self._probe, command, limits, unit)
+        command, state = await _limited(self.probe, command, limits, unit)
         process = await _started(
             *ssh_argv(self.host, command), stdin=remote_stdin(command), env=None, cwd=None
         )
@@ -1138,6 +1138,21 @@ class SshShell:
 
     def forward(self, port: int) -> AbstractAsyncContextManager[str]:
         return _forwarded_ssh(self.host, port)
+
+
+async def enforces(shell: HostShell) -> bool:
+    """Whether a capped run on this host really is a unit, which is what a gate that ran past its
+    time has to stop (27.12).
+
+    A shell of ours is asked its own `probe`, the answer kept per host, so a gate costs no second
+    probe; one that is not (a test's fake) is asked the way a shell asks — with a probe run."""
+    if isinstance(shell, (LocalShell, SshShell)):
+        return await shell.probe.there()
+    try:
+        said = await shell.run([*SYSTEMD, "true"], within=PROBE, check=False)
+    except PluginFailed, ToolUnavailable, TimeoutError:
+        return False
+    return said.returncode == 0
 
 
 def shell_for(host: Host, seen: MutableMapping[str, bool] | None = None) -> HostShell:

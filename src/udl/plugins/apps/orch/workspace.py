@@ -30,7 +30,7 @@ from udl.core.service import UDLService
 from udl.db.manager import DBManager
 from udl.errors import ConfigError, NotAllowed, PluginFailed, ToolUnavailable
 from udl.hosts import Host, HostName, HostShell
-from udl.hosts.shell import PROBE, SYSTEMD, ResourceLimits, scope_of, unit_name
+from udl.hosts.shell import ResourceLimits, enforces, scope_of, unit_name
 from udl.interfaces.security import current_principal
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.links import pull_ref
@@ -615,7 +615,7 @@ async def _stopped_gate(
     the gate's. A stop that fails is said rather than raised, and the cleanup runs whatever the
     stop did (it is what removes what the suite left behind)."""
     said = ""
-    if unit is not None and limits is not None and await _enforces(shell):
+    if unit is not None and limits is not None and await enforces(shell):
         try:
             await shell.run(
                 ["systemctl", "--user", "stop", scope_of(unit)], within=STOP_GRACE, check=False
@@ -625,17 +625,6 @@ async def _stopped_gate(
     if cleanup is None:
         return said
     return _said(said, await _cleanup(shell, cleanup, path))
-
-
-async def _enforces(shell: HostShell) -> bool:
-    """Whether a capped run on this host really is a unit to stop (27.12): the same probe the
-    shell makes before it caps a run, asked here because a gate that ran past its time has no
-    result to read. A host without user systemd has no unit to stop, so it is not asked to."""
-    try:
-        said = await shell.run([*SYSTEMD, "true"], within=PROBE, check=False)
-    except PluginFailed, ToolUnavailable, TimeoutError:
-        return False
-    return said.returncode == 0
 
 
 async def _cleanup(shell: HostShell, cleanup: Sequence[str], path: str) -> str:
