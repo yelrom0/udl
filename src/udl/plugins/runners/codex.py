@@ -46,7 +46,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # Local Imports
 from udl.clock import Clock
-from udl.errors import PluginFailed, ToolUnavailable
+from udl.errors import OverCap, PluginFailed, ToolUnavailable
 from udl.hosts.shell import HostShell, Interaction
 from udl.plugins.requirements import Requirement
 from udl.plugins.runners.base import (
@@ -66,6 +66,7 @@ from udl.plugins.runners.base import (
     TurnReason,
     Usage,
     lines,
+    turn_cap,
     turn_too_long,
 )
 
@@ -354,6 +355,10 @@ class Codex(AgentRunner[CodexOptions]):
         except TimeoutError:
             # (The turn ran past its turn_within: say so, rather than raising out of send().)
             ended = TurnEnded(reason=TurnReason.ERROR, text=turn_too_long(self.options.turn_within))
+        except OverCap as capped:
+            # (The turn was stopped at its memory cap: that is the turn's failure, said as one.)
+            yield RunnerFailed(message=str(capped))
+            ended = TurnEnded(reason=TurnReason.ERROR, text=str(capped))
         except (ToolUnavailable, PluginFailed) as failure:
             ended = TurnEnded(reason=TurnReason.ERROR, text=str(failure))
         if session.id in self._stopped:
@@ -389,6 +394,7 @@ class Codex(AgentRunner[CodexOptions]):
 
         (Pulled by a task of its own, so stop() can cancel it: closing a generator that is being
         read cannot, and the shell closes the process when its generator ends.)"""
+        limits, unit = turn_cap(spec, self.name)
         turn = self.shell.stream(
             self._argv(session, spec, first=first),
             cwd=session.cwd,
@@ -396,6 +402,8 @@ class Codex(AgentRunner[CodexOptions]):
             secret_env={name: value.get_secret_value() for name, value in spec.secret_env.items()},
             stdin=self._prompt(spec, prompt, first=first).encode(),
             within=self.options.turn_within,
+            limits=limits,
+            unit=unit,
         )
         queue: asyncio.Queue[bytes | Exception | None] = asyncio.Queue()
 

@@ -13,6 +13,7 @@ its turn as stopped.
 # System Imports
 import asyncio
 import sys
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -22,10 +23,11 @@ import pytest
 # Local Imports
 from support.clock import FakeClock
 from support.runners import RecordingShell
-from udl.errors import NotAllowed
-from udl.hosts.shell import Host, LocalShell
+from udl.errors import NotAllowed, OverCap
+from udl.hosts.shell import Host, LocalShell, ResourceLimits
 from udl.plugins.runners.base import (
     AgentEvent,
+    RunnerFailed,
     RunnerLimited,
     SessionRef,
     SessionSpec,
@@ -39,6 +41,7 @@ from udl.plugins.runners.command import (
     CommandRunnerOptions,
     CommandSessions,
 )
+from udl.process import CancelToken, ProcessResult
 
 ECHO = "import sys; print(sys.stdin.read().upper())"
 """A tiny harness: it says what it was given, in capitals."""
@@ -386,3 +389,104 @@ async def test_a_json_line_it_cannot_read_is_not_fatal(cwd: str) -> None:
         TextDelta(text='{"text": "a"'),
         TextDelta(text='{"other": 1}'),
     ]
+
+
+# ---------------------------------------------------------------------------------------------
+# Its memory cap (27.12)
+# ---------------------------------------------------------------------------------------------
+
+
+class OverCapShell(RecordingShell):
+    """A shell whose capped run ends at the cap (what the kernel does, without the kernel)."""
+
+    async def run(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        secret_env: Mapping[str, str] | None = None,
+        stdin: bytes | None = None,
+        within: timedelta | None = None,
+        cancel: CancelToken | None = None,
+        check: bool = True,
+        tail: bool = False,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
+    ) -> ProcessResult:
+        if limits is not None:
+            self.limits.append(limits)
+            self.units.append(unit)
+            raise OverCap(f"The program passed its memory cap of {limits.words}")
+        return await super().run(
+            argv,
+            cwd=cwd,
+            env=env,
+            secret_env=secret_env,
+            stdin=stdin,
+            within=within,
+            cancel=cancel,
+            check=check,
+            tail=tail,
+            limits=limits,
+            unit=unit,
+        )
+
+
+async def test_a_turn_is_run_under_its_session_s_cap_and_its_own_unit(cwd: str) -> None:
+    """(The card's `udl-session-<agent>-<8 hex>`: each turn its own, so a runaway is found as
+    that turn's.)"""
+    shell = RecordingShell(LocalShell(Host.local(cwd)))
+    runner = CommandRunner(
+        CommandRunnerOptions(argv=[sys.executable, "-c", ECHO]),
+        shell=shell,
+        clock=FakeClock(),
+        allowed=(sys.executable,),
+    )
+    session = await runner.start(
+        SessionSpec(cwd=cwd, memory=20 * 1024**3, unit="udl-session-deepseek-b")
+    )
+
+    await _turn(runner, session, "hello")
+
+    assert shell.limits == [ResourceLimits(memory=20 * 1024**3)]
+    unit = shell.units[0]
+    assert unit is not None
+    assert unit.startswith("udl-session-deepseek-b-")
+    assert len(unit.rsplit("-", 1)[1]) == 8
+
+
+async def test_a_session_with_no_cap_runs_as_it_did(cwd: str) -> None:
+    shell = RecordingShell(LocalShell(Host.local(cwd)))
+    runner = CommandRunner(
+        CommandRunnerOptions(argv=[sys.executable, "-c", ECHO]),
+        shell=shell,
+        clock=FakeClock(),
+        allowed=(sys.executable,),
+    )
+    session = await runner.start(_session(cwd))
+
+    await _turn(runner, session, "hello")
+
+    assert shell.limits == [None]
+    assert shell.units == [None]
+
+
+async def test_a_turn_stopped_at_its_memory_cap_is_that_turn_s_failure(cwd: str) -> None:
+    """(The card's done-when: the turn ends as RunnerFailed and TurnEnded(ERROR), saying the
+    cap, and nothing raises out of send().)"""
+    runner = CommandRunner(
+        CommandRunnerOptions(argv=[sys.executable, "-c", ECHO]),
+        shell=OverCapShell(LocalShell(Host.local(cwd))),
+        clock=FakeClock(),
+        allowed=(sys.executable,),
+    )
+    session = await runner.start(SessionSpec(cwd=cwd, memory=256 * 1024**2))
+
+    events = await _turn(runner, session, "hello")
+
+    assert isinstance(events[0], RunnerFailed)
+    assert events[0].message == "The program passed its memory cap of 256 MiB"
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.ERROR
+    assert events[-1].text == "The program passed its memory cap of 256 MiB"

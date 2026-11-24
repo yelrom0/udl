@@ -21,6 +21,7 @@ class ErrorCode(StrEnum):
     CONFIG_ERROR = "config_error"
     PLUGIN_ERROR = "plugin_error"
     PLUGIN_FAILED = "plugin_failed"
+    OVER_CAP = "over_cap"
     DATABASE_ERROR = "database_error"
     DUPLICATE_KEY = "duplicate_key"
     DOWNLOAD_ERROR = "download_error"
@@ -96,6 +97,13 @@ class PluginFailed(PluginError):
     download stops: trying other downloaders would fail the same way."""
 
     code = ErrorCode.PLUGIN_FAILED
+
+
+class OverCap(PluginFailed):
+    """A capped run the kernel stopped at its memory cap (27.12): the program did not fail, it
+    used more than it was allowed, so what went wrong is the cap and not the program."""
+
+    code = ErrorCode.OVER_CAP
 
 
 class DatabaseError(UDLError):

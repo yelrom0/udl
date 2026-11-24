@@ -17,6 +17,7 @@ from typing import Annotated, Final
 from pydantic import Field, PositiveInt
 
 # Local Imports
+from udl.config import ByteSize
 from udl.plugins.apps.base import AppSettings
 from udl.plugins.settings import FileOnly
 
@@ -69,6 +70,18 @@ class OrchSettings(AppSettings):
     chat_permission_minutes: PositiveInt = 10
     """How long a chat's harness waits for a person to answer its permission prompt, in minutes:
     past it, udl does not allow what it asked (a harness is never left waiting forever)."""
+
+    gates_per_host: PositiveInt = 1
+    """How many gate runs a host runs at once (27.12): a lane per slot, `orch-gate:<host>:<n>`.
+    One by default, as 27.5 built it: a bigger host raises it."""
+
+    gate_memory: ByteSize | None = 4 * 1024**3
+    """The memory a gate run may use, and no swap (27.12): a runaway suite is stopped at the cap
+    rather than by the kernel taking the host's memory. None: no cap."""
+
+    session_memory: ByteSize | None = 20 * 1024**3
+    """The memory one agent's turn may use (27.12), so a runaway in a turn is that turn's
+    failure. None: no cap."""
 
     session_days: PositiveInt = 30
     """How many days a session's transcript (its SessionEvents) is kept: what the dispatcher

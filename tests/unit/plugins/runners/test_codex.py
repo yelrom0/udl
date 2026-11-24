@@ -28,12 +28,13 @@ from pydantic import SecretStr
 
 # Local Imports
 from support.clock import FakeClock
-from udl.errors import PluginFailed, ToolUnavailable
-from udl.hosts.shell import Host, Interaction, LocalShell
+from udl.errors import OverCap, PluginFailed, ToolUnavailable
+from udl.hosts.shell import Host, Interaction, LocalShell, ResourceLimits
 from udl.plugins.requirements import Requirement
 from udl.plugins.runners.base import (
     AgentEvent,
     McpEndpoint,
+    RunnerFailed,
     RunnerHealth,
     RunnerLimited,
     SessionRef,
@@ -77,6 +78,8 @@ class HomeShell(LocalShell):
         cancel: CancelToken | None = None,
         check: bool = True,
         tail: bool = False,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> ProcessResult:
         self.calls.append((list(argv), stdin))
         return await super().run(
@@ -89,6 +92,8 @@ class HomeShell(LocalShell):
             cancel=cancel,
             check=check,
             tail=tail,
+            limits=limits,
+            unit=unit,
         )
 
 
@@ -104,6 +109,10 @@ class FakeShell:
         self.streams: list[tuple[list[str], bytes | None, Mapping[str, str]]] = []
         self.stream_withins: list[timedelta | None] = []
         """How long each stream it was asked for got (a turn's `within`, never the default)."""
+        self.stream_limits: list[ResourceLimits | None] = []
+        """The cap each stream was given (27.12)."""
+        self.stream_units: list[str | None] = []
+        """The unit each stream was asked to run under (27.12)."""
         self.endless = False
         """Whether its stream never ends (so only a turn's own time can)."""
         self.answers: dict[str, ProcessResult] = {}
@@ -124,6 +133,8 @@ class FakeShell:
         cancel: CancelToken | None = None,
         check: bool = True,
         tail: bool = False,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> ProcessResult:
         self.runs.append((list(argv), stdin))
         # (A test points the runner at a Python script, so the program is `python <script>`: the
@@ -154,9 +165,13 @@ class FakeShell:
         secret_env: Mapping[str, str] | None = None,
         stdin: bytes | None = None,
         within: timedelta | None = None,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> AsyncIterator[bytes]:
         self.streams.append((list(argv), stdin, dict(secret_env or {})))
         self.stream_withins.append(within)
+        self.stream_limits.append(limits)
+        self.stream_units.append(unit)
 
         async def chunks() -> AsyncIterator[bytes]:
             # (As a real shell: `within` is how long the whole stream gets.)
@@ -1024,3 +1039,57 @@ async def test_udl_never_opens_codexs_own_credentials(scripted: FakeShell) -> No
 def scripted() -> FakeShell:
     """A shell for a test that is not async."""
     return FakeShell()
+
+
+# ---------------------------------------------------------------------------------------------
+# Its memory cap (27.12)
+# ---------------------------------------------------------------------------------------------
+
+
+class Capped(FakeShell):
+    """A shell whose turn is stopped at its memory cap (what the kernel does, without one)."""
+
+    def stream(self, *args: object, **kwargs: object) -> AsyncIterator[bytes]:
+        async def chunks() -> AsyncIterator[bytes]:
+            raise OverCap("The program passed its memory cap of 20 GiB")
+            yield b""  # pragma: no cover - (a generator needs a statement after raise)
+
+        return chunks()
+
+
+async def test_a_turn_is_run_under_its_session_s_cap_and_its_own_unit(scripted: FakeShell) -> None:
+    given, _ = runner(scripted)
+    session_ = session().model_copy(
+        update={"memory": 20 * 1024**3, "unit": "udl-session-deepseek-b"}
+    )
+    started = await given.start(session_)
+
+    await turn_of(given, started)
+
+    assert scripted.stream_limits == [ResourceLimits(memory=20 * 1024**3)]
+    unit = scripted.stream_units[0]
+    assert unit is not None
+    assert unit.startswith("udl-session-deepseek-b-")
+    assert len(unit.rsplit("-", 1)[1]) == 8
+
+
+async def test_a_turn_stopped_at_its_memory_cap_is_that_turn_s_failure() -> None:
+    given, _ = runner(Capped())
+    started = await given.start(session().model_copy(update={"memory": 20 * 1024**3}))
+
+    events = await turn_of(given, started)
+
+    assert isinstance(events[0], RunnerFailed)
+    assert events[0].message == "The program passed its memory cap of 20 GiB"
+    assert isinstance(events[-1], TurnEnded)
+    assert events[-1].reason is TurnReason.ERROR
+
+
+async def test_a_session_with_no_cap_asks_for_none(scripted: FakeShell) -> None:
+    given, _ = runner(scripted)
+    started = await given.start(session())
+
+    await turn_of(given, started)
+
+    assert scripted.stream_limits == [None]
+    assert scripted.stream_units == [None]

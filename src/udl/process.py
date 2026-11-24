@@ -16,7 +16,7 @@ import logging
 import threading
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Final
+from typing import Final, Literal
 
 # Package Imports
 from pydantic import BaseModel, ConfigDict
@@ -86,6 +86,9 @@ class ProcessResult(BaseModel):
     stdout: str
     stderr: str
     truncated: bool = False  # (its output was more than it was let keep: see run_process())
+    limits: Literal["enforced", "unenforced"] | None = None
+    """Whether the run was under a memory cap the host enforces (`enforced`), asked for but not
+    enforced (`unenforced`: no user systemd there), or not asked for (None, 27.12)."""
 
 
 async def _stop(process: asyncio.subprocess.Process, grace: float) -> None:

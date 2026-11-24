@@ -565,6 +565,9 @@ class Repo(_Model):
     """The branch PRs go into."""
     gate: Gate = Field(default_factory=lambda: list(DEFAULT_GATE))
     """The argv that is its gate (e.g. ["make", "check"]), run before a push."""
+    gate_cleanup: Gate | None = None
+    """An argv run in the worktree after a gate that was stopped (by its memory cap or its time,
+    27.12): what such a run leaves behind is cleared before the agent is told. None: nothing."""
     checkouts: dict[HostName, str] = Field(default_factory=dict)
     """Host name → the main checkout's path there (empty: udl does not know where it is yet)."""
     branch_pattern: CheckedBranchPattern = DEFAULT_BRANCH_PATTERN

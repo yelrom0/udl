@@ -33,7 +33,7 @@ from pydantic import Field
 from udl.clock import Clock
 from udl.core.models import SiteList
 from udl.db.models import SiteQuery
-from udl.hosts.shell import Host, HostShell, Interaction
+from udl.hosts.shell import Host, HostShell, Interaction, ResourceLimits
 from udl.plugins.requirements import Requirement
 from udl.plugins.runners.base import (
     AgentEvent,
@@ -116,6 +116,10 @@ class RecordingShell:
         """How long each run it was asked for got (None: the shell's own default)."""
         self.secret_envs: list[dict[str, str]] = []
         """Every secret environment it was given, in order (a test's own: they stay there)."""
+        self.limits: list[ResourceLimits | None] = []
+        """Every memory cap it was asked for, in order (None: a run that was not capped)."""
+        self.units: list[str | None] = []
+        """Every unit name it was asked to run under, in order (None: no name of its own)."""
 
     async def run(
         self,
@@ -129,10 +133,14 @@ class RecordingShell:
         cancel: CancelToken | None = None,
         check: bool = True,
         tail: bool = False,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> ProcessResult:
         self.calls.append(list(argv))
         self.run_withins.append(within)
         self.secret_envs.append(dict(secret_env or {}))
+        self.limits.append(limits)
+        self.units.append(unit)
         return await self._shell.run(
             argv,
             cwd=cwd,
@@ -143,6 +151,8 @@ class RecordingShell:
             cancel=cancel,
             check=check,
             tail=tail,
+            limits=limits,
+            unit=unit,
         )
 
     def stream(
@@ -154,12 +164,23 @@ class RecordingShell:
         secret_env: Mapping[str, str] | None = None,
         stdin: bytes | None = None,
         within: timedelta | None = None,
+        limits: ResourceLimits | None = None,
+        unit: str | None = None,
     ) -> AsyncIterator[bytes]:
         self.calls.append(list(argv))
         self.withins.append(within)
         self.secret_envs.append(dict(secret_env or {}))
+        self.limits.append(limits)
+        self.units.append(unit)
         return self._shell.stream(
-            argv, cwd=cwd, env=env, secret_env=secret_env, stdin=stdin, within=within
+            argv,
+            cwd=cwd,
+            env=env,
+            secret_env=secret_env,
+            stdin=stdin,
+            within=within,
+            limits=limits,
+            unit=unit,
         )
 
     async def interact(

@@ -955,6 +955,7 @@ class Orch(AppPlugin[OrchSettings]):
                 harnesses=self.harnesses,
                 clock=self.clock,
                 permission_minutes=self.settings.chat_permission_minutes,
+                memory=self.settings.session_memory,
             )
         return self._chats
 
@@ -3265,6 +3266,9 @@ class Orch(AppPlugin[OrchSettings]):
             title=request.title,
             body=request.body,
             within=timedelta(minutes=self.settings.gate_minutes),
+            memory=self.settings.gate_memory,
+            cleanup=repo.gate_cleanup,
+            slots=self.settings.gates_per_host,
         )
 
     async def _repo_of(self, task: stored.Task) -> stored.Repo:

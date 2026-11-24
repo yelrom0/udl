@@ -48,6 +48,7 @@ from udl.db.manager import DBManager
 from udl.db.models import JsonObject
 from udl.errors import DoesNotExist, PluginError, UDLError
 from udl.hosts.models import HostRequest
+from udl.hosts.shell import unit_name
 from udl.plugins.apps.base import AppContext, AppEvent, AppEvents, AppRecords
 from udl.plugins.apps.orch import managers
 from udl.plugins.apps.orch import questions as asked
@@ -868,6 +869,8 @@ class Dispatcher:
             instructions=instructions(project, agent),
             mcp=await self._mcp(agent),
             deny=list(self._settings.deny),
+            memory=self._settings.session_memory,
+            unit=unit_name("udl-session", agent.name),
         )
         runner = await self._harnesses.runner(agent.host, agent.runner)
         ref = await runner.start(spec)
@@ -1343,8 +1346,8 @@ loop comes back to it, and a wait with no end is a hang."""
 
 class TurnLease:
     """One session's turn, held across processes (27.9): a `Lease` named `orch-turn:<session>`,
-    the way a gate's lane is `orch-gate:<host>` (27.5), so a person's typed turn (in the CLI's
-    process) and the loop's (in `udl serve`) never run one session at once.
+    the way a gate's lane is `orch-gate:<host>:<n>` (27.5, 27.12), so a person's typed turn (in
+    the CLI's process) and the loop's (in `udl serve`) never run one session at once.
 
     `held()` takes it — waiting for it, or not — and gives it back however the turn ends, renewing
     it while the turn runs: a process that dies mid-turn lets the next one in when its lease

@@ -363,6 +363,27 @@ class OpenCodeSessions:
     """What each session was started with, by id."""
 
 
+def _capped_problems(unit: str | None, memory: int | None, policy: str | None) -> list[str]:
+    """What is wrong with the service's cap, as 25.11's harness status says it (27.12): no unit
+    at all, a unit with no cap, or an `OOMPolicy` that stops the service with a turn killed at
+    its cap (`continue` is what keeps the other agents up)."""
+    if unit is None:
+        return ["No service unit was found, so there is no memory cap to read (27.12)"]
+    problems: list[str] = []
+    if memory is None:
+        problems.append(
+            f"{unit} has no MemoryMax: a runaway turn could take the machine"
+            f" (set it in ~/.config/systemd/user/{unit}.d/memory.conf)"
+        )
+    if policy != "continue":
+        problems.append(
+            f"{unit} has OOMPolicy={policy or 'unset'}: a turn killed at its cap would stop the"
+            f" whole service (set OOMPolicy=continue in"
+            f" ~/.config/systemd/user/{unit}.d/memory.conf)"
+        )
+    return problems
+
+
 class OpenCode(AgentRunner[OpenCodeOptions]):
     """OpenCode 2 as a runner."""
 
@@ -409,6 +430,9 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
                 signed_in=bool(accounts),
                 guards=guards,
             )
+        unit = await self._unit()
+        memory = await self.memory_cap(unit) if unit is not None else None
+        policy = await self._oom_policy(unit) if unit is not None else None
         return RunnerHealth(
             installed=True,
             signed_in=bool(accounts),  # (the service's password is not a provider's account)
@@ -416,6 +440,9 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
             account=accounts[0] if accounts else None,
             plan=None,  # (a provider's plan is not something the service says)
             guards=guards,
+            memory=memory,
+            oom_policy=policy,
+            problems=_capped_problems(unit, memory, policy),
             detail=f"pid {info.pid}",
         )
 
@@ -438,6 +465,69 @@ class OpenCode(AgentRunner[OpenCodeOptions]):
     async def _accounts(self) -> list[str]:
         """The accounts its providers are signed in as, in order."""
         return [sign_in.account for sign_in in await self._sign_ins() if sign_in.account]
+
+    async def _unit(self) -> str | None:
+        """The service's own unit (the first `opencode*` service there is), when the host has
+        one."""
+        try:
+            units = await self.shell.run(
+                [
+                    "systemctl",
+                    "--user",
+                    "list-units",
+                    "opencode*",
+                    "--type=service",
+                    "--no-legend",
+                    "--plain",
+                ],
+                check=False,
+            )
+        except ToolUnavailable, PluginFailed:
+            return None
+        for line in units.stdout.splitlines():
+            parts = line.split()
+            if parts and parts[0].endswith(".service"):
+                return parts[0]
+        return None
+
+    async def _show(self, unit: str, prop: str) -> str | None:
+        """One property of the unit, as `systemctl show` says it."""
+        said = await self.shell.run(
+            ["systemctl", "--user", "show", unit, "-p", prop, "--value"], check=False
+        )
+        if said.returncode != 0:
+            return None
+        return said.stdout.strip() or None
+
+    async def _oom_policy(self, unit: str) -> str | None:
+        """The unit's `OOMPolicy`: `continue` keeps the service up when a turn is killed at its
+        cap (27.12)."""
+        return await self._show(unit, "OOMPolicy")
+
+    async def memory_cap(self, unit: str | None = None) -> int | None:
+        """The memory the service's own unit is capped to (27.12), when it is.
+
+        A turn of this runner runs inside the service's process, so a turn's cap is the
+        service's: the unit's `MemoryMax`, set by an ExecStart drop-in in
+        `~/.config/systemd/user/<unit>.d/`. None when there is no unit, or it has no cap."""
+        found = unit or await self._unit()
+        if found is None:
+            return None
+        group = await self._show(found, "ControlGroup")
+        return await self._cap_of(group) if group else None
+
+    async def _cap_of(self, group: str) -> int | None:
+        """A cgroup's memory limit: cgroup v2's `memory.max`, or v1's `memory.limit_in_bytes`
+        (`max` on v2 is no cap: not a number, so None)."""
+        for path in (
+            f"/sys/fs/cgroup{group}/memory.max",
+            f"/sys/fs/cgroup/memory{group}/memory.limit_in_bytes",
+        ):
+            said = await self.shell.run(["cat", path], check=False)
+            value = said.stdout.strip()
+            if said.returncode == 0 and value.isdigit():
+                return int(value)
+        return None
 
     async def guards(self) -> bool:
         """Whether udl's deny policies are in the service's config on the host (25.9's rules,

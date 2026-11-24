@@ -4928,7 +4928,7 @@ export interface components {
          * @description A stable, machine-readable code for each error type.
          * @enum {string}
          */
-        ErrorCode: "udl_error" | "config_error" | "plugin_error" | "plugin_failed" | "database_error" | "duplicate_key" | "download_error" | "unsupported_url" | "extraction_failed" | "auth_required" | "rate_limited" | "network_error" | "not_found" | "tool_unavailable" | "no_strategy_found" | "cancelled" | "interrupted" | "does_not_exist" | "not_allowed" | "unauthorized" | "secret_store_error" | "template_failed" | "reauth_required" | "invalid_filter" | "already_exists" | "action_failed" | "in_use" | "ambiguous_account" | "challenge_required" | "provider_unavailable" | "login_by_hand";
+        ErrorCode: "udl_error" | "config_error" | "plugin_error" | "plugin_failed" | "over_cap" | "database_error" | "duplicate_key" | "download_error" | "unsupported_url" | "extraction_failed" | "auth_required" | "rate_limited" | "network_error" | "not_found" | "tool_unavailable" | "no_strategy_found" | "cancelled" | "interrupted" | "does_not_exist" | "not_allowed" | "unauthorized" | "secret_store_error" | "template_failed" | "reauth_required" | "invalid_filter" | "already_exists" | "action_failed" | "in_use" | "ambiguous_account" | "challenge_required" | "provider_unavailable" | "login_by_hand";
         /**
          * ErrorInfo
          * @description A UDLError as data, for API / MCP responses and --json output.
@@ -8592,6 +8592,12 @@ export interface components {
              */
             gate?: string[];
             /**
+             * Gate Cleanup
+             * @description An argv run in the worktree after a gate that was stopped (by its memory cap or its time,
+             *     27.12): what such a run leaves behind is cleared before the agent is told. None: nothing.
+             */
+            gate_cleanup?: string[] | null;
+            /**
              * Github
              * @description Its GitHub repository: owner/repo.
              */
@@ -9085,6 +9091,19 @@ export interface components {
              * @description When its quota is back, if the dispatcher last saw it out of quota (27.7).
              */
             limited_until?: string | null;
+            /**
+             * Memory
+             * @description The memory its turns are capped to, in bytes (27.12): a runner that runs its turns in a
+             *     service of its own says the service's cap; one that runs them as processes says nothing here
+             *     (each turn's cap is the session's).
+             */
+            memory?: number | null;
+            /**
+             * Oom Policy
+             * @description Its service's `OOMPolicy`, when it runs its turns in one (27.12): `continue` keeps the
+             *     service up when a turn is killed at its cap, and anything else stops it with the turn.
+             */
+            oom_policy?: string | null;
             /**
              * Plan
              * @description The plan its account is on, when the harness says.
