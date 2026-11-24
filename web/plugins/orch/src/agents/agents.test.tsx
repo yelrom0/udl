@@ -455,8 +455,10 @@ describe("the agents' page: a host that cannot say what it has (29.6)", () => {
 		await read();
 
 		fireEvent.click(screen.getByRole("button", { name: "New agent" }));
+		await settle();
 		const form = within(screen.getByRole("form", { name: "New agent" }));
-		// (A select with nothing in it is a dead end: it is a box to type in.)
+		// (A select with nothing in it is a dead end: it is a box to type in, once the read says
+		// no host has a harness.)
 		const runner = form.getByLabelText("Runner") as HTMLInputElement;
 		expect(runner.tagName).toBe("INPUT");
 		fireEvent.change(runner, { target: { value: "fake" } });
@@ -469,6 +471,43 @@ describe("the agents' page: a host that cannot say what it has (29.6)", () => {
 			name: "typed",
 			runner: "fake",
 		});
+	});
+});
+
+describe("an agent's editor: the harnesses answer after it opens (29.6)", () => {
+	it("draws the runner as loading, then a select, so nothing a person typed is swapped", async () => {
+		let said: (answer: unknown) => void = () => {};
+		const late = new Promise((done) => {
+			said = done;
+		});
+		const fake = fakeCtx((name) => {
+			if (name === "orch_list_runners") {
+				return late as never;
+			}
+			return ANSWERS[name] as never;
+		});
+		render(<AgentsPage ctx={fake.ctx} params={{}} path="agents" search={{}} />);
+		await screen.findByRole("heading", { level: 1, name: "Agents" });
+		fireEvent.click(screen.getByRole("button", { name: "New agent" }));
+		const form = within(screen.getByRole("form", { name: "New agent" }));
+
+		// (Before a host answers, the field is not one a person can type a runner into and lose
+		// when the answer replaces it: it says it is reading them, and takes nothing.)
+		const reading = form.getByLabelText("Runner") as HTMLInputElement;
+		expect(reading.disabled).toBe(true);
+		expect(reading.value).toBe("");
+
+		said({
+			items: [{ host: "local", runner: "opencode", health: {}, models: [] }],
+			problems: [],
+		});
+		await settle();
+
+		// (Then it is the select a host's harnesses are chosen from.)
+		const runner = form.getByLabelText("Runner") as HTMLSelectElement;
+		expect(runner.tagName).toBe("SELECT");
+		expect(runner.disabled).toBe(false);
+		expect([...runner.options].map((one) => one.value)).toContain("opencode");
 	});
 });
 
