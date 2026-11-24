@@ -29,6 +29,7 @@ export function registerPlugin(info: UIPluginInfo): void {
 			plugin: identity,
 			title: item.title,
 			to: `/p/${info.name}/${item.route}`,
+			route: item.route,
 			...(item.icon === null || item.icon === undefined ? {} : { icon: item.icon }),
 		});
 	}

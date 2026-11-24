@@ -28,6 +28,7 @@ const context: UIContext = {
 	api: {},
 	plugin: { name: "gmail", version: "0.1.0", baseUrl: "/ui/plugins/gmail/" },
 	navigate: () => {},
+	setNavCount: () => {},
 	toast: () => {},
 	confirm: async () => true,
 	call: async () => null,

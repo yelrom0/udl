@@ -105,13 +105,22 @@ test("the Q&A page shows a question asked while it is open, answers it, and the 
 	const task = (await call(page, "get_task", { key: "29.7" })) as {
 		notes?: { note_kind: string; text: string; author: string }[];
 	};
-	const decision = (task.notes ?? []).find((one) => one.note_kind === "decision");
-	expect(decision, "a decision note on the task").toBeTruthy();
+	// (Its own question's note: the note that names that question's key — the task may carry
+	// other decisions, from other questions asked in it.)
+	const decision = (task.notes ?? []).find(
+		(one) => one.note_kind === "decision" && one.text.includes(key),
+	);
+	expect(decision, `a decision note for ${key} on the task`).toBeTruthy();
 	expect(decision?.text).toContain("A decision note");
 
 	await page.goto("/ui/p/orch/tasks/29.7");
 	const notes = page.getByRole("list", { name: "Notes" });
-	// (The note names the question it answers, so a retry's earlier question is not this one.)
-	await expect(notes.getByText(`${key}, answered by`, { exact: false }).first()).toBeVisible();
-	await expect(notes.getByText(/A decision note/).first()).toBeVisible();
+	// (Its own question's note, on the task's page as well: the list holds every note, and the
+	// note names the question it answers.)
+	const note = notes
+		.locator("li")
+		.filter({ hasText: `${key}, answered by` })
+		.first();
+	await expect(note).toBeVisible();
+	expect(await note.textContent()).toContain("A decision note");
 });

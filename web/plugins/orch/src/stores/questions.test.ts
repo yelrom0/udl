@@ -39,6 +39,8 @@ describe("the questions store (29.7)", () => {
 		// is the open ones alone.)
 		expect(fake.calls[0]?.request).toEqual({ state: null });
 		expect(store.getState().project).toBe("udl");
+		// (And the drawer's question count (29.7's follow-up): what is still open.)
+		expect(fake.navCounts).toContainEqual({ route: "questions", count: 1 });
 		stop();
 	});
 

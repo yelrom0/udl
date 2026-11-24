@@ -19,6 +19,8 @@ export interface Fake {
 	toasts: { message: string; kind: string }[];
 	/** What a page asked before doing something (`stack on #N?`). */
 	asked: string[];
+	/** The counts the code under test put on the nav, in order. */
+	navCounts: { route: string; count: number | null }[];
 	/** What `confirm` answers from now on. */
 	yes: boolean;
 	emit(type: string, data?: JsonObject): void;
@@ -65,6 +67,7 @@ export function fakeCtx(answer: Answer): Fake {
 		navigations: [],
 		toasts: [],
 		asked: [],
+		navCounts: [],
 		yes: true,
 		emit(type, data) {
 			const event: JsonObject = { type, data: data ?? {} };
@@ -96,6 +99,9 @@ export function fakeCtx(answer: Answer): Fake {
 		stores: {},
 		navigate: (to) => {
 			fake.navigations.push(to);
+		},
+		setNavCount: (route, count) => {
+			fake.navCounts.push({ route, count });
 		},
 		toast: (message, kind) => {
 			fake.toasts.push({ message, kind: kind ?? "info" });

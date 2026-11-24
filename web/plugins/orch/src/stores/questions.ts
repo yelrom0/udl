@@ -35,11 +35,13 @@ export function questionsStore(ctx: UIContext): Loaded<QuestionsState> {
 			const value = await ctx.call("orch_list_questions", { state: null });
 			if (!stopped) {
 				const body = asObject(value);
-				store.setState({
-					project: asText(body.project),
-					questions: asArray(body.questions).map(questionOf),
-					error: null,
-				});
+				const questions = asArray(body.questions).map(questionOf);
+				store.setState({ project: asText(body.project), questions, error: null });
+				// (The drawer's question count (29.7's follow-up): what is still being asked. Set
+				// here as well as on the inbox, so it is live on whichever of the two pages is
+				// open — and none while nothing waits.)
+				const open = questions.filter((one) => one.state === "open").length;
+				ctx.setNavCount("questions", open === 0 ? null : open);
 			}
 		},
 		(error) => {

@@ -1,13 +1,13 @@
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { onNavigate, routerNavigation } from "./plugins/navigation";
-import { OWN_NAV, registerGenerated, registerPlugins } from "./plugins/shell";
+import { OWN_NAV, registerGenerated, registerPlugins, shellRegistry } from "./plugins/shell";
 import { BASE } from "./router";
 import { routeTree } from "./routeTree.gen";
 import { setGenerated } from "./stores/generated";
 import { clear, pushEvent, setRun } from "./stores/live";
-import { setPlugins } from "./stores/plugins";
+import { plugins, setNavCount, setPlugins } from "./stores/plugins";
 import { session } from "./stores/session";
 import { QuietEventSource, startFakingMatchMedia, stopFakingMatchMedia } from "./test-setup";
 
@@ -92,6 +92,7 @@ beforeEach(() => {
 	// (The page's own pages, as `main.tsx` registers them before the first route is drawn.)
 	registerPlugins([]);
 	setGenerated(null, null);
+	plugins.setState({ counts: {} });
 });
 
 afterEach(() => {
@@ -124,6 +125,32 @@ describe("the shell", () => {
 		}
 		expect(screen.getByRole("combobox", { name: "Theme" })).toBeTruthy();
 		expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
+	});
+
+	it("draws a live count on a nav entry (29.7's follow-up)", async () => {
+		udl();
+		shellRegistry.nav.push({
+			plugin: { name: "orch", version: "0.1.0", baseUrl: "/ui/plugins/orch/" },
+			title: "Q&A",
+			to: "/p/orch/questions",
+			route: "questions",
+		});
+		registerGenerated(null); // (The drawer's list is the registry's, copied in.)
+		setNavCount("orch", "questions", 3);
+		draw("/ui/downloads");
+
+		const link = await screen.findByRole("link", { name: /Q&A/ });
+		expect(link.textContent).toContain("Q&A");
+		// (The count is its own element, with what it counts read out rather than a bare "3".)
+		const badge = within(link).getByTestId("nav-count");
+		expect(badge.textContent).toBe("3 waiting");
+		expect(badge.querySelector(".sr-only")?.textContent).toBe(" waiting");
+
+		// (And none when the plugin takes it off: nothing is waiting.)
+		act(() => {
+			setNavCount("orch", "questions", null);
+		});
+		expect(screen.queryByTestId("nav-count")).toBeNull();
 	});
 
 	it("goes to the login page when udl asks for its key", async () => {

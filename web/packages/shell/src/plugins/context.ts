@@ -9,7 +9,7 @@ import { api } from "../api";
 import { ask } from "../stores/confirms";
 import { live } from "../stores/live";
 import type { UIPluginInfo } from "../stores/plugins";
-import { plugins } from "../stores/plugins";
+import { plugins, setNavCount } from "../stores/plugins";
 import { shownTheme, theme } from "../stores/theme";
 import { toast as say, toasts } from "../stores/toasts";
 import { callOperation } from "./call";
@@ -109,6 +109,9 @@ export function contextOf({ info, navigate }: ContextOptions): UIContext {
 			theme: storeOf(theme),
 		},
 		navigate,
+		setNavCount: (route, count) => {
+			setNavCount(info.name, route, count);
+		},
 		toast: (message, kind) => {
 			say(kind ?? "info", message);
 		},
