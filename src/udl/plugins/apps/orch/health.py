@@ -1,0 +1,366 @@
+"""
+---------------
+- health.py -
+---------------
+
+A host's health, and what udl does about it (27.13): on 23 Nov btrfs ran out of unallocated
+space — `df` still said 116 GiB free, and every commit failed — and later five full suites at
+once took disk I/O pressure to 50%. Claude caught both by hand every half hour; this makes it
+udl's.
+
+One `sh -c` script reads a host through its `HostShell` — memory, swap, I/O pressure, every disk
+udl uses there, and each harness service's memory — and prints one tab-separated line per
+measure. A measure a host cannot give (no PSI, not Linux, not btrfs) is left out, which is None
+("not measured"), never zero.
+
+`issues_of()` turns those numbers into the issues the thresholds make of them, and `Health`
+keeps the open ones as records: what the dispatcher holds turns and gates for, and what raises
+the one human action per issue.
+"""
+
+# System Imports
+import logging
+from collections.abc import Awaitable, Callable, Sequence
+from datetime import timedelta
+from typing import Final
+
+# Package Imports
+from pydantic import BaseModel, ConfigDict, Field
+
+# Local Imports
+from udl.clock import Clock
+from udl.hosts.shell import HostShell, size_words
+from udl.plugins.apps.orch.models import (
+    DiskHealth,
+    HarnessHealth,
+    HealthIssue,
+    HealthKind,
+    HostHealth,
+)
+from udl.plugins.apps.orch.settings import HealthSettings
+
+__all__ = ["MEASURES", "Health", "Measures", "Reading", "issues_of", "parse", "read"]
+
+log = logging.getLogger(__name__)
+
+MEASURES: Final = r"""\
+# udl host health (27.13): one tab-separated line per measure, and nothing for one this host
+# cannot give. $1 is how many paths follow; each path is a disk, and each name after them is a
+# harness unit.
+count=$1; shift
+if [ -r /proc/meminfo ]; then
+  awk '/^MemAvailable:/ {printf "memory\t%d\n", $2 * 1024}' /proc/meminfo
+  awk '/^SwapTotal:/ {total = $2} /^SwapFree:/ {free = $2}
+       END {if (total) printf "swap\t%d\t%d\n", (total - free) * 1024, total * 1024}' \
+    /proc/meminfo
+fi
+if [ -r /proc/pressure/io ]; then
+  awk '/^some/ {for (i = 2; i <= NF; i++) {
+         split($i, pair, "=")
+         if (pair[1] == "avg60") printf "io\t%s\n", pair[2]}}' /proc/pressure/io
+fi
+seen=0
+while [ "$seen" -lt "$count" ]; do
+  path=$1; shift
+  seen=$((seen + 1))
+  sizes=$(df -Pk -- "$path" 2>/dev/null | tail -n 1 | awk '{printf "%d\t%d", $4 * 1024, $2 * 1024}')
+  [ -z "$sizes" ] && continue
+  filesystem=$(stat -f -c %T -- "$path" 2>/dev/null)
+  printf 'disk\t%s\t%s\t%s\n' "$path" "$sizes" "$filesystem"
+  if [ "$filesystem" = btrfs ] && command -v btrfs >/dev/null 2>&1; then
+    btrfs filesystem usage -b -- "$path" 2>/dev/null | awk -v path="$path" '
+      {line = $0; sub(/^[ \t]+/, "", line)
+       if (line ~ /^Device unallocated:/) {
+         split(line, part, ":"); held = part[2]; gsub(/[ \t]/, "", held)}
+       else if (line ~ /^Metadata/) {
+         size = line; sub(/.*Size:/, "", size); sub(/,.*/, "", size); gsub(/[ \t]/, "", size)
+         total += size
+         use = line; sub(/.*Used:/, "", use); sub(/[ \t].*/, "", use); gsub(/[ \t]/, "", use)
+         used += use}}
+      END {if (held != "") printf "btrfs\t%s\t%s\t%d\t%d\n", path, held, used, total}'
+  fi
+done
+if command -v systemctl >/dev/null 2>&1; then
+  while [ "$#" -gt 0 ]; do
+    unit=$1; shift
+    said=$(systemctl --user show -p MemoryCurrent -p MemoryMax -- "$unit" 2>/dev/null)
+    [ -z "$said" ] && continue
+    current=$(printf '%s\n' "$said" | awk -F= '/^MemoryCurrent=/ {print $2}')
+    most=$(printf '%s\n' "$said" | awk -F= '/^MemoryMax=/ {print $2}')
+    printf 'harness\t%s\t%s\t%s\n' "$unit" "$current" "$most"
+  done
+fi
+exit 0
+"""
+"""The script one check runs on a host (27.13). It exits 0 whatever it could not measure: a
+measure it could not take is one line it did not print, which is how "not measured" travels."""
+
+MEASURE_TIMEOUT: Final = timedelta(seconds=30)
+"""How long a health check's script gets: it reads files and runs two commands, and a host that
+cannot answer in this is a host that is in trouble anyway."""
+
+GATE_SLOW: Final = timedelta(hours=2)
+"""How long a gate slot being taken is worth saying (27.13): a suite is minutes, and one that
+has held its host's only slot for two hours is one nobody is watching."""
+
+
+class Measures(BaseModel):
+    """What one host's script said, read into numbers (27.13). Every measure a host could not
+    give is None."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    memory_available: int | None = None
+    """Bytes available for a program."""
+    swap_used: int | None = None
+    """Bytes of swap in use."""
+    swap_total: int | None = None
+    """Bytes of swap there are."""
+    io_pressure: float | None = None
+    """`some avg60`, in percent."""
+    disks: list[DiskHealth] = Field(default_factory=list[DiskHealth])
+    """Every path the script was given, in its order."""
+    harnesses: list[HarnessHealth] = Field(default_factory=list[HarnessHealth])
+    """Every unit the script was given, in its order."""
+
+
+def _number(said: str) -> int | None:
+    """`said` as a whole number of bytes, or None when it is not one (systemd's `[not set]`, an
+    empty field, `infinity`)."""
+    try:
+        return int(said)
+    except ValueError:
+        return None
+
+
+def _share(said: str) -> float | None:
+    """`said` as a number (PSI's percent has a decimal point), or None when it is not one."""
+    try:
+        return float(said)
+    except ValueError:
+        return None
+
+
+def parse(said: str) -> Measures:
+    """What a host's script printed, as measures: one line per measure, its fields separated by
+    tabs (so a path with a space in it stays one field)."""
+    memory: int | None = None
+    swap_used: int | None = None
+    swap_total: int | None = None
+    pressure: float | None = None
+    disks: list[DiskHealth] = []
+    harnesses: list[HarnessHealth] = []
+    for line in said.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        fields = line.split("\t")
+        measure = fields[0]
+        if measure == "memory" and len(fields) == 2:
+            memory = _number(fields[1])
+        elif measure == "swap" and len(fields) == 3:
+            swap_used, swap_total = _number(fields[1]), _number(fields[2])
+        elif measure == "io" and len(fields) == 2:
+            pressure = _share(fields[1])
+        elif measure == "disk" and len(fields) == 5:
+            free, size = _number(fields[2]), _number(fields[3])
+            disks.append(
+                DiskHealth(path=fields[1], filesystem=_filesystem(fields), free=free, size=size)
+            )
+        elif measure == "btrfs" and len(fields) == 5:
+            disks = [
+                _with_btrfs(disk, fields) if disk.path == fields[1] else disk for disk in disks
+            ]
+        elif measure == "harness" and len(fields) == 4:
+            harnesses.append(
+                HarnessHealth(
+                    unit=fields[1],
+                    memory_current=_number(fields[2]),
+                    memory_max=_number(fields[3]),
+                )
+            )
+    return Measures(
+        memory_available=memory,
+        swap_used=swap_used,
+        swap_total=swap_total,
+        io_pressure=pressure,
+        disks=disks,
+        harnesses=harnesses,
+    )
+
+
+def _filesystem(fields: Sequence[str]) -> str | None:
+    """The filesystem a disk line names (None when the host could not say)."""
+    said = fields[4].strip() if len(fields) > 4 else ""
+    return said or None
+
+
+def _with_btrfs(disk: DiskHealth, fields: Sequence[str]) -> DiskHealth:
+    """`disk` with what btrfs said about it (its unallocated and metadata numbers)."""
+    return disk.model_copy(
+        update={
+            "unallocated": _number(fields[2]),
+            "metadata_used": _number(fields[3]),
+            "metadata_total": _number(fields[4]),
+        }
+    )
+
+
+def _issue(host: str, kind: HealthKind, detail: str, hint: str) -> HealthIssue:
+    """One issue, as its kind's line and hint make it."""
+    return HealthIssue(host=host, kind=kind, detail=detail, hint=hint)
+
+
+def issues_of(health: HostHealth, settings: HealthSettings) -> list[HealthIssue]:
+    """What the thresholds make of `health`'s numbers (27.13): nothing when the host is healthy,
+    and never an issue for a measure it could not give."""
+    found: list[HealthIssue] = []
+    host = health.host
+    if health.memory_available is not None and health.memory_available < settings.memory_min:
+        found.append(
+            _issue(
+                host,
+                HealthKind.MEMORY,
+                f"{size_words(health.memory_available)} available, under the "
+                f"{size_words(settings.memory_min)} it needs",
+                "Finish or stop what is running on it, or raise [apps.orch.health] memory_min.",
+            )
+        )
+    if (
+        health.swap_used is not None
+        and health.swap_total
+        and health.swap_used > health.swap_total * settings.swap_max_ratio
+    ):
+        found.append(
+            _issue(
+                host,
+                HealthKind.SWAP,
+                f"{size_words(health.swap_used)} of {size_words(health.swap_total)} swap in use",
+                "A program is holding memory it does not use: find it with `ps` sorted by RSS, "
+                "and restart it.",
+            )
+        )
+    if health.io_pressure is not None and health.io_pressure > settings.io_pressure_max:
+        found.append(
+            _issue(
+                host,
+                HealthKind.IO,
+                f"{health.io_pressure:.1f}% I/O pressure, over the {settings.io_pressure_max:.0f}%"
+                " it may reach",
+                "Fewer suites at once: the full one takes half an hour on a quiet machine, and "
+                "three at once take hours.",
+            )
+        )
+    for disk in health.disks:
+        if disk.free is not None and disk.free < settings.disk_min:
+            found.append(
+                _issue(
+                    host,
+                    HealthKind.DISK,
+                    f"{disk.path} has {size_words(disk.free)} free, under the "
+                    f"{size_words(settings.disk_min)} it needs",
+                    "udl removes a task's worktree after its merge: look for the ones of tasks "
+                    "that are done, and for anything else that grew.",
+                )
+            )
+        if (
+            disk.filesystem == "btrfs"
+            and disk.unallocated is not None
+            and disk.unallocated < settings.btrfs_unallocated_min
+        ):
+            found.append(
+                _issue(
+                    host,
+                    HealthKind.BTRFS_UNALLOCATED,
+                    f"{disk.path} can allocate {size_words(disk.unallocated)}, under the "
+                    f"{size_words(settings.btrfs_unallocated_min)} it needs: writes fail with "
+                    "No space left on device, whatever df says",
+                    "A data balance frees it: "
+                    f"`sudo btrfs balance start -dusage=10 {disk.path}`, which needs root, so a "
+                    "person runs it.",
+                )
+            )
+        if (
+            disk.filesystem == "btrfs"
+            and disk.metadata_used is not None
+            and disk.metadata_total
+            and disk.metadata_used > disk.metadata_total * settings.btrfs_metadata_max_ratio
+        ):
+            found.append(
+                _issue(
+                    host,
+                    HealthKind.BTRFS_METADATA,
+                    f"{disk.path} has {size_words(disk.metadata_used)} of "
+                    f"{size_words(disk.metadata_total)} metadata used",
+                    "A metadata balance frees it: "
+                    f"`sudo btrfs balance start -musage=10 {disk.path}`, which needs root, so a "
+                    "person runs it.",
+                )
+            )
+    return found
+
+
+class Health:
+    """The hosts' health, and what udl does about it (27.13).
+
+    `check()` reads the hosts, turns the numbers into issues, and keeps the open ones as records:
+    a new one is said (`orch.host.unhealthy`) and, when the setting says so, raises the one
+    action a person reads; one that has cleared is closed (`orch.host.healthy`), and its action
+    finished with what cleared it.
+
+    `held()` is what a turn and a gate ask before they start: whether the host has an open issue
+    while the setting says to act on it.
+    """
+
+    def __init__(
+        self,
+        *,
+        clock: Clock,
+        settings: HealthSettings,
+        reading: Reading,
+    ) -> None:
+        self._clock = clock
+        self._settings = settings
+        self._reading = reading
+
+    @property
+    def settings(self) -> HealthSettings:
+        """What counts as a breach, and what udl does about it."""
+        return self._settings
+
+
+type Reading = Callable[[str], Awaitable[HostHealth]]
+"""How a host's health is read (27.13): the name of a host, and what it says about itself. It is
+a callable so a test's reader is the one the dispatcher's checks run through."""
+
+
+async def read(
+    name: str,
+    *,
+    shell: HostShell,
+    paths: Sequence[str],
+    units: Sequence[str],
+    clock: Clock,
+    gates_running: int = 0,
+    gates_allowed: int = 1,
+) -> HostHealth:
+    """Read `name`'s health through `shell` (27.13): the script's lines, parsed into measures,
+    with the gates it has running and allows, and the time it was read."""
+    said = await shell.run(
+        ["sh", "-c", MEASURES, "udl-health", str(len(paths)), *paths, *units],
+        within=MEASURE_TIMEOUT,
+        check=False,
+        tail=False,
+    )
+    measures = parse(said.stdout)
+    return HostHealth(
+        host=name,
+        memory_available=measures.memory_available,
+        swap_used=measures.swap_used,
+        swap_total=measures.swap_total,
+        io_pressure=measures.io_pressure,
+        disks=measures.disks,
+        harnesses=measures.harnesses,
+        gates_running=gates_running,
+        gates_allowed=gates_allowed,
+        at=clock.now(),
+    )

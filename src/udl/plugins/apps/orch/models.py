@@ -101,6 +101,11 @@ __all__ = [
     "GetTaskRequest",
     "GitHubAccount",
     "GitHubSlug",
+    "HealthIssue",
+    "HealthKind",
+    "HostHealth",
+    "HostHealthList",
+    "HostHealthRequest",
     "HostName",
     "ImportPlanRequest",
     "ImportReport",
@@ -1477,6 +1482,105 @@ class AgentStatus(StrEnum):
     LIMITED = "limited"  # its harness's quota is spent, until its session says when
     OFFLINE = "offline"  # its host did not answer (27.7)
     PAUSED = "paused"  # a person paused it: nothing is dispatched to it
+
+
+class HealthKind(StrEnum):
+    """What is wrong with a host (27.13): one issue per kind, while it lasts."""
+
+    MEMORY = "memory"  # too little memory available
+    SWAP = "swap"  # nearly all swap used
+    IO = "io"  # disk I/O pressure high (a full suite or five)
+    DISK = "disk"  # a disk udl uses is nearly full
+    BTRFS_UNALLOCATED = "btrfs_unallocated"  # btrfs cannot allocate: every write fails
+    BTRFS_METADATA = "btrfs_metadata"  # btrfs metadata is nearly all used
+    GATES = "gates"  # every gate slot of the host is taken for a long time
+
+
+class DiskHealth(_Model):
+    """One disk a host keeps udl's work on (27.13): what it has left, and on btrfs, what it can
+    still allocate. A measure the filesystem cannot give is None ("not measured"), never zero."""
+
+    path: str
+    """The path udl uses there (a host's work directory, or a repo's checkout)."""
+    filesystem: str | None = None
+    """Its filesystem (`ext4`, `btrfs`, `apfs`), when the host says."""
+    free: int | None = None
+    """Bytes free to udl (`df`)."""
+    size: int | None = None
+    """Its size in bytes."""
+    unallocated: int | None = None
+    """On btrfs: bytes not allocated to any chunk, which is what a write needs
+    (`btrfs filesystem usage`); None elsewhere."""
+    metadata_used: int | None = None
+    """On btrfs: metadata allocated, in bytes."""
+    metadata_total: int | None = None
+    """On btrfs: metadata allocated and free, in bytes."""
+
+
+class HarnessHealth(_Model):
+    """One harness service's memory, as its unit reports it (27.13)."""
+
+    unit: str
+    """The unit's name (`udl-opencode-<agent>.service`)."""
+    memory_current: int | None = None
+    """What it is using now, in bytes (None: not measured, or the unit is not there)."""
+    memory_max: int | None = None
+    """Its cap in bytes (None: no cap, or not measured)."""
+
+
+class HealthIssue(_Model):
+    """Something wrong with a host (27.13), with what to do about it."""
+
+    host: Name
+    """The host it is on."""
+    kind: HealthKind
+    """What is wrong."""
+    detail: str
+    """The numbers, in a line: `1 GiB available, under the 2 GiB it needs`."""
+    hint: str
+    """What a person can do about it."""
+
+
+class HostHealth(_Model):
+    """What a host's health check found (27.13): its measures, its disks, its harnesses, its
+    gates, and the issues they make. A measure the host cannot give is None."""
+
+    host: Name
+    """The host."""
+    memory_available: int | None = None
+    """Bytes available for a program (`/proc/meminfo`'s MemAvailable)."""
+    swap_used: int | None = None
+    """Bytes of swap in use."""
+    swap_total: int | None = None
+    """Bytes of swap there are (0: none)."""
+    io_pressure: float | None = None
+    """`/proc/pressure/io`'s `some avg60`, in percent."""
+    disks: list[DiskHealth] = Field(default_factory=list[DiskHealth])
+    """Every path udl uses on the host."""
+    harnesses: list[HarnessHealth] = Field(default_factory=list[HarnessHealth])
+    """Each harness service's memory."""
+    gates_running: int = 0
+    """Gate runs going on the host now."""
+    gates_allowed: int = 1
+    """How many it runs at once (`gates_per_host`)."""
+    issues: list[HealthIssue] = Field(default_factory=list[HealthIssue])
+    """What the thresholds make of these numbers: empty when the host is healthy."""
+    at: AwareDatetime
+    """When it was read."""
+
+
+class HostHealthRequest(_Model):
+    """Asking how the hosts are (27.13)."""
+
+    host: Name | None = None
+    """One host (None: every host udl knows)."""
+
+
+class HostHealthList(_Model):
+    """What the health check found, per host (27.13): what `udl orch hosts health` shows."""
+
+    hosts: list[HostHealth] = Field(default_factory=list[HostHealth])
+    """One per host, in the order udl knows them."""
 
 
 class MergeList(_Model):
