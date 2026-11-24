@@ -261,6 +261,10 @@ describe("a question's thread (29.7)", () => {
 		// (While it is out: nothing to click, and the button says so.)
 		const waiting = screen.getByRole("button", { name: "Saying…" }) as HTMLButtonElement;
 		expect(waiting.disabled).toBe(true);
+		// (A second click on it: a disabled button takes no event, so it is not another post.)
+		await act(async () => {
+			fireEvent.click(waiting);
+		});
 
 		await act(async () => {
 			release?.();
