@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { asSize, boardOf, inboxOf, mergeListOf, POINTS, sessionOf } from "./model";
+import {
+	asSize,
+	boardOf,
+	durationOf,
+	estimateOf,
+	featureInfoOf,
+	inboxOf,
+	isQuestionKey,
+	mergeListOf,
+	movesFrom,
+	POINTS,
+	readinessOf,
+	sessionOf,
+	sessionOfTask,
+	taskInfoOf,
+} from "./model";
 
 describe("reading an answer", () => {
 	it("reads an inbox, and nothing at all from nothing", () => {
@@ -170,5 +185,151 @@ describe("reading an answer", () => {
 	it("reads a session's fields, and a task's own fields when it has none", () => {
 		expect(sessionOf({ id: "ses_1", turns: 3, task: 5 }).task).toBe("");
 		expect(sessionOf(undefined).turns).toBe(0);
+	});
+});
+
+describe("a feature's and a task's pages (29.5)", () => {
+	it("reads a feature with its spec, its totals, its tasks, its links and its notes", () => {
+		const info = featureInfoOf({
+			// (A feature's spec is its own: `orch_get_feature` sends it on the feature.)
+			feature: { key: "29", title: "Screens", status: "active", spec: "## What it is" },
+			totals: { points: 13, points_merged: 5, points_ready: 3 },
+			tasks: [{ key: "29.2", title: "The skeleton", state: "merged", size: "L" }],
+			links: [{ link_kind: "pull", url: "https://github.com/o/r/pull/80", title: "80", state: {} }],
+			notes: [{ at: "2026-11-24T01:00:00Z", author: "deepseek-a", note_kind: "note", text: "hi" }],
+		});
+
+		expect(info.feature.key).toBe("29");
+		expect(info.spec).toBe("## What it is");
+		expect(info.totals.points).toBe(13);
+		expect(info.totals.points_merged).toBe(5);
+		expect(info.tasks[0]?.state).toBe("merged");
+		expect(info.links[0]?.link_kind).toBe("pull");
+		expect(info.notes[0]?.author).toBe("deepseek-a");
+	});
+
+	it("reads a task with its feature, its links, its notes, its questions and what it unblocks", () => {
+		const info = taskInfoOf(
+			{
+				feature: { key: "29", title: "Screens", status: "active" },
+				task: {
+					key: "29.2",
+					feature: "29",
+					title: "The skeleton",
+					state: "ready",
+					spec: "## It",
+					size: "L",
+					needs: ["28.7"],
+					assignee: "deepseek-a",
+					repo: "yelrom0/udl",
+					branch: "feat/29.2-ui-skeleton",
+					blocked_on: "CI",
+					hold: "built now, merged later",
+				},
+				links: [{ link_kind: "pull", url: "https://github.com/o/r/pull/80" }],
+				notes: [{ at: "2026-11-24T01:00:00Z", author: "claude", note_kind: "note", text: "ok" }],
+				questions: [{ key: "Q-8", title: "Screens", state: "open", task: "29.2" }],
+			},
+			["29.5"],
+		);
+
+		expect(info.task.key).toBe("29.2");
+		expect(info.task.spec).toBe("## It");
+		expect(info.task.branch).toBe("feat/29.2-ui-skeleton");
+		expect(info.task.blocked_on).toBe("CI");
+		// (A hold is why it is held, not a flag.)
+		expect(info.task.hold).toBe("built now, merged later");
+		expect(info.feature?.key).toBe("29");
+		expect(info.notes[0]?.text).toBe("ok");
+		expect(info.questions[0]?.key).toBe("Q-8");
+		expect(info.unblocks).toEqual(["29.5"]);
+	});
+
+	it("reads nothing at all from nothing, and no feature from a task without one", () => {
+		const nothing = featureInfoOf(undefined);
+		expect(nothing.feature.key).toBe("");
+		expect(nothing.totals.points).toBe(0);
+		expect(nothing.tasks).toEqual([]);
+		expect(nothing.notes).toEqual([]);
+
+		const alone = taskInfoOf({ task: { key: "29.9" } }, []);
+		expect(alone.feature).toBeNull();
+		expect(alone.task.key).toBe("29.9");
+		expect(alone.task.needs).toEqual([]);
+	});
+
+	it("reads an estimate, and a readiness with its blockers", () => {
+		const estimate = estimateOf({ size: "L", estimate: "4h", worked: "1h 20m" });
+		expect(estimate.size).toBe("L");
+		expect(estimate.estimate).toBe("4h");
+		expect(estimate.worked).toBe("1h 20m");
+
+		const readiness = readinessOf({
+			ready: false,
+			held: true,
+			blockers: ["CI is red", "the bot has 2 items"],
+			pending: ["the bot"],
+			open_items: [{ number: "1", status: "open", text: "a nit" }],
+			waited: 42,
+		});
+		expect(readiness.ready).toBe(false);
+		expect(readiness.held).toBe(true);
+		expect(readiness.blockers).toEqual(["CI is red", "the bot has 2 items"]);
+		expect(readiness.open_items).toEqual([{ number: "1", status: "open", text: "a nit" }]);
+		expect(readiness.waited).toBe(42);
+
+		expect(estimateOf(undefined).size).toBeNull();
+		expect(readinessOf(undefined).blockers).toEqual([]);
+	});
+
+	it("tells a question's key from a line of text", () => {
+		// (What a task waits on is the question's key, `Q-<n>`, or free text.)
+		expect(isQuestionKey("Q-8")).toBe(true);
+		expect(isQuestionKey("Q-108")).toBe(true);
+		expect(isQuestionKey("CI")).toBe(false);
+		expect(isQuestionKey("Q-8 and Q-9")).toBe(false);
+		expect(isQuestionKey("")).toBe(false);
+	});
+
+	it("reads a duration as a person reads it, and anything else as it came", () => {
+		// (What `orch_estimate` sends: an ISO 8601 duration.)
+		expect(durationOf("PT4H")).toBe("4h");
+		expect(durationOf("PT1H20M")).toBe("1h 20m");
+		expect(durationOf("P1DT2H30M")).toBe("1d 2h 30m");
+		expect(durationOf("PT0S")).toBe("0s");
+		expect(durationOf("P")).toBe("0m");
+		expect(durationOf("4h")).toBe("4h");
+		expect(durationOf("")).toBe("");
+	});
+
+	it("finds the session a task is in, among the agents' (29.6's page takes it)", () => {
+		const session = sessionOfTask(
+			{
+				items: [
+					{
+						agent: { name: "deepseek-a" },
+						status: "working",
+						session: { agent: "deepseek-a", task: "29.2", ref: { id: "s-1" }, state: "running" },
+					},
+					{
+						agent: { name: "ernie-d" },
+						status: "working",
+						session: { agent: "ernie-d", task: "29.7", ref: { id: "s-2" }, state: "running" },
+					},
+				],
+			},
+			"29.7",
+		);
+
+		expect(session).toEqual({ agent: "ernie-d", id: "s-2", state: "running" });
+		expect(sessionOfTask({ items: [] }, "29.2")).toBeNull();
+	});
+
+	it("lists the states a person may move a task to: every one but its own", () => {
+		expect(movesFrom("open")).not.toContain("open");
+		expect(movesFrom("open")).toContain("in_progress");
+		expect(movesFrom("open")).toContain("cancelled");
+		expect(movesFrom("merged")).toContain("done");
+		expect(movesFrom("done")).toContain("merged");
 	});
 });

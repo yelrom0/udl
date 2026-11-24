@@ -153,7 +153,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 29.2 The `orch` UI plugin's skeleton: manifest, routes, stores, live data
   - [~] 29.3 Inbox (home)
   - [~] 29.4 Board: features and tasks, agents' queues, the suggested list, drag to assign
-  - [ ] 29.5 Feature and task pages (specs, notes, links)
+  - [~] 29.5 Feature and task pages (specs, notes, links)
   - [ ] 29.6 Agents: the hierarchy, assigning models to models, an agent's page with its live session
   - [ ] 29.7 Q&A
   - [ ] 29.8 Ready to merge and To action

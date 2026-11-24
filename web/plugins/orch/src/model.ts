@@ -95,6 +95,7 @@ export interface Inbox {
 /** A feature: a part of a project's work (26.2). */
 export interface Feature {
 	readonly key: string;
+	readonly project: string;
 	readonly title: string;
 	readonly status: string;
 }
@@ -108,6 +109,111 @@ export interface Task {
 	readonly assignee: string | null;
 	readonly size: Size | null;
 	readonly needs: readonly string[];
+	readonly spec: string;
+	/** Why it is held (built now, merged later), or null. */
+	readonly hold: string | null;
+	readonly blocked_on: string | null;
+	readonly repo: string;
+	readonly branch: string;
+	readonly worktree: string;
+	readonly task_kind: string;
+}
+
+/** Every state a task is in (26.3's Concepts table), in the order a person reads them. */
+export const STATES: readonly string[] = [
+	"open",
+	"queued",
+	"in_progress",
+	"blocked",
+	"ready",
+	"merged",
+	"done",
+	"moved",
+	"cancelled",
+];
+
+/** The states a person may move a task to: every one but the one it is in (a person moves a
+ * task anywhere; the table's rules are for the agents). */
+export function movesFrom(state: string): readonly string[] {
+	return STATES.filter((one) => one !== state);
+}
+
+/** A note on a feature or a task (26.5), as an operation sends it. */
+export interface Note {
+	readonly at: string;
+	readonly author: string;
+	readonly note_kind: string;
+	readonly text: string;
+}
+
+/** A typed pointer from a feature or a task to something else (26.4). */
+export interface Link {
+	readonly link_kind: string;
+	readonly url: string;
+	readonly title: string;
+	readonly state: PullState;
+}
+
+/** What a feature's or a project's tasks come to, in points (26.8). */
+export interface Totals {
+	readonly points: number;
+	readonly points_merged: number;
+	readonly points_ready: number;
+}
+
+/** A feature, with what hangs on it: its spec, its tasks, its links, its notes, its totals. */
+export interface FeatureInfo {
+	readonly feature: Feature;
+	readonly spec: string;
+	readonly status: string;
+	readonly totals: Totals;
+	readonly tasks: readonly Task[];
+	readonly links: readonly Link[];
+	readonly notes: readonly Note[];
+}
+
+/** A task, with what hangs on it: its feature, its links, its notes, its questions, and the
+ * tasks that wait on it. */
+export interface TaskInfo {
+	readonly task: Task;
+	readonly feature: Feature | null;
+	readonly links: readonly Link[];
+	readonly notes: readonly Note[];
+	readonly questions: readonly Question[];
+	readonly unblocks: readonly string[];
+}
+
+/** What a task is expected to take, and what it has taken (27.10). */
+export interface Estimate {
+	readonly size: Size | null;
+	readonly estimate: string | null;
+	readonly worked: string;
+}
+
+/** One of the review bot's items, as udl reads it out of the bot's comment (27.6). */
+export interface ReviewItem {
+	/** Its number in the comment (`1`, or empty for a row without one). */
+	readonly number: string;
+	/** Where it is; anything but `fixed` keeps the pull from being ready. */
+	readonly status: string;
+	readonly text: string;
+}
+
+/** Whether a task's pull may be merged, and what it waits on (27.6). */
+export interface Readiness {
+	readonly ready: boolean;
+	readonly held: boolean;
+	readonly blockers: readonly string[];
+	readonly pending: readonly string[];
+	readonly open_items: readonly ReviewItem[];
+	readonly waited: number;
+}
+
+/** The session a task is in (27.7), as an agent's own answer names it. */
+export interface TaskSession {
+	readonly agent: string;
+	readonly id: string;
+	readonly state: string;
 }
 
 /** A task on an agent's queue, as `orch_list_agents` sends it (29.4). */
@@ -269,14 +375,19 @@ export function inboxOf(value: JsonValue | undefined): Inbox {
 	};
 }
 
-/** A feature, as `orch_list_features` sends it. */
-function featureOf(value: JsonValue): Feature {
+/** A feature, as `orch_list_features` and a feature's page send it. */
+function featureOf(value: JsonValue | undefined): Feature {
 	const one = asObject(value);
-	return { key: asText(one.key), title: asText(one.title), status: asText(one.status) };
+	return {
+		key: asText(one.key),
+		project: asText(one.project),
+		title: asText(one.title),
+		status: asText(one.status),
+	};
 }
 
 /** A task, as `orch_list_tasks` sends it. */
-function taskOf(value: JsonValue): Task {
+function taskOf(value: JsonValue | undefined): Task {
 	const one = asObject(value);
 	return {
 		key: asText(one.key),
@@ -286,6 +397,13 @@ function taskOf(value: JsonValue): Task {
 		assignee: typeof one.assignee === "string" ? one.assignee : null,
 		size: asSize(one.size),
 		needs: asArray(one.needs).map((need) => asText(need)),
+		spec: asText(one.spec),
+		hold: typeof one.hold === "string" && one.hold !== "" ? one.hold : null,
+		blocked_on: typeof one.blocked_on === "string" ? one.blocked_on : null,
+		repo: asText(one.repo),
+		branch: asText(one.branch),
+		worktree: asText(one.worktree),
+		task_kind: asText(one.task_kind),
 	};
 }
 
@@ -385,4 +503,159 @@ export function boardOf(
 		merge: mergeListOf(merge),
 		progress: progressOf(progress),
 	};
+}
+
+/** A note, as a feature's or a task's answer sends it. */
+function noteOf(value: JsonValue): Note {
+	const one = asObject(value);
+	return {
+		at: asText(one.at),
+		author: asText(one.author),
+		note_kind: asText(one.note_kind),
+		text: asText(one.text),
+	};
+}
+
+/** What is known of a pull, from a link's own `state`. */
+function pullStateOf(state: JsonValue): PullState {
+	const one = asObject(state);
+	return {
+		...(typeof one.checks === "string" ? { checks: one.checks } : {}),
+		...(typeof one.review === "string" ? { review: one.review } : {}),
+	};
+}
+
+/** A link, as a feature's or a task's answer sends it. */
+function linkOf(value: JsonValue): Link {
+	const one = asObject(value);
+	const state = asObject(one.state);
+	return {
+		link_kind: asText(one.link_kind),
+		url: asText(one.url),
+		title: asText(one.title),
+		state: pullStateOf(state),
+	};
+}
+
+/** What a feature's tasks come to, as `orch_get_feature` sends it. */
+function totalsOf(value: JsonValue | undefined): Totals {
+	const totals = asObject(value);
+	return {
+		points: asNumber(totals.points),
+		points_merged: asNumber(totals.points_merged),
+		points_ready: asNumber(totals.points_ready),
+	};
+}
+
+/** A feature, with what hangs on it (29.5's page). */
+export function featureInfoOf(value: JsonValue | undefined): FeatureInfo {
+	const info = asObject(value);
+	const feature = asObject(info.feature);
+	return {
+		feature: featureOf(feature),
+		spec: asText(feature.spec),
+		status: asText(feature.status),
+		totals: totalsOf(info.totals),
+		tasks: asArray(info.tasks).map(taskOf),
+		links: asArray(info.links).map(linkOf),
+		notes: asArray(info.notes).map(noteOf),
+	};
+}
+
+/** A task, with what hangs on it (29.5's page). `unblocks` is the keys of the tasks whose
+ * `needs` name it: udl answers that from the feature's tasks, which the page reads too. */
+export function taskInfoOf(value: JsonValue | undefined, unblocks: readonly string[]): TaskInfo {
+	const info = asObject(value ?? {});
+	const feature =
+		info.feature === null || info.feature === undefined ? null : asObject(info.feature);
+	return {
+		task: taskOf(info.task),
+		feature: feature === null ? null : featureOf(feature),
+		links: asArray(info.links).map(linkOf),
+		notes: asArray(info.notes).map(noteOf),
+		questions: asArray(info.questions).map(questionOf),
+		unblocks,
+	};
+}
+
+/** What a task is expected to take, as `orch_estimate` sends it. */
+export function estimateOf(value: JsonValue | undefined): Estimate {
+	const one = asObject(value);
+	return {
+		size: asSize(one.size),
+		estimate: typeof one.estimate === "string" ? one.estimate : null,
+		worked: asText(one.worked),
+	};
+}
+
+/** Whether what a task waits on is a question's key (`Q-<n>`), rather than a line of text. */
+export function isQuestionKey(value: string): boolean {
+	return /^Q-\d+$/.test(value);
+}
+
+/**
+ * An ISO 8601 duration (`PT4H`, `PT1H20M`, `P1DT2H`) as a person reads it (`4h`, `1h 20m`,
+ * `1d 2h`): what `orch_estimate` sends for what a task takes and has taken. Anything that is not
+ * one is handed back as it came, so a caller may show it as it is.
+ */
+export function durationOf(value: string): string {
+	const match = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$/.exec(value);
+	if (match === null) {
+		return value;
+	}
+	const [, days, hours, minutes, seconds] = match;
+	const parts: string[] = [];
+	if (days !== undefined) {
+		parts.push(`${days}d`);
+	}
+	if (hours !== undefined) {
+		parts.push(`${hours}h`);
+	}
+	if (minutes !== undefined) {
+		parts.push(`${minutes}m`);
+	}
+	if (seconds !== undefined) {
+		parts.push(`${seconds}s`);
+	}
+	return parts.length === 0 ? "0m" : parts.join(" ");
+}
+
+/** Whether a pull may be merged, as `orch_readiness` sends it. */
+export function readinessOf(value: JsonValue | undefined): Readiness {
+	const one = asObject(value);
+	return {
+		ready: asFlag(one.ready),
+		held: asFlag(one.held),
+		blockers: asArray(one.blockers).map((blocker) => asText(blocker)),
+		pending: asArray(one.pending).map((kind) => asText(kind)),
+		open_items: asArray(one.open_items).map((value) => {
+			const item = asObject(value);
+			return {
+				number: asText(item.number),
+				status: asText(item.status),
+				text: asText(item.text),
+			};
+		}),
+		waited: asNumber(one.waited),
+	};
+}
+
+/** The session a task is in, from `orch_list_agents`: the agent whose session is that task. */
+export function sessionOfTask(agents: JsonValue | undefined, key: string): TaskSession | null {
+	for (const item of asArray(asObject(agents).items)) {
+		const info = asObject(item);
+		if (info.session === null || info.session === undefined) {
+			continue;
+		}
+		const session = asObject(info.session);
+		if (asText(session.task) !== key) {
+			continue;
+		}
+		return {
+			agent: asText(asObject(info.agent).name),
+			id: asText(asObject(session.ref).id),
+			state: asText(session.state),
+		};
+	}
+	return null;
 }

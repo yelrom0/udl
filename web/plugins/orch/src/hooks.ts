@@ -1,8 +1,10 @@
 import type { UIContext } from "@udl/ui-sdk";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { mergeListOf, progressOf } from "./model";
 import { type BoardState, boardStore } from "./stores/board";
+import { type FeatureState, featureStore } from "./stores/feature";
 import { type InboxState, inboxStore, type Loaded } from "./stores/inbox";
+import { type TaskState, taskStore } from "./stores/task";
 
 /** What a page that can change what it read is given: the state, and a way to read it again. */
 export type Refreshable<T> = T & { refresh(): Promise<void> };
@@ -53,6 +55,37 @@ function useLoaded<T>(
 /** The inbox (28.4), as a page or the widget reads it. */
 export function useInbox(ctx: UIContext): Refreshable<InboxState> {
 	return useLoaded(ctx, inboxStore, NO_INBOX);
+}
+
+/** A feature's page before it is read. */
+const NO_FEATURE: FeatureState = {
+	info: null,
+	points: { points: 0, merged: 0, forecast: null },
+	pace: 0,
+	pulls: {},
+	error: null,
+};
+
+/** A task's page before it is read. */
+const NO_TASK: TaskState = {
+	info: null,
+	estimate: null,
+	readiness: null,
+	session: null,
+	agents: [],
+	error: null,
+};
+
+/** A feature, with its own row of the project's progress (29.5). */
+export function useFeature(ctx: UIContext, key: string): Refreshable<FeatureState> {
+	const make = useCallback((inner: UIContext) => featureStore(inner, key), [key]);
+	return useLoaded(ctx, make, NO_FEATURE);
+}
+
+/** A task, with what it takes, whether its pull may merge, and its session (29.5). */
+export function useTask(ctx: UIContext, key: string): Refreshable<TaskState> {
+	const make = useCallback((inner: UIContext) => taskStore(inner, key), [key]);
+	return useLoaded(ctx, make, NO_TASK);
 }
 
 /** The board's four lists (29.4). */
