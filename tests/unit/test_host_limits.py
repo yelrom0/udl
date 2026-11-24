@@ -65,7 +65,7 @@ def test_a_name_with_an_at_sign_has_it_escaped() -> None:
 
 def test_a_non_ascii_name_is_escaped_byte_by_byte() -> None:
     """(A letter is not enough: `isalnum()` is true for `é` and `٣`, and a unit name allows only
-    ASCII letters and digits, so `systemd-escape 'café'` writes `caf\xc3\xa9` — a name with `é`
+    ASCII letters and digits, so `systemd-escape 'café'` writes `caf\\xc3\\xa9` — a name with `é`
     left in it is one systemd refuses.)"""
     assert escaped("café") == "caf\\xc3\\xa9"
     assert escaped("٣") == "\\xd9\\xa3"

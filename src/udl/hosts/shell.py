@@ -347,7 +347,7 @@ def escaped(part: str) -> str:
     """One part of a unit's name, escaped the way `systemd-escape` escapes it: an ASCII letter, a
     digit or `:`, `_`, `.`, `-` stays (a `-` is how udl joins the parts, so `deepseek-b` stays
     readable), a `/` becomes a `-`, and anything else becomes an `x` escape, byte by byte (a
-    unit name is ASCII only, so `é` is `\xc3\xa9` and not a letter). A `-` at the start is
+    unit name is ASCII only, so `é` is `\\xc3\\xa9` and not a letter). A `-` at the start is
     escaped, since a unit name cannot begin with one."""
     kept: list[str] = []
     for index, char in enumerate(part):
