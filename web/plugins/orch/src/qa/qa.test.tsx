@@ -145,6 +145,16 @@ describe("the Q&A page (29.7)", () => {
 		expect(fake.calls.filter((one) => one.name === "orch_list_questions").length).toBe(before + 1);
 	});
 
+	it("says it is reading, until the questions are read", () => {
+		// (A read that never lands: the page must not say "0 open" as if nothing were asked.)
+		const fake = fakeCtx(() => new Promise(() => {}));
+
+		render(<QaPage {...props} ctx={fake.ctx} />);
+
+		expect(screen.getByText("Reading what is being asked…")).toBeTruthy();
+		expect(screen.queryByText("0 open")).toBeNull();
+	});
+
 	it("says what reading them failed with", async () => {
 		const fake = fakeCtx(() => {
 			throw new Error("the database is closed");

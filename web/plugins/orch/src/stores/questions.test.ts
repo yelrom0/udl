@@ -74,7 +74,7 @@ describe("the questions store (29.7)", () => {
 		await settle();
 
 		expect(store.getState().questions).toBeNull();
-		expect(store.getState().error).toContain("the database is closed");
+		expect(store.getState().project).toBe("");
 		expect(store.getState().error).toContain("the database is closed");
 		stop();
 	});

@@ -19,7 +19,7 @@ const WHAT = "What agents are asking, and what was decided: the blocking ones fi
 export const QaPage: Component<RouteProps> = ({ ctx }) => {
 	const { project, questions, error, refresh } = useQuestions(ctx);
 	// (29.3's handler, shared with the inbox: one place decides what answering does. The project
-	// is the store's own, from the answer — never the first question's.)
+	// is the store's own, from `orch_list_questions`' answer — never the first question's.)
 	const { answering, refused, answer } = useAnswer(ctx, project, refresh);
 
 	if (error !== null) {

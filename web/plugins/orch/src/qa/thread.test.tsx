@@ -39,7 +39,9 @@ function found(over: JsonObject = {}): JsonObject {
 const props = { ctx: null as never, questionKey: "Q-8" };
 
 /** A page on a fake context, drawn and read. */
-async function draw(answer: (name: string, request: JsonObject) => JsonObject) {
+async function draw(
+	answer: (name: string, request: JsonObject) => JsonObject | Promise<JsonObject>,
+) {
 	const fake = fakeCtx(answer);
 	await act(async () => {
 		render(<QuestionPageView {...props} ctx={fake.ctx} />);
@@ -229,6 +231,43 @@ describe("a question's thread (29.7)", () => {
 		await draw(() => found({ tasks: [] }));
 
 		expect(screen.getAllByRole("link", { name: "27.3" }).length).toBeGreaterThan(0);
+	});
+
+	it("takes one follow-up, even if the button is clicked twice", async () => {
+		// (The button is disabled while the call is out, so a second click cannot post twice.)
+		let release: (() => void) | null = null;
+		const gate = new Promise<void>((done) => {
+			release = done;
+		});
+		const fake = await draw((name) => {
+			if (name === "orch_reply") {
+				return gate.then(() => ({
+					text: "A worktree is cheap.",
+					author: "human:claude",
+					at: "2026-11-21T10:00:00Z",
+				}));
+			}
+			return found();
+		});
+
+		const box = screen.getByLabelText("Follow up");
+		await act(async () => {
+			fireEvent.change(box, { target: { value: "A worktree is cheap." } });
+		});
+		await act(async () => {
+			fireEvent.click(screen.getByRole("button", { name: "Say it" }));
+		});
+
+		// (While it is out: nothing to click, and the button says so.)
+		const waiting = screen.getByRole("button", { name: "Saying…" }) as HTMLButtonElement;
+		expect(waiting.disabled).toBe(true);
+
+		await act(async () => {
+			release?.();
+			await settle();
+		});
+
+		expect(fake.calls.filter((one) => one.name === "orch_reply")).toHaveLength(1);
 	});
 
 	it("says a follow-up it could not add, and keeps the box", async () => {

@@ -25,6 +25,7 @@ export function QuestionThreadView({ ctx, found, project, refresh }: ThreadProps
 	const [typing, setTyping] = useState<string | null>(null);
 	const [typed, setTyped] = useState<string | null>(null);
 	const [replyFailed, setReplyFailed] = useState<string | null>(null);
+	const [saying, setSaying] = useState(false);
 	const [outcome, setOutcome] = useState<string | null>(null);
 	const [closeFailed, setCloseFailed] = useState<string | null>(null);
 	const [closing, setClosing] = useState(false);
@@ -176,10 +177,12 @@ export function QuestionThreadView({ ctx, found, project, refresh }: ThreadProps
 							if (said.trim() === "") {
 								return;
 							}
+							setSaying(true);
 							void (async () => {
 								if (await write("orch_reply", { text: said }, setReplyFailed)) {
 									setTyping(null);
 								}
+								setSaying(false);
 							})();
 						}}
 					>
@@ -199,8 +202,8 @@ export function QuestionThreadView({ ctx, found, project, refresh }: ThreadProps
 								{replyFailed}
 							</p>
 						)}
-						<button className="btn btn-sm" type="submit">
-							Say it
+						<button className="btn btn-sm" disabled={saying} type="submit">
+							{saying ? "Saying…" : "Say it"}
 						</button>
 					</form>
 
