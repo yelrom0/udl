@@ -2950,6 +2950,94 @@
         "title": "Disconnected",
         "type": "object"
       },
+      "DiskHealth": {
+        "additionalProperties": false,
+        "description": "One disk a host keeps udl's work on (27.13): what it has left, and on btrfs, what it can\nstill allocate. A measure the filesystem cannot give is None (\"not measured\"), never zero.",
+        "properties": {
+          "filesystem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its filesystem (`ext4`, `btrfs`, `apfs`), when the host says.",
+            "title": "Filesystem"
+          },
+          "free": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bytes free to udl (`df`).",
+            "title": "Free"
+          },
+          "metadata_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "On btrfs: metadata allocated and free, in bytes.",
+            "title": "Metadata Total"
+          },
+          "metadata_used": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "On btrfs: metadata allocated, in bytes.",
+            "title": "Metadata Used"
+          },
+          "path": {
+            "description": "The path udl uses there (a host's work directory, or a repo's checkout).",
+            "title": "Path",
+            "type": "string"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its size in bytes.",
+            "title": "Size"
+          },
+          "unallocated": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "On btrfs: bytes not allocated to any chunk, which is what a write needs\n(`btrfs filesystem usage`); None elsewhere.",
+            "title": "Unallocated"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "DiskHealth",
+        "type": "object"
+      },
       "DownloadBatch": {
         "additionalProperties": false,
         "description": "The jobs of one download request.",
@@ -5627,6 +5715,92 @@
         "title": "Handoff",
         "type": "object"
       },
+      "HarnessHealth": {
+        "additionalProperties": false,
+        "description": "One harness service's memory, as its unit reports it (27.13).",
+        "properties": {
+          "memory_current": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What it is using now, in bytes (None: not measured, or the unit is not there).",
+            "title": "Memory Current"
+          },
+          "memory_max": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its cap in bytes (None: no cap, or not measured).",
+            "title": "Memory Max"
+          },
+          "unit": {
+            "description": "The unit's name (`udl-opencode-<agent>.service`).",
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "unit"
+        ],
+        "title": "HarnessHealth",
+        "type": "object"
+      },
+      "HealthIssue": {
+        "additionalProperties": false,
+        "description": "Something wrong with a host (27.13), with what to do about it.",
+        "properties": {
+          "detail": {
+            "description": "The numbers, in a line: `1 GiB available, under the 2 GiB it needs`.",
+            "title": "Detail",
+            "type": "string"
+          },
+          "hint": {
+            "description": "What a person can do about it.",
+            "title": "Hint",
+            "type": "string"
+          },
+          "host": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The host it is on."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/HealthKind",
+            "description": "What is wrong."
+          }
+        },
+        "required": [
+          "host",
+          "kind",
+          "detail",
+          "hint"
+        ],
+        "title": "HealthIssue",
+        "type": "object"
+      },
+      "HealthKind": {
+        "description": "What is wrong with a host (27.13): one issue per kind, while it lasts.",
+        "enum": [
+          "memory",
+          "swap",
+          "io",
+          "disk",
+          "btrfs_unallocated",
+          "btrfs_metadata",
+          "gates"
+        ],
+        "title": "HealthKind",
+        "type": "string"
+      },
       "Host": {
         "description": "A machine agents run on: this one (local), or another reached over SSH.",
         "properties": {
@@ -5741,6 +5915,147 @@
         "title": "HostCheck",
         "type": "object"
       },
+      "HostHealth": {
+        "additionalProperties": false,
+        "description": "What a host's health check found (27.13): its measures, its disks, its harnesses, its\ngates, and the issues they make. A measure the host cannot give is None.",
+        "properties": {
+          "at": {
+            "description": "When it was read.",
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "disks": {
+            "description": "Every path udl uses on the host.",
+            "items": {
+              "$ref": "#/components/schemas/DiskHealth"
+            },
+            "title": "Disks",
+            "type": "array"
+          },
+          "gates_allowed": {
+            "default": 1,
+            "description": "How many it runs at once (`gates_per_host`).",
+            "title": "Gates Allowed",
+            "type": "integer"
+          },
+          "gates_running": {
+            "default": 0,
+            "description": "Gate runs going on the host now.",
+            "title": "Gates Running",
+            "type": "integer"
+          },
+          "harnesses": {
+            "description": "Each harness service's memory.",
+            "items": {
+              "$ref": "#/components/schemas/HarnessHealth"
+            },
+            "title": "Harnesses",
+            "type": "array"
+          },
+          "host": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The host."
+          },
+          "io_pressure": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`/proc/pressure/io`'s `some avg60`, in percent.",
+            "title": "Io Pressure"
+          },
+          "issues": {
+            "description": "What the thresholds make of these numbers: empty when the host is healthy.",
+            "items": {
+              "$ref": "#/components/schemas/HealthIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "memory_available": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bytes available for a program (`/proc/meminfo`'s MemAvailable).",
+            "title": "Memory Available"
+          },
+          "swap_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bytes of swap there are (0: none).",
+            "title": "Swap Total"
+          },
+          "swap_used": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bytes of swap in use.",
+            "title": "Swap Used"
+          }
+        },
+        "required": [
+          "host",
+          "at"
+        ],
+        "title": "HostHealth",
+        "type": "object"
+      },
+      "HostHealthList": {
+        "additionalProperties": false,
+        "description": "What the health check found, per host (27.13): what `udl orch hosts health` shows.",
+        "properties": {
+          "hosts": {
+            "description": "One per host, in the order udl knows them.",
+            "items": {
+              "$ref": "#/components/schemas/HostHealth"
+            },
+            "title": "Hosts",
+            "type": "array"
+          }
+        },
+        "title": "HostHealthList",
+        "type": "object"
+      },
+      "HostHealthRequest": {
+        "additionalProperties": false,
+        "description": "Asking how the hosts are (27.13).",
+        "properties": {
+          "host": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "One host (None: every host udl knows)."
+          }
+        },
+        "title": "HostHealthRequest",
+        "type": "object"
+      },
       "HostInfo": {
         "additionalProperties": false,
         "description": "A host, as it is kept.",
@@ -5798,6 +6113,33 @@
           "work_dir"
         ],
         "title": "HostInfo",
+        "type": "object"
+      },
+      "HostLine": {
+        "additionalProperties": false,
+        "description": "A host that is held, in a line (27.13): what the inbox's strip shows beside the agents.",
+        "properties": {
+          "held": {
+            "default": true,
+            "description": "Whether new turns and gates are held there (False: it is in trouble and udl only tells).",
+            "title": "Held",
+            "type": "boolean"
+          },
+          "line": {
+            "default": "",
+            "description": "It, in a line: `jeff-wiggle \u2014 held: btrfs unallocated, disk`.",
+            "title": "Line",
+            "type": "string"
+          },
+          "name": {
+            "$ref": "#/components/schemas/Name",
+            "description": "The host."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "HostLine",
         "type": "object"
       },
       "HostList": {
@@ -6076,6 +6418,14 @@
             "description": "Whether a merger merges the ready ones by itself (28.7).",
             "title": "Auto Merge",
             "type": "boolean"
+          },
+          "hosts": {
+            "description": "The hosts that are in trouble (27.13), with what is wrong: empty when they are well.",
+            "items": {
+              "$ref": "#/components/schemas/HostLine"
+            },
+            "title": "Hosts",
+            "type": "array"
           },
           "merge": {
             "$ref": "#/components/schemas/MergeList",
@@ -23241,6 +23591,103 @@
           }
         ],
         "summary": "A task, with its feature, its links, its notes and its open questions.",
+        "tags": [
+          "orch"
+        ]
+      }
+    },
+    "/plugins/orch/host_health": {
+      "post": {
+        "description": "How each host is (27.13): its memory, swap, I/O pressure, disks, harnesses and gates,\nwith what the thresholds make of them. It reads: the dispatcher's own check is what\nopens and closes issues, and raises the action a person reads.",
+        "operationId": "orch_host_health",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostHealthRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostHealthList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorInfo"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "How each host is (27.13): its memory, swap, I/O pressure, disks, harnesses and gates,",
         "tags": [
           "orch"
         ]

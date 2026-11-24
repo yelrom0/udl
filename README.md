@@ -444,6 +444,32 @@ the repo's `gate_cleanup` runs after either — not after a gate that simply fai
 reads its failure in the worktree. Where the host has no user systemd, the cap cannot be enforced:
 the gate runs as it did before, and its result says `limits: unenforced` rather than `enforced`.
 
+### A host that is in trouble
+
+The same machine that runs the gates also runs the sessions, the database and this checkout, so a
+host that is out of room takes everything with it. On 23 Nov btrfs ran out of unallocated space —
+`df` still said 116 GiB free, and every commit failed with "No space left on device" — and five
+full suites at once took disk I/O pressure to 50%; both were caught by hand, every half hour.
+
+`udl orch hosts health` reads each host (one `sh -c` script through its shell: memory, swap, I/O
+pressure, every path udl uses there, and each harness service's `MemoryCurrent`/`MemoryMax`) and
+says what the thresholds make of it. A measure a host cannot give — no PSI, not Linux, not btrfs —
+is "not measured", never zero. The thresholds are `[apps.orch.health]`: `memory_min` (2 GiB),
+`swap_max_ratio` (0.9), `disk_min` (10 GiB), `btrfs_unallocated_min` (1 GiB),
+`btrfs_metadata_max_ratio` (0.9), `io_pressure_max` (40%) and `check_minutes` (10), and each issue
+carries the fix it needs — for btrfs unallocated space, the balance a person runs.
+
+What a breach does is `on_breach`, `act_and_tell` by default:
+
+| `on_breach` | What happens |
+| --- | --- |
+| `act` | No new turn and no new gate starts on that host while an issue is open; what is running finishes, and a check that finds it healthy releases it |
+| `tell` | One action in the inbox per open issue (host and kind), with its detail and hint; udl closes it with "cleared at …" when the issue clears |
+| `act_and_tell` | Both |
+
+Either way, `orch.host.unhealthy` and `orch.host.healthy` say what changed, and the inbox's host
+strip says which hosts are held.
+
 ## Plugins
 
 udl has six kinds of plugin: databases, downloaders, site plugins, secret stores, kinds of action, and

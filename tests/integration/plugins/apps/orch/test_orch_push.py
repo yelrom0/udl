@@ -141,6 +141,26 @@ async def service(tmp_path: Path, home: Path) -> AsyncIterator[UDLService]:
     """A service with the project, its repo, the agent, and the task assigned to it, in its
     worktree."""
     async with UDLService(settings(tmp_path), registry=orch_registry()) as running:
+        # (This host is never in trouble: its work dir is on a small tmpfs, and a check of the
+        # machine running the test says nothing about what the test is about — 27.13's own
+        # tests are the ones that read a host.)
+        await running.call(
+            "set_plugin_settings",
+            {
+                "name": "orch",
+                "values": {
+                    "health": {
+                        "memory_min": 1,
+                        "swap_max_ratio": 1.0,
+                        "disk_min": 1,
+                        "btrfs_unallocated_min": 1,
+                        "btrfs_metadata_max_ratio": 1.0,
+                        "io_pressure_max": 100.0,
+                    }
+                },
+                "reset": [],
+            },
+        )
         await running.db.upsert_record(Host.local(str(home / "work")))
         records = AppRecords(running.db)
         await ProjectRecords(records).save_project(Project(name="udl", title="udl"))

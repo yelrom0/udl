@@ -20,7 +20,7 @@ import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 # Package Imports
 import pytest
@@ -61,6 +61,7 @@ from udl.plugins.apps.orch.dispatcher import (
     fenced,
     first_prompt,
 )
+from udl.plugins.apps.orch.health import Health
 from udl.plugins.apps.orch.models import (
     BLOCKED,
     DONE,
@@ -68,6 +69,7 @@ from udl.plugins.apps.orch.models import (
     MERGED,
     QUEUED,
     READY,
+    HostHealth,
     MergeList,
     OwnerKind,
     Principal,
@@ -98,7 +100,7 @@ from udl.plugins.apps.orch.records import (
     TaskRecords,
     WaitRecords,
 )
-from udl.plugins.apps.orch.settings import OrchSettings
+from udl.plugins.apps.orch.settings import HealthSettings, OrchSettings
 from udl.plugins.apps.orch.tokens import secret_ref
 from udl.plugins.registry import APPS, RUNNERS, PluginRegistry
 from udl.plugins.runners.base import (
@@ -329,6 +331,7 @@ async def dispatcher(
     tick: timedelta | None = None,
     settings: OrchSettings | None = None,
     records: AppRecords | None = None,
+    health: Health | None = None,
 ) -> tuple[Dispatcher, AppContext]:
     """A dispatcher for `service`, with a test's own `prepare()` (a path, no git), and a test's
     own records when it needs a store that fails."""
@@ -352,6 +355,7 @@ async def dispatcher(
         harnesses=app.harnesses,
         prepare=fake_prepare,
         tick=tick if tick is not None else timedelta(seconds=30),
+        health=health,
     )
     return found, ctx
 
@@ -3293,3 +3297,79 @@ async def test_the_merger_is_told_the_next_one_it_may_act_on(service: UDLService
     row = said.split("This one is ready:")[1].split("Its diff")[0]
     assert "F-1.1" not in row, "the merger's own is a person's"
     assert "F-1.2" not in row, "and what is stacked on it waits with it"
+
+
+# ---------------------------------------------------------------------------------------------
+# A host in trouble holds its agent (27.13)
+# ---------------------------------------------------------------------------------------------
+
+
+def _a_host(*, io: float) -> HostHealth:
+    """A host whose numbers are all fine but its I/O pressure."""
+    return HostHealth(
+        host="local",
+        memory_available=8 * 1024**3,
+        io_pressure=io,
+        at=datetime(2026, 11, 24, 12, tzinfo=UTC),
+    )
+
+
+Breach = Literal["act_and_tell", "tell", "act"]
+
+
+class _AHost:
+    """What a host says about itself, as the check asks it: what the test set, and how often."""
+
+    def __init__(self, health: HostHealth) -> None:
+        self.health = health
+        self.asked = 0
+
+    async def __call__(self, name: str) -> HostHealth:
+        self.asked += 1
+        return self.health
+
+
+def _health_over(service: UDLService, said: _AHost, *, on_breach: Breach = "act") -> Health:
+    """The check over `service`, reading what `said` says, holding the host when it acts."""
+    return Health(
+        records=AppRecords(service.db),
+        db=service.db,
+        clock=service.clock,
+        settings=HealthSettings(on_breach=on_breach),
+        reading=said,
+    )
+
+
+async def test_a_host_in_trouble_holds_its_agent_s_turn(service: UDLService) -> None:
+    """(A machine with no room left must not get a gate or a turn: the check says so, and the
+    loop holds the agent while it does.)"""
+    await scripted(service, "F-1.1")
+    said = _AHost(_a_host(io=90.0))
+    clock = FakeClock()
+    found, _ = await dispatcher(
+        service, clock=clock, health=_health_over(service, said, on_breach="act")
+    )
+    running = asyncio.ensure_future(found.run())
+    try:
+        for _ in range(4):
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert STORE.turns == 0
+    assert PROMPTS == []
+    assert said.asked >= 1
+
+
+async def test_a_host_that_gets_better_lets_its_agent_go(service: UDLService) -> None:
+    said = _AHost(_a_host(io=90.0))
+    check = _health_over(service, said, on_breach="act")
+    await check.check(["local"])
+    assert await check.held("local") is True
+
+    said.health = _a_host(io=1.0)
+    await check.check(["local"])
+
+    assert await check.held("local") is False

@@ -1629,6 +1629,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/host_health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * How each host is (27.13): its memory, swap, I/O pressure, disks, harnesses and gates,
+         * @description How each host is (27.13): its memory, swap, I/O pressure, disks, harnesses and gates,
+         *     with what the thresholds make of them. It reads: the dispatcher's own check is what
+         *     opens and closes issues, and raises the action a person reads.
+         */
+        post: operations["orch_host_health"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/orch/import_plan": {
         parameters: {
             query?: never;
@@ -4803,6 +4825,49 @@ export interface components {
             subscriptions?: string[];
         };
         /**
+         * DiskHealth
+         * @description One disk a host keeps udl's work on (27.13): what it has left, and on btrfs, what it can
+         *     still allocate. A measure the filesystem cannot give is None ("not measured"), never zero.
+         */
+        DiskHealth: {
+            /**
+             * Filesystem
+             * @description Its filesystem (`ext4`, `btrfs`, `apfs`), when the host says.
+             */
+            filesystem?: string | null;
+            /**
+             * Free
+             * @description Bytes free to udl (`df`).
+             */
+            free?: number | null;
+            /**
+             * Metadata Total
+             * @description On btrfs: metadata allocated and free, in bytes.
+             */
+            metadata_total?: number | null;
+            /**
+             * Metadata Used
+             * @description On btrfs: metadata allocated, in bytes.
+             */
+            metadata_used?: number | null;
+            /**
+             * Path
+             * @description The path udl uses there (a host's work directory, or a repo's checkout).
+             */
+            path: string;
+            /**
+             * Size
+             * @description Its size in bytes.
+             */
+            size?: number | null;
+            /**
+             * Unallocated
+             * @description On btrfs: bytes not allocated to any chunk, which is what a write needs
+             *     (`btrfs filesystem usage`); None elsewhere.
+             */
+            unallocated?: number | null;
+        };
+        /**
          * DownloadBatch
          * @description The jobs of one download request.
          */
@@ -6212,6 +6277,53 @@ export interface components {
             url: components["schemas"]["HttpURL"];
         };
         /**
+         * HarnessHealth
+         * @description One harness service's memory, as its unit reports it (27.13).
+         */
+        HarnessHealth: {
+            /**
+             * Memory Current
+             * @description What it is using now, in bytes (None: not measured, or the unit is not there).
+             */
+            memory_current?: number | null;
+            /**
+             * Memory Max
+             * @description Its cap in bytes (None: no cap, or not measured).
+             */
+            memory_max?: number | null;
+            /**
+             * Unit
+             * @description The unit's name (`udl-opencode-<agent>.service`).
+             */
+            unit: string;
+        };
+        /**
+         * HealthIssue
+         * @description Something wrong with a host (27.13), with what to do about it.
+         */
+        HealthIssue: {
+            /**
+             * Detail
+             * @description The numbers, in a line: `1 GiB available, under the 2 GiB it needs`.
+             */
+            detail: string;
+            /**
+             * Hint
+             * @description What a person can do about it.
+             */
+            hint: string;
+            /** @description The host it is on. */
+            host: components["schemas"]["Name"];
+            /** @description What is wrong. */
+            kind: components["schemas"]["HealthKind"];
+        };
+        /**
+         * HealthKind
+         * @description What is wrong with a host (27.13): one issue per kind, while it lasts.
+         * @enum {string}
+         */
+        HealthKind: "memory" | "swap" | "io" | "disk" | "btrfs_unallocated" | "btrfs_metadata" | "gates";
+        /**
          * Host
          * @description A machine agents run on: this one (local), or another reached over SSH.
          */
@@ -6279,6 +6391,87 @@ export interface components {
             uname?: string | null;
         };
         /**
+         * HostHealth
+         * @description What a host's health check found (27.13): its measures, its disks, its harnesses, its
+         *     gates, and the issues they make. A measure the host cannot give is None.
+         */
+        HostHealth: {
+            /**
+             * At
+             * Format: date-time
+             * @description When it was read.
+             */
+            at: string;
+            /**
+             * Disks
+             * @description Every path udl uses on the host.
+             */
+            disks?: components["schemas"]["DiskHealth"][];
+            /**
+             * Gates Allowed
+             * @description How many it runs at once (`gates_per_host`).
+             * @default 1
+             */
+            gates_allowed: number;
+            /**
+             * Gates Running
+             * @description Gate runs going on the host now.
+             * @default 0
+             */
+            gates_running: number;
+            /**
+             * Harnesses
+             * @description Each harness service's memory.
+             */
+            harnesses?: components["schemas"]["HarnessHealth"][];
+            /** @description The host. */
+            host: components["schemas"]["Name"];
+            /**
+             * Io Pressure
+             * @description `/proc/pressure/io`'s `some avg60`, in percent.
+             */
+            io_pressure?: number | null;
+            /**
+             * Issues
+             * @description What the thresholds make of these numbers: empty when the host is healthy.
+             */
+            issues?: components["schemas"]["HealthIssue"][];
+            /**
+             * Memory Available
+             * @description Bytes available for a program (`/proc/meminfo`'s MemAvailable).
+             */
+            memory_available?: number | null;
+            /**
+             * Swap Total
+             * @description Bytes of swap there are (0: none).
+             */
+            swap_total?: number | null;
+            /**
+             * Swap Used
+             * @description Bytes of swap in use.
+             */
+            swap_used?: number | null;
+        };
+        /**
+         * HostHealthList
+         * @description What the health check found, per host (27.13): what `udl orch hosts health` shows.
+         */
+        HostHealthList: {
+            /**
+             * Hosts
+             * @description One per host, in the order udl knows them.
+             */
+            hosts?: components["schemas"]["HostHealth"][];
+        };
+        /**
+         * HostHealthRequest
+         * @description Asking how the hosts are (27.13).
+         */
+        HostHealthRequest: {
+            /** @description One host (None: every host udl knows). */
+            host?: components["schemas"]["Name"] | null;
+        };
+        /**
          * HostInfo
          * @description A host, as it is kept.
          */
@@ -6318,6 +6511,26 @@ export interface components {
              * @description Where worktrees go on it.
              */
             work_dir: string;
+        };
+        /**
+         * HostLine
+         * @description A host that is held, in a line (27.13): what the inbox's strip shows beside the agents.
+         */
+        HostLine: {
+            /**
+             * Held
+             * @description Whether new turns and gates are held there (False: it is in trouble and udl only tells).
+             * @default true
+             */
+            held: boolean;
+            /**
+             * Line
+             * @description It, in a line: `jeff-wiggle — held: btrfs unallocated, disk`.
+             * @default
+             */
+            line: string;
+            /** @description The host. */
+            name: components["schemas"]["Name"];
         };
         /** HostList */
         HostList: {
@@ -6478,6 +6691,11 @@ export interface components {
              * @default false
              */
             auto_merge: boolean;
+            /**
+             * Hosts
+             * @description The hosts that are in trouble (27.13), with what is wrong: empty when they are well.
+             */
+            hosts?: components["schemas"]["HostLine"][];
             /** @description Ready to merge (28.3's own list: ready, coming, held, done). */
             merge: components["schemas"]["MergeList"];
             /**
@@ -17458,6 +17676,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskInfo"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_host_health: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostHealthRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostHealthList"];
                 };
             };
             /** @description Bad Request */

@@ -19,9 +19,10 @@ the one human action per issue.
 """
 
 # System Imports
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Final
 
 # Package Imports
@@ -29,13 +30,32 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # Local Imports
 from udl.clock import Clock
+from udl.db.manager import DBManager
+from udl.db.records import Lease, RecordQuery
 from udl.hosts.shell import HostShell, size_words
+from udl.plugins.apps.base import AppRecords
+from udl.plugins.apps.orch.actions import ActionRecords, finish, set_action
+from udl.plugins.apps.orch.events import (
+    HOST_HEALTHY,
+    HOST_UNHEALTHY,
+    HostHealthy,
+    HostIssueSaid,
+    HostUnhealthy,
+)
 from udl.plugins.apps.orch.models import (
+    ActionState,
+    ActionWhen,
     DiskHealth,
     HarnessHealth,
     HealthIssue,
     HealthKind,
     HostHealth,
+)
+from udl.plugins.apps.orch.records import (
+    HostIssue,
+    HostIssueRecords,
+    ProjectRecords,
+    RepoRecords,
 )
 from udl.plugins.apps.orch.settings import HealthSettings
 
@@ -45,8 +65,8 @@ log = logging.getLogger(__name__)
 
 MEASURES: Final = r"""\
 # udl host health (27.13): one tab-separated line per measure, and nothing for one this host
-# cannot give. $1 is how many paths follow; each path is a disk, and each name after them is a
-# harness unit.
+# cannot give. $1 is how many paths follow, and each path is a disk udl uses there; the harness
+# services are the `udl-*.service` units systemd knows, by udl's own naming.
 count=$1; shift
 if [ -r /proc/meminfo ]; then
   awk '/^MemAvailable:/ {printf "memory\t%d\n", $2 * 1024}' /proc/meminfo
@@ -81,8 +101,9 @@ while [ "$seen" -lt "$count" ]; do
   fi
 done
 if command -v systemctl >/dev/null 2>&1; then
-  while [ "$#" -gt 0 ]; do
-    unit=$1; shift
+  systemctl --user list-units --all --type=service --no-legend 'udl-*.service' 2>/dev/null |
+  while read -r unit rest; do
+    case "$unit" in *.service) ;; *) continue ;; esac
     said=$(systemctl --user show -p MemoryCurrent -p MemoryMax -- "$unit" 2>/dev/null)
     [ -z "$said" ] && continue
     current=$(printf '%s\n' "$said" | awk -F= '/^MemoryCurrent=/ {print $2}')
@@ -302,30 +323,206 @@ def issues_of(health: HostHealth, settings: HealthSettings) -> list[HealthIssue]
 class Health:
     """The hosts' health, and what udl does about it (27.13).
 
-    `check()` reads the hosts, turns the numbers into issues, and keeps the open ones as records:
-    a new one is said (`orch.host.unhealthy`) and, when the setting says so, raises the one
-    action a person reads; one that has cleared is closed (`orch.host.healthy`), and its action
-    finished with what cleared it.
+    `check()` reads the hosts it is given, turns their numbers into issues, and keeps the open
+    ones as records: a new one is said (`orch.host.unhealthy`) and, when `on_breach` says to
+    tell, raises the one action a person reads; one that has cleared is closed
+    (`orch.host.healthy`) and its action finished with what cleared it.
 
     `held()` is what a turn and a gate ask before they start: whether the host has an open issue
-    while the setting says to act on it.
+    while `on_breach` says to act on it.
     """
 
     def __init__(
         self,
         *,
+        records: AppRecords,
+        db: DBManager,
         clock: Clock,
         settings: HealthSettings,
         reading: Reading,
+        gates_allowed: int = 1,
     ) -> None:
+        self._records = records
+        self._db = db
         self._clock = clock
         self._settings = settings
         self._reading = reading
+        self._gates_allowed = gates_allowed
+        self._one_at_a_time = asyncio.Lock()
+        """One check at a time (see `check`)."""
+        self._seen: dict[str, datetime] = {}
+        """When each host was last checked, in this process: what `stale()` reads (an issue
+        already open is a record, so a fresh process still holds the host)."""
 
     @property
     def settings(self) -> HealthSettings:
         """What counts as a breach, and what udl does about it."""
         return self._settings
+
+    async def see(self, names: Sequence[str]) -> list[HostHealth]:
+        """Read `names` and answer what each is, with the issues its numbers make: what the
+        operation shows, recording nothing."""
+        found: list[HostHealth] = []
+        for name in names:
+            health = await self._reading(name)
+            running = await self._gates_running(name)
+            found.append(
+                health.model_copy(
+                    update={
+                        "issues": issues_of(health, self._settings),
+                        "gates_running": running,
+                        "gates_allowed": self._gates_allowed,
+                    }
+                )
+            )
+        return found
+
+    async def check(self, names: Sequence[str]) -> list[HostHealth]:
+        """Read `names`, open and close the issues the numbers make, and answer what each host
+        is now — with its issues, which is what the operation shows.
+
+        One check at a time: the dispatcher's loop and a turn's freshness both ask, and two
+        checks of one host at once would each find its issue new and raise two actions."""
+        async with self._one_at_a_time:
+            found = await self.see(names)
+            for health in found:
+                await self._reconciled(health)
+                self._seen[health.host] = health.at
+            return found
+
+    def stale(self, host: str) -> bool:
+        """Whether `host` has not been checked within `check_minutes`: what a gate asks before
+        it starts, so a push is never held on a check from an hour ago."""
+        seen = self._seen.get(host)
+        if seen is None:
+            return True
+        return self._clock.now() - seen >= timedelta(minutes=self._settings.check_minutes)
+
+    async def freshly(self, host: str) -> None:
+        """Check `host` when its last check is older than `check_minutes`: what a gate does
+        before it starts."""
+        if self.stale(host):
+            await self.check([host])
+
+    async def held(self, host: str) -> bool:
+        """Whether `host` has an open issue while `on_breach` says to act on it: a turn and a
+        gate ask this before they start."""
+        if self._settings.on_breach not in ("act", "act_and_tell"):
+            return False
+        return bool(await HostIssueRecords(self._records).for_host(host))
+
+    async def _reconciled(self, health: HostHealth) -> None:
+        """Keep `health`'s host's issues as records: open what is new, close what has cleared,
+        say both, and raise or finish the action a person reads."""
+        issues = HostIssueRecords(self._records)
+        now = self._clock.now()
+        known = {one.issue: one for one in await issues.for_host(health.host)}
+        present = {issue.kind.value: issue for issue in health.issues}
+        opened: list[HostIssue] = []
+        for kind, issue in present.items():
+            if kind in known:
+                if (known[kind].detail, known[kind].hint) != (issue.detail, issue.hint):
+                    await issues.save(
+                        known[kind].model_copy(update={"detail": issue.detail, "hint": issue.hint})
+                    )
+                continue
+            record = HostIssue(host=health.host, issue=kind, detail=issue.detail, hint=issue.hint)
+            if self._settings.on_breach in ("tell", "act_and_tell"):
+                record = await self._told(record)
+            opened.append(await issues.save(record))
+        cleared = [known[kind] for kind in known if kind not in present]
+        if opened:
+            await self._said(
+                HOST_UNHEALTHY.name,
+                HostUnhealthy(
+                    host=health.host,
+                    issues=[
+                        HostIssueSaid(host=one.host, kind=one.issue, detail=one.detail)
+                        for one in opened
+                    ],
+                ),
+                dedupe=(
+                    f"host.unhealthy:{health.host}:" + ",".join(sorted(one.issue for one in opened))
+                ),
+            )
+        for record in cleared:
+            await issues.close(record, at=now)
+            await self._finished(record, at=now)
+        if cleared:
+            await self._said(
+                HOST_HEALTHY.name,
+                HostHealthy(
+                    host=health.host,
+                    cleared=[
+                        HostIssueSaid(host=one.host, kind=one.issue, detail=one.detail)
+                        for one in cleared
+                    ],
+                ),
+                dedupe=f"host.healthy:{health.host}:{now.isoformat()}",
+            )
+
+    async def _told(self, issue: HostIssue) -> HostIssue:
+        """`issue` with the action a person reads about it: one per issue while it is open, in
+        the project whose checkout is on the host (or the only project udl has). An issue with
+        no project to put one in is still an issue, said in the log."""
+        project = await self._project_for(issue.host)
+        if project is None:
+            log.warning("No project to raise an action for %s on %s", issue.issue, issue.host)
+            return issue
+        action = await set_action(
+            ActionRecords(self._records),
+            project=project,
+            title=f"{issue.host}: {issue.issue.replace('_', ' ')}",
+            text=f"{issue.detail}\n\n{issue.hint}",
+            when=ActionWhen.NOW,
+        )
+        return issue.model_copy(update={"project": project, "action": action.key})
+
+    async def _finished(self, issue: HostIssue, *, at: datetime) -> None:
+        """Finish the action `issue` raised, with what cleared it: what a person reads when the
+        trouble is over. An action a person already finished is left as it is."""
+        if issue.action is None or issue.project is None:
+            return
+        actions = ActionRecords(self._records)
+        found = await actions.action(issue.project, issue.action)
+        if found is None or found.state is not ActionState.OPEN:
+            return
+        await finish(
+            actions,
+            project=issue.project,
+            key=issue.action,
+            result=f"cleared at {at.isoformat()}: {issue.issue.replace('_', ' ')} on {issue.host}",
+        )
+
+    async def _project_for(self, host: str) -> str | None:
+        """The project whose repo has a checkout on `host`, or the only project udl has."""
+        projects = await ProjectRecords(self._records).projects()
+        for project in projects:
+            for repo in await RepoRecords(self._records).repos(project.name):
+                if host in repo.checkouts:
+                    return project.name
+        return projects[0].name if len(projects) == 1 else None
+
+    async def _gates_running(self, host: str) -> int:
+        """How many of `host`'s gate slots are held now: its lane's leases that have not
+        expired (a lease whose run died has, and is not a running gate)."""
+        now = self._clock.now()
+        prefix = f"orch-gate:{host}:"
+        held = await self._db.list_records(Lease, RecordQuery())
+        return len(
+            {one.name for one in held if one.name.startswith(prefix) and one.expires_at > now}
+        )
+
+    async def _said(self, name: str, data: BaseModel, *, dedupe: str) -> None:
+        """Publish `name` with `data`, or say in the log that it could not be (an event is never
+        worth losing a check over)."""
+        events = self._records.events
+        if events is None:
+            return
+        try:
+            await events.emit(name, data, dedupe_key=dedupe)
+        except Exception:
+            log.warning("The %s event could not be published", name, exc_info=True)
 
 
 type Reading = Callable[[str], Awaitable[HostHealth]]
@@ -338,7 +535,6 @@ async def read(
     *,
     shell: HostShell,
     paths: Sequence[str],
-    units: Sequence[str],
     clock: Clock,
     gates_running: int = 0,
     gates_allowed: int = 1,
@@ -346,7 +542,7 @@ async def read(
     """Read `name`'s health through `shell` (27.13): the script's lines, parsed into measures,
     with the gates it has running and allows, and the time it was read."""
     said = await shell.run(
-        ["sh", "-c", MEASURES, "udl-health", str(len(paths)), *paths, *units],
+        ["sh", "-c", MEASURES, "udl-health", str(len(paths)), *paths],
         within=MEASURE_TIMEOUT,
         check=False,
         tail=False,

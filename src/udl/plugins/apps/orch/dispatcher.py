@@ -50,6 +50,7 @@ from udl.errors import DoesNotExist, PluginError, UDLError
 from udl.hosts.models import HostRequest
 from udl.hosts.shell import unit_name
 from udl.plugins.apps.base import AppContext, AppEvent, AppEvents, AppRecords
+from udl.plugins.apps.orch import health as healths
 from udl.plugins.apps.orch import managers
 from udl.plugins.apps.orch import questions as asked
 from udl.plugins.apps.orch import queue as queues
@@ -262,6 +263,7 @@ class Dispatcher:
         harnesses: Harnesses,
         prepare: Preparing | None = None,
         tick: timedelta = TICK,
+        health: healths.Health | None = None,
     ) -> None:
         self._ctx = ctx
         self._records = ctx.records
@@ -294,6 +296,12 @@ class Dispatcher:
         the run it happened in as well as by its number — else a restarted udl's first stretches
         would look like ones it had already said."""
         self._tick = tick
+        self._health = health
+        """The hosts' health (27.13), when the app has one: a host with an open issue is held
+        while `on_breach` says to act, so no new turn starts there."""
+        self._held: set[str] = set()
+        """The hosts already told they are held, for this stretch of it: a loop ticks every 30
+        seconds, and a host that is in trouble is in trouble all of them."""
         self._wakes: dict[str, asyncio.Event] = {}
         """One wake per agent: an event that may concern it, or its tick."""
 
@@ -322,9 +330,10 @@ class Dispatcher:
         loops = [asyncio.create_task(self._loop(agent)) for agent in agents]
         waking = asyncio.create_task(self._woken_by_events())
         pruning = asyncio.create_task(self._pruning())
-        checking = [asyncio.create_task(self._reaching(agent)) for agent in agents]
+        reaching = [asyncio.create_task(self._reaching(agent)) for agent in agents]
+        checking = asyncio.create_task(self._checking(agents))
         stopping = asyncio.create_task(self._stop.wait())
-        everything = [*loops, *checking, waking, pruning, stopping]
+        everything = [*loops, *reaching, waking, pruning, checking, stopping]
         try:
             await self._stop.wait()  # (a loop never ends on its own: it logs and carries on)
         finally:
@@ -350,6 +359,21 @@ class Dispatcher:
             await self._clock.sleep(PRUNE_EVERY)
             with contextlib.suppress(PluginError, UDLError):
                 await self._pruned()
+
+    async def _checking(self, agents: Sequence[stored.Agent]) -> None:
+        """Check every agent's host on `check_minutes`, for as long as udl runs (27.13): what
+        opens and closes a host's issues, and raises the action a person reads about one. The
+        first check is at once — a udl that starts on a host with no room left should say so
+        before it starts anything."""
+        if self._health is None:
+            return
+        hosts = sorted({agent.host for agent in agents})
+        while True:
+            try:
+                await self._health.check(hosts)
+            except Exception:
+                log.warning("checking the hosts' health", exc_info=True)
+            await self._clock.sleep(timedelta(minutes=self._settings.health.check_minutes))
 
     async def _woken_by_events(self) -> None:
         """Wake every agent's loop on each `orch.*` or `github.pr.*` event: what an agent waits
@@ -414,6 +438,14 @@ class Dispatcher:
             return
         if agent.offline:
             return  # (until its host answers again: see `_reaching`)
+        if self._health is not None:
+            await self._health.freshly(agent.host)  # (a stale check is no check: refresh it)
+        if self._health is not None and await self._health.held(agent.host):
+            if agent.name not in self._held:
+                self._held.add(agent.name)
+                log.info("holding %s: its host %s is in trouble", agent.name, agent.host)
+            return
+        self._held.discard(agent.name)
         sessions = stored.SessionRecords(self._records)
         current = await sessions.current(agent.name)
         if current is not None:

@@ -106,6 +106,7 @@ __all__ = [
     "HostHealth",
     "HostHealthList",
     "HostHealthRequest",
+    "HostLine",
     "HostName",
     "ImportPlanRequest",
     "ImportReport",
@@ -1636,6 +1637,17 @@ def agent_line(name: str, role: AgentRole, state: AgentStatus, task: str | None)
     return f"{name} — {state.value}"
 
 
+class HostLine(_Model):
+    """A host that is held, in a line (27.13): what the inbox's strip shows beside the agents."""
+
+    name: Name
+    """The host."""
+    held: bool = True
+    """Whether new turns and gates are held there (False: it is in trouble and udl only tells)."""
+    line: str = ""
+    """It, in a line: `jeff-wiggle — held: btrfs unallocated, disk`."""
+
+
 class InboxRequest(_Model):
     """Asking for the inbox: everything that waits on a person (28.4)."""
 
@@ -1662,6 +1674,8 @@ class Inbox(_Model):
     """What only a person can do: now, then after, then later."""
     agents: list[AgentLine] = Field(default_factory=list[AgentLine])
     """What every agent is doing, by name."""
+    hosts: list[HostLine] = Field(default_factory=list[HostLine])
+    """The hosts that are in trouble (27.13), with what is wrong: empty when they are well."""
     updated_at: AwareDatetime
     """When this was read (the dispatcher and the watcher's events change it, 28.5)."""
 

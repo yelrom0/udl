@@ -79,6 +79,16 @@ poll_every = "1s"
 
 [integrations.scripted]
 dir = "{root}"
+
+[apps.orch.health]
+# (This host is never in trouble: its work dir is on a small tmpfs, and a check of the machine
+# running the test says nothing about what the test is about — 27.13's own tests read a host.)
+memory_min = 1
+swap_max_ratio = 1.0
+disk_min = 1
+btrfs_unallocated_min = 1
+btrfs_metadata_max_ratio = 1.0
+io_pressure_max = 100.0
 """
 
 
