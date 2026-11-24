@@ -63,6 +63,14 @@ def test_a_name_with_an_at_sign_has_it_escaped() -> None:
     assert escaped("a@b") == "a\\x40b"
 
 
+def test_a_non_ascii_name_is_escaped_byte_by_byte() -> None:
+    """(A letter is not enough: `isalnum()` is true for `é` and `٣`, and a unit name allows only
+    ASCII letters and digits, so `systemd-escape 'café'` writes `caf\xc3\xa9` — a name with `é`
+    left in it is one systemd refuses.)"""
+    assert escaped("café") == "caf\\xc3\\xa9"
+    assert escaped("٣") == "\\xd9\\xa3"
+
+
 def test_a_scope_is_named_with_its_suffix() -> None:
     """(A bare name means `.service` to `systemctl`, so the stop has to say `.scope`.)"""
     assert scope_of("udl-gate-udl-27.3a-0a1b2c3d") == "udl-gate-udl-27.3a-0a1b2c3d.scope"
