@@ -123,6 +123,8 @@ async def follow(
 
 def advice(why: str, checkout: str, base: str) -> str:
     """What to do about a checkout that did not follow: only the fix that can help."""
+    if why == "it has no branch checked out (a detached HEAD)":
+        return f"Bring it onto the branch yourself: `git -C {checkout} checkout {base}`."
     if why.startswith("it is on another branch") or why == "it has uncommitted changes":
         return (
             f"Bring it over yourself (`git -C {checkout} checkout {base}` and commit or stash "
@@ -140,8 +142,10 @@ async def _bring_up_to_date(
     try:
         shell = await shells.shell(host)
         await shell.run(["git", "-C", checkout, "fetch", "origin", base], within=GIT)
-    except (DoesNotExist, PluginFailed, ToolUnavailable) as error:
-        return f"it could not be reached on {host} ({error})"
+    except DoesNotExist as error:
+        return f"its host is not known ({error})"
+    except (PluginFailed, ToolUnavailable) as error:
+        return f"its fetch failed: {error}"
     except TimeoutError:
         return f"its fetch timed out after {int(GIT.total_seconds() // 60)} minutes"
     on = await _says(shell, ["git", "-C", checkout, "rev-parse", "--abbrev-ref", "HEAD"])

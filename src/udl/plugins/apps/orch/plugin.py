@@ -2793,8 +2793,9 @@ class Orch(AppPlugin[OrchSettings]):
                 ),
                 dedupe_key=f"{project}:{task.key}:{pull.head_sha}",
             )
-        # (28.8, after the merge's own event and result: several hosts times a few git commands each
-        # must not hold up `orch_merge` or the next auto merge.)
+        # (28.8, after the merge's own event and result, and still before `Merged` comes back:
+        # several hosts times a few git commands each is a slow tail on `orch_merge`, but it is
+        # behind the merge, so a checkout that hangs delays the answer, never the merge itself.)
         await self._follow_checkout(service, project=project, key=task.key, repo=repo)
         return Merged(task=task.key, url=link, sha=pull.head_sha, state=moved.state)
 

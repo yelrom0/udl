@@ -24,7 +24,7 @@ import pytest
 from support.engine import settings
 from support.harnesses import ScriptedShell
 from udl.core.service import UDLService
-from udl.hosts.shell import HostShell
+from udl.hosts.shell import Host, HostShell, HostTransport
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.checkout import CHECKOUT_BEHIND, CheckoutBehind, follow
 from udl.plugins.apps.orch.models import OwnerKind
@@ -39,7 +39,6 @@ from udl.plugins.apps.orch.records import (
     Task,
     TaskRecords,
 )
-from udl.process import ProcessResult
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -190,21 +189,26 @@ async def test_a_diverged_checkout_is_left_and_noted(service: UDLService, repo: 
 async def test_a_checkout_that_is_not_a_repo_is_noted_not_raised(
     service: UDLService, repo: Path
 ) -> None:
+    """A checkout whose path is not a repo: its `why` says the fetch failed (not that the host
+    is unknown), and the reachable checkout still follows."""
     nowhere = repo.parent / "nowhere"
     nowhere.mkdir()
+    from udl.hosts import SetHostRequest
+
+    await service.set_host(
+        SetHostRequest(
+            host=Host(
+                name="local2",
+                transport=HostTransport.SSH,
+                ssh="nowhere",
+                work_dir=str(nowhere),
+            )
+        )
+    )
     found = await RepoRecords(AppRecords(service.db)).repo("udl", "udl")
     assert found is not None
     await RepoRecords(AppRecords(service.db)).save_repo(
-        found.model_copy(
-            update={
-                "checkouts": {
-                    "local": str(repo),
-                    # (A second host that is this machine, at a path that is not a repo: the
-                    # honest way to name one that is here and cannot be read.)
-                    "nowhere": str(nowhere),
-                }
-            }
-        )
+        found.model_copy(update={"checkouts": {"local": str(repo), "local2": str(nowhere)}})
     )
     bring(repo)
 
@@ -217,36 +221,78 @@ async def test_a_checkout_that_is_not_a_repo_is_noted_not_raised(
     )
 
     lost = next(one for one in behind if one.checkout == str(nowhere))
-    assert "could not be reached" in lost.why or "not a git repository" in lost.why
-    # (The reachable one still followed: one bad host never stops the others.)
+    assert lost.host == "local2"
+    assert lost.why.startswith("its fetch failed")
     assert git(repo, "rev-parse", "HEAD") == git(repo, "rev-parse", "origin/main")
 
 
-class _TimeoutShell(ScriptedShell):
-    """A host's shell whose every command runs out of time (28.8: a fetch that hangs)."""
+class _Hosts:
+    """Hosts whose only shell is one a test scripts (`follow` needs `shell(name)`)."""
 
-    async def run(self, argv: object = (), **kwargs: object) -> ProcessResult:
-        raise TimeoutError("git fetch timed out")
-
-
-class _TimeoutHosts:
-    """Hosts whose only shell never answers (a typed fake: `follow` needs `shell(name)`)."""
+    def __init__(self, shell: HostShell) -> None:
+        self._shell = shell
 
     async def shell(self, name: str) -> HostShell:
-        return _TimeoutShell()
+        return self._shell
 
 
 async def test_a_timeout_is_noted_not_raised(service: UDLService, repo: Path) -> None:
+    shell = ScriptedShell()
+    shell.never(["git", "-C", str(repo), "fetch", "origin", "main"])
+
     behind = await follow(
         AppRecords(service.db),
         project="udl",
         key="F-1.1",
         repo="yelrom0/udl",
-        shells=_TimeoutHosts(),
+        shells=_Hosts(shell),
     )
 
     assert len(behind) == 1
     assert "timed out" in behind[0].why
+
+
+async def test_an_unknown_host_is_named_as_such(service: UDLService, repo: Path) -> None:
+    """A host the records do not have: `Hosts.shell` raises `DoesNotExist`, and the reason says
+    so — not 'could not be reached', which is a host that is there and did not answer."""
+    found = await RepoRecords(AppRecords(service.db)).repo("udl", "udl")
+    assert found is not None
+    await RepoRecords(AppRecords(service.db)).save_repo(
+        found.model_copy(update={"checkouts": {**found.checkouts, "elsewhere": "/srv/udl"}})
+    )
+    bring(repo)
+
+    behind = await follow(
+        AppRecords(service.db),
+        project="udl",
+        key="F-1.1",
+        repo="yelrom0/udl",
+        shells=service.hosts,
+    )
+
+    lost = next(one for one in behind if one.host == "elsewhere")
+    assert "not known" in lost.why
+
+
+async def test_each_pass_names_a_checkout_left_behind_again(
+    service: UDLService, repo: Path
+) -> None:
+    """Every pass over a checkout that cannot follow adds its own note: what dedupes the event is
+    the merge's own stamp (the caller's), so the same reason after another merge is said again."""
+    at(repo / "dirty.txt", "work\n")
+    for _ in range(2):
+        await follow(
+            AppRecords(service.db),
+            project="udl",
+            key="F-1.1",
+            repo="yelrom0/udl",
+            shells=service.hosts,
+        )
+
+    task = await TaskRecords(AppRecords(service.db)).task("udl", "F-1.1")
+    assert task is not None
+    notes = await NoteRecords(AppRecords(service.db)).for_owner(OwnerKind.TASK, task.id)
+    assert len([note for note in notes if "did not follow" in note.text]) == 2
 
 
 async def test_the_event_follows_a_checkout_left_behind(service: UDLService, repo: Path) -> None:
