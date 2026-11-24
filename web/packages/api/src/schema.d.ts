@@ -3670,6 +3670,12 @@ export interface components {
              */
             cost?: string | null;
             /**
+             * Id
+             * Format: uuid
+             * @description Its id (what `orch_get_session` and `orch_stop_session` take).
+             */
+            id: string;
+            /**
              * Last Text
              * @description What it last said (the end of its last turn's answer).
              * @default

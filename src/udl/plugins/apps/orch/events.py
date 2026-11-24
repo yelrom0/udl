@@ -130,6 +130,16 @@ class AgentIdle(_Model):
     """A project it works (its own, or the first of every one it may work)."""
 
 
+class AgentChanged(_Model):
+    """An agent was made, edited, paused, resumed or deleted (29.6): what a tree draws, and what a
+    page shows of it, is read again."""
+
+    agent: str
+    """The agent it is (the one that was deleted, too: its row is what went)."""
+    project: str = ""
+    """A project it works, when the change named one."""
+
+
 TASK_CHANGED: Final = EventType(
     name="orch.task.changed",
     data=TaskChanged,
@@ -205,3 +215,13 @@ AGENT_IDLE: Final = EventType(
     source="orch",
 )
 """What orch publishes when an agent's queue is empty and it goes idle (28.5)."""
+
+AGENT_CHANGED: Final = EventType(
+    name="orch.agent.changed",
+    data=AgentChanged,
+    summary="An agent was made, edited, paused, resumed or deleted",
+    example=AgentChanged(agent="deepseek-b"),
+    subject=lambda event: f"{event.agent} changed",
+    source="orch",
+)
+"""What orch publishes when an agent itself changes (29.6): the tree and its page read again."""

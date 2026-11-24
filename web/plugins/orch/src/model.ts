@@ -5,7 +5,13 @@
  */
 
 import type { JsonValue } from "@udl/ui-sdk";
-import { asArray, asFlag, asNumber, asObject, asText } from "./json";
+import { asArray, asDecimal, asFlag, asNumber, asObject, asText } from "./json";
+
+/** The pull open on a task: its number, and where it is. */
+export interface OpenPull {
+	readonly number: number;
+	readonly url: string;
+}
 
 /** A task's size (26.8), and what it is worth. */
 export type Size = "S" | "M" | "L" | "XL";
@@ -26,6 +32,8 @@ export interface PullState {
 
 /** One task in a merge list (28.3). */
 export interface MergeRow {
+	/** The project its task is in (the list it came from: a key is only unique within one). */
+	readonly project: string;
 	readonly task: string;
 	readonly feature: string;
 	readonly title: string;
@@ -124,6 +132,8 @@ export interface Feature {
 /** A task: one piece of a feature (26.3, 26.8). */
 export interface Task {
 	readonly key: string;
+	/** The project it is in (a task's key is only unique within one). */
+	readonly project: string;
 	readonly feature: string;
 	readonly title: string;
 	readonly state: string;
@@ -240,6 +250,8 @@ export interface TaskSession {
 /** A task on an agent's queue, as `orch_list_agents` sends it (29.4). */
 export interface QueueEntry {
 	readonly key: string;
+	/** The project its task is in (a key is only unique within one). */
+	readonly project: string;
 	readonly feature: string;
 	readonly title: string;
 	readonly state: string;
@@ -300,20 +312,121 @@ export interface Board {
 	readonly progress: Progress;
 }
 
-/** A session, as `orch_get_session` answers it (27.7): where it is and what it last said. */
-export interface Session {
+/** What a session has used and where it got to, as an agent's own answer carries it (27.9). */
+export interface SessionSummary {
 	readonly id: string;
-	readonly agent: string;
 	readonly task: string;
 	readonly state: string;
 	readonly turns: number;
+	readonly tokens_in: number;
+	readonly tokens_out: number;
+	readonly cost: number | null;
 	readonly last_text: string;
 }
 
+/** One thing a session's runner said, as its transcript holds it (27.9's `AnAgentEvent`). */
+export interface Spoken {
+	/** The turn it happened in (0: before the first one). */
+	readonly turn: number;
+	/** When it was stored. */
+	readonly at: string;
+	/** Which of the runner's events it is (`text_delta`, `tool_started`, `usage`, …). */
+	readonly kind: string;
+	/** What it said, for the kinds that say something. */
+	readonly text: string;
+	/** The tool's name, for a tool's events. */
+	readonly name: string;
+	/** What a tool is doing, in a line. */
+	readonly summary: string;
+	/** Whether a tool that ended worked (null: it is not a tool's end). */
+	readonly ok: boolean | null;
+	/** What a turn's usage cost, when the harness said. */
+	readonly cost: number | null;
+	readonly tokens_in: number;
+	readonly tokens_out: number;
+	/** How a turn ended, for `turn_ended`. */
+	readonly reason: string;
+	/** What a failed or a limited runner said (`runner_failed`, `runner_limited`). */
+	readonly message: string;
+	/** When a limited runner's quota is back, if it said (`runner_limited`). */
+	readonly until: string | null;
+}
+
+/** The harness's own session: the runner, its id, the folder and the host. */
+export interface SessionRef {
+	readonly runner: string;
+	readonly id: string;
+	readonly cwd: string;
+	readonly host: string;
+}
+
+/** A session with its transcript, as `orch_get_session` answers it. */
+export interface Session extends SessionSummary {
+	readonly agent: string;
+	readonly created_at: string;
+	readonly limited_until: string | null;
+	readonly ref: SessionRef;
+	/** How many events its transcript has (`events` is the page). */
+	readonly total: number;
+	readonly events: readonly Spoken[];
+}
+
+/** What a manager may do for its reports (O-D10): each power is off until it is given. */
+export interface Powers {
+	readonly assign: boolean;
+	readonly answer: boolean;
+	readonly review: boolean;
+	readonly plan: boolean;
+}
+
+/** An agent, as its own page and its editor read it (27.9). */
+export interface AgentDetail {
+	readonly name: string;
+	readonly title: string;
+	readonly runner: string;
+	readonly model: string;
+	readonly host: string;
+	readonly role: string;
+	/** The agent it reports to (null: the humans). */
+	readonly manager: string | null;
+	readonly manages: Powers;
+	readonly projects: readonly string[];
+	readonly brief: string;
+	readonly max_nudges: number;
+	readonly enabled: boolean;
+	readonly paused: boolean;
+}
+
+/** An agent, with what its page draws: its status, its session, its queue and its reports. */
+export interface AgentInfo {
+	readonly agent: AgentDetail;
+	readonly status: string;
+	readonly session: SessionSummary | null;
+	readonly queue: readonly QueueEntry[];
+	readonly reports: readonly string[];
+}
+
+/** A model a harness can run on a host, as `orch_list_runners` sends it (25.11). */
+export interface RunnerModel {
+	readonly id: string;
+	readonly name: string;
+}
+
+/** A harness on a host: whether it is there, signed in, and what it can run. */
+export interface Runner {
+	readonly host: string;
+	readonly runner: string;
+	readonly installed: boolean;
+	readonly signed_in: boolean;
+	readonly version: string;
+	readonly models: readonly RunnerModel[];
+}
+
 /** One row of a merge list, as the operation sends it. */
-function mergeRowOf(value: JsonValue): MergeRow {
+function mergeRowOf(value: JsonValue, project: string): MergeRow {
 	const row = asObject(value);
 	return {
+		project,
 		task: asText(row.task),
 		feature: asText(row.feature),
 		title: asText(row.title),
@@ -329,14 +442,15 @@ function mergeRowOf(value: JsonValue): MergeRow {
 /** A merge list, as `orch_merge_list` and `orch_inbox` send it. */
 export function mergeListOf(value: JsonValue | undefined): MergeList {
 	const list = asObject(value);
+	const project = asText(list.project);
 	return {
-		project: asText(list.project),
+		project,
 		auto_merge: asFlag(list.auto_merge),
 		merger: typeof list.merger === "string" ? list.merger : null,
-		ready: asArray(list.ready).map(mergeRowOf),
-		coming: asArray(list.coming).map(mergeRowOf),
-		held: asArray(list.held).map(mergeRowOf),
-		done: asArray(list.done).map(mergeRowOf),
+		ready: asArray(list.ready).map((one) => mergeRowOf(one, project)),
+		coming: asArray(list.coming).map((one) => mergeRowOf(one, project)),
+		held: asArray(list.held).map((one) => mergeRowOf(one, project)),
+		done: asArray(list.done).map((one) => mergeRowOf(one, project)),
 	};
 }
 
@@ -434,6 +548,7 @@ function taskOf(value: JsonValue | undefined): Task {
 	const one = asObject(value);
 	return {
 		key: asText(one.key),
+		project: asText(one.project),
 		feature: asText(one.feature),
 		title: asText(one.title),
 		state: asText(one.state),
@@ -455,6 +570,7 @@ function queueEntryOf(value: JsonValue): QueueEntry {
 	const one = asObject(value);
 	return {
 		key: asText(one.key),
+		project: asText(one.project),
 		feature: asText(one.feature),
 		title: asText(one.title),
 		state: asText(one.state),
@@ -515,16 +631,176 @@ function suggestionOf(value: JsonValue): Suggestion {
 	};
 }
 
+/** One thing a session said, as its transcript holds it. */
+function spokenOf(value: JsonValue): Spoken {
+	const item = asObject(value);
+	const said = asObject(item.event);
+	return {
+		turn: asNumber(item.turn),
+		at: asText(item.at),
+		kind: asText(said.kind),
+		text: asText(said.text),
+		name: asText(said.name),
+		summary: asText(said.summary),
+		ok: typeof said.ok === "boolean" ? said.ok : null,
+		cost: asDecimal(said.cost),
+		tokens_in: asNumber(said.input_tokens),
+		tokens_out: asNumber(said.output_tokens),
+		reason: asText(said.reason),
+		message: asText(said.message),
+		until: typeof said.until === "string" ? said.until : null,
+	};
+}
+
+/** A session, as an agent's own answer carries it (no transcript: `sessionOf` reads that). */
+function sessionSummaryOf(value: JsonValue | undefined): SessionSummary | null {
+	if (value === undefined || value === null) {
+		return null;
+	}
+	const one = asObject(value);
+	return {
+		id: asText(one.id),
+		task: asText(one.task),
+		state: asText(one.state),
+		turns: asNumber(one.turns),
+		tokens_in: asNumber(one.tokens_in),
+		tokens_out: asNumber(one.tokens_out),
+		cost: asDecimal(one.cost),
+		last_text: asText(one.last_text),
+	};
+}
+
+/** A manager's powers, each off unless it is given (O-D10). */
+function powersOf(value: JsonValue | undefined): Powers {
+	const one = asObject(value);
+	return {
+		assign: asFlag(one.assign),
+		answer: asFlag(one.answer),
+		review: asFlag(one.review),
+		plan: asFlag(one.plan),
+	};
+}
+
+/** An agent's own record, as `orch_get_agent` and its editor read it. */
+function agentDetailOf(value: JsonValue | undefined): AgentDetail {
+	const one = asObject(value);
+	return {
+		name: asText(one.name),
+		title: asText(one.title),
+		runner: asText(one.runner),
+		model: asText(one.model),
+		host: asText(one.host),
+		role: asText(one.role),
+		manager: typeof one.manager === "string" && one.manager !== "" ? one.manager : null,
+		manages: powersOf(one.manages),
+		projects: asArray(one.projects).map((name) => asText(name)),
+		brief: asText(one.brief),
+		max_nudges: asNumber(one.max_nudges),
+		enabled: one.enabled === undefined ? true : asFlag(one.enabled),
+		paused: asFlag(one.paused),
+	};
+}
+
+/** An agent, as `orch_get_agent` answers it. */
+export function agentInfoOf(value: JsonValue | undefined): AgentInfo {
+	const info = asObject(value);
+	return {
+		agent: agentDetailOf(info.agent),
+		status: asText(info.status),
+		session: sessionSummaryOf(info.session),
+		queue: asArray(info.queue).map(queueEntryOf),
+		reports: asArray(info.reports).map((name) => asText(name)),
+	};
+}
+
+/** Every agent, as `orch_list_agents` answers them, by name. */
+export function agentsOf(value: JsonValue | undefined): AgentInfo[] {
+	return asArray(asObject(value).items).map(agentInfoOf);
+}
+
+/** The pull open on each task, from `orch_merge_list`'s three open lists (a merged or done one
+ * is not open, so it is not there). */
+export function openPullsOf(merge: MergeList): Record<string, OpenPull> {
+	const pulls: Record<string, OpenPull> = {};
+	for (const row of [...merge.ready, ...merge.coming, ...merge.held]) {
+		if (row.task === "") {
+			continue;
+		}
+		pulls[`${row.project}/${row.task}`] = { number: row.number, url: row.url };
+	}
+	return pulls;
+}
+
+/** A project's tasks, as `orch_list_tasks` answers them. */
+export function tasksOf(value: JsonValue | undefined): Task[] {
+	return asArray(asObject(value).tasks).map(taskOf);
+}
+
+/** The harnesses, as `orch_list_runners` answers them (25.11): what an agent's editor offers. */
+export function runnersOf(value: JsonValue | undefined): Runner[] {
+	return asArray(asObject(value).items).map((item) => {
+		const one = asObject(item);
+		const health = asObject(one.health);
+		return {
+			host: asText(one.host),
+			runner: asText(one.runner),
+			installed: asFlag(health.installed),
+			signed_in: asFlag(health.signed_in),
+			version: asText(health.version),
+			models: asArray(one.models).map((model) => {
+				const each = asObject(model);
+				return { id: asText(each.id), name: asText(each.name) };
+			}),
+		};
+	});
+}
+
+/** Who an agent reports up through, nearest first, ending at the humans (empty: it is a root). */
+export function chainOf(agents: readonly AgentInfo[], name: string): string[] {
+	const found = agents.find((one) => one.agent.name === name);
+	if (found === undefined) {
+		return [];
+	}
+	const chain: string[] = [];
+	let above = found.agent.manager;
+	// (A stored tree has no cycles — udl refuses to make one — but a page is not a place to
+	// loop forever if one is ever read: a name already walked ends the chain.)
+	while (above !== null && !chain.includes(above) && chain.length < agents.length) {
+		chain.push(above);
+		above = agents.find((one) => one.agent.name === above)?.agent.manager ?? null;
+	}
+	return chain;
+}
+
+/** Whether `above` is somewhere up `name`'s chain: the check a drag makes before it asks. */
+export function isAbove(agents: readonly AgentInfo[], above: string, name: string): boolean {
+	return chainOf(agents, name).includes(above);
+}
+
 /** A session, as `orch_get_session` answers it. */
 export function sessionOf(value: JsonValue | undefined): Session {
 	const one = asObject(value);
+	const ref = asObject(one.ref);
 	return {
 		id: asText(one.id),
 		agent: asText(one.agent),
 		task: asText(one.task),
 		state: asText(one.state),
 		turns: asNumber(one.turns),
+		tokens_in: asNumber(one.tokens_in),
+		tokens_out: asNumber(one.tokens_out),
+		cost: asDecimal(one.cost),
 		last_text: asText(one.last_text),
+		created_at: asText(one.created_at),
+		limited_until: typeof one.limited_until === "string" ? one.limited_until : null,
+		ref: {
+			runner: asText(ref.runner),
+			id: asText(ref.id),
+			cwd: asText(ref.cwd),
+			host: asText(ref.host),
+		},
+		total: asNumber(one.total),
+		events: asArray(one.events).map(spokenOf),
 	};
 }
 
@@ -696,7 +972,7 @@ export function sessionOfTask(agents: JsonValue | undefined, key: string): TaskS
 		}
 		return {
 			agent: asText(asObject(info.agent).name),
-			id: asText(asObject(session.ref).id),
+			id: asText(session.id),
 			state: asText(session.state),
 		};
 	}

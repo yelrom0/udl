@@ -1,16 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
+	agentInfoOf,
+	agentsOf,
 	asSize,
 	boardOf,
+	chainOf,
 	durationOf,
 	estimateOf,
 	featureInfoOf,
 	inboxOf,
+	isAbove,
 	isQuestionKey,
 	mergeListOf,
 	movesFrom,
 	POINTS,
 	readinessOf,
+	runnersOf,
 	sessionOf,
 	sessionOfTask,
 	taskInfoOf,
@@ -309,12 +314,12 @@ describe("a feature's and a task's pages (29.5)", () => {
 					{
 						agent: { name: "deepseek-a" },
 						status: "working",
-						session: { agent: "deepseek-a", task: "29.2", ref: { id: "s-1" }, state: "running" },
+						session: { id: "s-1", agent: "deepseek-a", task: "29.2", state: "running" },
 					},
 					{
 						agent: { name: "ernie-d" },
 						status: "working",
-						session: { agent: "ernie-d", task: "29.7", ref: { id: "s-2" }, state: "running" },
+						session: { id: "s-2", agent: "ernie-d", task: "29.7", state: "running" },
 					},
 				],
 			},
@@ -331,5 +336,245 @@ describe("a feature's and a task's pages (29.5)", () => {
 		expect(movesFrom("open")).toContain("cancelled");
 		expect(movesFrom("merged")).toContain("done");
 		expect(movesFrom("done")).toContain("merged");
+	});
+});
+
+describe("an agent's page (29.6)", () => {
+	const ANSWER = {
+		agent: {
+			name: "deepseek-a",
+			title: "DeepSeek A",
+			runner: "opencode",
+			runner_options: { profile: "paid" },
+			model: "deepseek-v4.1-flash",
+			host: "local",
+			role: "implementer",
+			manager: "boss",
+			manages: { assign: true, answer: false, review: true, plan: false },
+			projects: ["udl"],
+			brief: "You build udl.",
+			max_nudges: 4,
+			enabled: true,
+			paused: false,
+		},
+		status: "working",
+		session: {
+			id: "0b9a1f8e-0000-4000-8000-000000000001",
+			agent: "deepseek-a",
+			task: "29.6",
+			ref: { runner: "opencode", id: "ses-1", cwd: "/tmp", host: "local" },
+			state: "running",
+			turns: 3,
+			tokens_in: 1200,
+			tokens_out: 300,
+			cost: 0.42,
+			last_text: "Working on it.",
+		},
+		queue: [
+			{ key: "29.6", project: "udl", feature: "29", title: "The agents", state: "in_progress" },
+			{ key: "29.12", project: "udl", feature: "29", title: "The chat", state: "queued" },
+		],
+		reports: ["deepseek-b"],
+	};
+
+	it("reads an agent with its session, its queue and its reports", () => {
+		const info = agentInfoOf(ANSWER);
+
+		expect(info.agent.name).toBe("deepseek-a");
+		expect(info.agent.runner).toBe("opencode");
+		expect(info.agent.model).toBe("deepseek-v4.1-flash");
+		expect(info.agent.host).toBe("local");
+		expect(info.agent.role).toBe("implementer");
+		expect(info.agent.manager).toBe("boss");
+		expect(info.agent.manages).toEqual({ assign: true, answer: false, review: true, plan: false });
+		expect(info.agent.projects).toEqual(["udl"]);
+		expect(info.agent.brief).toBe("You build udl.");
+		expect(info.agent.max_nudges).toBe(4);
+		expect(info.status).toBe("working");
+		expect(info.session).toEqual({
+			id: "0b9a1f8e-0000-4000-8000-000000000001",
+			task: "29.6",
+			state: "running",
+			turns: 3,
+			tokens_in: 1200,
+			tokens_out: 300,
+			cost: 0.42,
+			last_text: "Working on it.",
+		});
+		expect(info.queue.map((one) => one.key)).toEqual(["29.6", "29.12"]);
+		expect(info.queue[0]?.project).toBe("udl");
+		expect(info.reports).toEqual(["deepseek-b"]);
+	});
+
+	it("reads an agent that reports to the humans and has nothing running", () => {
+		const info = agentInfoOf({
+			agent: { name: "solo", title: "Solo", role: "manager", manager: null },
+			status: "idle",
+			session: null,
+			queue: [],
+			reports: [],
+		});
+
+		expect(info.agent.manager).toBeNull();
+		expect(info.session).toBeNull();
+		expect(info.agent.manages).toEqual({
+			assign: false,
+			answer: false,
+			review: false,
+			plan: false,
+		});
+		expect(info.agent.projects).toEqual([]);
+		expect(info.agent.enabled).toBe(true);
+		expect(info.agent.paused).toBe(false);
+	});
+
+	it("reads nothing at all from nothing", () => {
+		const info = agentInfoOf(undefined);
+
+		expect(info.agent.name).toBe("");
+		expect(info.agent.runner).toBe("");
+		expect(info.status).toBe("");
+		expect(info.session).toBeNull();
+		expect(info.queue).toEqual([]);
+		expect(info.reports).toEqual([]);
+	});
+
+	it("reads the agents a project has, by name", () => {
+		expect(agentsOf({ items: [ANSWER, ANSWER] }).map((one) => one.agent.name)).toEqual([
+			"deepseek-a",
+			"deepseek-a",
+		]);
+		expect(agentsOf(undefined)).toEqual([]);
+	});
+
+	it("reads a session's transcript, each thing it said as it said it", () => {
+		const session = sessionOf({
+			id: "ses-1",
+			agent: "deepseek-a",
+			task: "29.6",
+			ref: { runner: "opencode", id: "ses-1", cwd: "/tmp", host: "local" },
+			state: "idle",
+			turns: 2,
+			tokens_in: 900,
+			tokens_out: 120,
+			cost: "0.1",
+			last_text: "Done.",
+			created_at: "2026-11-24T01:00:00Z",
+			limited_until: null,
+			total: 5,
+			events: [
+				{ turn: 1, at: "2026-11-24T01:00:01Z", event: { kind: "text_delta", text: "Hello" } },
+				{
+					turn: 1,
+					at: "2026-11-24T01:00:02Z",
+					event: { kind: "tool_started", name: "bash", summary: "pytest -q" },
+				},
+				{
+					turn: 1,
+					at: "2026-11-24T01:00:03Z",
+					event: { kind: "tool_finished", name: "bash", ok: true },
+				},
+				{
+					turn: 2,
+					at: "2026-11-24T01:00:04Z",
+					event: { kind: "usage", input_tokens: 900, output_tokens: 120, cost: "0.1" },
+				},
+				{
+					turn: 2,
+					at: "2026-11-24T01:00:05Z",
+					event: { kind: "turn_ended", reason: "done", text: "Done." },
+				},
+				{
+					turn: 3,
+					at: "2026-11-24T01:00:06Z",
+					event: {
+						kind: "runner_limited",
+						message: "Free tier used up.",
+						until: "2026-11-25T00:00:00Z",
+					},
+				},
+				{
+					turn: 4,
+					at: "2026-11-24T01:00:07Z",
+					event: { kind: "runner_failed", message: "It crashed." },
+				},
+			],
+		});
+
+		expect(session.id).toBe("ses-1");
+		expect(session.total).toBe(5);
+		expect(session.created_at).toBe("2026-11-24T01:00:00Z");
+		expect(session.events.map((one) => one.kind)).toEqual([
+			"text_delta",
+			"tool_started",
+			"tool_finished",
+			"usage",
+			"turn_ended",
+			"runner_limited",
+			"runner_failed",
+		]);
+		expect(session.events[0]).toMatchObject({ turn: 1, text: "Hello" });
+		expect(session.events[1]).toMatchObject({ name: "bash", summary: "pytest -q" });
+		expect(session.events[2]).toMatchObject({ ok: true });
+		expect(session.events[3]).toMatchObject({ tokens_in: 900, tokens_out: 120, cost: 0.1 });
+		expect(session.events[4]).toMatchObject({ reason: "done", text: "Done." });
+		// (A cost is a Decimal, so udl sends it as a string: read it as one.)
+		expect(session.events[3]?.cost).toBe(0.1);
+		expect(session.cost).toBe(0.1);
+		// (What a runner said went wrong, and when a quota is back, are their own fields.)
+		expect(session.events[5]).toMatchObject({
+			message: "Free tier used up.",
+			until: "2026-11-25T00:00:00Z",
+		});
+		expect(session.events[6]).toMatchObject({ message: "It crashed.", until: null });
+	});
+
+	it("reads a session that has not started yet as one with nothing said", () => {
+		const session = sessionOf(undefined);
+
+		expect(session.id).toBe("");
+		expect(session.events).toEqual([]);
+		expect(session.cost).toBeNull();
+		expect(session.limited_until).toBeNull();
+	});
+
+	it("reads the harnesses a host has, and what each can run", () => {
+		const runners = runnersOf({
+			items: [
+				{
+					host: "local",
+					runner: "opencode",
+					health: { installed: true, signed_in: true, version: "1.2.3" },
+					models: [{ id: "deepseek-v4.1", name: "DeepSeek V4.1" }],
+				},
+				{ host: "local", runner: "claude-code", health: { installed: false } },
+			],
+			problems: ["jeff-wiggle/codex: it did not answer"],
+		});
+
+		expect(runners.map((one) => one.runner)).toEqual(["opencode", "claude-code"]);
+		expect(runners[0]).toMatchObject({
+			host: "local",
+			installed: true,
+			version: "1.2.3",
+		});
+		expect(runners[0]?.models).toEqual([{ id: "deepseek-v4.1", name: "DeepSeek V4.1" }]);
+		expect(runners[1]?.installed).toBe(false);
+		expect(runnersOf(undefined)).toEqual([]);
+	});
+
+	it("walks up the tree from an agent to the humans", () => {
+		const tree = agentsOf({
+			items: [
+				{ agent: { name: "deepseek-a", role: "implementer", manager: "boss" }, status: "idle" },
+				{ agent: { name: "boss", role: "manager", manager: null }, status: "idle" },
+			],
+		});
+
+		expect(chainOf(tree, "deepseek-a")).toEqual(["boss"]);
+		expect(chainOf(tree, "boss")).toEqual([]);
+		expect(chainOf(tree, "nobody")).toEqual([]);
+		expect(isAbove(tree, "boss", "deepseek-a")).toBe(true);
+		expect(isAbove(tree, "deepseek-a", "boss")).toBe(false);
 	});
 });

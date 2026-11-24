@@ -994,6 +994,12 @@
             "description": "What it has cost, in USD, when its harness says (None: it does not charge per turn).",
             "title": "Cost"
           },
+          "id": {
+            "description": "Its id (what `orch_get_session` and `orch_stop_session` take).",
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
           "last_text": {
             "default": "",
             "description": "What it last said (the end of its last turn's answer).",
@@ -1058,6 +1064,7 @@
           }
         },
         "required": [
+          "id",
           "agent",
           "ref"
         ],
