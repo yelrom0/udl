@@ -511,6 +511,37 @@ describe("an agent's editor: the harnesses answer after it opens (29.6)", () => 
 	});
 });
 
+describe("an agent's editor: the harnesses answer after it opens (29.6)", () => {
+	it("shows the agent's own runner while the read is still out", async () => {
+		let said: (answer: unknown) => void = () => {};
+		const late = new Promise((done) => {
+			said = done;
+		});
+		const fake = fakeCtx((name) => {
+			if (name === "orch_list_runners") {
+				return late as never;
+			}
+			return ANSWERS[name] as never;
+		});
+		render(<AgentsPage ctx={fake.ctx} params={{}} path="agents" search={{}} />);
+		await screen.findByRole("heading", { level: 1, name: "Agents" });
+		fireEvent.click(
+			within(screen.getByLabelText("deepseek-a")).getByRole("button", { name: "Edit" }),
+		);
+		const form = within(screen.getByRole("form", { name: "Edit deepseek-a" }));
+
+		// (The agent runs opencode, and the field says so before the harnesses answer: a disabled
+		// box cannot be typed into, so it may as well say what the agent runs on.)
+		const reading = form.getByLabelText("Runner") as HTMLInputElement;
+		expect(reading.disabled).toBe(true);
+		expect(reading.value).toBe("opencode");
+
+		said({ items: [], problems: ["jeff-wiggle: no answer"] });
+		await settle();
+		expect((form.getByLabelText("Runner") as HTMLInputElement).value).toBe("opencode");
+	});
+});
+
 describe("the agents' page: an agent whose manager is not there (29.6)", () => {
 	it("draws it at the humans rather than not at all", async () => {
 		const fake = fakeCtx((name) => {

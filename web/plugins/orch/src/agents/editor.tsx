@@ -142,7 +142,9 @@ export function AgentEditor({ ctx, agent, onDone }: AgentEditorProps) {
 							disabled
 							id={`${id}-runner`}
 							placeholder="Reading the harnesses…"
-							value=""
+							// (Disabled, so it takes nothing: an agent being edited still says what it
+							// runs on while the harnesses are read.)
+							value={runner}
 						/>
 					) : names.length === 0 ? (
 						// (No host answered what it has installed — a headless one, or a host that is
