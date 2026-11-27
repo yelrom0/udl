@@ -29,7 +29,9 @@
 			"actions"
 		],
 		"widgets": [{ "slot": "dashboard", "id": "orch" }],
-		"panels": [{ "id": "chat", "title": "Chat", "icon": "message-square", "shortcut": "Ctrl+J" }]
+		"panels": [{ "id": "chat", "title": "Chat", "icon": "message-square", "shortcut": "Ctrl+J" }],
+		"operationViews": ["orch_list_runners"],
+		"resultViews": ["orch_import_plan"]
 	},
 	"generated": {
 		"tabs": ["settings", "operations"],

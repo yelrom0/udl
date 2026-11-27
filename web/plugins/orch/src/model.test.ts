@@ -13,11 +13,14 @@ import {
 	inboxOf,
 	isAbove,
 	isQuestionKey,
+	machinesOf,
 	mergeListOf,
 	movesFrom,
 	POINTS,
 	progressReportOf,
 	readinessOf,
+	reportOf,
+	runnerProblemsOf,
 	runnersOf,
 	sessionOf,
 	sessionOfTask,
@@ -653,6 +656,126 @@ describe("a chat", () => {
 		});
 
 		expect(chats.map((one) => one.id)).toEqual(["b", "a"]);
+	});
+});
+
+describe("the machines (29.9)", () => {
+	const answered = {
+		items: [
+			{
+				host: "local",
+				runner: "claude-code",
+				health: {
+					installed: true,
+					version: "3.2.1",
+					latest: "3.2.1",
+					signed_in: true,
+					plan: "Max",
+					guards: true,
+				},
+			},
+			{
+				host: "local",
+				runner: "opencode",
+				health: { installed: true, version: "2.1.2", latest: "2.1.2", signed_in: false },
+			},
+			{
+				host: "thevault",
+				runner: "claude-code",
+				health: {
+					installed: true,
+					version: "3.1.9",
+					latest: "3.2.1",
+					signed_in: true,
+					account: "someone@example.com",
+					limited_until: "2026-11-28T12:00:00Z",
+					problems: ["the plan is at its limit"],
+				},
+			},
+		],
+		problems: ["thevault/opencode: it did not answer"],
+	};
+
+	it("reads nothing at all from nothing", () => {
+		expect(machinesOf(undefined)).toEqual([]);
+	});
+
+	it("puts each host's harnesses together, in the order udl answered", () => {
+		const machines = machinesOf(answered);
+
+		expect(machines.map((one) => one.host)).toEqual(["local", "thevault"]);
+		expect(machines[0]?.harnesses.map((one) => one.runner)).toEqual(["claude-code", "opencode"]);
+		expect(machines[1]?.harnesses.map((one) => one.runner)).toEqual(["claude-code"]);
+	});
+
+	it("reads no version as none at all, rather than an empty one", () => {
+		const [one] = machinesOf({
+			items: [{ host: "local", runner: "claude-code", health: { installed: true } }],
+		});
+
+		expect(one?.harnesses[0]?.version).toBeNull();
+		expect(one?.harnesses[0]?.update).toBeNull();
+	});
+
+	it("says when a harness is a version behind", () => {
+		const [local, thevault] = machinesOf(answered);
+
+		expect(local?.harnesses[0]?.update).toBeNull();
+		expect(thevault?.harnesses[0]?.update).toBe("3.2.1");
+	});
+
+	it("says who it is signed in as, and on what plan", () => {
+		const [local, thevault] = machinesOf(answered);
+
+		expect(local?.harnesses[0]?.signed_in).toBe(true);
+		expect(local?.harnesses[0]?.plan).toBe("Max");
+		expect(local?.harnesses[1]?.signed_in).toBe(false);
+		expect(thevault?.harnesses[0]?.account).toBe("someone@example.com");
+	});
+
+	it("carries what is wrong with it, and when its quota is back", () => {
+		const harness = machinesOf(answered)[1]?.harnesses[0];
+
+		expect(harness?.limited_until).toBe("2026-11-28T12:00:00Z");
+		expect(harness?.problems).toEqual(["the plan is at its limit"]);
+		expect(harness?.guards).toBe(false);
+	});
+
+	it("keeps what could not be asked, as udl said it", () => {
+		expect(machinesOf(answered).flatMap((one) => one.harnesses)).toHaveLength(3);
+		expect(runnerProblemsOf(answered)).toEqual(["thevault/opencode: it did not answer"]);
+	});
+});
+
+describe("the import's report (29.9)", () => {
+	it("reads nothing at all from nothing", () => {
+		const report = reportOf(undefined);
+
+		expect(report.created).toEqual([]);
+		expect(report.updated).toEqual([]);
+		expect(report.unchanged).toEqual([]);
+		expect(report.kept).toEqual([]);
+		expect(report.unplaced).toEqual([]);
+	});
+
+	it("reads what it made, changed, kept and could not place", () => {
+		const report = reportOf({
+			created: ["29.1", "29.2"],
+			updated: ["29.3"],
+			unchanged: ["29.4"],
+			kept: ["29.5"],
+			unplaced: [
+				{ source: "planning.md", line: 8122, text: "- [ ] 29.9 something", why: "no phase" },
+			],
+		});
+
+		expect(report.created).toEqual(["29.1", "29.2"]);
+		expect(report.updated).toEqual(["29.3"]);
+		expect(report.unchanged).toEqual(["29.4"]);
+		expect(report.kept).toEqual(["29.5"]);
+		expect(report.unplaced).toEqual([
+			{ source: "planning.md", line: 8122, text: "- [ ] 29.9 something", why: "no phase" },
+		]);
 	});
 });
 

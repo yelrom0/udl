@@ -5,11 +5,13 @@
  * context — the API, the live events and the theme — on every draw.
  */
 
-import type { Mount, RouteProps } from "@udl/ui-sdk";
+import type { Mount, OperationViewProps, ResultViewProps, RouteProps } from "@udl/ui-sdk";
 import { defineUIPlugin } from "@udl/ui-sdk";
 import { react } from "@udl/ui-sdk/react";
 import "./index.css";
 import { ChatPanel } from "./chat/chat";
+import { ImportReportView } from "./import/report";
+import { Machines } from "./machines/machines";
 import { pages } from "./pages";
 import { Widget } from "./widget";
 
@@ -19,9 +21,12 @@ for (const [route, Page] of Object.entries(pages)) {
 	routes[route] = react(Page);
 }
 
-/** The plugin itself: its routes, its widget and its chat (29.12's panel). */
+/** The plugin itself: its routes, its widget, its chat (29.12's panel), and the two generated
+ * pages it draws itself (29.9): the machines, and an import's report. */
 export default defineUIPlugin({
 	routes,
 	widgets: { orch: react(Widget) },
 	panels: { chat: react(ChatPanel) },
+	operationViews: { orch_list_runners: react<OperationViewProps>(Machines) },
+	resultViews: { orch_import_plan: react<ResultViewProps>(ImportReportView) },
 });
