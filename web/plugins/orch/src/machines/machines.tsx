@@ -18,22 +18,11 @@ import {
 	machinesOf,
 	reportOfSignIn,
 	runnerProblemsOf,
+	type SignInReport,
 } from "../model";
 
 /** The operation a button runs, and what it takes. */
 type Act = (name: string, request: JsonObject) => Promise<void>;
-
-/** A sign-in that is running, as 25.11's relay describes it. */
-interface SignIn {
-	readonly host: string;
-	readonly runner: string;
-	readonly id: string;
-	readonly prompt: string;
-	readonly expects: "none" | "code";
-	readonly command: string | null;
-	readonly done: boolean;
-	readonly ok: boolean | null;
-}
 
 /** One harness's line in its host's card. */
 function Harness({
@@ -66,6 +55,10 @@ function Harness({
 						? `signed in${harness.plan === null ? "" : ` (${harness.plan} plan)`}`
 						: "not signed in"}
 				</span>
+				{harness.account === null ? null : (
+					<span className="text-base-content/60 text-xs">as {harness.account}</span>
+				)}
+				{harness.guards ? null : <span className="badge badge-warning badge-sm">no guards</span>}
 			</div>
 			{harness.limited_until === null ? null : (
 				<p className="text-warning text-xs">out of quota until {harness.limited_until}</p>
@@ -127,10 +120,12 @@ function Relay({
 	signIn,
 	act,
 	onDone,
+	onClose,
 }: {
-	readonly signIn: SignIn;
+	readonly signIn: SignInReport;
 	readonly act: Act;
 	readonly onDone: () => void;
+	readonly onClose: () => void;
 }) {
 	const [code, setCode] = useState("");
 	const [said, setSaid] = useState<string | null>(null);
@@ -147,9 +142,15 @@ function Relay({
 		return undefined;
 	}, [signIn, onDone]);
 
+	const link = /https?:\/\/\S+/.exec(signIn.prompt)?.[0] ?? null;
 	return (
 		<div className="mt-2 rounded-box border border-base-300 p-2">
 			<p className="text-sm whitespace-pre-wrap">{signIn.prompt}</p>
+			{link === null ? null : (
+				<a className="btn btn-sm mt-1" href={link} target="_blank" rel="noopener noreferrer">
+					Open the link
+				</a>
+			)}
 			{signIn.command === null ? null : (
 				<code className="mt-1 block text-xs">{signIn.command}</code>
 			)}
@@ -181,19 +182,13 @@ function Relay({
 				>
 					Check
 				</button>
+				<button type="button" className="btn btn-ghost btn-xs" onClick={onClose}>
+					Close
+				</button>
 			</div>
 			{said === null ? null : <p className="text-error text-xs">{said}</p>}
 		</div>
 	);
-}
-
-/** A sign-in as 25.11 answers it: `orch_runner_login`'s attempt, or `orch_runner_login_status`'s. */
-function signInOf(value: JsonValue | undefined): SignIn | null {
-	const found = reportOfSignIn(value);
-	if (found === null) {
-		return null;
-	}
-	return found;
 }
 
 /**
@@ -204,7 +199,7 @@ function signInOf(value: JsonValue | undefined): SignIn | null {
 export function Machines({ ctx, run }: OperationViewProps & { readonly ctx: UIContext }) {
 	const [answered, setAnswered] = useState<JsonValue | undefined>(undefined);
 	const [busy, setBusy] = useState<string | null>(null);
-	const [signIn, setSignIn] = useState<SignIn | null>(null);
+	const [signIn, setSignIn] = useState<SignInReport | null>(null);
 	const closeRelay = useCallback(() => setSignIn(null), []);
 
 	const read = useCallback(async () => {
@@ -222,13 +217,13 @@ export function Machines({ ctx, run }: OperationViewProps & { readonly ctx: UICo
 			try {
 				const answer = await ctx.call(name, request);
 				if (name === "orch_runner_login") {
-					setSignIn(signInOf(answer));
+					setSignIn(reportOfSignIn(answer));
 					return;
 				}
 				if (name === "orch_runner_login_reply") {
 					// (The code is in: ask how it is going, since it may finish now.)
-					setSignIn(signInOf(answer));
-					const after = signInOf(
+					setSignIn(reportOfSignIn(answer));
+					const after = reportOfSignIn(
 						await ctx.call("orch_runner_login_status", { id: String(request.id ?? "") }),
 					);
 					setSignIn(after);
@@ -238,7 +233,7 @@ export function Machines({ ctx, run }: OperationViewProps & { readonly ctx: UICo
 					return;
 				}
 				if (name === "orch_runner_login_status") {
-					const next = signInOf(answer);
+					const next = reportOfSignIn(answer);
 					setSignIn(next);
 					if (next?.done === true) {
 						await read();
@@ -268,13 +263,25 @@ export function Machines({ ctx, run }: OperationViewProps & { readonly ctx: UICo
 		}
 		let live = true;
 		const check = async (): Promise<void> => {
-			const next = signInOf(await ctx.call("orch_runner_login_status", { id: attemptId }));
-			if (!live || next === null) {
-				return;
-			}
-			setSignIn(next);
-			if (next.done) {
-				await read();
+			try {
+				const next = reportOfSignIn(await ctx.call("orch_runner_login_status", { id: attemptId }));
+				if (!live || next === null) {
+					return;
+				}
+				setSignIn(next);
+				if (next.done) {
+					await read();
+				}
+			} catch (error) {
+				// (The attempt expired, or the host went away: said once, and the asking stops.)
+				if (!live) {
+					return;
+				}
+				ctx.toast(error instanceof Error ? error.message : String(error), "error");
+				// (Ended, so the asking stops: the attempt is gone, and there is nothing to ask.)
+				setSignIn((previous) =>
+					previous === null ? null : { ...previous, done: true, ok: false },
+				);
 			}
 		};
 		void check();
@@ -327,7 +334,13 @@ export function Machines({ ctx, run }: OperationViewProps & { readonly ctx: UICo
 							))}
 						</ul>
 						{signIn !== null && signIn.host === machine.host ? (
-							<Relay signIn={signIn} act={act} onDone={closeRelay} />
+							<Relay
+								key={signIn.id}
+								signIn={signIn}
+								act={act}
+								onDone={closeRelay}
+								onClose={closeRelay}
+							/>
 						) : null}
 					</section>
 				))}

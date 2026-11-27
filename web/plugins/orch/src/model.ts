@@ -975,14 +975,14 @@ export function machinesOf(value: JsonValue | undefined): Machine[] {
 		const one = asObject(item);
 		const health = asObject(one.health);
 		const host = asText(one.host);
-		const version = asText(health.version);
+		const version = asText(health.version) === "" ? null : asText(health.version);
 		const latest = asText(health.latest);
 		const harness: HarnessState = {
 			runner: asText(one.runner),
 			installed: asFlag(health.installed),
 			version,
 			// (A version udl cannot compare is not an update: it says nothing rather than guess.)
-			update: latest !== "" && version !== "" && latest !== version ? latest : null,
+			update: latest !== "" && version !== null && latest !== version ? latest : null,
 			signed_in: asFlag(health.signed_in),
 			account: asText(health.account) === "" ? null : asText(health.account),
 			plan: asText(health.plan) === "" ? null : asText(health.plan),

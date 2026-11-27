@@ -708,6 +708,15 @@ describe("the machines (29.9)", () => {
 		expect(machines[1]?.harnesses.map((one) => one.runner)).toEqual(["claude-code"]);
 	});
 
+	it("reads no version as none at all, rather than an empty one", () => {
+		const [one] = machinesOf({
+			items: [{ host: "local", runner: "claude-code", health: { installed: true } }],
+		});
+
+		expect(one?.harnesses[0]?.version).toBeNull();
+		expect(one?.harnesses[0]?.update).toBeNull();
+	});
+
 	it("says when a harness is a version behind", () => {
 		const [local, thevault] = machinesOf(answered);
 

@@ -44,6 +44,7 @@ const answer: JsonValue = {
 				latest: "3.2.1",
 				signed_in: true,
 				plan: "Pro",
+				account: "someone@example.com",
 				limited_until: "2026-11-28T12:00:00Z",
 				problems: ["the plan is at its limit"],
 			},
@@ -71,6 +72,9 @@ describe("the machines view (29.9)", () => {
 		expect(screen.getAllByText("3.2.1").length).toBeGreaterThan(0);
 		expect(screen.getByText("signed in (Max plan)")).toBeTruthy();
 		expect(screen.getByText("not signed in")).toBeTruthy();
+		// (Who it is signed in as, and whether the deny policies are in place.)
+		expect(screen.getByText("as someone@example.com")).toBeTruthy();
+		expect(screen.getAllByText("no guards").length).toBe(2);
 	});
 
 	it("says a harness is a version behind, and updates it", async () => {
@@ -90,10 +94,10 @@ describe("the machines view (29.9)", () => {
 			}),
 		);
 		// (The list is read again, so the card says what it is now.)
-		await waitFor(() => expect(run).toHaveBeenCalled());
+		await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
 	});
 
-	it("sets a harness up when its guards are not in place", async () => {
+	it("sets a harness up from its card", async () => {
 		const fake = fakeCtx(() => answer);
 		render(<Machines ctx={fake.ctx} operation={operation} schema={{}} run={async () => answer} />);
 
@@ -137,8 +141,11 @@ describe("the machines view (29.9)", () => {
 
 		fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
 
-		// (The harness's own words: what to open, and what it wants back.)
+		// (The harness's own words, and its link as a button: nothing to copy out by hand.)
 		expect(await screen.findByText(/Open https:\/\/example.com\/device/)).toBeTruthy();
+		const link = screen.getByRole("link", { name: "Open the link" });
+		expect(link.getAttribute("href")).toBe("https://example.com/device");
+		expect(link.getAttribute("rel")).toBe("noopener noreferrer");
 		const code = await screen.findByLabelText("Code");
 		fireEvent.change(code, { target: { value: "ABCD-1234" } });
 		fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -153,7 +160,7 @@ describe("the machines view (29.9)", () => {
 		await waitFor(() =>
 			expect(fake.calls.some((call) => call.name === "orch_runner_login_status")).toBe(true),
 		);
-		await waitFor(() => expect(run).toHaveBeenCalled());
+		await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
 	});
 
 	it("draws what udl could not ask, rather than hiding it", async () => {
@@ -205,6 +212,29 @@ describe("the machines view (29.9)", () => {
 
 		expect(await screen.findByText("out of quota until 2026-11-28T12:00:00Z")).toBeTruthy();
 		expect(screen.getByText("the plan is at its limit")).toBeTruthy();
+	});
+
+	it("says nothing of a version it does not have", async () => {
+		const versionless = {
+			items: [
+				{
+					host: "local",
+					runner: "claude-code",
+					health: { installed: true, signed_in: true, guards: true },
+				},
+			],
+			problems: [],
+		};
+		render(
+			<Machines
+				ctx={fakeCtx(() => versionless).ctx}
+				operation={operation}
+				schema={{}}
+				run={async () => versionless}
+			/>,
+		);
+
+		expect(await screen.findByText("?")).toBeTruthy();
 	});
 
 	it("says what else is worth showing about a harness", async () => {
@@ -326,5 +356,85 @@ describe("the machines view (29.9)", () => {
 				kind: "success",
 			}),
 		);
+	});
+
+	it("closes a relay that ended without signing in, and starts the next one clean", async () => {
+		let started = 0;
+		const fake = fakeCtx((name) => {
+			if (name === "orch_runner_login") {
+				started += 1;
+				return {
+					id: `login-${String(started)}`,
+					host: "local",
+					runner: "opencode",
+					prompt: "Sign in in your browser",
+					expects: "code",
+					done: false,
+					ok: null,
+				};
+			}
+			if (name === "orch_runner_login_status") {
+				return {
+					attempt: {
+						id: `login-${String(started)}`,
+						host: "local",
+						runner: "opencode",
+						prompt: "Sign in in your browser",
+						expects: "code",
+						done: true,
+						ok: false,
+					},
+				};
+			}
+			return answer;
+		});
+		render(<Machines ctx={fake.ctx} operation={operation} schema={{}} run={async () => answer} />);
+
+		fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+		expect(await screen.findByText("It ended without signing in.")).toBeTruthy();
+
+		// (Closed, rather than left until a reload.)
+		fireEvent.click(screen.getByRole("button", { name: "Close" }));
+		expect(screen.queryByText("It ended without signing in.")).toBeNull();
+
+		// (A new sign-in starts clean: no old failure, and no old code.)
+		fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+		expect(await screen.findByText("Sign in in your browser")).toBeTruthy();
+		expect(screen.queryByText("It ended without signing in.")).toBeNull();
+		expect((screen.getByLabelText("Code") as HTMLInputElement).value).toBe("");
+	});
+
+	it("says so when it cannot ask how a sign-in is going, and stops asking", async () => {
+		let asked = 0;
+		const fake = fakeCtx((name) => {
+			if (name === "orch_runner_login") {
+				return {
+					id: "login-4",
+					host: "local",
+					runner: "opencode",
+					prompt: "Sign in in your browser",
+					expects: "none",
+					done: false,
+					ok: null,
+				};
+			}
+			if (name === "orch_runner_login_status") {
+				asked += 1;
+				throw new Error("the attempt has expired");
+			}
+			return answer;
+		});
+		render(<Machines ctx={fake.ctx} operation={operation} schema={{}} run={async () => answer} />);
+
+		fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+
+		await waitFor(() =>
+			expect(fake.toasts).toContainEqual({
+				message: "the attempt has expired",
+				kind: "error",
+			}),
+		);
+		// (Said once, and the asking stops.)
+		expect(asked).toBe(1);
 	});
 });

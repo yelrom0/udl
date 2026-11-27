@@ -1796,7 +1796,7 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
   which also carries the Done when's proof (a 1Password token, an OpenRouter key by `op://` reference, a
   GitHub account, a host and a project with a repo, all set up from the web alone): `setup-pages.spec.ts`
   proves the groups and fields are drawn, not that a setup works. `29.10`'s e2e is still its own card.
-- **Built (deepseek-a, 28 Nov 2026, PR #N):** 29.9's second half, the two contributions:
+- **Built (deepseek-a, 27 Nov 2026, PR #115):** 29.9's second half, the two contributions:
   `operationViews` for `orch_list_runners` (the **Machines** view — a card per host, each harness's
   version and whether it is a version behind, who it is signed in as and on what plan, when its quota is
   back, what its doctor says is wrong, and install / update, set up, and sign in through 25.11's relay:

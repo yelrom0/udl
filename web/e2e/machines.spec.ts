@@ -1,6 +1,4 @@
 import { writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { SIGNED_IN } from "./helpers";
 
@@ -42,7 +40,8 @@ test("the machines are a card per host, and an import says what it made of the p
 	await expect(machines.getByRole("button", { name: "Refresh" })).toBeVisible();
 
 	// -- an import's report, from a plan file the page is pointed at ------------------------
-	const plan = join(tmpdir(), `e2e-plan-${String(Date.now())}.md`);
+	// (Playwright's own output folder, which it clears up after the run.)
+	const plan = test.info().outputPath("plan.md");
 	writeFileSync(
 		plan,
 		[
