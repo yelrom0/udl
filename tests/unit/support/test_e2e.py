@@ -32,6 +32,7 @@ from support.e2e import (
     free_port,
     github,
     half_built,
+    head_of,
     main,
     port_from,
     repo,
@@ -266,10 +267,48 @@ def test_a_push_can_name_its_own_repository_and_pull() -> None:
     with serving(control) as port, github() as (fake, _):
         control.fake_github = fake
         fake.open_pull(repo="acme/widgets", number=9, head="feat/story", sha="c0ffee")
-        post(port, "/github", {"sha": "d00d1e", "repo": "acme/widgets", "number": "9"})
+        post(port, "/github", {"sha": "d00d1e", "repo": "acme/widgets", "number": 9})
 
     assert fake.pull_of("acme/widgets", 9).head.sha == "d00d1e"
     assert fake.pull_of("acme/widgets", 7).head.sha != "d00d1e"
+
+
+def test_a_comment_with_no_pull_is_refused_not_a_key_error() -> None:
+    """(A control body is a model: what is missing is a 400, as the other controls say.)"""
+    control = Control()
+
+    with serving(control) as port, github() as (fake, _):
+        control.fake_github = fake
+        refuses(port, "/github/comment", {"text": "no pull said"}, 400)
+        refuses(port, "/github/comment", {"repo": "acme/widgets", "text": "no number"}, 400)
+
+
+def test_the_control_api_says_a_branch_s_head_in_the_story_s_origin(tmp_path: Path) -> None:
+    """(29.10: the commit a story's branch has in its origin, and "" for one it does not have.)"""
+    control = Control()
+
+    with serving(control) as port, repo(tmp_path) as (checkout, origin):
+        control.repo = (checkout, origin)
+        there = git("rev-parse", "HEAD", cwd=checkout).strip()
+        said = urllib.request.urlopen(f"http://127.0.0.1:{port}/repo/head?branch=main", timeout=5)
+        with said:
+            assert json.loads(said.read())["sha"] == there
+        missing = urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/repo/head?branch=feat/never", timeout=5
+        )
+        with missing:
+            assert json.loads(missing.read())["sha"] == ""
+
+
+def test_a_branch_is_read_from_the_origin_not_the_checkout(tmp_path: Path) -> None:
+    """(The story reads the origin's branches: a branch made in the checkout is not there yet.)"""
+    control = Control()
+
+    with repo(tmp_path) as (checkout, origin):
+        control.repo = (checkout, origin)
+        assert head_of(control, "main") != ""
+        assert head_of(control, "feat/never") == ""
+        assert head_of(Control(), "main") == ""
 
 
 def test_the_story_s_repository_is_a_checkout_of_its_own_origin(tmp_path: Path) -> None:
@@ -503,6 +542,41 @@ def test_main_stops_on_sigterm() -> None:
         if started.poll() is None:  # pragma: no cover - the server must have stopped
             started.kill()
             started.wait(timeout=10)
+
+
+def test_the_log_a_test_asks_for_has_udl_s_own_lines(tmp_path: Path) -> None:
+    """(29.10: a test that has to see why udl did what it did names a file, and udl's own lines
+    — `--verbose` — are written to it, not to the harness's own output.)"""
+    port = free_port()
+    logged = tmp_path / "udl.log"
+    script = (
+        "import pathlib\n"
+        "import support.e2e as e2e\n"
+        "e2e.SHELL_DIST = pathlib.Path('/nonexistent')\n"
+        f"raise SystemExit(e2e.main(port={port}))\n"
+    )
+    env = environment_for_the_test()
+    env["UDL_E2E_LOG"] = str(logged)
+    started = subprocess.Popen(  # noqa: S603 - the module under test
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        assert started.stdout is not None
+        assert started.stdout.readline().startswith("e2e: udl serve on"), "the server came up"
+        started.send_signal(signal.SIGTERM)
+        assert started.wait(timeout=30) == 0
+        started.stdout.close()
+    finally:
+        if started.poll() is None:  # pragma: no cover - the server must have stopped
+            started.kill()
+            started.wait(timeout=10)
+
+    assert "udl" in logged.read_text()
 
 
 @contextmanager

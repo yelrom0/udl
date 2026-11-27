@@ -29,12 +29,8 @@ from pydantic import (
     NonNegativeInt,
     PositiveInt,
     StringConstraints,
-    TypeAdapter,
     computed_field,
 )
-from pydantic.annotated_handlers import GetJsonSchemaHandler
-from pydantic.json_schema import JsonSchemaValue
-from pydantic_core import CoreSchema
 
 # Local Imports
 from udl.automations.events import EventType
@@ -503,28 +499,6 @@ Promotion = Annotated[list[BranchName], AfterValidator(_promotion)]
 
 class _Model(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
-
-    @classmethod
-    def __get_pydantic_json_schema__(
-        cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler
-    ) -> JsonSchemaValue:
-        """Its schema has its computed fields in it, whichever schema is asked for.
-
-        (pydantic leaves them out of the validation one, and that is the schema an MCP tool
-        publishes and the generated UI draws: a task's `points` is in what udl sends, and an
-        agent's client refused its own `get_task` for it — 29.10.)"""
-        schema = handler(core_schema)
-        properties = schema.setdefault("properties", {})
-        for name, field in cls.model_computed_fields.items():
-            if name in properties:
-                continue  # (the serialisation schema has them already)
-            described = TypeAdapter(field.return_type).json_schema()
-            described["title"] = name.replace("_", " ").title()
-            if field.description is not None:
-                described["description"] = field.description
-            described["readOnly"] = True
-            properties[name] = described
-        return schema
 
 
 class Project(_Model):

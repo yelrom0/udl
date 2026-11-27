@@ -34,14 +34,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Generator
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import FrameType
-from typing import IO, Final
+from typing import Final
 
 # Package Imports
-from pydantic import TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 # Local Imports
 from support.fixture_site import FixtureSite
@@ -82,10 +82,32 @@ JSON = "application/json"
 
 # A control call's body: an object (a mail, a Slack message) or a list of strings (the AI's).
 _MAIL: Final = TypeAdapter(dict[str, object])
-# A test's push: the commit that is now at a pull's head.
-_GH_PUSH: Final = TypeAdapter(dict[str, str])
-# A review bot's comment on a pull (29.10's story: what the bot says, and where).
-_COMMENT: Final = TypeAdapter(dict[str, object])
+
+
+class Push(BaseModel):
+    """A test's push: the commit that is now at a pull's head (29.10: its own pull, if it says)."""
+
+    sha: str
+    """The commit the pull's head moves to."""
+    repo: str = GITHUB_REPO
+    """The repository its pull is in (the fake's own, unless the test says)."""
+    number: int = 7
+    """The pull's number (the fake's first, unless the test says)."""
+
+
+class Said(BaseModel):
+    """A review bot's comment on a pull (29.10's story: what the bot says, and where)."""
+
+    repo: str
+    """The repository the pull is in."""
+    number: int
+    """The pull's number."""
+    text: str
+    """What the bot says."""
+    login: str = "claude"
+    """Who says it (a bot's login)."""
+
+
 _AI: Final = TypeAdapter(list[str])
 # A scripted runner's turns: a list of objects (29.12's chat, and 28.6's orchestration).
 _TURNS: Final = TypeAdapter(list[dict[str, object]])
@@ -281,7 +303,7 @@ def handler_for(control: Control) -> type[BaseHTTPRequestHandler]:
             elif path == "/repo/head":
                 # (29.10: a branch's commit in the story's origin — "" until it is pushed.)
                 branch = urllib.parse.parse_qs(asked.query).get("branch", [""])[0]
-                body = json.dumps({"sha": _head_of(control, branch)}).encode()
+                body = json.dumps({"sha": head_of(control, branch)}).encode()
             elif path == "/repo":
                 # (29.10: where the story's checkout and its origin are.)
                 made = control.repo or (Path(), Path())
@@ -319,25 +341,21 @@ def handler_for(control: Control) -> type[BaseHTTPRequestHandler]:
                 elif path == "/restart":
                     control.restart_udl()
                 elif path == "/github":
-                    pushed = _GH_PUSH.validate_python(body)
-                    control.push(
-                        str(pushed["sha"]),
-                        repo=str(pushed.get("repo") or GITHUB_REPO),
-                        number=int(pushed.get("number") or 7),
-                    )
+                    pushed = Push.model_validate(body)
+                    control.push(pushed.sha, repo=pushed.repo, number=pushed.number)
                 elif path == "/github/comment":
-                    said = _COMMENT.validate_python(body)
+                    said = Said.model_validate(body)
                     control.comment(
-                        repo=str(said["repo"]),
-                        number=int(str(said["number"])),
-                        text=str(said["text"]),
-                        login=str(said.get("login") or "claude"),
+                        repo=said.repo, number=said.number, text=said.text, login=said.login
                     )
                 else:
                     self.fail(404, "no such control")
                     return
             except ValidationError as e:
                 self.fail(400, "; ".join(error["msg"] for error in e.errors()))
+            except TimeoutError as e:
+                # (udl did not come back: the test hears it, rather than a reset connection.)
+                self.fail(503, str(e))
                 return
             except ValueError as e:
                 self.fail(400, str(e))
@@ -387,7 +405,7 @@ def github() -> Generator[tuple[FakeGitHub, int]]:
         thread.join(timeout=10)
 
 
-def _head_of(control: Control, branch: str) -> str:
+def head_of(control: Control, branch: str) -> str:
     """The commit at `branch` in the story's origin, or "" when it has no such branch."""
     if control.repo is None or branch == "":
         return ""
@@ -588,48 +606,57 @@ def main(
             # (udl answers /docs whether or not the UI is built, so it is what says it is up; the
             # shell's own /ui/ comes with 18.3, and until then a test asks for it and gets a 404.)
             url = f"http://127.0.0.1:{port}/docs"
+            # (Every process this harness starts, so the one that is running when the harness
+            # stops is stopped — including a restart's, which the control server asks for from
+            # its own thread.)
             running: list[subprocess.Popen[bytes]] = []
-
+            restarting = threading.Lock()
             # (A test that has to see why udl did what it did asks for its log by naming a file.)
             named = os.environ.get("UDL_E2E_LOG")
-            logged: IO[bytes] | int = (
-                Path(named).open("ab") if named else subprocess.DEVNULL  # noqa: SIM115 - (kept open)
-            )
-
-            def launch() -> None:
-                """Start udl, and wait for it to answer."""
-                started = subprocess.Popen(  # noqa: S603 - (a test's own argv)
-                    # (--verbose when a test asked for the log: udl's own lines are why it did.)
-                    [sys.executable, "-m", "udl", "--verbose", "serve"]
-                    if named
-                    else [sys.executable, "-m", "udl", "serve"],
-                    cwd=ROOT,
-                    env=environment(config, home),
-                    stdout=logged,
-                    stderr=subprocess.STDOUT,
+            with ExitStack() as opened:
+                logged = (
+                    opened.enter_context(Path(named).open("ab")) if named else subprocess.DEVNULL
                 )
-                running.append(started)
-                wait_until(url, started)
 
-            def again() -> None:
-                """Stop udl and start it again (29.10: the dispatcher reads its agents at start)."""
-                stop(running[-1])
+                def launch() -> None:
+                    """Start udl, and wait for it to answer."""
+                    started = subprocess.Popen(  # noqa: S603 - (a test's own argv)
+                        # (--verbose when a test asked for the log: udl's own lines are why it did.)
+                        [sys.executable, "-m", "udl", "--verbose", "serve"]
+                        if named
+                        else [sys.executable, "-m", "udl", "serve"],
+                        cwd=ROOT,
+                        env=environment(config, home),
+                        stdout=logged,
+                        stderr=subprocess.STDOUT,
+                    )
+                    running.append(started)
+                    wait_until(url, started)
+
+                def again() -> None:
+                    """Stop udl and start it again (29.10: the dispatcher reads its agents at
+                    start). The harness's own stop waits for this lock, so a stop mid-restart
+                    stops the process the restart started, not the one before it."""
+                    with restarting:
+                        stop(running[-1])
+                        launch()
+
+                control.restart = again
                 launch()
-
-            control.restart = again
-            launch()
-            # (Both lines are printed before waiting: a server that is up must say so even if its
-            # /docs never answers, or the test would only time out.)
-            print(f"e2e: udl serve on {url}", file=sys.stdout, flush=True)  # noqa: T201
-            print(f"e2e: github on {gh_url}", flush=True)  # noqa: T201
-            print(f"e2e: controls on :{controls_port}", flush=True)  # noqa: T201
-            try:
-                stopping.wait(self_stop)  # (Playwright's webServer kills after a few minutes)
-            except TimeoutError as e:
-                print(f"e2e: {e}", file=sys.stderr, flush=True)  # noqa: T201
-                return 1
-            finally:
-                stop(running[-1])
+                # (Both lines are printed before waiting: a server that is up must say so even
+                # if its /docs never answers, or the test would only time out.)
+                print(f"e2e: udl serve on {url}", file=sys.stdout, flush=True)  # noqa: T201
+                print(f"e2e: github on {gh_url}", flush=True)  # noqa: T201
+                print(f"e2e: controls on :{controls_port}", flush=True)  # noqa: T201
+                try:
+                    stopping.wait(self_stop)  # (Playwright's webServer kills after a few minutes)
+                except TimeoutError as e:
+                    print(f"e2e: {e}", file=sys.stderr, flush=True)  # noqa: T201
+                    return 1
+                finally:
+                    with restarting:
+                        for one in running:
+                            stop(one)
     return 0
 
 

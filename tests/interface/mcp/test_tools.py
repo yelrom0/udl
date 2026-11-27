@@ -11,13 +11,13 @@ read and act on
 # System Imports
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 # Package Imports
 import pytest
 from mcp import Client
 from mcp_types import CallToolResult, TextContent
-from pydantic import TypeAdapter
+from pydantic import BaseModel, TypeAdapter
 
 # Local Imports
 from support.engine import connection, script
@@ -107,13 +107,14 @@ async def test_a_tool_s_schema_allows_what_its_response_sends(tmp_path: Path) ->
     async with held(client_for(harness)) as client:
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
 
-    def properties(schema: dict[str, Any]) -> dict[str, set[str]]:
+    def properties(schema: object) -> dict[str, set[str]]:
         """Each model's property names, by the name its definition has."""
+        document = _OBJECT.validate_python(schema)
         found = {
-            where: set(definition.get("properties", {}))
-            for where, definition in schema.get("$defs", {}).items()
+            where: _names(_OBJECT.validate_python(definition))
+            for where, definition in _defs(document).items()
         }
-        found[""] = set(schema.get("properties", {}))
+        found[""] = _names(document)
         return found
 
     async with harness.service() as service:
@@ -122,12 +123,26 @@ async def test_a_tool_s_schema_allows_what_its_response_sends(tmp_path: Path) ->
         if not op.hints.mcp:
             continue
         name = op.name
-        sent = TypeAdapter[Any](op.response).json_schema(mode="serialization")
+        sent = TypeAdapter[BaseModel](op.response).json_schema(mode="serialization")
         assert tools[name].output_schema is not None
         allowed = properties(tools[name].output_schema or {})
         for where, props in properties(sent).items():
             missing = props - allowed.get(where, set())
             assert not missing, f"{name}: {where or 'the response'} sends {sorted(missing)}"
+
+
+# A JSON object, as a schema's document or one of its definitions is.
+_OBJECT: Final = TypeAdapter[dict[str, object]](dict[str, object])
+
+
+def _defs(document: dict[str, object]) -> dict[str, object]:
+    """A schema's `$defs`: its definitions, by the name each has."""
+    return _OBJECT.validate_python(document.get("$defs") or {})
+
+
+def _names(definition: dict[str, object]) -> set[str]:
+    """A schema node's property names (none, for a node that has no properties)."""
+    return set(_OBJECT.validate_python(definition.get("properties") or {}))
 
 
 # What each tool said it does when its hints lived in the MCP server (Phase 4): (title,

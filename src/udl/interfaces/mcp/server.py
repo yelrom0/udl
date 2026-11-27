@@ -110,7 +110,15 @@ def create_server(
             tool = _tool(op, DownloadRequest, _download, service)
         else:
             tool = _tool(op, op.request, functools.partial(_call, op), service)
-        server.add_tool(
+        # (The manager's own `add_tool` is `MCPServer.add_tool`'s, and it hands the tool back:
+        # the SDK publishes a response's *validation* schema, which leaves computed fields out —
+        # a task's `points` is in what udl sends, and a client that checks an answer against the
+        # tool's own schema refused `get_task` for it. What a tool answers with is what udl
+        # sends, so its output schema is that: the serialisation one (29.10).)
+        # (The SDK keeps a tool's metadata here, and offers no way to say which schema it
+        # publishes: `add_tool` hands the tool back.)
+        manager = server._tool_manager  # pyright: ignore[reportPrivateUsage]
+        added = manager.add_tool(
             tool,
             name=op.name,
             title=op.title,
@@ -118,7 +126,21 @@ def create_server(
             annotations=_annotations(op),
             structured_output=True,
         )
+        added.fn_metadata.output_schema = _answer_schema(op.response)
     return server
+
+
+def _answer_schema(response: type[BaseModel]) -> dict[str, Any]:
+    """What an operation's answer looks like as JSON: its serialisation schema, with its root
+    inlined (an MCP client is not required to resolve a `$ref` at the top of the document)."""
+    schema = TypeAdapter(response).json_schema(mode="serialization")
+    root = schema.get("$ref")
+    defs = schema.get("$defs", {})
+    if isinstance(root, str) and root.startswith("#/$defs/"):
+        inlined = dict(defs[root.removeprefix("#/$defs/")])
+        inlined["$defs"] = defs
+        return inlined
+    return schema
 
 
 def _annotations(op: Operation) -> ToolAnnotations:

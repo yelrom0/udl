@@ -16,8 +16,6 @@ import { API_KEY, SIGNED_IN } from "./helpers";
  * agent's page really streams its session, and a question really waits for its answer.
  */
 
-test.use({ storageState: SIGNED_IN });
-
 /** The routes the manifest contributes, and the heading each draws. */
 const PAGES: [string, string][] = [
 	["inbox", "Inbox"],
@@ -68,6 +66,12 @@ test("its nav is in the drawer, Progress after Board (Q-8)", async ({ page }) =>
 	await page.goto("/ui/");
 
 	const drawer = page.locator(".drawer-side");
+	// (The plugin's nav arrives with its manifest, which the shell reads as the page loads: on a
+	// udl that is busy with a turn that is a few seconds, so the first item is waited for on its
+	// own rather than each on the five seconds a failing one gets.)
+	await expect(drawer.getByRole("link", { name: "Board", exact: true })).toBeVisible({
+		timeout: 30_000,
+	});
 	for (const title of NAV) {
 		await expect(drawer.getByRole("link", { name: title, exact: true })).toBeVisible();
 	}
@@ -207,7 +211,7 @@ async function commented(repo: string, number: number, text: string, login: stri
 	const answer = await fetch(control("/github/comment"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ repo, number: String(number), text, login }),
+		body: JSON.stringify({ repo, number, text, login }),
 	});
 	expect(answer.status, "the control API took the comment").toBe(204);
 }
@@ -217,7 +221,7 @@ async function pushed(repo: string, number: number, sha: string): Promise<void> 
 	const answer = await fetch(control("/github"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ repo, number: String(number), sha }),
+		body: JSON.stringify({ repo, number, sha }),
 	});
 	expect(answer.status, "the control API took the push").toBe(204);
 }
@@ -244,9 +248,12 @@ Nothing new.
 **Verdict: all clear**
 `;
 
-/** What this run seeded: its own feature and tasks, and its two agents. */
+/** What this run seeded: its own feature, tasks, repo and account, and its two agents. */
 interface Seeded {
 	readonly repo: string;
+	readonly repoName: string;
+	readonly account: string;
+	readonly home: string;
 	readonly feature: string;
 	readonly story: string;
 	readonly dragged: string;
@@ -256,7 +263,7 @@ interface Seeded {
 }
 
 /**
- * What a person sets up once, through udl's own operations: the host, the GitHub account, the
+ * What a person sets up once, through udl's own operations: the GitHub account, the
  * project with its review bot, its repo and its gate, two agents on the scripted runner, the
  * feature and the tasks — one for the story, one to drag, one already merged (so the progress
  * page has a history).
@@ -267,6 +274,14 @@ async function setup(page: Page, run: string): Promise<Seeded> {
 	const feature = `e2e-${run}`;
 	const seeded: Seeded = {
 		repo,
+		// (A repo record of its own: 29.8's spec keeps its `udl` one, and the suite runs on one
+		// database.)
+		repoName: `story-${run}`,
+		account: `github:yelrom0-${run}`,
+
+		// (The harness's temp home: a checkout of the story's repo, whose parent is where its
+		// config, its secrets and its database are — a chat's folder belongs inside it.)
+		home: checkout.slice(0, checkout.lastIndexOf("/")),
 		feature,
 		story: `${feature}.1`,
 		dragged: `${feature}.2`,
@@ -274,13 +289,12 @@ async function setup(page: Page, run: string): Promise<Seeded> {
 		worker: `worker-${run}`,
 		watcher: `watcher-${run}`,
 	};
+	// (The turns run in a folder of the story's own, inside the harness's temp home. It is udl's
+	// own `local` host, changed rather than added: `local` is always there, and the only host
+	// whose transport is `local`.)
 	await core(page, "put", "/hosts", {
-		host: {
-			name: "local",
-			transport: "local",
-			work_dir: `${checkout.slice(0, checkout.lastIndexOf("/"))}/work`,
-		},
-		update: {},
+		host: { name: "local", transport: "local", work_dir: `${seeded.home}/work` },
+		update: { work_dir: `${seeded.home}/work` },
 	});
 	// (One udl, one story at a time: an agent's push asks which account may push, and two
 	// connected accounts make that question unanswerable — so the other colour's is disconnected.
@@ -290,14 +304,14 @@ async function setup(page: Page, run: string): Promise<Seeded> {
 	};
 	for (const one of connected.accounts ?? []) {
 		const ref = one.account ?? "";
-		if (one.integration === "github" && ref !== `github:yelrom0-${run}`) {
+		if (one.integration === "github" && ref !== seeded.account) {
 			await core(page, "delete", `/accounts/${encodeURIComponent(ref)}`, undefined);
 		}
 	}
 	await core(page, "post", "/accounts", {
 		integration: "github",
 		// (Per run: the two projects' stories share one database, and an account's name is its key.)
-		name: `yelrom0-${run}`,
+		name: seeded.account.replace("github:", ""),
 		method: "tokens",
 		options: { api_url: github, repos: [repo] },
 		tokens: { token: "ghp_fake_token" },
@@ -309,9 +323,9 @@ async function setup(page: Page, run: string): Promise<Seeded> {
 	});
 	await call(page, "set_repo", {
 		project: "udl",
-		name: "udl",
+		name: seeded.repoName,
 		github: repo,
-		account: `github:yelrom0-${run}`,
+		account: seeded.account,
 		checkouts: { local: checkout },
 		gate: ["make", "check"],
 	});
@@ -323,7 +337,6 @@ async function setup(page: Page, run: string): Promise<Seeded> {
 			name,
 			title,
 			runner: "scripted",
-			host: "local",
 			projects: ["udl"],
 			max_nudges: 50,
 		});
@@ -345,7 +358,7 @@ async function setup(page: Page, run: string): Promise<Seeded> {
 		feature,
 		title: "The story's task",
 		size: "S",
-		repo: "udl",
+		repo: seeded.repoName,
 	});
 	await call(page, "set_task", {
 		project: "udl",
@@ -353,7 +366,7 @@ async function setup(page: Page, run: string): Promise<Seeded> {
 		feature,
 		title: "The dragged task",
 		size: "S",
-		repo: "udl",
+		repo: seeded.repoName,
 	});
 	await call(page, "set_task", {
 		project: "udl",
@@ -366,6 +379,41 @@ async function setup(page: Page, run: string): Promise<Seeded> {
 	return seeded;
 }
 
+/** What a run left behind, to be cleaned up: its two agents and its GitHub account. */
+interface Left {
+	readonly worker: string;
+	readonly watcher: string;
+	readonly account: string;
+}
+
+/**
+ * Leave nothing behind for the specs that follow: both agents paused (a paused agent is not
+ * nudged, so it asks nothing), the account disconnected (an agent's push asks which account may
+ * push, and a second one makes that unanswerable). The suite runs on one database and one fake
+ * GitHub, one spec at a time, so the next spec sees what this one left.
+ */
+async function tidy(page: Page, left: Left, origin: string): Promise<void> {
+	const headers = { "X-UDL-CSRF": "1", Origin: origin };
+	for (const name of [left.worker, left.watcher]) {
+		const found = await page.request.post("/plugins/orch/get_agent", {
+			data: { name },
+			headers,
+		});
+		if (!found.ok()) {
+			continue; // (a test that never made it)
+		}
+		const answer = (await found.json()) as { agent?: unknown };
+		if (answer.agent !== undefined && answer.agent !== null) {
+			await call(page, "pause_agent", { name });
+		}
+	}
+	const gone = await page.request.delete(`/accounts/${encodeURIComponent(left.account)}`, {
+		headers,
+	});
+	// (404: a test that never connected it; 401: one that never signed in, so there is nothing.)
+	expect([200, 204, 401, 404]).toContain(gone.status());
+}
+
 /** Where a task is now, as udl has it. */
 async function stateOf(page: Page, key: string): Promise<string> {
 	const found = (await call(page, "get_task", { project: "udl", key })) as {
@@ -373,6 +421,26 @@ async function stateOf(page: Page, key: string): Promise<string> {
 	};
 	return found.task?.state ?? "";
 }
+
+// (After every test, whatever it did: the agents it made are paused and the account it
+// connected is gone, so the specs that follow — and the other colour's run — find the database
+// as they expect it. A test that failed midway leaves state too, which is why this is here and
+// not at the end of each test.)
+test.afterEach(async ({ page }, testInfo) => {
+	// (The run's own address: a test that failed before its first page has no `page.url()`.)
+	const origin = String(testInfo.project.use.baseURL);
+	for (const run of [testInfo.project.name, `${testInfo.project.name}-chat`]) {
+		await tidy(
+			page,
+			{
+				worker: `worker-${run}`,
+				watcher: `watcher-${run}`,
+				account: `github:yelrom0-${run}`,
+			},
+			origin,
+		);
+	}
+});
 
 test("the story: a drag, a transcript, a question, an answer, and a pull, through the pages (29.10)", async ({
 	page,
@@ -497,8 +565,10 @@ test("the story: a drag, a transcript, a question, an answer, and a pull, throug
 	await blocking.getByRole("button", { name: "The right way." }).click();
 	await blocking.getByRole("button", { name: "Not now." }).click();
 	// (The answer is sent, the agent takes the task up again, and the page's live stream drops the
-	// question: a few seconds, not a page load.)
-	await expect(blocking).toHaveCount(0, { timeout: 60_000 });
+	// question: a few seconds, not a page load. The story's two, not "none at all": the suite
+	// runs on one database, and another spec's agent may be asking its own.)
+	await expect(blocking.getByText("Which way?")).toHaveCount(0, { timeout: 60_000 });
+	await expect(blocking.getByText("Shall I carry on?")).toHaveCount(0, { timeout: 60_000 });
 
 	// -- the pull: the agent pushes, the bot finds an item, the fix goes up, the bot is clean ---
 	// (Everything from here is read from udl's records, through the API — the task, the branch,
@@ -592,11 +662,6 @@ test("the story: a drag, a transcript, a question, an answer, and a pull, throug
 	const notes = page.getByRole("list", { name: "Notes" });
 	await expect(notes).toContainText("The right way.");
 
-	// (Both agents have said all they will: paused, so a later run of this spec — the other
-	// colour scheme — has the dispatcher to itself.)
-	await call(page, "pause_agent", { name: seeded.worker });
-	await call(page, "pause_agent", { name: seeded.watcher });
-
 	// -- the progress page: the history, drawn (29.11's step) ----------------------------------
 	await page.goto("/ui/p/orch/progress?project=udl");
 	await expect(named(page, "The burn-up's lines")).toBeVisible({ timeout: 30_000 });
@@ -643,7 +708,7 @@ test("the chat allows a permission and assigns a task, and the Board has it (29.
 	await expect(panel).toBeVisible();
 	await panel.getByRole("button", { name: "Start a new chat" }).click();
 	await panel.getByLabel("Harness").selectOption("scripted");
-	await panel.getByLabel("Folder").fill("/tmp");
+	await panel.getByLabel("Folder").fill(seeded.home);
 	await page.getByRole("button", { name: "Start the chat" }).click();
 	await expect(panel.getByLabel("Transcript")).toBeVisible();
 

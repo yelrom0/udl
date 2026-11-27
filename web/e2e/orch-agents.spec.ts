@@ -162,9 +162,11 @@ test("an agent is made through the page's own form, and paused from it (29.6)", 
 	await form.getByLabel("Title").fill("Made by hand");
 	// (The editor reads the host's harnesses as it opens and shows the field as loading until
 	// they answer, so the spec waits for it: then it is a select when a host has harnesses, and a
-	// box to type a name in when none has.)
+	// box to type a name in when none has. The wait is a long one: once udl has a host, every
+	// harness's own doctor is asked (each a few seconds when the machine really has them), so the
+	// answer takes 20 seconds, not one.)
 	const runner = form.getByLabel("Runner", { exact: true });
-	await expect(runner).toBeEnabled();
+	await expect(runner).toBeEnabled({ timeout: 90_000 });
 	if ((await runner.evaluate((one) => one.tagName)) === "SELECT") {
 		const offered = await runner
 			.locator("option")
