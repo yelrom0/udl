@@ -16,6 +16,21 @@ const ANSWER = {
 };
 
 describe("the harnesses' store (29.6, 25.11)", () => {
+	it("asks a host by name when it is given one, as a chat does (29.12)", async () => {
+		const asked: unknown[] = [];
+		const fake = fakeCtx((name, request) => {
+			asked.push({ name, body: request });
+			return ANSWER as never;
+		});
+		const loaded = runnersStore(fake.ctx, "local");
+		await settle();
+
+		// (With no host, udl lists the hosts it has records for — and `local` is made only when
+		// it is asked for by name, so a chat must name it.)
+		expect(asked).toEqual([{ name: "orch_list_runners", body: { host: "local" } }]);
+		expect(loaded.store.getState().answered).toBe(true);
+	});
+
 	it("reads what every host has, and that it answered", async () => {
 		const fake = fakeCtx(() => ANSWER as never);
 		const loaded = runnersStore(fake.ctx);

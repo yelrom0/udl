@@ -69,6 +69,7 @@ __all__ = [
     "ManagerPowers",
     "PauseAgentRequest",
     "ResumeAgentRequest",
+    "Said",
     "SendRequest",
     "Sent",
     "SessionEventShape",
@@ -78,11 +79,29 @@ __all__ = [
     "StopSessionRequest",
 ]
 
+
+class Said(AgentEvent):
+    """What the person said to a chat (29.12): their own words, the first line of its turn's
+    transcript, so a page that draws a chat draws both sides of it."""
+
+    kind: Literal["said"] = "said"
+    text: str
+    """What they said."""
+
+
 AnAgentEvent = Annotated[
-    TextDelta | ToolStarted | ToolFinished | Usage | TurnEnded | RunnerLimited | RunnerFailed,
+    TextDelta
+    | ToolStarted
+    | ToolFinished
+    | Usage
+    | TurnEnded
+    | RunnerLimited
+    | RunnerFailed
+    | Said,
     Field(discriminator="kind"),
 ]
-"""One thing that happened in a session, as its runner said it (the `kind` says which)."""
+"""One thing that happened in a session, as its runner said it — and, in a chat, what the
+person said too (the `kind` says which)."""
 
 _AN_EVENT: Final = TypeAdapter(AnAgentEvent)
 

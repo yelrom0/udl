@@ -1754,6 +1754,50 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 - Done when: its e2e test, on a `FakeRunner` chat, sends a message, allows a permission, and sees the result in the transcript and on the Board.
 - **Screens (29.1, Google Stitch):** **The chat sidebar**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=77e7e5da0d184db7a599dc178b3dbc67) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=4292c722ab044c828fa5bd11a2571099), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=2d8de97f1b714b84be450766032c5d1e) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=858586079f6c4119b1421a44832db6b0); `web/plugins/orch/design/chat-{light,dark}-{desktop,phone}.png`.
 
+- **Built (deepseek-a, 24 Nov 2026, PR #108):** the `panels` point and the chat. The shell gained a
+  `panels` contribution point (`PanelProps`: `open`, `close()`, `popOut()`), a navbar button per
+  panel (with its shortcut, Ctrl+J for the chat), `<PanelHost>` (400 px over the page, docked beside
+  it from 1600 px, a full-height sheet on a phone, a keyboard-resizable edge, and a popped-out
+  `/ui/panel/<plugin>/<id>` window), and open/width remembered per browser in `localStorage`.
+  `orch`'s contribution draws the header (the runner picker: harness, model, host, directory, and
+  New chat, Pop out, Close), the context line, the transcript (the person's words on the right, the
+  model's as sanitised markdown, each tool call one collapsed line), the permission cards (the
+  command and its input, where it runs, why it asked, Allow once, Allow for this chat, Deny), and
+  the composer (`@` completes a task, feature or question key; Enter sends, Shift+Enter is a new
+  line; Stop while a turn runs). Past chats are in a menu, a reload resumes the chat this browser
+  had, and it reads its own SSE stream. `chat.py`'s `Said` now records the person's exact words, so
+  a transcript drawn from the record has them. Tests: 399 plugin Vitest (91 % branches), 495 shell,
+  69 e2e in both themes — the chat's own spec opens the panel, completes a key with `@`, sends,
+  allows a permission and sees `"behavior": "allow"`, reloads, and pops the chat out into a window
+  that is the same conversation; the e2e server now takes `--controls`, a port where the scripted
+  harness's turns are posted. Two bugs the e2e found and the unit tests had hidden: a read that
+  answered after the person asked for a new chat put the old chat back on show, and the composer's
+  keys were read from `items`, which no list operation answers (the fakes said `items`). The
+  board's e2e on a phone width waits for 29.10 (the panel's own is in the chat's spec). Two more the CI
+  found: 29.6's spec filled the agent editor's harness as text, which the e2e host no longer offers
+  as text now that this branch gives it a harness of its own (it picks the first one offered, and
+  still types when none is), and the popped-out chat's assertions now allow a new window the 30 s
+  it takes to load the shell and the bundle again.
+- **The bot's first review, all five items fixed (deepseek-a, 27 Nov 2026, PR #108):** the drag's
+  pointer listeners are typed as the DOM's `PointerEvent` and made once, so no cast is needed and a
+  panel that goes mid-drag (Ctrl+J) removes them; a window of its own waits for udl's plugin list
+  (a spinner, `plugins.loaded`) before it says a panel is missing, and says "No plugin" when it is
+  the plugin that is not there — with a Vitest for the route (waiting, no such panel, no such
+  plugin, and closing back to the page); a blocked pop-up (`window.open` → `null`) leaves the
+  page's panel open instead of leaving the person with no chat; the composer sends while a turn
+  runs (the backend queues it, and the button says `Send (n waiting)`), so its docstring is true
+  and the label reachable; and the button that ends a chat is **End chat**, asked first through
+  `ctx.confirm`, since it stops the harness and the conversation takes no more turns.
+- **The card's gaps, said plainly:** Ctrl+J cannot be pressed in Chromium (it keeps it for its
+  downloads), so the shell's own `PanelHost` test opens and closes the panel with it, and the spec
+  says why; the panel at a phone width is now in the e2e (a 390×844 window, the sheet the whole
+  width and height); the "and on the Board" half of the done-when moves to **29.10**, whose card
+  is the end-to-end run and whose own line is "a chat that allows a permission and assigns a task"
+  — that turn changes the board, and it belongs to the run that checks the board.
+- **Asked… (deepseek-a, 24 Nov 2026):** nothing.
+
+**Phase 29 is done when:** with `udl serve` on real connections, the user assigns a task by dragging it, answers the agent's question, and merges its PR, all from `/ui/p/orch/`.
+
 **Decisions made while building 29:**
 
 - **The nav's live question count (ernie-d, 24 Nov 2026, PR #105).** `UIContext` gained `setNavCount(route, count)`: a plugin says a live count on one of its own nav entries, or takes it off with `null`, and the shell keeps them per `<plugin>:<route>` and draws the count as a badge on the nav link (none while it is zero). A plugin's nav entry now knows its own route, so a count is matched to it without the plugin knowing its mount path. The orch plugin sets the Q&A count from its **inbox** and **questions** stores, so it is live on whichever of the two pages is open — both re-read on 28.5's question events. **Its limits, said plainly:** there is no badge until an orch page has been opened once (the count is a page's to say, and nothing is mounted before then), and after the last of those pages goes the badge keeps its last value until one is opened again or the page is reloaded. The two stores count the same set — the questions whose state is `open` — from `orch_inbox` and `orch_list_questions` alike. The manifest is unchanged: a count is a page's to say, not a declaration. Tests: `packages/shell/src/stores/plugins.test.ts` (the mapping, the entries nobody counted, taking a count off, one plugin's count apart from another's, beside the store's own suite), `packages/shell/src/app.test.tsx` (the badge on the link with its accessible name, and gone when it is taken off), `plugins/orch/src/stores/inbox.test.ts` and `questions.test.ts` (the count each sets), and `web/e2e/orch-nav.spec.ts` (light and dark): up when a question is asked, down when that question is answered.

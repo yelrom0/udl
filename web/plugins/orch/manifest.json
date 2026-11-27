@@ -28,7 +28,8 @@
 			"merge",
 			"actions"
 		],
-		"widgets": [{ "slot": "dashboard", "id": "orch" }]
+		"widgets": [{ "slot": "dashboard", "id": "orch" }],
+		"panels": [{ "id": "chat", "title": "Chat", "icon": "message-square", "shortcut": "Ctrl+J" }]
 	},
 	"generated": {
 		"tabs": ["settings"],

@@ -104,6 +104,29 @@ def test_the_points_are_the_manifest_s_and_a_closed_set(tmp_path: Path) -> None:
     assert found.manifest.contributes.field_widgets == ["rating"]
 
 
+def test_a_panel_is_read_with_its_button_and_its_key(tmp_path: Path) -> None:
+    found = of(
+        bundle(
+            tmp_path,
+            contributes={
+                "panels": [
+                    {"id": "chat", "title": "Chat", "icon": "message-square", "shortcut": "Ctrl+J"},
+                    {"id": "help", "title": "Help"},
+                ]
+            },
+        )
+    )
+
+    assert [
+        (one.id, one.title, one.icon, one.shortcut) for one in found.manifest.contributes.panels
+    ] == [("chat", "Chat", "message-square", "Ctrl+J"), ("help", "Help", None, None)]
+
+
+def test_a_panel_needs_an_id_and_a_title(tmp_path: Path) -> None:
+    with pytest.raises(PluginError, match="panels"):
+        of(bundle(tmp_path, contributes={"panels": [{"title": "Chat"}]}))
+
+
 def test_a_point_the_shell_does_not_know_is_a_problem(tmp_path: Path) -> None:
     folder = bundle(tmp_path, contributes={"sidebar": ["x"]})
 

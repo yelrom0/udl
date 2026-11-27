@@ -48,7 +48,7 @@ from udl.interfaces.security import (
     current_principal,
 )
 from udl.plugins.apps.base import AppEvents, AppRecords
-from udl.plugins.apps.orch.agents import SessionState
+from udl.plugins.apps.orch.agents import Said, SessionState
 from udl.plugins.apps.orch.chat import (
     AskPermissionRequest,
     ChatInfo,
@@ -223,6 +223,27 @@ async def test_the_owner_starts_a_chat_and_sends_it_a_turn(service: UDLService) 
     assert spec.mcp is not None, "the harness is pointed at udl's MCP server"
     assert spec.memory == 20 * 1024**3, "a chat's turn is capped like an agent's (27.12)"
     assert spec.unit == "udl-session-chat", "and its turn is named for the chat, not an agent"
+
+
+async def test_what_the_person_said_is_the_first_line_of_the_transcript(
+    service: UDLService,
+) -> None:
+    """(29.12: a page draws both sides of the chat, so what the person said is in the transcript —
+    a reload shows it, and the answer is under it.)"""
+
+    async def hello(_: FakeRunner, __: SessionRef) -> AsyncIterator[AgentEvent]:
+        yield TextDelta(text="Hello.")
+        yield TurnEnded(reason=TurnReason.DONE, text="Hello.")
+
+    SCRIPT["what is stuck?"] = hello
+    chat = await started(service)
+    await service.call("orch_chat_send", {"chat": chat.id, "text": "what is stuck?"})
+    done = await settled(service, chat)
+
+    assert [event.kind for event in done.events] == ["said", "text_delta", "turn_ended"]
+    first = done.events[0]
+    assert isinstance(first, Said)
+    assert first.text == "what is stuck?"
 
 
 async def test_a_permission_is_asked_and_the_answer_reaches_the_harness(

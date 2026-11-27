@@ -15,8 +15,13 @@ export interface RunnersState {
 	readonly error: string | null;
 }
 
-/** The harnesses a person may name for an agent, as `orch_list_runners` answers them (25.11). */
-export function runnersStore(ctx: UIContext): Loaded<RunnersState> {
+/**
+ * The harnesses a person may name for an agent, as `orch_list_runners` answers them (25.11).
+ *
+ * `host` names the host to ask: a chat asks its own (29.12), because asking for none lists the
+ * hosts udl has records of, and `local` is only made when it is asked for by name.
+ */
+export function runnersStore(ctx: UIContext, host?: string): Loaded<RunnersState> {
 	const store = createStore<RunnersState>(() => ({
 		items: [],
 		problems: [],
@@ -27,7 +32,9 @@ export function runnersStore(ctx: UIContext): Loaded<RunnersState> {
 	let stopped = false;
 	const read = async (): Promise<void> => {
 		try {
-			const answer = asObject(await ctx.call("orch_list_runners", {}));
+			const answer = asObject(
+				await ctx.call("orch_list_runners", host === undefined ? {} : { host }),
+			);
 			if (!stopped) {
 				store.setState({
 					items: runnersOf(answer),

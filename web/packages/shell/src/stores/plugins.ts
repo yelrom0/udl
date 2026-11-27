@@ -48,19 +48,29 @@ export const plugins = createStore<{
 	manifests: readonly UIPluginInfo[];
 	problems: readonly BundleProblem[];
 	errors: readonly PluginError[];
+	/** Whether udl's list has answered (`/ui/plugins.json`): before it does, no plugin is
+	 * missing — the page just does not know yet. */
+	loaded: boolean;
 	/** The navigation's pages: the shell's own, then each plugin's (18.9's registry fills it). */
 	nav: readonly NavEntry[];
 	/** A live count per nav entry, by `<plugin>:<route>`: what a plugin said with
 	 * `ctx.setNavCount` (29.7's question count). */
 	counts: Readonly<Record<string, number>>;
-}>(() => ({ manifests: [], problems: [], errors: [], nav: ownNav(), counts: {} }));
+}>(() => ({
+	manifests: [],
+	problems: [],
+	errors: [],
+	loaded: false,
+	nav: ownNav(),
+	counts: {},
+}));
 
 /** Replace what the page knows about the plugins (after `GET /ui/plugins.json`). */
 export function setPlugins(
 	manifests: readonly UIPluginInfo[],
 	problems: readonly BundleProblem[],
 ): void {
-	plugins.setState({ manifests, problems });
+	plugins.setState({ manifests, problems, loaded: true });
 }
 
 /** Say a plugin's bundle did not load (it stays out of the page, and is listed once). */
@@ -75,6 +85,9 @@ export function addError(name: string, message: string): void {
 
 /** The plugins' state, as a hook. */
 export const usePlugins = () => useStore(plugins, (state) => state.manifests);
+
+/** Whether udl's list has answered, as a hook (a page that says a plugin is missing waits). */
+export const usePluginsLoaded = () => useStore(plugins, (state) => state.loaded);
 
 /** The bundles udl refused, as a hook. */
 export const useProblems = () => useStore(plugins, (state) => state.problems);

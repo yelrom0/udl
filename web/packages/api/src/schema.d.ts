@@ -4258,7 +4258,7 @@ export interface components {
              * Events
              * @description Its transcript (paged: the newest page of it, oldest first).
              */
-            events?: (components["schemas"]["TextDelta"] | components["schemas"]["ToolStarted"] | components["schemas"]["ToolFinished"] | components["schemas"]["Usage"] | components["schemas"]["TurnEnded"] | components["schemas"]["RunnerLimited"] | components["schemas"]["RunnerFailed"])[];
+            events?: (components["schemas"]["TextDelta"] | components["schemas"]["ToolStarted"] | components["schemas"]["ToolFinished"] | components["schemas"]["Usage"] | components["schemas"]["TurnEnded"] | components["schemas"]["RunnerLimited"] | components["schemas"]["RunnerFailed"] | components["schemas"]["Said"])[];
             /**
              * Host
              * @description The host its harness runs on.
@@ -9583,6 +9583,23 @@ export interface components {
              */
             watchers?: components["schemas"]["WatcherStatus"][];
         };
+        /**
+         * Said
+         * @description What the person said to a chat (29.12): their own words, the first line of its turn's
+         *     transcript, so a page that draws a chat draws both sides of it.
+         */
+        Said: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "said";
+            /**
+             * Text
+             * @description What they said.
+             */
+            text: string;
+        };
         Scalar: string | number | boolean | null;
         /**
          * ScheduleInfo
@@ -9923,7 +9940,7 @@ export interface components {
              * Event
              * @description What happened (its `kind` says which of the runner's events it is).
              */
-            event: components["schemas"]["TextDelta"] | components["schemas"]["ToolStarted"] | components["schemas"]["ToolFinished"] | components["schemas"]["Usage"] | components["schemas"]["TurnEnded"] | components["schemas"]["RunnerLimited"] | components["schemas"]["RunnerFailed"];
+            event: components["schemas"]["TextDelta"] | components["schemas"]["ToolStarted"] | components["schemas"]["ToolFinished"] | components["schemas"]["Usage"] | components["schemas"]["TurnEnded"] | components["schemas"]["RunnerLimited"] | components["schemas"]["RunnerFailed"] | components["schemas"]["Said"];
             /**
              * Turn
              * @description The turn it happened in (0: before the first one).

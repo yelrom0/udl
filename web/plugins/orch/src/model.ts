@@ -4,7 +4,7 @@
  * plugin draws is here; the rest stays `JsonValue` until a page needs it.
  */
 
-import type { JsonValue } from "@udl/ui-sdk";
+import type { JsonObject, JsonValue } from "@udl/ui-sdk";
 import { asArray, asDecimal, asFlag, asNumber, asObject, asText } from "./json";
 
 /** The pull open on a task: its number, and where it is. */
@@ -371,6 +371,55 @@ export interface Session extends SessionSummary {
 	readonly events: readonly Spoken[];
 }
 
+/** A permission a chat's harness asked for, and where it got to (27.11). */
+export interface ChatPermission {
+	/** Its id (what `orch_chat_permission` takes). */
+	readonly id: string;
+	/** The tool it wants (`Bash`, `Edit`, …). */
+	readonly tool: string;
+	/** What it wants to use it on, as the harness asked. */
+	readonly input: JsonObject;
+	/** `pending`, `allowed` or `denied`. */
+	readonly state: string;
+	/** Why it was denied, when the person said why. */
+	readonly message: string;
+	/** Whether the person allowed this tool for the rest of the chat. */
+	readonly allowed_for_chat: boolean;
+	readonly asked_at: string;
+}
+
+/** A person's chat with their own harness (27.11), as `orch_chat_get` answers it. */
+export interface Chat {
+	readonly id: string;
+	/** Whose it is (`human:<name>`). */
+	readonly owner: string;
+	/** The harness it is in (`claude-code`). */
+	readonly runner: string;
+	/** The model it was asked for (empty: the harness's own default). */
+	readonly model: string;
+	readonly permission_mode: string;
+	readonly host: string;
+	readonly directory: string;
+	/** `starting`, `running`, `idle`, `limited`, `failed` or `ended`. */
+	readonly state: string;
+	readonly title: string;
+	readonly turns: number;
+	readonly tokens_in: number;
+	readonly tokens_out: number;
+	readonly cost: number | null;
+	readonly last_error: string;
+	readonly last_text: string;
+	/** How many things the person said are queued for the next turns. */
+	readonly pending: number;
+	readonly created_at: string;
+	readonly updated_at: string;
+	/** What its harness is waiting on, if it is waiting on one. */
+	readonly permission: ChatPermission | null;
+	/** Its transcript (a page of it, oldest first). */
+	readonly events: readonly Spoken[];
+	readonly total: number;
+}
+
 /** What a manager may do for its reports (O-D10): each power is off until it is given. */
 export interface Powers {
 	readonly assign: boolean;
@@ -634,22 +683,7 @@ function suggestionOf(value: JsonValue): Suggestion {
 /** One thing a session said, as its transcript holds it. */
 function spokenOf(value: JsonValue): Spoken {
 	const item = asObject(value);
-	const said = asObject(item.event);
-	return {
-		turn: asNumber(item.turn),
-		at: asText(item.at),
-		kind: asText(said.kind),
-		text: asText(said.text),
-		name: asText(said.name),
-		summary: asText(said.summary),
-		ok: typeof said.ok === "boolean" ? said.ok : null,
-		cost: asDecimal(said.cost),
-		tokens_in: asNumber(said.input_tokens),
-		tokens_out: asNumber(said.output_tokens),
-		reason: asText(said.reason),
-		message: asText(said.message),
-		until: typeof said.until === "string" ? said.until : null,
-	};
+	return spokenFrom(asObject(item.event), asNumber(item.turn), asText(item.at));
 }
 
 /** A session, as an agent's own answer carries it (no transcript: `sessionOf` reads that). */
@@ -960,6 +994,86 @@ export function readinessOf(value: JsonValue | undefined): Readiness {
 }
 
 /** The session a task is in, from `orch_list_agents`: the agent whose session is that task. */
+/** `said`, as the transcript holds it (`turn` and `at` come from the record around it). */
+function spokenFrom(said: JsonObject, turn: number, at: string): Spoken {
+	return {
+		turn,
+		at,
+		kind: asText(said.kind),
+		text: asText(said.text),
+		name: asText(said.name),
+		summary: asText(said.summary),
+		ok: typeof said.ok === "boolean" ? said.ok : null,
+		cost: asDecimal(said.cost),
+		tokens_in: asNumber(said.input_tokens),
+		tokens_out: asNumber(said.output_tokens),
+		reason: asText(said.reason),
+		message: asText(said.message),
+		until: typeof said.until === "string" ? said.until : null,
+	};
+}
+
+/** A permission a chat's harness asked for, as the chat's answer carries it. */
+function permissionOf(value: JsonValue | undefined): ChatPermission | null {
+	if (value === undefined || value === null) {
+		return null;
+	}
+	const one = asObject(value);
+	return {
+		id: asText(one.id),
+		tool: asText(one.tool),
+		input: asObject(one.input),
+		state: asText(one.state, "pending"),
+		message: asText(one.message),
+		allowed_for_chat: asFlag(one.allowed_for_chat),
+		asked_at: asText(one.asked_at),
+	};
+}
+
+/** A chat, as `orch_chat_get` (or `orch_chat_start`) answers it. */
+export function chatOf(value: JsonValue | undefined): Chat {
+	const one = asObject(value);
+	return {
+		id: asText(one.id),
+		owner: asText(one.owner),
+		runner: asText(one.runner),
+		model: asText(one.model),
+		permission_mode: asText(one.permission_mode, "manual"),
+		host: asText(one.host, "local"),
+		directory: asText(one.directory),
+		state: asText(one.state),
+		title: asText(one.title),
+		turns: asNumber(one.turns),
+		tokens_in: asNumber(one.tokens_in),
+		tokens_out: asNumber(one.tokens_out),
+		cost: asDecimal(one.cost),
+		last_error: asText(one.last_error),
+		last_text: asText(one.last_text),
+		pending: asNumber(one.pending),
+		created_at: asText(one.created_at),
+		updated_at: asText(one.updated_at),
+		permission: permissionOf(one.permission),
+		// (A chat's events are the events themselves: a session's are records of them.)
+		events: asArray(one.events).map((event) => spokenFrom(asObject(event), 0, "")),
+		total: asNumber(one.total),
+	};
+}
+
+/** A person's chats, as `orch_chat_list` answers them (the most recently spoken in first). */
+export function chatsOf(value: JsonValue | undefined): Chat[] {
+	return asArray(asObject(value).items).map(chatOf);
+}
+
+/** Whether `chat` is in a turn now (its composer offers End chat, and its answer is coming). */
+export function isChatting(chat: Chat | null): boolean {
+	return chat !== null && (chat.state === "running" || chat.state === "starting");
+}
+
+/** Whether `chat` takes no more turns (it ended, or its harness failed). */
+export function isOver(chat: Chat | null): boolean {
+	return chat !== null && (chat.state === "ended" || chat.state === "failed");
+}
+
 export function sessionOfTask(agents: JsonValue | undefined, key: string): TaskSession | null {
 	for (const item of asArray(asObject(agents).items)) {
 		const info = asObject(item);

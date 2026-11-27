@@ -15,6 +15,7 @@ import type {
 	FilterEditorProps,
 	Mount,
 	OperationViewProps,
+	PanelProps,
 	PluginIdentity,
 	ResultViewProps,
 	RouteProps,
@@ -31,6 +32,8 @@ export interface Points {
 	filterEditors: FilterEditorProps;
 	actionEditors: ActionEditorProps;
 	widgets: WidgetProps;
+	/** 29.12: what the navbar opens at the right of the page. */
+	panels: PanelProps;
 	/** 24.7: what replaces part of the page udl generates. */
 	operationViews: OperationViewProps;
 	resultViews: ResultViewProps;
@@ -49,6 +52,7 @@ export const POINTS: readonly Point[] = [
 	"filterEditors",
 	"actionEditors",
 	"widgets",
+	"panels",
 	"operationViews",
 	"resultViews",
 	"fieldWidgets",
@@ -62,6 +66,11 @@ export interface Contribution<P> {
 	readonly key: string;
 	/** A widget's id within its slot (`contributes.widgets[].id`). */
 	readonly id?: string;
+	/** What a panel's button in the navbar says (`contributes.panels[].title`, 29.12). */
+	readonly title?: string;
+	/** The icon a panel's button draws, and the key that opens it (29.12). */
+	readonly icon?: string;
+	readonly shortcut?: string;
 	/** The key its bundle's record has it under (a widget's id; else the key). */
 	readonly entry?: string;
 	/** What draws it, when the shell itself does (a plugin's comes from its bundle). */
@@ -105,6 +114,7 @@ const KEYS: { [Q in Point]: (props: Points[Q], lookup?: string) => { key: string
 		operationViews: (_props, lookup) => ({ key: lookup ?? "" }),
 		resultViews: (_props, lookup) => ({ key: lookup ?? "" }),
 		fieldWidgets: (props) => ({ key: props.field.asked ?? props.field.widget }),
+		panels: (_props, lookup) => ({ key: lookup ?? "" }),
 	};
 
 /** The type of the event an event view is drawn for (its `type`). */
@@ -196,6 +206,7 @@ export class Registry {
 		filterEditors: new Contributions<FilterEditorProps>(),
 		actionEditors: new Contributions<ActionEditorProps>(),
 		widgets: new Contributions<WidgetProps>(),
+		panels: new Contributions<PanelProps>(),
 		operationViews: new Contributions<OperationViewProps>(),
 		resultViews: new Contributions<ResultViewProps>(),
 		fieldWidgets: new Contributions<FieldWidgetProps>(),

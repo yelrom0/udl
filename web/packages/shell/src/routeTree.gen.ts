@@ -25,6 +25,7 @@ import { Route as SchedulesIndexRouteImport } from './routes/schedules/index'
 import { Route as SitesIndexRouteImport } from './routes/sites/index'
 import { Route as SubscriptionsIndexRouteImport } from './routes/subscriptions/index'
 import { Route as PPluginSplatRouteImport } from './routes/p/$plugin/$'
+import { Route as PanelPluginIdRouteImport } from './routes/panel/$plugin/$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -106,6 +107,11 @@ const PPluginSplatRoute = PPluginSplatRouteImport.update({
   path: '/p/$plugin/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PanelPluginIdRoute = PanelPluginIdRouteImport.update({
+  id: '/panel/$plugin/$id',
+  path: '/panel/$plugin/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -124,6 +130,7 @@ export interface FileRoutesByFullPath {
   '/sites/': typeof SitesIndexRoute
   '/subscriptions/': typeof SubscriptionsIndexRoute
   '/p/$plugin/$': typeof PPluginSplatRoute
+  '/panel/$plugin/$id': typeof PanelPluginIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -142,6 +149,7 @@ export interface FileRoutesByTo {
   '/sites': typeof SitesIndexRoute
   '/subscriptions': typeof SubscriptionsIndexRoute
   '/p/$plugin/$': typeof PPluginSplatRoute
+  '/panel/$plugin/$id': typeof PanelPluginIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -161,6 +169,7 @@ export interface FileRoutesById {
   '/sites/': typeof SitesIndexRoute
   '/subscriptions/': typeof SubscriptionsIndexRoute
   '/p/$plugin/$': typeof PPluginSplatRoute
+  '/panel/$plugin/$id': typeof PanelPluginIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -181,6 +190,7 @@ export interface FileRouteTypes {
     | '/sites/'
     | '/subscriptions/'
     | '/p/$plugin/$'
+    | '/panel/$plugin/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -199,6 +209,7 @@ export interface FileRouteTypes {
     | '/sites'
     | '/subscriptions'
     | '/p/$plugin/$'
+    | '/panel/$plugin/$id'
   id:
     | '__root__'
     | '/'
@@ -217,6 +228,7 @@ export interface FileRouteTypes {
     | '/sites/'
     | '/subscriptions/'
     | '/p/$plugin/$'
+    | '/panel/$plugin/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -236,6 +248,7 @@ export interface RootRouteChildren {
   SitesIndexRoute: typeof SitesIndexRoute
   SubscriptionsIndexRoute: typeof SubscriptionsIndexRoute
   PPluginSplatRoute: typeof PPluginSplatRoute
+  PanelPluginIdRoute: typeof PanelPluginIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -352,6 +365,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PPluginSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/panel/$plugin/$id': {
+      id: '/panel/$plugin/$id'
+      path: '/panel/$plugin/$id'
+      fullPath: '/panel/$plugin/$id'
+      preLoaderRoute: typeof PanelPluginIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -372,6 +392,7 @@ const rootRouteChildren: RootRouteChildren = {
   SitesIndexRoute: SitesIndexRoute,
   SubscriptionsIndexRoute: SubscriptionsIndexRoute,
   PPluginSplatRoute: PPluginSplatRoute,
+  PanelPluginIdRoute: PanelPluginIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

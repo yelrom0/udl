@@ -18,6 +18,7 @@ export type {
 	Generated,
 	GeneratedNav,
 	NavItem,
+	Panel,
 	UIManifest,
 	Widget,
 } from "./manifest";
@@ -175,6 +176,19 @@ export type WidgetProps = {
 	plugin: PluginIdentity;
 };
 
+/**
+ * A panel of the plugin's, drawn at the right of the page (29.12): the navbar's button opens
+ * it, and it is drawn only while it is open.
+ */
+export type PanelProps = {
+	/** Whether it is open (a panel in its own window is always open). */
+	open: boolean;
+	/** Close it: its navbar button, Ctrl+J again, or its own Close. */
+	close(): void;
+	/** Open it in a window of its own (`/ui/panel/<plugin>/<id>`), and close this one. */
+	popOut(): void;
+};
+
 /** An operation, as a UI plugin that replaces part of its page is shown it (24.7). */
 export type GuidedOperation = {
 	/** Its name (the API's operationId). */
@@ -214,6 +228,8 @@ export type UIPluginSpec = {
 	filterEditors?: Record<string, Mount<FilterEditorProps>>;
 	actionEditors?: Record<string, Mount<ActionEditorProps>>;
 	widgets?: Record<string, Mount<WidgetProps>>;
+	/** What it opens at the right of the page (29.12), by its panel's id. */
+	panels?: Record<string, Mount<PanelProps>>;
 	/** The operations whose panel it replaces (its manifest's `operationViews`, 24.7). */
 	operationViews?: Record<string, Mount<OperationViewProps>>;
 	/** The operations whose result it draws (its manifest's `resultViews`, a `*` prefix too). */

@@ -76,6 +76,14 @@
 					"title": "Themes",
 					"type": "array"
 				},
+				"panels": {
+					"description": "What it opens at the right of the page (29.12).",
+					"items": {
+						"$ref": "#/$defs/Panel"
+					},
+					"title": "Panels",
+					"type": "array"
+				},
 				"operationViews": {
 					"description": "The operations whose panel it replaces (a mount of its own).",
 					"items": {
@@ -241,6 +249,56 @@
 				"route"
 			],
 			"title": "NavItem",
+			"type": "object"
+		},
+		"Panel": {
+			"additionalProperties": false,
+			"description": "Something the shell opens at the right of the page, from its own button (29.12).",
+			"properties": {
+				"id": {
+					"description": "Which of the plugin's panels it is (what its entry's `panels` is keyed by).",
+					"minLength": 1,
+					"title": "Id",
+					"type": "string"
+				},
+				"title": {
+					"description": "What its button in the navbar says.",
+					"minLength": 1,
+					"title": "Title",
+					"type": "string"
+				},
+				"icon": {
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"default": null,
+					"description": "The icon's name (the shell maps it to lucide's).",
+					"title": "Icon"
+				},
+				"shortcut": {
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"default": null,
+					"description": "The key that opens and closes it (`Ctrl+J`), when it has one.",
+					"title": "Shortcut"
+				}
+			},
+			"required": [
+				"id",
+				"title"
+			],
+			"title": "Panel",
 			"type": "object"
 		},
 		"Widget": {

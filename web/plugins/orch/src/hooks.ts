@@ -1,8 +1,16 @@
 import type { UIContext } from "@udl/ui-sdk";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { asArray, asObject, asText } from "./json";
 import { mergeListOf, progressOf, type Session } from "./model";
 import { type AgentState, type AgentsState, agentStore, agentsStore } from "./stores/agents";
 import { type BoardState, boardStore } from "./stores/board";
+import {
+	type ChatState,
+	type ChatStore,
+	chatStore,
+	type Decision,
+	type StartChat,
+} from "./stores/chat";
 import { type FeatureState, featureStore } from "./stores/feature";
 import { type InboxState, inboxStore, type Loaded } from "./stores/inbox";
 import { type QuestionsState, questionsStore } from "./stores/questions";
@@ -133,6 +141,16 @@ export function useRunners(ctx: UIContext): Refreshable<RunnersState> {
 	return useLoaded(ctx, runnersStore, NO_RUNNERS);
 }
 
+/** The harnesses on the local host: what a chat may run on (29.12). */
+function runnersOnLocal(ctx: UIContext): Loaded<RunnersState> {
+	return runnersStore(ctx, "local");
+}
+
+/** The harnesses a chat may start on, read for the host it runs on (29.12). */
+export function useChatRunners(ctx: UIContext): Refreshable<RunnersState> {
+	return useLoaded(ctx, runnersOnLocal, NO_RUNNERS);
+}
+
 /** Every agent (29.6). */
 export function useAgents(ctx: UIContext): Refreshable<AgentsState> {
 	return useLoaded(ctx, agentsStore, NO_AGENTS);
@@ -142,6 +160,115 @@ export function useAgents(ctx: UIContext): Refreshable<AgentsState> {
 export function useAgent(ctx: UIContext, name: string): Refreshable<AgentState> {
 	const make = useCallback((inner: UIContext) => agentStore(inner, name), [name]);
 	return useLoaded(ctx, make, NO_AGENT);
+}
+
+/** The keys a chat's composer completes, before they are read. */
+const NO_KEYS: readonly string[] = [];
+
+/** The `field` of every item `name` answers, or nothing when it could not be asked. */
+async function keysOf(
+	ctx: UIContext,
+	name: string,
+	collection: string,
+	field: string,
+): Promise<string[]> {
+	try {
+		// (Each list operation answers its own collection: `tasks`, `features`, `questions`.)
+		const answer = asObject(await ctx.call(name, {}));
+		return asArray(answer[collection])
+			.map((item) => asText(asObject(item)[field]))
+			.filter((key) => key !== "");
+	} catch {
+		// (A key list that cannot be read is a completion with fewer keys, not an error.)
+		return [];
+	}
+}
+
+/**
+ * The keys a chat's composer completes (29.12): the project's tasks, its features and the
+ * questions asked of it. Read once when the panel opens — a chat is about the work, and the keys
+ * are what a person names.
+ */
+export function useKeys(ctx: UIContext): readonly string[] {
+	const [keys, setKeys] = useState<readonly string[]>(NO_KEYS);
+	useEffect(() => {
+		let stopped = false;
+		const read = async (): Promise<void> => {
+			const found = [
+				...(await keysOf(ctx, "orch_list_tasks", "tasks", "key")),
+				...(await keysOf(ctx, "orch_list_features", "features", "key")),
+				...(await keysOf(ctx, "orch_list_questions", "questions", "key")),
+			];
+			if (!stopped) {
+				setKeys([...new Set(found)]);
+			}
+		};
+		void read();
+		return () => {
+			stopped = true;
+		};
+	}, [ctx]);
+	return keys;
+}
+
+/** The chat before it is read. */
+const NO_CHAT: ChatState = { chats: [], chat: null, loaded: false, error: null };
+
+/** What a chat's panel is given: the state, and every write a person makes. */
+export type ChatView = ChatState & {
+	refresh(): Promise<void>;
+	pick(chat: string): Promise<void>;
+	draft(): Promise<void>;
+	start(request: StartChat): Promise<void>;
+	send(text: string): Promise<void>;
+	answer(request: string, decision: Decision, message?: string): Promise<void>;
+	end(): Promise<void>;
+};
+
+/**
+ * The chat (29.12), read when the panel opens and again as its harness streams. Its writes are
+ * the store's own (a chat's turn outlives the draw that asked for it), so they go through the
+ * store the panel was made with, not a call per render.
+ */
+export function useChat(ctx: UIContext): ChatView {
+	const [state, setState] = useState<ChatState>(NO_CHAT);
+	const made = useRef<ChatStore | null>(null);
+	useEffect(() => {
+		const store = chatStore(ctx);
+		made.current = store;
+		const unsubscribe = store.store.subscribe(setState);
+		setState(store.store.getState());
+		void store.read();
+		return () => {
+			unsubscribe();
+			store.stop();
+			made.current = null;
+		};
+	}, [ctx]);
+	return {
+		...state,
+		refresh: async () => {
+			await made.current?.read();
+		},
+		pick: async (chat) => {
+			await made.current?.pick(chat);
+		},
+		draft: async () => {
+			await made.current?.draft();
+		},
+		start: async (request) => {
+			await made.current?.start(request);
+		},
+		send: async (text) => {
+			await made.current?.send(text);
+		},
+		answer: async (request, decision, message) => {
+			await made.current?.answer(request, decision, message);
+		},
+		end: async () => {
+			await made.current?.end();
+		},
+	};
 }
 
 /** A session before it is read. */

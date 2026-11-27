@@ -1,8 +1,12 @@
 /**
  * The page's frame: a daisyUI drawer (the nav, on a phone too) around a navbar (the live
- * connection, the theme, signing out) and the route's own page. It also decides whether there
- * is a page to show: udl answers a request without its key only with a session, so a page that
- * is not signed in goes to the login page.
+ * connection, the theme, the panels, signing out) and the route's own page, with the open
+ * panels beside it (29.12). It also decides whether there is a page to show: udl answers a
+ * request without its key only with a session, so a page that is not signed in goes to the
+ * login page.
+ *
+ * A panel popped out is a window of its own (`/panel/<plugin>/<id>`): it is the panel, and no
+ * frame at all.
  */
 
 import {
@@ -10,11 +14,13 @@ import {
 	Link,
 	Outlet,
 	redirect,
+	useLocation,
 	useNavigate,
 	useRouter,
 } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { ConfirmHost } from "../components/ConfirmHost";
+import { PanelButtons, PanelHost } from "../components/PanelHost";
 import { ThemeSwitcher } from "../components/ThemeSwitcher";
 import { startLive } from "../live/connection";
 import { useLive } from "../stores/live";
@@ -41,6 +47,7 @@ function Layout() {
 	const theme = useTheme();
 	const connection = useLive((live) => live.connection);
 	const nav = useRef<HTMLInputElement>(null);
+	const at = useLocation({ select: (location) => location.pathname });
 	// (The shell's own pages and each plugin's: one list, from 18.9's registry.)
 	const pages = useNav();
 
@@ -65,6 +72,11 @@ function Layout() {
 
 	// (The login page, or the page udl said to show before signing in: `beforeLoad` asked.)
 	if (state !== "signed-in") {
+		return <Outlet />;
+	}
+
+	// (A panel's own window is the panel, and nothing else.)
+	if (at.startsWith("/panel/")) {
 		return <Outlet />;
 	}
 
@@ -102,6 +114,7 @@ function Layout() {
 							{connection}
 						</span>
 						<ThemeSwitcher />
+						<PanelButtons />
 						<button
 							type="button"
 							className="btn btn-sm"
@@ -113,9 +126,12 @@ function Layout() {
 						</button>
 					</div>
 				</header>
-				<main className="flex-1 p-4 lg:p-8">
-					<Outlet />
-				</main>
+				<div className="flex min-h-0 flex-1">
+					<main className="min-w-0 flex-1 p-4 lg:p-8">
+						<Outlet />
+					</main>
+					<PanelHost />
+				</div>
 				<ConfirmHost />
 			</div>
 			<div className="drawer-side z-10">

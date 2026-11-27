@@ -46,7 +46,7 @@ from udl.errors import DoesNotExist, PluginError, UDLError
 from udl.interfaces.security import CHAT_PREFIX
 from udl.plugins.apps.base import AppEvents, AppRecords
 from udl.plugins.apps.orch import records as stored
-from udl.plugins.apps.orch.agents import AnAgentEvent, SessionState, an_event
+from udl.plugins.apps.orch.agents import AnAgentEvent, Said, SessionState, an_event
 from udl.plugins.apps.orch.models import ChatPermissionState, HostName, Text, Title
 from udl.plugins.runners.base import (
     McpEndpoint,
@@ -448,6 +448,13 @@ class Chats:
 
     async def _begin(self, chat: stored.Chat, text: str) -> ChatInfo:
         """Start a turn of `chat` with `text` (the caller has checked one is not running)."""
+        # (29.12: the person's own words are the turn's first line, so a page that draws the
+        # chat draws both sides of it — and a reload shows the question as well as the answer.)
+        await self._records.save(
+            stored.SessionEvent(
+                agent=chat.owner, session=chat.id, turn=chat.turns + 1, event=Said(text=text)
+            )
+        )
         running = await self._records.save(
             chat.model_copy(
                 update={

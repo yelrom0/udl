@@ -26,6 +26,7 @@ const GMAIL: UIPluginInfo = {
 		filterEditors: ["gmail"],
 		actionEditors: ["gmail.send"],
 		widgets: [{ slot: "dashboard", id: "unread" }],
+		panels: [{ id: "chat", title: "Chat", icon: "message-square", shortcut: "Ctrl+J" }],
 	},
 	plugin: "gmail",
 };
@@ -70,6 +71,17 @@ describe("registering a plugin", () => {
 		expect(shellRegistry.point("eventViews").at("gmail.*")).toHaveLength(1);
 		expect(shellRegistry.point("filterEditors").at("gmail")).toHaveLength(1);
 		expect(shellRegistry.point("actionEditors").at("gmail.send")).toHaveLength(1);
+	});
+
+	it("puts a panel under its plugin and id, with its button (29.12)", () => {
+		registerPlugin(GMAIL);
+
+		const [panel] = shellRegistry.point("panels").at("gmail/chat");
+		expect(panel?.id).toBe("chat");
+		expect(panel?.entry).toBe("chat");
+		expect(panel?.title).toBe("Chat");
+		expect(panel?.icon).toBe("message-square");
+		expect(panel?.shortcut).toBe("Ctrl+J");
 	});
 
 	it("puts a widget under its slot, with the id its bundle has it by", () => {
