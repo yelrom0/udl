@@ -134,8 +134,6 @@ test("a ready pull merges, and the task stacked on it is told to rebase (29.8)",
 		.toBe(true);
 	// (A person pushing to the pull is what makes udl look at it again, and the link's head is
 	// what the merge is at.)
-	// (A person pushing to the pull is what makes udl look at it again, and the link's head is
-	// what the merge is at.)
 	const pushed = await page.request.post(`${controls}/github`, { data: { sha: "abc1235" } });
 	expect(pushed.ok(), `the push answered ${pushed.status()}`).toBe(true);
 	// (The event the watcher published, then the link's head, read through the task.)
