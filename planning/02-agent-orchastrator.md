@@ -198,8 +198,13 @@ A task's life: **assigned** (dragged to an agent, or picked from its suggestions
 - **Memory (the user, Q-7, 20 Nov 2026 AEDT):** only Claude writes Claude's memory, in any regard, and the OpenCode agents keep their own, separate memory in Magic Context. So the `opencode-claude-memory` plugin is `readOnly: true` in `~/.config/opencode/opencode.json`: no `memory_save` or `memory_delete`, no extraction, no auto-dream, and nothing written under `~/.claude`. Magic Context's `memory.enabled` is on in `~/.config/cortexkit/magic-context.jsonc`, so an agent remembers with `ctx_memory`, and the historian captures memories as it compresses a session. It keys a project by its root commit, so all udl worktrees share one memory, kept in Magic Context's own store. Both switches are user-level, since neither plugin can scope by agent, so the user's own OpenCode sessions follow them too. The agents' `AGENTS.md` says so. Claude still moves out anything an OpenCode session writes under `~/.claude`.
 - **Codex (the user, Q-9, 21 Nov 2026 AEDT):** 25.12 is optional, and the user isn't signing Codex in: that subscription isn't the user's, and the user uses the Claude Code plugin. Claude installed `codex` 0.171.0 on jeff-wiggle (`~/.local/bin`, not signed in) so 25.12 has a real CLI to read. A test's real turn runs on jeff-wiggle's llama.cpp router instead (`codex exec --profile local`, the router's key from `LLAMA_API_KEY`, never in a file). Claude recorded the first turn and a resume for the fixtures. 25.12 is `ernie-d`'s, on the free tier.
 - **Phase 26's end (the user, Q-10, 21 Nov 2026 AEDT: "your recommendation"):** 26.6 and 26.7 moved from `ernie-c` to `deepseek-a`, since they had become the critical path (26.8, 27.10 and Phase 29 wait on them). `ernie-c` kept 26.5. This is an exception to the 19 Nov rule that ERNIE keeps its unstarted lines; the rule still holds otherwise.
-- **Local gates stay, for agents too (the user, Q-12, 23 Nov 2026 AEDT):** asked whether agents could commit with `--no-verify` (on 23 Nov five full `make check` runs at once took disk I/O pressure to 50%), the user said: "No! The reason we force local testing is to avoid longer runs that actually potentially cost `GitHub Actions` minutes during their `PR CI`. If it passes locally, it should also pass on `GitHub` reducing bounce back-and-forward runs to the actions runners." So the pre-commit hook's `make check` and `agent-push`'s run both stay. Contention is handled by scheduling instead: rule 9 of `planning/agent-queues/_rules.md` allows at most two full suites at once on jeff-wiggle, with the DeepSeek agents' tasks first.
+- **Local gates stay, for agents too (the user, Q-12, 23 Nov 2026 AEDT):** asked whether agents could commit with `--no-verify` (on 23 Nov five full `make check` runs at once took disk I/O pressure to 50%), the user said: "No! The reason we force local testing is to avoid longer runs that actually potentially cost `GitHub Actions` minutes during their `PR CI`. If it passes locally, it should also pass on `GitHub` reducing bounce back-and-forward runs to the actions runners." So the pre-commit hook's `make check` and `agent-push`'s run both stay. Contention is handled by scheduling instead: rule 9 of `planning/agent-queues/_rules.md` allows at most two full suites at once on jeff-wiggle (three since 23 Nov 18:30, the user's call, once `pytest-xdist` made each run shorter), with the DeepSeek agents' tasks first. Every suite runs through `~/.local/share/udl-agents/wait-slot`, which holds one of the slots while it runs.
 - **25.12 merges without its OpenAI turn (the user, Q-13, 23 Nov 2026 AEDT):** the card's MCP smoke turn (`get_status` over udl's MCP) can't run on jeff-wiggle's local model, because Codex 0.171 offers an MCP server's tools only to OpenAI's own models, and the test key's OpenAI account has no credit (Q-11). The user said: "Yes, merge without the `OpenAI` test turn. If there's issues, we will figure them out when `Norbert` tries to connect as I use `Claude` and will continue to do so via `MCP` (so this feature doesn't really apply to me)". So 25.12 merged (#64) and is `[~]`, not `[x]`, until Norbert's first real use runs that turn. The smoke test keeps the turn and skips it, saying why, until a model is named (`UDL_CODEX_MODEL`).
+- **Claude force-pushes its own branches (the user, Q-14, 23 Nov 2026 AEDT):** `main` needs branches to be up to date, so with several merges an hour Claude's own PRs kept falling behind, and Claude replaced each one with a new branch and PR (#86 → #89 → #91). Asked whether it could push its own PR branches `--force-with-lease`, the user said: "Yes, as long you've determined no conflicts and that it won't cause any issues". So Claude rebases its own branch onto `origin/main`, checks that the rebase had no conflicts, and pushes it with a lease. It never does this to an agent's branch (an agent rebases its own, through `agent-push`) or to `main`, and never with a plain `--force`.
+- **The permission rule (the user, Q-15, 23 Nov 2026 AEDT):** Claude Code doesn't let Claude write its own permission rules, so the user installed the allow and deny rules for that push in udl's `.claude/settings.local.json`, which `.git/info/exclude` keeps out of git.
+- **Only `agent-push` (the user, Q-16, 23 Nov 2026 AEDT: "sure, do it"):** Claude Code warned that the `git -C …/udl-wt/* push …` rules allowed any option at their `*`. That let in `-c core.sshCommand=…`, and the other rules let through `HEAD:refs/heads/main`, `--delete` and `--no-verify`. So the file now allows only `agent-push`, as an exact match, and keeps the deny list. Claude pushes its own branches the way the agents do, with `wait-slot agent-push` from the branch's worktree. That runs the gate under a rule 9 slot, refuses the main checkout, and leases on the remote sha it has just read.
+- **`pr-status`'s false "skipped" (the user, Q-18, 24 Nov 2026 AEDT):** on #91, `pr-status` said `USER` ("the review was skipped") although `claude-review.yml` matched `main`'s and the bot had said all clear. Its `coversHead` (oc-guard `src/lib/bot.ts`) took a follow-up's reviewed sha only from a backticked sha in a sentence that says "head", which udl's bot never writes. So every follow-up read as stale, and a review run under a minute long (after a PR body edit) read as skipped. Claude fixed it test-first as oc-guard `afa2481` (branch `udl`): a follow-up with no sha is dated like a full review. oc-guard is the guard over the agents, so only the user swaps its installed `dist`, and did on 24 Nov. thevault doesn't have it yet.
+- **1Password's SSH agent (the user, Q-19 and Q-20, 27 Nov 2026 AEDT):** from 24 Nov the agent stopped signing (`communication with agent failed`, though `ssh-add -l` listed the keys), so no agent could commit or push for three days. The user unlocked 1Password (Q-19). After that it asked for an approval once per process, which nobody saw (Q-20), so the user set it to remember approvals for all applications until it locks. To test: `ssh -T personalgit` answers `Hi yelrom0!` (plain `github.com` is another account), and `git -C ~/Documents/code/udl fetch` works with no prompt.
 
 **Phase 23 is done when:** a throwaway one-line PR opened by an implementation agent goes red on a failing test, green after the fix, gets the bot's review, and can only be merged through the PR.
 
@@ -1409,6 +1414,53 @@ Run by Claude on 22 Nov 2026 against `main` at `2858d25` (throwaway data dirs, a
   - on the fakes, all of the above;
   - on jeff-wiggle, an opt-in `-m host` test whose gate allocates past a 256 MiB cap is stopped and reported `memory` while the machine stays up. Claude runs it.
 
+- **Built (`deepseek-b`, 24 Nov 2026, PR #101):** the caps, the lanes and the cleanup, as the card
+  asked, with a few places the build reads the card differently.
+  - **What is there:** `HostShell.run()`/`stream()` take `limits: ResourceLimits | None` and a
+    `unit`; a host is probed once (`systemd-run --user --scope -q true`) and the answer is kept by
+    host name in the map a service's shells share (a shell is made per call, so keeping it in one
+    shell would probe before every gate and every turn), and a capped run is a transient user
+    scope with `MemoryMax` and `MemorySwapMax=0`. Where
+    the probe fails, the run goes ahead and its result says `limits="unenforced"`. `ProcessResult`
+    carries that state, and a capped run ending on 137/-9 that udl did not stop raises `OverCap`
+    ("passed its memory cap of 4 GiB"). A stop ends the push, so the reason is in the `NotAllowed`
+    (`hint` starts `stopped: memory` or `stopped: timeout`, then the gate's or the cleanup's own
+    output) rather than in a `PushResult` that is never returned, so no field records a stop that
+    nothing ever reads. A timeout `systemctl --user stop <unit>.scope`s the unit, so the suite's
+    children go with it — only where the host really enforces caps (elsewhere there is no unit,
+    and a stop that fails is said in the hint instead of raised), and `gate_cleanup` runs after
+    either stop — not after a gate that failed on its own. `OrchSettings` has `gates_per_host`, `gate_memory` (4 GiB) and
+    `session_memory` (20 GiB), all `ByteSize | None` but `gates_per_host`; `Repo` has
+    `gate_cleanup`. The lane takes one of `gates_per_host` leases (`orch-gate:<host>:<n>`), and a
+    push with slots waits as before.
+  - **Sessions:** `SessionSpec` gains `memory` and `unit` (a prefix), and `command`, `codex` and
+    `claude-code` run each turn as `udl-session-<agent>-<8 hex>`; an `OverCap` from the shell is
+    that turn's `RunnerFailed` and `TurnEnded(ERROR)`; a person's chat (27.11) is capped the same
+    way, as `udl-session-chat-<8 hex>`. Over SSH a capped run is wrapped so the shell waits for it
+    and exits with its code (`reports_status`): a shell that `exec`s a program the kernel kills
+    dies with it, and sshd then reports a signal, so the client exits 255 — "the host was not
+    reached" — instead of 137. `opencode` runs its turns in its service, so
+    its health reports the unit's `MemoryMax` and `OOMPolicy`, and `problems` says when there is no
+    cap or when `OOMPolicy` is not `continue`.
+  - **Read differently:** the unit name is `unit_name(prefix, *parts)` — udl's own prefix stays
+    literal, and only the parts go through `escaped()` (`systemd-escape`'s rules, except that a `-`
+    inside a part is kept: it is how the parts are joined, and `deepseek-b` reads better than
+    `deepseek\x2db`; a leading `-` is still escaped). So the gate's unit is
+    `udl-gate-udl-27.3a-0a1b2c3d` and a turn's `udl-session-deepseek-b-0a1b2c3d`.
+  - **Left out:** `udl hosts check` does not yet say whether a host has user systemd (the gate's
+    own result says `unenforced` instead, which is where a person meets it). The card's second
+    done-when is the `-m host` test on jeff-wiggle, which Claude runs: `pyproject.toml` gains a
+    `host` marker, deselected by default like `network`, and `tests/integration/test_host_caps.py`
+    is `pytest -m host`.
+  - **Tests:** `tests/unit/test_host_limits.py` (names, the argv, the words of a cap, the probe
+    asked once per host), `tests/integration/test_host_caps.py` (a real scope's own `memory.max`,
+    no systemd, a 1 GiB allocation stopped at 256 MiB, and a capped run through the remote line
+    arriving as 137 and never 255), `tests/integration/plugins/apps/orch/test_gate_caps.py`
+    (memory, timeout, a timeout where the host caps nothing, a stop that fails, cleanup only
+    after a stop, 137 unenforced, the unit's name), `test_gate_lane.py` (two slots, a third
+    waiting), `test_chat.py` (a chat's turn is capped), and the runners' own files (the cap and
+    unit each turn gets, `RunnerFailed` at the cap, `opencode`'s `MemoryMax`/`OOMPolicy`).
+
 **27.13 Host health, and what udl does about it** · needs 27.12, 28.2, 25.11 · size L (the user, 23 Nov 2026)
 - Why: on 23 Nov btrfs ran out of unallocated space. `df` still showed 116 GiB free, but metadata couldn't grow, so every commit failed with "No space left on device". Later, five full suites at once took disk I/O pressure to 50%. Claude caught both by hand every half hour. This makes it udl's.
 - Build: `orch/health.py`.
@@ -1593,6 +1645,7 @@ This is human-comms.md as data. Its three sections become three lists with the s
   - one on another branch is left, and noted;
   - one that diverged is left, and noted.
 - Done when: on the fakes, after a three-PR stack merges, the host's checkout is at the last merge.
+- **Built (`ernie-c`, 23 Nov 2026, PR #97):** `checkout.py` — after a merge, for each host in `Repo.checkouts`, `git -C <checkout> fetch origin <base>`, then `git merge --ff-only origin/<base>` when the checkout is on `<base>`, clean and can take it. A checkout on another branch, with uncommitted changes, diverged, or on an unreachable host is left as it is, with a `system` note on the merged task and an `orch.checkout.behind` event naming the checkout and why; it never fails the merge. `Orch._follow_checkout` calls it from `_merge_now` (so every merge — a person's, an agent's own, the watcher's and auto merge's — follows), and it uses the merged pull's own repo and that repo's base. Tests, written first, in `tests/unit/plugins/apps/orch/test_checkout.py` (9), and five through a real merge in `test_merge_operations.py` (a merge moves the checkout; a left-behind one gets its note and event through the merge; two merges give two events; a three-PR stack, merged one after another, leaves the checkout at the last merge — the card's Done when; and a follow that raises leaves a note and the merge still stands): a clean checkout moves to the merge commit; a dirty one, one on another branch and one that diverged are left and noted; a host the records do not have is named `not known`, a path that is not a repo is `its fetch failed`, a fetch that runs out of time is `timed out`, and one bad host never stops the others. A real merge through `orch_merge` moves the host's checkout to the merge commit, a checkout left behind gets its `system` note and its `orch.checkout.behind` event through the merge, two merges give two events, a three-PR stack merged in turn leaves the checkout at the last merge, and a follow that raises leaves a note with the merge still standing.
 - **Fix (deepseek-b, 27 Nov 2026, PR #109):** `test_checkout.py` was the only test that committed in a repo of its own without `tests/support/git.py`, so it ran the machine's git: with `commit.gpgsign` on, its eight temp-repo tests tried to sign through 1Password and errored whenever the agent refused. It takes support's `GIT` (a test's own identity, no signing, no hooks) and `inherited()`'s environment now, so a `make check` under the pre-commit hook never works on the repo it was run from. Its own commit in #109, because it blocked that PR's gates.
 
 **Phase 28 is done when:** that test passes, and `udl orch inbox` during it shows each stage.
@@ -1724,6 +1777,7 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 - Done when: `make e2e` passes in both themes.
 - **Q-8 (user, 21 Nov 2026):** it covers 29.11 and 29.12 too: the Progress page for a fixture history, and a chat that allows a permission and assigns a task.
 - **Moved here from 29.6 (deepseek-a, 24 Nov 2026, PR #103):** an agent's page watched for a fake session stream, because a session is started by the dispatcher and the e2e config leaves automations off. This card's `FakeRunner` is the harness that starts one: the e2e opens an agent's page, sends it a task through `orch_assign`, and sees the transcript grow line by line in both themes.
+- **Moved here from 29.4 (deepseek-a, 24 Nov 2026, PR #99):** the last step of 29.4's Done when, where the dragged task goes `in_progress` live. 29.4's e2e server runs with `[automations] enabled = false` and no dispatcher, so its dragged suggestion stops at `queued`. This card's hub runs 27.7's dispatcher on its `FakeRunner`, so its e2e drags a suggested task onto a fake agent on the board and watches the card go `in_progress` without a reload, in both themes.
 
 **29.11 Progress** · needs 29.2, 27.10 · size L (O-D14)
 - Build: the route `progress`, with a "Progress" nav item after Board.
@@ -1798,8 +1852,6 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
   is the end-to-end run and whose own line is "a chat that allows a permission and assigns a task"
   — that turn changes the board, and it belongs to the run that checks the board.
 - **Asked… (deepseek-a, 24 Nov 2026):** nothing.
-
-**Phase 29 is done when:** with `udl serve` on real connections, the user assigns a task by dragging it, answers the agent's question, and merges its PR, all from `/ui/p/orch/`.
 
 **Decisions made while building 29:**
 
