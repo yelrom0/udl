@@ -16,13 +16,13 @@ note and an `orch.checkout.behind` event. A host that cannot be reached is noted
 import subprocess
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Final
 
 # Package Imports
 import pytest
 
 # Local Imports
 from support.engine import settings
+from support.git import GIT
 from support.harnesses import ScriptedShell
 from udl.core.service import UDLService
 from udl.errors import PluginFailed
@@ -42,20 +42,6 @@ from udl.plugins.apps.orch.records import (
     TaskRecords,
 )
 from udl.process import ProcessResult
-
-# (The repo a test makes is its own: no signing, which the machine's git does with 1Password and
-# which refuses under load, and no hooks from the machine's own settings. The variables a hook
-# exports are dropped, so a `make check` under the pre-commit hook never works on the repo it was
-# run from — `tests/support/git.py` says the same.)
-GIT: Final[list[str]] = [
-    "git",
-    "-c",
-    "commit.gpgsign=false",
-    "-c",
-    "tag.gpgsign=false",
-    "-c",
-    "core.hooksPath=/dev/null",
-]
 
 
 def git(cwd: Path, *args: str) -> str:
