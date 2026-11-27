@@ -356,6 +356,20 @@ _MERGED: Final = "github.pr.merged"
 _CLOSED: Final = "github.pr.closed"
 """The event it publishes for one closed without merging."""
 
+
+def _merged_by(text: str) -> str | None:
+    """Who a done row was merged by, read from the note `after_merge` writes (`merge.py`), or None
+    when the note is not one. A name may hold a dot, so the note's own tail is what comes off,
+    not the first full stop: "Merged by a.b." is `a.b`. The tail is `, and done: …`, so a comma
+    ends the name (a person's name does not hold one)."""
+    if not text.startswith("Merged by "):
+        return None
+    rest = text[len("Merged by ") :]
+    auto = " (auto merge)" in rest
+    who = rest.replace(" (auto merge)", "").split(",")[0].rstrip(".")
+    return f"{who} (auto merge)" if auto else who
+
+
 _UNSTARTED: Final = ("open", "blocked")
 """The states a task is split in: its spec is not yet being written (nor written)."""
 
@@ -2841,9 +2855,20 @@ class Orch(AppPlugin[OrchSettings]):
                 blockers = [f"its pull could not be read: {error}"]
         if task.hold is not None:
             blockers = [f"it is on hold: {task.hold}"]
+        # (Who merged it, for a row that is done: the note `after_merge` writes says so, and
+        # whether it was the merger's own merge.)
+        merged_by = ""
+        if task.state in (MERGED, DONE):
+            for note in reversed(
+                await stored.NoteRecords(self.records).for_owner(OwnerKind.TASK, task.id)
+            ):
+                said = _merged_by(note.text)
+                if said is not None:
+                    merged_by = said
+                    break
+        reviews = await stored.ReviewRecords(self.records).for_task(project.name, task.key)
         # (The newest verdict on this pull: `changes asked` is the merger's, and a review of a
         # head the pull has since moved past says nothing about this one.)
-        reviews = await stored.ReviewRecords(self.records).for_task(project.name, task.key)
         asked = reviews[0] if reviews else None
         if asked is not None and link.state.head_sha and asked.head != link.state.head_sha:
             asked = None
@@ -2867,6 +2892,9 @@ class Orch(AppPlugin[OrchSettings]):
             number=number,
             url=link.url,
             sha=link.state.head_sha,
+            checks=link.state.checks,
+            review=link.state.review,
+            merged_by=merged_by,
             state=task.state,
             needs=list(task.needs),
             blockers=blockers,

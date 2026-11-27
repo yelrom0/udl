@@ -7809,6 +7809,18 @@
             "title": "Blockers",
             "type": "array"
           },
+          "checks": {
+            "default": "none",
+            "description": "How its pull's checks are: pass, fail, pending or none.",
+            "enum": [
+              "pass",
+              "fail",
+              "pending",
+              "none"
+            ],
+            "title": "Checks",
+            "type": "string"
+          },
           "feature": {
             "description": "The feature it belongs to.",
             "maxLength": 40,
@@ -7831,6 +7843,12 @@
             "description": "Whether it is held: built now, merged later.",
             "title": "Hold",
             "type": "boolean"
+          },
+          "merged_by": {
+            "default": "",
+            "description": "Who merged it (a done row's; empty for one not merged).",
+            "title": "Merged By",
+            "type": "string"
           },
           "merger": {
             "anyOf": [
@@ -7865,6 +7883,18 @@
           "repo": {
             "description": "Its repo, in full (`owner/name`).",
             "title": "Repo",
+            "type": "string"
+          },
+          "review": {
+            "default": "none",
+            "description": "What its pull's review says: approve, changes, commented or none.",
+            "enum": [
+              "approved",
+              "changes",
+              "pending",
+              "none"
+            ],
+            "title": "Review",
             "type": "string"
           },
           "sha": {

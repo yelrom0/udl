@@ -30,6 +30,7 @@ from support.e2e import (
     Control,
     environment,
     free_port,
+    github,
     half_built,
     main,
     port_from,
@@ -192,6 +193,23 @@ def test_the_control_api_takes_what_a_test_delivers() -> None:
     assert control.next_ai() == "one"
     assert control.next_ai() == "two"
     assert control.next_ai() == "I am a fake AI."
+
+
+def test_the_control_api_holds_the_fake_github_and_says_what_it_was_asked() -> None:
+    # (29.8: a test pushes a head and reads what the watcher looked at, so the harness serves a
+    # fake GitHub of its own beside the site.)
+    control = Control()
+
+    with serving(control) as port, github() as (fake, gh_port):
+        control.fake_github = fake
+        post(port, "/github", {"sha": "abc1235"})
+        assert fake.pull_of("acme/widgets", 7).head.sha == "abc1235"
+
+        asked = urllib.request.urlopen(f"http://127.0.0.1:{port}/github-calls", timeout=5)
+        with asked:
+            assert asked.status == 200
+            assert json.loads(asked.read())["calls"] == []
+        assert gh_port > 0
 
 
 def test_the_control_api_says_no_to_what_it_does_not_take() -> None:
