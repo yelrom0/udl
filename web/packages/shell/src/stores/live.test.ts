@@ -66,7 +66,7 @@ describe("the live store", () => {
 		expect(useLive).toBeTypeOf("function");
 	});
 
-	it("keeps an event once, as its latest copy: stored, then dispatched (Q: 18.6-dupe)", () => {
+	it("keeps an event once, as its latest copy: stored, then dispatched (18.6)", () => {
 		// (18.6's stream sends an event twice by design: when it is stored, and when it is
 		// dispatched. The timeline is of events, not of notices.)
 		pushEvent({
@@ -90,6 +90,33 @@ describe("the live store", () => {
 		expect(events).toHaveLength(2);
 		expect(events[0]?.data).toMatchObject({ id: "e-1", status: "dispatched" });
 		expect(events[1]?.data).toMatchObject({ id: "e-2" });
+	});
+
+	it("keeps an event's time and place when another's comes between its two copies", () => {
+		pushEvent({
+			name: "event",
+			at: "2026-11-28T01:00:00Z",
+			data: { id: "e-1", status: "pending" },
+		});
+		pushEvent({
+			name: "event",
+			at: "2026-11-28T01:00:01Z",
+			data: { id: "e-2", status: "pending" },
+		});
+		pushEvent({
+			name: "event",
+			at: "2026-11-28T01:00:02Z",
+			data: { id: "e-1", status: "dispatched" },
+		});
+
+		const { events } = live.getState();
+
+		// (Its place and its time are when it happened; only what udl said of it is newer.)
+		expect(events.map((one) => one.data)).toEqual([
+			{ id: "e-1", status: "dispatched" },
+			{ id: "e-2", status: "pending" },
+		]);
+		expect(events.map((one) => one.at)).toEqual(["2026-11-28T01:00:00Z", "2026-11-28T01:00:01Z"]);
 	});
 
 	it("keeps a run's notices as they come: they are not one event", () => {
