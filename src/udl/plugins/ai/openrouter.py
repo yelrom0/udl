@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 # Local Imports
 from udl.db.models import JsonObject
 from udl.errors import UDLError
-from udl.plugins.ai.base import ChatRequest, ModelInfo, ModelPricing, ProviderHealth
+from udl.plugins.ai.base import ChatRequest, KeyStatus, ModelInfo, ModelPricing, ProviderHealth
 from udl.plugins.ai.openai import OpenAICompatibleProvider, OpenAIOptions, as_money
 
 DEFAULT_URL: Final = "https://openrouter.ai/api/v1"
@@ -88,7 +88,19 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             detail = f"{key.label}: used {used} USD; {credit} of {limit} USD left"
         else:
             detail = f"{key.label}: used {used} of {limit} USD ({credit} left)"
-        return ProviderHealth(ok=True, detail=detail, credit_left=credit)
+        return ProviderHealth(
+            ok=True,
+            detail=detail,
+            credit_left=credit,
+            key=KeyStatus(
+                label=key.label,
+                spent=used,
+                limit=limit,
+                left=credit,
+                spent_today=as_money(key.usage_daily),
+                is_free_tier=key.is_free_tier,
+            ),
+        )
 
     async def models(self) -> list[ModelInfo]:
         """The models it has (GET /models): what each takes, whether it takes tools, and what it
@@ -132,6 +144,8 @@ class _KeyInfo(BaseModel):
     usage: JsonValue = None
     limit: JsonValue = None
     limit_remaining: JsonValue = None
+    usage_daily: JsonValue = None
+    is_free_tier: bool | None = None
 
 
 class _Key(BaseModel):

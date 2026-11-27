@@ -14,7 +14,7 @@ is set through one service and read through another (each CLI run makes its own)
 # System Imports
 import inspect
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from pathlib import Path
 from typing import Any, Final
 
@@ -23,23 +23,29 @@ import pytest
 from mcp.types import TextContent
 from typer.core import TyperCommand, TyperGroup
 
+from support.ai_servers import FakeOpenRouter
+
 # Local Imports
 from support.api import client_for as api_client_for
 from support.cli import CLI
 from support.interfaces import Harness
 from support.mcp import client_for as mcp_client_for
 from support.runners import SharedRunner
+from udl.db.manager import DBManager
 from udl.interfaces.adapters import cli_groups
 from udl.interfaces.cli.common import operation_of
+from udl.plugins.ai.base import AIProviderConnection
+from udl.plugins.ai.openrouter import OpenRouterProvider
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.agents import AgentRole, ManagerPowers, SessionState
 from udl.plugins.apps.orch.plugin import Orch
 from udl.plugins.apps.orch.records import Agent, AgentRecords, AgentSession, SessionRecords
-from udl.plugins.registry import APPS, RUNNERS
+from udl.plugins.registry import AI, APPS, RUNNERS
 from udl.plugins.runners.base import SessionSpec
 
 CATALOGUE: Final[dict[str, tuple[str, ...]]] = {
     "orch_inbox": ("orch", "inbox"),
+    "orch_usage": ("orch", "agents", "usage"),
     "orch_list_projects": ("orch", "projects"),
     "orch_get_project": ("orch", "projects", "show"),
     "orch_set_project": ("orch", "projects", "set"),
@@ -395,3 +401,178 @@ def test_the_owner_turns_auto_merge_on_over_the_cli(with_a_merger: Harness) -> N
     assert shown.exit_code == 0, shown.output
     found = json.loads(shown.stdout)
     assert (found["project"]["auto_merge"], found["project"]["merger"]) == (True, "claude")
+
+
+# ---------------------------------------------------------------------------------------------
+# 27.14: what each agent has left, on the CLI and over MCP
+# ---------------------------------------------------------------------------------------------
+
+
+def test_the_usage_table_shows_a_paid_and_a_free_agent(harness: Harness) -> None:
+    """The card's Done when: a paid agent's money left and a free agent's requests left, with
+    its reset time, on the CLI and over MCP."""
+    _wire_openrouter(harness)
+
+    def seed(db: DBManager) -> Awaitable[object]:
+        return db.upsert_record(
+            AIProviderConnection(
+                name="openrouter",
+                plugin="openrouter",
+                options={"api_key": "sk-or-v1-test"},
+                default_model="fake-1",
+            )
+        )
+
+    harness.seed(seed)
+    harness.seed(_save_agents)
+
+    result = CLI(harness)("orch", "agents", "usage", "--json")
+
+    assert result.exit_code == 0, result.output
+    rows = json.loads(result.stdout)["items"]
+    by = {one["agent"]: one for one in rows}
+    # (FakeOpenRouter's key has a limit and is not on the free tier: a paid key, 1,000 a day.)
+    assert by["deepseek-b"]["paid"]["left"] == "8.75"
+    assert by["ernie-c"]["free"] is not None
+    assert by["ernie-c"]["free"]["allowance"] == 1000
+    assert by["ernie-c"]["free"]["resets_at"].endswith("T00:00:00Z")
+
+    # (The table, not just --json: the renderer is what a person reads.)
+    table = CLI(harness)("orch", "agents", "usage")
+
+    assert table.exit_code == 0, table.output
+    assert "deepseek-b" in table.stdout
+    assert "ernie-c" in table.stdout
+    assert "8.75" in table.stdout
+    assert "1,000" in table.stdout
+
+
+async def _save_agents(db: DBManager) -> None:
+    """(The two agents the usage table is of: one paid, one free.)"""
+    await db.upsert_record(
+        Agent(name="deepseek-b", title="deepseek-b", runner="fake", model="deepseek/chat")
+    )
+    await db.upsert_record(
+        Agent(name="ernie-c", title="ernie-c", runner="fake", model="deepseek/free")
+    )
+
+
+def _wire_openrouter(harness: Harness) -> FakeOpenRouter:
+    """(The fake OpenRouter, as the provider's transport: the service's HTTP client is the
+    fake's, so nothing here patches the provider itself.)"""
+    fake = FakeOpenRouter()
+    harness.registry.register(AI, OpenRouterProvider)
+    harness.http = fake.http()
+    return fake
+
+
+async def test_the_usage_comes_over_mcp(harness: Harness) -> None:
+    """(The same answer over MCP: the operation is offered, and its rows are the CLI's —
+    the paid key's money and the free agent's requests.)"""
+    _wire_openrouter(harness)
+
+    async with harness.service() as service:
+        await service.db.upsert_record(
+            AIProviderConnection(
+                name="openrouter",
+                plugin="openrouter",
+                options={"api_key": "sk-or-v1-test"},
+                default_model="fake-1",
+            )
+        )
+        await _save_agents(service.db)
+
+    async with mcp_client_for(harness) as client:
+        listed = (await client.list_tools()).tools
+        assert "orch_usage" in {tool.name for tool in listed}
+
+        answer = await client.call_tool("orch_usage", {})
+
+    assert answer is not None
+    first = answer.content[0]
+    assert isinstance(first, TextContent)
+    rows = json.loads(first.text)["items"]
+    by = {one["agent"]: one for one in rows}
+    assert by["deepseek-b"]["paid"]["left"] == "8.75"
+    assert by["ernie-c"]["free"]["allowance"] == 1000
+
+
+def test_an_agent_s_answer_carries_its_usage_line(harness: Harness) -> None:
+    """(27.14: `orch_get_agent` fills `AgentInfo.usage` — the one-line `line` — and asks the
+    provider once, not once per agent.)"""
+    _wire_openrouter(harness)
+
+    def seed(db: DBManager) -> Awaitable[object]:
+        return db.upsert_record(
+            AIProviderConnection(
+                name="openrouter",
+                plugin="openrouter",
+                options={"api_key": "sk-or-v1-test"},
+                default_model="fake-1",
+            )
+        )
+
+    harness.seed(seed)
+    harness.seed(_save_agents)
+
+    result = CLI(harness)("orch", "agents", "show", "deepseek-b", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["usage"] == "$8.75 of $10 left"
+
+
+def test_the_provider_is_the_one_the_model_names(harness: Harness) -> None:
+    """(27.14: an agent whose model names a provider spends that provider's key, not the first
+    enabled connection's — here an `openai` connection that answers nothing is first.)"""
+    from udl.plugins.ai.openai import OpenAICompatibleProvider
+
+    _wire_openrouter(harness)
+    harness.registry.register(AI, OpenAICompatibleProvider)
+
+    def seed(db: DBManager) -> Awaitable[object]:
+        return _two_connections(db)
+
+    harness.seed(seed)
+    harness.seed(lambda db: _save_one_agent(db, "deepseek-b", "openrouter/deepseek/chat"))
+
+    result = CLI(harness)("orch", "agents", "usage", "--json")
+
+    assert result.exit_code == 0, result.output
+    # (The openrouter key's money: the openai connection was never asked.)
+    assert json.loads(result.stdout)["items"][0]["paid"]["left"] == "8.75"
+
+
+async def _two_connections(db: DBManager) -> None:
+    """(An `openai` connection that answers nothing, and the `openrouter` one that does.)"""
+    await db.upsert_record(
+        AIProviderConnection(
+            name="openai",
+            plugin="openai",
+            options={"api_key": "sk-test", "url": "http://127.0.0.1:9/v1"},
+            default_model="gpt-4",
+        )
+    )
+    await db.upsert_record(
+        AIProviderConnection(
+            name="openrouter",
+            plugin="openrouter",
+            options={"api_key": "sk-or-v1-test"},
+            default_model="fake-1",
+        )
+    )
+
+
+async def _save_one_agent(db: DBManager, name: str, model: str) -> None:
+    """(One agent, on `model`.)"""
+    await db.upsert_record(Agent(name=name, title=name, runner="fake", model=model))
+
+
+def test_an_agent_with_no_provider_has_an_empty_usage_line(harness: Harness) -> None:
+    """(27.14: a paid agent with no provider connection has nothing to measure, and
+    `AgentInfo.usage` is empty rather than the placeholder line.)"""
+    harness.seed(lambda db: _save_one_agent(db, "deepseek-b", "deepseek/chat"))
+
+    result = CLI(harness)("orch", "agents", "show", "deepseek-b", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["usage"] == ""

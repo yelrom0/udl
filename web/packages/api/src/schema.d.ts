@@ -1497,6 +1497,9 @@ export interface paths {
         /**
          * One agent, with its queue, its current session and the agents that report to it.
          * @description One agent, with its queue, its current session and the agents that report to it.
+         *
+         *     Its usage line is the one `orch_usage` gives (27.14): the same per-provider health and
+         *     the same account-wide `left`, so the two never disagree.
          */
         post: operations["orch_get_agent"];
         delete?: never;
@@ -2655,6 +2658,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/orch/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What each agent has left (27.14): a paid key's money, or a free model's requests
+         * @description What each agent has left (27.14): a paid key's money, or a free model's requests
+         *     today with its reset. Never the key itself.
+         */
+        post: operations["orch_usage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plugins/{name}/settings": {
         parameters: {
             query?: never;
@@ -3636,6 +3660,13 @@ export interface components {
             session?: components["schemas"]["AgentSession"] | null;
             /** @description What it is doing now (derived: never stored). */
             status: components["schemas"]["AgentStatus"];
+            /**
+             * Usage
+             * @description What it has left, in one line (27.14: `$3.36 of $8 left`, or `412 of 1,000 requests
+             *     left, resets 11:00`); empty for an agent with nothing to measure.
+             * @default
+             */
+            usage: string;
         };
         /**
          * AgentLine
@@ -3752,6 +3783,61 @@ export interface components {
          * @enum {string}
          */
         AgentStatus: "idle" | "working" | "waiting" | "limited" | "offline" | "paused";
+        /**
+         * AgentUsage
+         * @description What one agent has left (27.14).
+         */
+        AgentUsage: {
+            /** @description The agent it is of. */
+            agent: components["schemas"]["Name"];
+            /**
+             * Cost
+             * @description What its turns cost today, when its harness says.
+             */
+            cost?: string | null;
+            /** @description Its free allowance's usage, for a free model (None: a paid one). */
+            free?: components["schemas"]["FreeUsage"] | null;
+            /**
+             * Limited Until
+             * @description When its harness's quota is back, when its session says (27.7).
+             */
+            limited_until?: string | null;
+            /**
+             * Model
+             * @description The model it runs (empty: its runner's default).
+             * @default
+             */
+            model: string;
+            /** @description Its provider key's usage, for a paid model (None: a free one, or no provider). */
+            paid?: components["schemas"]["KeyUsage"] | null;
+            /**
+             * Requests Today
+             * @description The requests its sessions sent today, whatever it runs.
+             * @default 0
+             */
+            requests_today: number;
+            /** @description The runner it runs. */
+            runner: components["schemas"]["Name"];
+            /**
+             * State
+             * @description Where its usage is: ok, low, or out.
+             * @default ok
+             * @enum {string}
+             */
+            state: "ok" | "low" | "out";
+            /**
+             * Tokens In
+             * @description The tokens it was given today.
+             * @default 0
+             */
+            tokens_in: number;
+            /**
+             * Tokens Out
+             * @description The tokens it wrote today.
+             * @default 0
+             */
+            tokens_out: number;
+        };
         /**
          * Agents
          * @description Every agent, each as `AgentInfo` answers one.
@@ -5959,6 +6045,37 @@ export interface components {
             unsized: number;
         };
         /**
+         * FreeUsage
+         * @description A free model's allowance: what the account has, what this agent has sent, and when the
+         *     allowance resets.
+         */
+        FreeUsage: {
+            /**
+             * Allowance
+             * @description What the account may send a day: 50, or 1,000 once it has bought credits.
+             * @default 50
+             */
+            allowance: number;
+            /**
+             * Left
+             * @description What is left of the allowance today (the account's, shared by every agent on it).
+             * @default 0
+             */
+            left: number;
+            /**
+             * Requests Today
+             * @description The requests this agent's sessions sent today (each `Usage` event is one).
+             * @default 0
+             */
+            requests_today: number;
+            /**
+             * Resets At
+             * Format: date-time
+             * @description When the allowance resets (00:00 UTC).
+             */
+            resets_at: string;
+        };
+        /**
          * GateRun
          * @description The gate a push ran: how it ended, and the end of what it printed.
          */
@@ -6865,6 +6982,44 @@ export interface components {
             pick: components["schemas"]["Pick"];
         };
         JsonValue: unknown;
+        /**
+         * KeyUsage
+         * @description What a provider key has left, as its provider says (25.3's `ProviderHealth.key`).
+         */
+        KeyUsage: {
+            /**
+             * Free Tier
+             * @description Whether the account is on the free tier (OpenRouter's `is_free_tier`); None when the
+             *     provider does not say.
+             */
+            free_tier?: boolean | null;
+            /**
+             * Label
+             * @description The provider's own label for the key (never the key itself).
+             * @default
+             */
+            label: string;
+            /**
+             * Left
+             * @description What is left, in USD (the provider's `limit_remaining`, or `limit - spent`).
+             */
+            left?: string | null;
+            /**
+             * Limit
+             * @description What it may spend, in USD (None: no limit).
+             */
+            limit?: string | null;
+            /**
+             * Spent
+             * @description What it has spent, in USD, when the provider says.
+             */
+            spent?: string | null;
+            /**
+             * Spent Today
+             * @description What it has spent today, when the provider says (`usage_daily`).
+             */
+            spent_today?: string | null;
+        };
         Length: components["schemas"]["Duration-Input"];
         /**
          * Link
@@ -11754,6 +11909,25 @@ export interface components {
              * @default 0
              */
             output_tokens: number;
+        };
+        /**
+         * UsageList
+         * @description What each agent has left (27.14), as `orch_usage` answers.
+         */
+        UsageList: {
+            /**
+             * Items
+             * @description One row per agent, by name.
+             */
+            items?: components["schemas"]["AgentUsage"][];
+        };
+        /**
+         * UsageRequest
+         * @description Who to report usage for (27.14): one agent, or every agent.
+         */
+        UsageRequest: {
+            /** @description Only this agent (None: every agent udl has). */
+            agent?: components["schemas"]["Name"] | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -21274,6 +21448,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskQueue"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorInfo"];
+                };
+            };
+        };
+    };
+    orch_usage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UsageRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageList"];
                 };
             };
             /** @description Bad Request */
