@@ -34,6 +34,8 @@ web/test-results/
 web/playwright/.cache/
 # (The e2e run's session cookie: it is the run's, not the repo's.)
 web/playwright/.auth/
+# (And the fake GitHub's address and token, which the harness writes for the tests.)
+web/playwright/.e2e-github.json
 src/udl/interfaces/web/dist/
 src/udl/plugins/integrations/*/ui/*.js
 src/udl/plugins/integrations/*/ui/*.map
