@@ -422,6 +422,7 @@ describe("an agent's page: the rest of what a person may do (29.6)", () => {
 		await read();
 
 		fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+		await settle();
 		const form = within(screen.getByRole("form", { name: "Edit deepseek-a" }));
 		expect((form.getByLabelText("Brief") as HTMLTextAreaElement).value).toBe("You build udl.");
 		fireEvent.change(form.getByLabelText("Title"), { target: { value: "DeepSeek A!" } });
