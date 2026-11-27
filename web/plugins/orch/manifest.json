@@ -32,7 +32,18 @@
 		"panels": [{ "id": "chat", "title": "Chat", "icon": "message-square", "shortcut": "Ctrl+J" }]
 	},
 	"generated": {
-		"tabs": ["settings"],
-		"hide": ["orch_*"]
+		"tabs": ["settings", "operations"],
+		"hide": ["orch_*"],
+		"show": [
+			"orch_list_runners",
+			"orch_runner_*",
+			"orch_list_projects",
+			"orch_get_project",
+			"orch_set_project",
+			"orch_delete_project",
+			"orch_set_repo",
+			"orch_delete_repo",
+			"orch_import_plan"
+		]
 	}
 }

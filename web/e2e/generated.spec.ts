@@ -33,9 +33,9 @@ test("a plugin with no UI plugin gets a page that does something", async ({ page
 	await page.getByRole("textbox", { name: "Name", exact: true }).fill(name);
 	// (What for: a read-only level would refuse the destructive operation.)
 	await page.getByRole("checkbox", { name: "write", exact: true }).check();
-	await page.getByLabel("Token name").fill("api_key");
-	await page.getByRole("button", { name: "Add token" }).click();
-	await page.getByRole("textbox", { name: "api_key" }).fill("e2e-fake-key");
+	// (29.9: udl says which tokens an account takes, so the form draws their own fields —
+	// labelled from the schema — rather than a name and a value typed by hand.)
+	await page.getByLabel(/Api Key/).fill("e2e-fake-key");
 	await page.getByRole("button", { name: "Connect", exact: true }).click();
 	await expect(page.getByText(`fake:${name}`)).toBeVisible();
 

@@ -74,6 +74,9 @@ export interface GeneratedAccounts {
 	/** What an account may be connected for, the default first. */
 	readonly access_levels: readonly string[];
 	readonly options_schema: JsonValue;
+	/** The tokens an account is connected with, as a schema (absent or empty: it takes none, or
+	 * udl does not say which, and the form takes their names and values as text). */
+	readonly tokens_schema?: JsonValue;
 }
 
 /** One plugin's page. */

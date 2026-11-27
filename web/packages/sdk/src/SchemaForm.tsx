@@ -262,6 +262,7 @@ function Control({ id, field, value, onChange, onClear, disabled, invalid, secre
 				id={id}
 				className={className}
 				set={value !== undefined}
+				{...(field.placeholder === undefined ? {} : { placeholder: field.placeholder })}
 				disabled={disabled}
 				onChange={onChange}
 				onClear={onClear}
@@ -366,6 +367,8 @@ interface SecretBoxProps {
 	readonly className: string;
 	/** Whether the form holds a value for it (it is not drawn back, only said to be set). */
 	readonly set: boolean;
+	/** What goes in it, when the field says (`x-udl-ui`'s placeholder). */
+	readonly placeholder?: string;
 	readonly disabled: boolean;
 	readonly onChange: (value: JsonValue) => void;
 	readonly onClear: () => void;
@@ -375,7 +378,15 @@ interface SecretBoxProps {
  * A password box that is never drawn back: it holds what was typed into it now, and never the
  * value the form holds — a secret that is set says so, and is not in the page's DOM.
  */
-function SecretBox({ id, className, set, disabled, onChange, onClear }: SecretBoxProps) {
+function SecretBox({
+	id,
+	className,
+	set,
+	placeholder,
+	disabled,
+	onChange,
+	onClear,
+}: SecretBoxProps) {
 	const [typed, setTyped] = useState("");
 	return (
 		<input
@@ -384,7 +395,9 @@ function SecretBox({ id, className, set, disabled, onChange, onClear }: SecretBo
 			className={className}
 			value={typed}
 			disabled={disabled}
-			placeholder={set ? "(set: type to replace)" : "(not set)"}
+			// (What the field says goes in it, when it says: a token that may be an `op://`
+			// reference is not "(not set)".)
+			placeholder={placeholder ?? (set ? "(set: type to replace)" : "(not set)")}
 			onChange={(event) => {
 				setTyped(event.target.value);
 				if (event.target.value === "") {

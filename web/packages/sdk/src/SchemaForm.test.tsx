@@ -368,6 +368,29 @@ describe("a secret with no value", () => {
 		expect(box.getAttribute("placeholder")).toBe("(not set)");
 		expect(box.getAttribute("value")).toBe("");
 	});
+
+	it("says what goes in it, when the field says (29.9)", () => {
+		render(
+			<SchemaForm
+				schema={{
+					type: "object",
+					properties: {
+						token: {
+							type: "string",
+							writeOnly: true,
+							"x-udl-ui": { label: "Token", placeholder: "ghp_… or op://vault/item/field" },
+						},
+					},
+				}}
+				value={{}}
+				onChange={() => {}}
+			/>,
+		);
+
+		expect(screen.getByLabelText("Token").getAttribute("placeholder")).toBe(
+			"ghp_… or op://vault/item/field",
+		);
+	});
 });
 
 describe("the form itself", () => {

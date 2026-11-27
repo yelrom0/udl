@@ -34,6 +34,7 @@ from pydantic import (
 
 # Local Imports
 from udl.automations.events import EventType
+from udl.core.operations import ui_field
 from udl.db.models import JsonObject
 from udl.db.records import Name
 
@@ -1810,7 +1811,13 @@ class SetProjectRequest(_Model):
 
     A new project needs a title; the rest it has by default."""
 
-    name: Name
+    name: Name = Field(
+        json_schema_extra=ui_field(
+            label="Project",
+            placeholder="udl",
+            help="The project's name: what it is found, and set, by.",
+        )
+    )
     """The project's name (what it is found, and set, by)."""
     title: Title | None = None
     """How it is shown (needed when it is a new project)."""
@@ -1857,9 +1864,22 @@ class SetRepoRequest(_Model):
 
     project: Name | None = None
     """Its project's name (None: the only one, while udl has one)."""
-    name: Name
+    name: Name = Field(
+        json_schema_extra=ui_field(
+            label="Repo",
+            placeholder="udl",
+            help="What the repo is called within the project.",
+        )
+    )
     """What the repo is called within the project."""
-    github: GitHubSlug | None = None
+    github: GitHubSlug | None = Field(
+        default=None,
+        json_schema_extra=ui_field(
+            label="On GitHub",
+            placeholder="yelrom0/udl",
+            help="Its GitHub repository, owner/repo (needed when it is a new repo).",
+        ),
+    )
     """Its GitHub repository: owner/repo (needed when it is a new repo)."""
     account: GitHubAccount | None = None
     """The github account udl reaches it through (needed when it is a new repo)."""
@@ -2246,9 +2266,22 @@ class UnplacedLine(_Model):
 class ImportPlanRequest(_Model):
     """Reading plan files into udl (26.7)."""
 
-    files: list[Text] = Field(min_length=1)
+    files: list[Text] = Field(
+        min_length=1,
+        json_schema_extra=ui_field(
+            label="Plan files",
+            placeholder="planning.md",
+            help="The plan files, by path: udl reads the tracker and the cards in them.",
+        ),
+    )
     """The plan files, by path."""
-    dry_run: bool = False
+    dry_run: bool = Field(
+        default=False,
+        json_schema_extra=ui_field(
+            label="Only report what it would do",
+            help="Write nothing: say what the import would create and change.",
+        ),
+    )
     """Whether to report what it would do, and write nothing."""
     project: Name | None = None
     """The project (None: the only one, while udl has one)."""

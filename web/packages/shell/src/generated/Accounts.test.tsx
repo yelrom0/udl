@@ -186,6 +186,58 @@ describe("an integration's accounts", () => {
 		);
 	});
 
+	it("draws the tokens udl says an account takes, with how each is shown (29.9)", async () => {
+		const fake = draw(
+			plugin({
+				accounts: {
+					connect: ["tokens"],
+					access_levels: ["read"],
+					options_schema: {},
+					tokens_schema: {
+						type: "object",
+						required: ["token"],
+						properties: {
+							token: {
+								type: "string",
+								writeOnly: true,
+								"x-udl-ui": {
+									label: "Token",
+									placeholder: "ghp_… or op://vault/item/field",
+									help: "Or a 1Password reference, read when used and never stored.",
+								},
+							},
+						},
+					},
+				},
+			}),
+		);
+		fake.handle("list_accounts", () => ({ accounts: [] }));
+		fake.handle("connect_account", () => ({
+			account: account("gmail", "work"),
+			authorization_url: null,
+		}));
+
+		await screen.findByText("No accounts yet.");
+		fireEvent.change(screen.getByLabelText("Name"), { target: { value: "work" } });
+		// (udl's hints, not a name typed by hand: the box says what goes in it.)
+		expect(screen.getByPlaceholderText("ghp_… or op://vault/item/field")).toBeDefined();
+		expect(
+			screen.getByText("Or a 1Password reference, read when used and never stored."),
+		).toBeDefined();
+		fireEvent.change(screen.getByLabelText(/Token/), { target: { value: "ghp_x" } });
+		fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+		await waitFor(() =>
+			expect(fake.calls.find((call) => call.id === "connect_account")?.body).toEqual({
+				integration: "gmail",
+				name: "work",
+				reconnect: false,
+				access: ["read"],
+				tokens: { token: "ghp_x" },
+			}),
+		);
+	});
+
 	it("takes an access level off again", async () => {
 		const fake = draw(
 			plugin({

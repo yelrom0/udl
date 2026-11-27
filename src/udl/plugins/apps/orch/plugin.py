@@ -29,7 +29,7 @@ from pydantic import BaseModel, SecretStr, ValidationError
 from udl.automations.events import EventType
 from udl.clock import Clock
 from udl.core.models import Deleted
-from udl.core.operations import CLISpec, Operation, OperationHints
+from udl.core.operations import CLISpec, Operation, OperationHints, UISpec
 from udl.db.manager import DBManager
 from udl.db.models import JsonObject
 from udl.db.records import Record, RecordQuery
@@ -669,6 +669,7 @@ class Orch(AppPlugin[OrchSettings]):
                 title="List the harnesses",
                 hints=OperationHints(read_only=True, open_world=True),
                 cli=CLISpec(path=_RUNNERS, options={"host": "--host"}),
+                ui=UISpec(group="Machines", order=0),
             ),
             cls.operation(
                 "runner_install",
@@ -679,12 +680,14 @@ class Orch(AppPlugin[OrchSettings]):
                     arguments=("host", "runner"),
                     options={"version": "--version"},
                 ),
+                ui=UISpec(group="Machines", order=1),
             ),
             cls.operation(
                 "runner_setup",
                 title="Set a harness up",
                 hints=OperationHints(admin=True, idempotent=True),
                 cli=CLISpec(path=(*_RUNNERS, "setup"), arguments=("host", "runner")),
+                ui=UISpec(group="Machines", order=2),
             ),
             cls.operation(
                 "runner_login",
@@ -695,24 +698,28 @@ class Orch(AppPlugin[OrchSettings]):
                     arguments=("host", "runner"),
                     options={"provider": "--provider"},
                 ),
+                ui=UISpec(group="Machines", order=3),
             ),
             cls.operation(
                 "runner_login_reply",
                 title="Answer a sign-in",
                 hints=OperationHints(admin=True, open_world=True, mcp=False),
                 cli=CLISpec(path=(*_RUNNERS, "login-reply"), arguments=("id", "text")),
+                ui=UISpec(group="Machines", order=4),
             ),
             cls.operation(
                 "runner_login_status",
                 title="Check a sign-in",
                 hints=OperationHints(admin=True, open_world=True, mcp=False),
                 cli=CLISpec(path=(*_RUNNERS, "login-status"), arguments=("id",)),
+                ui=UISpec(group="Machines", order=5),
             ),
             cls.operation(
                 "runner_logout",
                 title="Sign a harness out",
                 hints=OperationHints(admin=True, destructive=True),
                 cli=CLISpec(path=(*_RUNNERS, "logout"), arguments=("host", "runner", "confirm")),
+                ui=UISpec(group="Machines", order=6),
             ),
             cls.operation(
                 "host_health",
@@ -732,18 +739,21 @@ class Orch(AppPlugin[OrchSettings]):
                 title="List the projects",
                 hints=OperationHints(read_only=True),
                 cli=CLISpec(path=_PROJECTS),
+                ui=UISpec(group="Projects", order=0),
             ),
             cls.operation(
                 "get_project",
                 title="A project and its repos",
                 hints=OperationHints(read_only=True),
                 cli=CLISpec(path=(*_PROJECTS, "show"), arguments=("name",)),
+                ui=UISpec(group="Projects", order=1),
             ),
             cls.operation(
                 "set_project",
                 title="Create or edit a project",
                 hints=OperationHints(admin=True),
                 cli=CLISpec(path=(*_PROJECTS, "set")),
+                ui=UISpec(group="Projects", order=2),
             ),
             cls.operation(
                 "set_auto_merge",
@@ -756,18 +766,21 @@ class Orch(AppPlugin[OrchSettings]):
                 title="Delete a project",
                 hints=OperationHints(destructive=True, idempotent=True, admin=True),
                 cli=CLISpec(path=(*_PROJECTS, "rm"), arguments=("name",)),
+                ui=UISpec(group="Projects", order=3),
             ),
             cls.operation(
                 "set_repo",
                 title="Create or edit a repo",
                 hints=OperationHints(admin=True),
                 cli=CLISpec(path=(*_REPOS, "set")),
+                ui=UISpec(group="Repos", order=0),
             ),
             cls.operation(
                 "delete_repo",
                 title="Delete a repo",
                 hints=OperationHints(destructive=True, idempotent=True, admin=True),
                 cli=CLISpec(path=(*_REPOS, "rm"), arguments=("name",)),
+                ui=UISpec(group="Repos", order=1),
             ),
             cls.operation(
                 "list_features",
@@ -853,6 +866,7 @@ class Orch(AppPlugin[OrchSettings]):
                 title="Read plan files into udl",
                 hints=OperationHints(admin=True, idempotent=True),
                 cli=CLISpec(path=("orch", "import"), arguments=("files",)),
+                ui=UISpec(group="Import", order=0),
             ),
             cls.operation(
                 "list_agents",
