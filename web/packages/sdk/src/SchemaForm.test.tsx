@@ -519,6 +519,30 @@ describe("a list of lines (29.9)", () => {
 		expect((box as HTMLTextAreaElement).value).toBe("a/one\nb/two");
 	});
 
+	it("takes the field out when every line is gone, as the other boxes do", () => {
+		const onChange = vi.fn();
+		render(<SchemaForm schema={schema} value={{ repos: ["a/one"] }} onChange={onChange} />);
+
+		fireEvent.change(screen.getByLabelText("Repositories"), { target: { value: "" } });
+
+		// (Out of the value, not sent as `[]`: a `min_length=1` list would be refused.)
+		expect(onChange).toHaveBeenLastCalledWith({});
+	});
+
+	it("draws what the form holds again when it changes from outside, focused or not", () => {
+		const { rerender } = render(
+			<SchemaForm schema={schema} value={{ repos: ["a/one"] }} onChange={() => {}} />,
+		);
+		const box = screen.getByLabelText("Repositories") as HTMLTextAreaElement;
+		// (Half-typed, as a person leaves it: the box holds what was typed, not the value.)
+		fireEvent.change(box, { target: { value: "a/one\nc" } });
+		box.focus();
+
+		rerender(<SchemaForm schema={schema} value={{ repos: ["b/two"] }} onChange={() => {}} />);
+
+		expect(box.value).toBe("b/two");
+	});
+
 	it("reads a typed line as an item, and leaves out the empty ones", () => {
 		const onChange = vi.fn();
 		render(<SchemaForm schema={schema} value={{}} onChange={onChange} />);

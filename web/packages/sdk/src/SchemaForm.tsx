@@ -353,6 +353,7 @@ function Control({ id, field, value, onChange, onClear, disabled, invalid, secre
 				disabled={disabled}
 				invalid={invalid}
 				onChange={onChange}
+				onClear={onClear}
 			/>
 		);
 	}
@@ -432,6 +433,7 @@ interface LinesBoxProps {
 	readonly disabled: boolean;
 	readonly invalid: boolean;
 	readonly onChange: (value: JsonValue) => void;
+	readonly onClear: () => void;
 }
 
 /**
@@ -440,27 +442,40 @@ interface LinesBoxProps {
  * half-typed is not turned into an item and then read back trimmed; the value is the lines that
  * are not empty, each trimmed.
  */
-function LinesBox({ id, value, placeholder, disabled, invalid, onChange }: LinesBoxProps) {
-	const shown = Array.isArray(value) ? value.map((item) => String(item)).join("\n") : "";
-	const [typed, setTyped] = useState<string | null>(null);
+function LinesBox({ id, value, placeholder, disabled, invalid, onChange, onClear }: LinesBoxProps) {
+	const printed = Array.isArray(value) ? value.map((item) => String(item)).join("\n") : "";
+	const [text, setText] = useState(printed);
+	const [was, setWas] = useState(printed);
+
+	// (The value changed from outside the box — a reset, a loaded one: draw it again. What was
+	// typed is what set it, so `was` follows the lines the box sent.)
+	if (printed !== was) {
+		setWas(printed);
+		setText(printed);
+	}
+
 	return (
 		<textarea
 			id={id}
 			className={`textarea w-full${invalid ? " textarea-error" : ""}`}
-			value={typed ?? shown}
+			value={text}
 			disabled={disabled}
 			{...(placeholder === undefined ? {} : { placeholder })}
 			onChange={(event) => {
-				const text = event.target.value;
-				setTyped(text);
-				onChange(
-					text
-						.split("\n")
-						.map((line) => line.trim())
-						.filter((line) => line !== ""),
-				);
+				const typed = event.target.value;
+				setText(typed);
+				const lines = typed
+					.split("\n")
+					.map((line) => line.trim())
+					.filter((line) => line !== "");
+				setWas(lines.join("\n"));
+				if (lines.length === 0) {
+					// (Emptied: the field is taken out, not sent as `[]`, which a `min_length=1` list refuses.)
+					onClear();
+					return;
+				}
+				onChange(lines);
 			}}
-			onBlur={() => setTyped(null)}
 		/>
 	);
 }
