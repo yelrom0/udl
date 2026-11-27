@@ -27,9 +27,23 @@ describe("the orchestrator's manifest and its entry", () => {
 		expect(titles.indexOf("Progress")).toBe(titles.indexOf("Board") + 1);
 	});
 
-	it("keeps only the generated page's Settings tab, and hides every orch operation", () => {
-		expect(manifest.generated.tabs).toEqual(["settings"]);
+	it("keeps the Settings tab and the setup operations, and hides the rest (29.9)", () => {
+		// (Its day-to-day operations have pages of their own; its setup ones — projects, repos,
+		// machines, import — are what the generated page is for.)
+		expect(manifest.generated.tabs).toEqual(["settings", "operations"]);
 		expect(manifest.generated.hide).toEqual(["orch_*"]);
+		expect(manifest.generated.show).toEqual([
+			"orch_list_runners",
+			"orch_runner_*",
+			"orch_list_projects",
+			"orch_get_project",
+			"orch_set_project",
+			"orch_set_auto_merge",
+			"orch_delete_project",
+			"orch_set_repo",
+			"orch_delete_repo",
+			"orch_import_plan",
+		]);
 	});
 
 	it("names the files its bundle really has", () => {

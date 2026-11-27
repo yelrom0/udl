@@ -23,6 +23,8 @@ import { type Tab, tabsOf } from "./spec";
 export interface Guidance {
 	/** The operations not to show, a `*` at the end naming a prefix. */
 	readonly hide: readonly string[];
+	/** The operations to show even so (29.9): what a plugin's own pages do not cover. */
+	readonly show: readonly string[];
 	/** The operations to move under a group, by group (`Mail: ["gmail_list"]`). */
 	readonly groups: Readonly<Record<string, readonly string[]>>;
 	/** The groups' own order: the order their keys were given in. */
@@ -34,7 +36,7 @@ export interface Guidance {
 }
 
 /** The guidance nothing says. */
-const NOTHING: Guidance = { hide: [], groups: {}, groupOrder: [], order: [], labels: {} };
+const NOTHING: Guidance = { hide: [], show: [], groups: {}, groupOrder: [], order: [], labels: {} };
 
 /** Whether `pattern` names `name`: itself, or its prefix when it ends with `*`. */
 export function matches(pattern: string, name: string): boolean {
@@ -58,6 +60,7 @@ export function guidanceOf(manifests: readonly UIPluginInfo[], plugin: string): 
 		...reaching.filter((manifest) => (manifest.plugin ?? null) === plugin),
 	];
 	const hide: string[] = [];
+	const show: string[] = [];
 	const groups: Record<string, readonly string[]> = {};
 	const order: string[] = [];
 	const labels: Record<string, string> = {};
@@ -67,6 +70,7 @@ export function guidanceOf(manifests: readonly UIPluginInfo[], plugin: string): 
 			continue;
 		}
 		hide.push(...(given.hide ?? []));
+		show.push(...(given.show ?? []));
 		// (A group is a name, not an owner: a second manifest naming it adds its members.)
 		for (const [group, names] of Object.entries(given.groups ?? {})) {
 			const found = groups[group];
@@ -76,12 +80,12 @@ export function guidanceOf(manifests: readonly UIPluginInfo[], plugin: string): 
 		Object.assign(labels, given.labels ?? {});
 	}
 	if (
-		hide.length + order.length === 0 &&
+		hide.length + show.length + order.length === 0 &&
 		Object.keys(groups).length + Object.keys(labels).length === 0
 	) {
 		return NOTHING;
 	}
-	return { hide, groups, groupOrder: Object.keys(groups), order, labels };
+	return { hide, show, groups, groupOrder: Object.keys(groups), order, labels };
 }
 
 /** `plugin`'s page as `guidance` asks for it: its hidden operations gone, its own in their
@@ -101,7 +105,11 @@ export function guided(plugin: GeneratedPlugin, guidance: Guidance): GeneratedPl
 		first.set(name, index);
 	});
 	const operations = plugin.operations
-		.filter((operation) => !guidance.hide.some((pattern) => matches(pattern, operation.name)))
+		.filter(
+			(operation) =>
+				guidance.show.some((pattern) => matches(pattern, operation.name)) ||
+				!guidance.hide.some((pattern) => matches(pattern, operation.name)),
+		)
 		.map((operation) => {
 			const group = grouped.get(operation.name);
 			const label = guidance.labels[operation.name];

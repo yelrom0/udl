@@ -44,6 +44,7 @@ from udl.core.operations import (
     Operation,
     OperationHints,
     UISpec,
+    ui_field,
     valid_name,
 )
 from udl.db.models import JsonObject, utcnow
@@ -79,6 +80,7 @@ __all__ = [
     "StateStore",
     "UISpec",
     "integration_operation",
+    "ui_field",
 ]
 
 _MARK: Final = "__udl_integration_operation__"

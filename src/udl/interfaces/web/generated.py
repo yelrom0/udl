@@ -119,6 +119,10 @@ class GeneratedAccounts(_Frozen):
     """What an account may be connected for (read, send...), the default first."""
     options_schema: JsonValue
     """The account options' JSON Schema, `$defs` inlined."""
+    tokens_schema: JsonValue = Field(default_factory=dict)
+    """The tokens an account is connected with, as a JSON Schema (empty: it takes none, and the
+    page takes their names and values as text). Its fields' hints are how the form shows them
+    (29.9): before, only the integration's own docs said which tokens there were."""
 
 
 class GeneratedPlugin(_Frozen):
@@ -211,18 +215,22 @@ def _guidance_problems(cls: type[object], operations: list[str]) -> list[str]:
 
 
 def _accounts_of(cls: type[object]) -> GeneratedAccounts:
-    """How an integration's accounts connect."""
+    """How an integration's accounts connect, and the tokens they take."""
     account_model = getattr(cls, "account_model", None)
-    options = (
-        model_schema(account_model)
-        if isinstance(account_model, type) and issubclass(account_model, BaseModel)
-        else {}
-    )
+    token_model = getattr(cls, "token_model", None)
     return GeneratedAccounts(
         connect=[str(method.value) for method in getattr(cls, "connect", ())],
         access_levels=[str(level) for level in getattr(cls, "access_levels", ())],
-        options_schema=options,
+        options_schema=_schema_of(account_model),
+        tokens_schema=_schema_of(token_model),
     )
+
+
+def _schema_of(model: object) -> JsonValue:
+    """`model`'s JSON Schema, `$defs` inlined (an empty schema when there is no such model)."""
+    if isinstance(model, type) and issubclass(model, BaseModel):
+        return model_schema(model)
+    return {}
 
 
 class _Named(Protocol):

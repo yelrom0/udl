@@ -57,6 +57,7 @@ All of it optional; what a plugin does not say stays as udl answered it.
 	"nav": { "title": "Mail", "icon": "mail" },
 	"tabs": ["operations", "settings"],
 	"hide": ["gmail_watch_*"],
+	"show": ["gmail_watch_status"],
 	"groups": { "Sending": ["gmail_send", "gmail_reply"] },
 	"order": ["gmail_inbox"],
 	"labels": { "gmail_inbox": "Inbox" }
@@ -66,6 +67,19 @@ All of it optional; what a plugin does not say stays as udl answered it.
 - `nav`: its drawer entry's title and icon, or `false` for no entry at all.
 - `tabs`: which of `operations`, `settings`, `accounts`, `events` stay, in this order.
 - `hide`, `groups`, `order`, `labels`: operation names, or a `*` prefix (`gmail_send_*`).
+- `show`: operations to keep even so — what a `hide` matches and the page should have anyway. A plugin
+  whose day-to-day operations have pages of its own hides them all and shows its setup ones: the
+  orchestrator's page keeps its projects, repos, machines and import that way.
+
+**What a form draws comes from udl, not from the shell.** An operation's request and an integration's
+`account_model`/`token_model` are drawn from their JSON Schemas, and a field says how it is shown with
+`ui_field()` in its model (`Field(json_schema_extra=ui_field(label=…, placeholder=…, help=…,
+widget=…))`): its label, what goes in its box, the line under it, and which control draws it —
+`text`, `textarea`, `markdown`, `password`, `number`, `switch`, `select`, `multiselect`, `lines`
+(a `list[str]`, one item a line), `path`, `url`, `datetime`, `duration`, `json`, `account`, `code`. An
+operation says its group and place in it the same way (`UISpec(group=…, order=…)`). So a plugin's page
+reads well without a UI plugin at all — and a UI plugin's `fieldWidgets` replaces one of those controls,
+not the field's own words.
 
 Guidance names operations by name; naming one the plugin does not have is not an error — the page says
 so in a notice (`problems` in the shell's own words) and shows the rest. Several manifests may guide the

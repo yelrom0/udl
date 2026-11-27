@@ -22,9 +22,9 @@ test("a UI plugin draws one result, and the rest of the page stays generated", a
 	await page.getByRole("tab", { name: "accounts" }).click();
 	await page.getByRole("textbox", { name: "Name", exact: true }).fill(name);
 	await page.getByRole("checkbox", { name: "write", exact: true }).check();
-	await page.getByLabel("Token name").fill("api_key");
-	await page.getByRole("button", { name: "Add token" }).click();
-	await page.getByRole("textbox", { name: "api_key" }).fill("e2e-fake-key");
+	// (29.9: udl says which tokens an account takes, so the form draws their own fields —
+	// labelled from the schema — rather than a name and a value typed by hand.)
+	await page.getByLabel(/Api Key/).fill("e2e-fake-key");
 	await page.getByRole("button", { name: "Connect", exact: true }).click();
 	await expect(page.getByText(`fake:${name}`)).toBeVisible();
 

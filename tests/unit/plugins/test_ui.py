@@ -196,6 +196,7 @@ def test_guidance_is_read_whole(tmp_path: Path) -> None:
                 "nav": {"title": "Mail", "icon": "mail"},
                 "tabs": ["accounts", "operations"],
                 "hide": ["gmail_send_*"],
+                "show": ["gmail_send_one"],
                 "groups": {"Mail": ["gmail_list"]},
                 "order": ["gmail_list"],
                 "labels": {"gmail_list": "Inbox"},
@@ -209,6 +210,7 @@ def test_guidance_is_read_whole(tmp_path: Path) -> None:
     assert (guidance.nav.title, guidance.nav.icon) == ("Mail", "mail")
     assert guidance.tabs == ["accounts", "operations"]
     assert guidance.hide == ["gmail_send_*"]
+    assert guidance.show == ["gmail_send_one"]
     assert guidance.groups == {"Mail": ["gmail_list"]}
     assert guidance.order == ["gmail_list"]
     assert guidance.labels == {"gmail_list": "Inbox"}
@@ -279,6 +281,22 @@ def test_guidance_that_names_an_operation_is_no_problem(tmp_path: Path) -> None:
     # (A `*` is a prefix: `gmail_send_*` names `gmail_send_all`, and `gmail_send` itself is named
     # by its own name.)
     assert guidance_problems(found.manifest, ["gmail_list", "gmail_send", "gmail_send_all"]) == []
+
+
+def test_a_show_that_names_nothing_is_a_problem_too(tmp_path: Path) -> None:
+    # (A `show` keeps an operation its `hide` matches — the setup operations of a plugin whose
+    # day-to-day ones have pages of their own — so a typo in it hides what was to be kept.)
+    found = of(bundle(tmp_path, generated={"hide": ["orch_*"], "show": ["orch_nope"]}))
+
+    assert guidance_problems(found.manifest, ["orch_list_runners"]) == [
+        'its guidance shows "orch_nope", and no operation matches',
+    ]
+
+
+def test_a_show_that_names_an_operation_is_no_problem(tmp_path: Path) -> None:
+    found = of(bundle(tmp_path, generated={"hide": ["orch_*"], "show": ["orch_list_runners"]}))
+
+    assert guidance_problems(found.manifest, ["orch_list_runners", "orch_assign"]) == []
 
 
 def test_a_manifest_without_guidance_has_no_problems(tmp_path: Path) -> None:

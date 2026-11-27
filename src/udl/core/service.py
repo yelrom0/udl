@@ -129,6 +129,7 @@ from udl.core.operations import (
     CLISpec,
     OperationHints,
     OperationRegistry,
+    UISpec,
     current_caller,
     operation,
 )
@@ -1574,6 +1575,7 @@ class UDLService:
         hints=OperationHints(read_only=True),
         cli=CLISpec(path=("hosts", "list")),
         api=APISpec(method="GET", path="/hosts"),
+        ui=UISpec(group="Hosts", order=0),
     )
     async def list_hosts(self, request: ListHostsRequest) -> HostList:
         """List the hosts agents run on: this machine (local, always there) and any others
@@ -1586,6 +1588,7 @@ class UDLService:
         hints=OperationHints(idempotent=True, admin=True),
         cli=CLISpec(path=("hosts", "set")),
         api=APISpec(method="PUT", path="/hosts"),
+        ui=UISpec(group="Hosts", order=1),
     )
     async def set_host(self, request: SetHostRequest) -> HostInfo:
         """Add a host (its name, transport, ssh config name, work_dir, env), or change the one
@@ -1599,6 +1602,7 @@ class UDLService:
         hints=OperationHints(destructive=True, idempotent=True, admin=True),
         cli=CLISpec(path=("hosts", "rm"), arguments=("host",)),
         api=APISpec(method="DELETE", path="/hosts/{host}"),
+        ui=UISpec(group="Hosts", order=3),
     )
     async def delete_host(self, request: HostRequest) -> Deleted:
         """Delete a host. `local` is this machine and is always there, so it cannot be
@@ -1611,6 +1615,7 @@ class UDLService:
         hints=OperationHints(read_only=True, open_world=True),
         cli=CLISpec(path=("hosts", "check"), arguments=("host",)),
         api=APISpec(method="POST", path="/hosts/{host}/check"),
+        ui=UISpec(group="Hosts", order=2),
     )
     async def check_host(self, request: HostRequest) -> HostCheck:
         """Check a host: run `uname -a` there, and look for the tools the runners need (git,
@@ -1625,6 +1630,7 @@ class UDLService:
         hints=OperationHints(read_only=True, open_world=True),
         cli=CLISpec(path=("secrets", "status")),
         api=APISpec(method="GET", path="/secrets"),
+        ui=UISpec(group="Secrets", order=0),
     )
     async def get_secrets_status(self, request: GetSecretsStatusRequest) -> SecretsStatus:
         """Show where udl keeps its secrets (the store, and whether it can be used here) and what
@@ -1638,6 +1644,7 @@ class UDLService:
         hints=OperationHints(admin=True, idempotent=True, mcp=False),
         cli=CLISpec(path=("secrets", "onepassword", "login")),
         api=APISpec(method="PUT", path="/secrets/onepassword"),
+        ui=UISpec(group="Secrets", order=1),
     )
     async def set_onepassword_token(self, request: SetToken) -> SecretsStatus:
         """Keep 1Password's service account token in udl's own store (never in a log line), so
