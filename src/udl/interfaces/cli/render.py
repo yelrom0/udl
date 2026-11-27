@@ -105,6 +105,7 @@ from udl.plugins.apps.orch.models import (
     NoteInfo,
     Question,
 )
+from udl.plugins.apps.orch.usage import UsageList
 from udl.plugins.downloaders.base import MediaCandidate, MediaKind
 from udl.plugins.integrations.base import AccountHealth, AccountStatus
 from udl.plugins.registry import ACTIONS, DATABASES, DOWNLOADERS, INTEGRATIONS, SECRETS, SITES
@@ -1303,6 +1304,25 @@ def secrets_status(console: Console, found: SecretsStatus) -> None:
             _yes(resolver.ok),
             escape("\n".join(resolver.vaults) or "-"),
             escape("\n".join(resolver.problems)),
+        )
+    console.print(table)
+
+
+def usage(console: Console, found: UsageList) -> None:
+    """What each agent has left (27.14): a table of agent, model, what is left, what it sent
+    today, when the allowance resets, and its state (`ok`, `low`, `out`)."""
+    table = Table(
+        "Agent", "Model", "Left", "Today", "Resets", "State", title="Usage", title_justify="left"
+    )
+    for one in found.items:
+        left = one.line if one.line != "nothing to measure" else "-"
+        table.add_row(
+            escape(one.agent),
+            escape(one.model or "-"),
+            escape(left),
+            str(one.requests_today),
+            _when(one.free.resets_at) if one.free is not None else "-",
+            escape(one.state),
         )
     console.print(table)
 

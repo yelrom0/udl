@@ -34,6 +34,7 @@ from udl.plugins.ai.base import (
     ChatRequest,
     ChatRole,
     DoneReason,
+    KeyStatus,
     ModelInfo,
     ProviderHealth,
     ProviderOptions,
@@ -203,6 +204,12 @@ async def test_a_provider_is_healthy(case: Case) -> None:
 
     assert isinstance(health, ProviderHealth)
     assert health.ok
+    # (27.14: a provider that has no key endpoint leaves `key` None, rather than inventing
+    # one. Only a provider that describes its key fills it in — OpenRouter's own test does.)
+    if case.plugin.name == "openrouter":
+        assert isinstance(health.key, KeyStatus)
+    else:
+        assert health.key is None
 
 
 async def test_a_provider_lists_its_models(case: Case) -> None:

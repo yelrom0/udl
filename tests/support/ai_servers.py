@@ -378,6 +378,8 @@ class FakeOpenRouter(FakeOpenAI):
     """What is left of the limit now, in USD, when the key resets (None: it does not say)."""
     cost: str = "0.00042"
     """What a chat costs, as OpenRouter says."""
+    used_daily: str | None = None
+    """What the key has spent today, in USD (None: it does not say)."""
 
     def http(self) -> HttpClientFactory:
         """udl's client factory, reaching this fake in-process (and nothing else)."""
@@ -442,6 +444,7 @@ class FakeOpenRouter(FakeOpenAI):
                 "limit": self.limit,
                 "limit_remaining": self.limit_remaining,
                 "is_free_tier": self.limit is None,
+                "usage_daily": self.used_daily,
             }
         }
         return JSONResponse(key)
