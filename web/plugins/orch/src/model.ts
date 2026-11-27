@@ -942,6 +942,146 @@ export function runnersOf(value: JsonValue | undefined): Runner[] {
 	});
 }
 
+/** One harness on one host, as the Machines view draws it (29.9): what it is, whether it is signed
+ * in, what is wrong with it, and the version it is behind. */
+export interface HarnessState {
+	readonly runner: string;
+	readonly installed: boolean;
+	readonly version: string | null;
+	/** The newest version there is, when udl could tell it is a newer one (else null). */
+	readonly update: string | null;
+	readonly signed_in: boolean;
+	readonly account: string | null;
+	readonly plan: string | null;
+	readonly guards: boolean;
+	/** When its quota is back, if it is out of one (27.7). */
+	readonly limited_until: string | null;
+	/** What the harness's own doctor says is wrong. */
+	readonly problems: readonly string[];
+	/** Anything else worth showing (a missing sign-in's hint). */
+	readonly detail: string | null;
+}
+
+/** A host and the harnesses it runs: the Machines view's card (29.9). */
+export interface Machine {
+	readonly host: string;
+	readonly harnesses: HarnessState[];
+}
+
+/** The harnesses, host by host, as `orch_list_runners` answers them (29.9's Machines view). */
+export function machinesOf(value: JsonValue | undefined): Machine[] {
+	const machines: Machine[] = [];
+	for (const item of asArray(asObject(value).items)) {
+		const one = asObject(item);
+		const health = asObject(one.health);
+		const host = asText(one.host);
+		const version = asText(health.version);
+		const latest = asText(health.latest);
+		const harness: HarnessState = {
+			runner: asText(one.runner),
+			installed: asFlag(health.installed),
+			version,
+			// (A version udl cannot compare is not an update: it says nothing rather than guess.)
+			update: latest !== "" && version !== "" && latest !== version ? latest : null,
+			signed_in: asFlag(health.signed_in),
+			account: asText(health.account) === "" ? null : asText(health.account),
+			plan: asText(health.plan) === "" ? null : asText(health.plan),
+			guards: asFlag(health.guards),
+			limited_until: asText(health.limited_until) === "" ? null : asText(health.limited_until),
+			problems: asArray(health.problems).map((problem) => asText(problem)),
+			detail: asText(health.detail) === "" ? null : asText(health.detail),
+		};
+		const found = machines.find((machine) => machine.host === host);
+		if (found === undefined) {
+			machines.push({ host, harnesses: [harness] });
+		} else {
+			found.harnesses.push(harness);
+		}
+	}
+	return machines;
+}
+
+/** The (host, runner) pairs udl could not ask, and why (`orch_list_runners`'s own `problems`). */
+export function runnerProblemsOf(value: JsonValue | undefined): string[] {
+	return asArray(asObject(value).problems).map((problem) => asText(problem));
+}
+
+/** A sign-in 25.11 is relaying, as `orch_runner_login` (an attempt) and `orch_runner_login_status`
+ * (`{attempt}`) answer it. */
+export interface SignInReport {
+	readonly id: string;
+	readonly host: string;
+	readonly runner: string;
+	/** What the harness printed: the text, and the link to open. */
+	readonly prompt: string;
+	/** What it wants back: nothing, or a code. */
+	readonly expects: "none" | "code";
+	/** The command to run on the host, when it cannot be driven without a terminal. */
+	readonly command: string | null;
+	readonly done: boolean;
+	readonly ok: boolean | null;
+}
+
+/** A sign-in attempt, from either answer (`orch_runner_login`'s, or a status's `{attempt}`). */
+export function reportOfSignIn(value: JsonValue | undefined): SignInReport | null {
+	const answer = asObject(value);
+	const attempt = asObject(answer.attempt);
+	const one = Object.keys(attempt).length === 0 ? answer : attempt;
+	const id = asText(one.id);
+	if (id === "") {
+		return null;
+	}
+	const expects = asText(one.expects);
+	return {
+		id,
+		host: asText(one.host),
+		runner: asText(one.runner),
+		prompt: asText(one.prompt),
+		expects: expects === "code" ? "code" : "none",
+		command: asText(one.command) === "" ? null : asText(one.command),
+		done: asFlag(one.done),
+		ok: one.ok === true ? true : one.ok === false ? false : null,
+	};
+}
+
+/** A line of a plan file the importer could not place (26.7). */
+export interface UnplacedLine {
+	readonly source: string;
+	readonly line: number;
+	readonly text: string;
+	readonly why: string;
+}
+
+/** What an import did, or would do: `orch_import_plan`'s report (26.7), drawn by 29.9's view. */
+export interface ImportReport {
+	readonly created: readonly string[];
+	readonly updated: readonly string[];
+	readonly unchanged: readonly string[];
+	/** The tasks udl has moved on from what the plan says, kept as udl has them. */
+	readonly kept: readonly string[];
+	readonly unplaced: readonly UnplacedLine[];
+}
+
+/** `orch_import_plan`'s report, as its own result view draws it (29.9). */
+export function reportOf(value: JsonValue | undefined): ImportReport {
+	const one = asObject(value);
+	return {
+		created: asArray(one.created).map((key) => asText(key)),
+		updated: asArray(one.updated).map((key) => asText(key)),
+		unchanged: asArray(one.unchanged).map((key) => asText(key)),
+		kept: asArray(one.kept).map((key) => asText(key)),
+		unplaced: asArray(one.unplaced).map((row) => {
+			const each = asObject(row);
+			return {
+				source: asText(each.source),
+				line: asNumber(each.line),
+				text: asText(each.text),
+				why: asText(each.why),
+			};
+		}),
+	};
+}
+
 /** Who an agent reports up through, nearest first, ending at the humans (empty: it is a root). */
 export function chainOf(agents: readonly AgentInfo[], name: string): string[] {
 	const found = agents.find((one) => one.agent.name === name);

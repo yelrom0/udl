@@ -27,6 +27,13 @@ describe("the orchestrator's manifest and its entry", () => {
 		expect(titles.indexOf("Progress")).toBe(titles.indexOf("Board") + 1);
 	});
 
+	it("draws the machines and an import's report itself (29.9)", () => {
+		// (The two generated-page pieces a list of rows cannot show: the machines, host by host,
+		// and what an import made of the plan files.)
+		expect(manifest.contributes.operationViews).toEqual(["orch_list_runners"]);
+		expect(manifest.contributes.resultViews).toEqual(["orch_import_plan"]);
+	});
+
 	it("keeps the Settings tab and the setup operations, and hides the rest (29.9)", () => {
 		// (Its day-to-day operations have pages of their own; its setup ones — projects, repos,
 		// machines, import — are what the generated page is for.)
