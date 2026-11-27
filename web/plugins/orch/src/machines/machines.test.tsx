@@ -9,7 +9,7 @@
  * 25.11's relay (the link, a box for the code, and how it went).
  */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { JsonValue } from "@udl/ui-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { fakeCtx } from "../testing/fake";
@@ -358,6 +358,24 @@ describe("the machines view (29.9)", () => {
 		);
 	});
 
+	it("takes the link out of the harness's own words, and no punctuation with it", async () => {
+		const fake = fakeCtx(() => ({
+			id: "login-5",
+			host: "local",
+			runner: "opencode",
+			prompt: "Visit (https://example.com/device).\u001b[0m and enter the code",
+			expects: "none",
+			done: false,
+			ok: null,
+		}));
+		render(<Machines ctx={fake.ctx} operation={operation} schema={{}} run={async () => answer} />);
+
+		fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+
+		const link = await screen.findByRole("link", { name: "Open the link" });
+		expect(link.getAttribute("href")).toBe("https://example.com/device");
+	});
+
 	it("closes a relay that ended without signing in, and starts the next one clean", async () => {
 		let started = 0;
 		const fake = fakeCtx((name) => {
@@ -374,6 +392,7 @@ describe("the machines view (29.9)", () => {
 				};
 			}
 			if (name === "orch_runner_login_status") {
+				// (The first attempt ended without signing in; the second is still going.)
 				return {
 					attempt: {
 						id: `login-${String(started)}`,
@@ -381,8 +400,8 @@ describe("the machines view (29.9)", () => {
 						runner: "opencode",
 						prompt: "Sign in in your browser",
 						expects: "code",
-						done: true,
-						ok: false,
+						done: started === 1,
+						ok: started === 1 ? false : null,
 					},
 				};
 			}
@@ -434,7 +453,17 @@ describe("the machines view (29.9)", () => {
 				kind: "error",
 			}),
 		);
-		// (Said once, and the asking stops.)
-		expect(asked).toBe(1);
+		// (The ticks that would have come: they do not.)
+		vi.useFakeTimers();
+		try {
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(6_000);
+			});
+			expect(asked).toBe(1);
+		} finally {
+			vi.useRealTimers();
+		}
+		// (And the box says it ended, rather than waiting forever.)
+		expect(screen.getByText("It ended without signing in.")).toBeTruthy();
 	});
 });

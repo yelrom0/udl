@@ -142,7 +142,11 @@ function Relay({
 		return undefined;
 	}, [signIn, onDone]);
 
-	const link = /https?:\/\/\S+/.exec(signIn.prompt)?.[0] ?? null;
+	// (The harness's output, not a page's: stop at what a URL cannot hold — a colour reset is a
+	// control character, which is not whitespace — and drop the punctuation a sentence ends it
+	// with.)
+	const link =
+		/https?:\/\/[^\s<>"'\p{Cc}]+/u.exec(signIn.prompt)?.[0]?.replace(/[.,;:!?)\]}]+$/, "") ?? null;
 	return (
 		<div className="mt-2 rounded-box border border-base-300 p-2">
 			<p className="text-sm whitespace-pre-wrap">{signIn.prompt}</p>
