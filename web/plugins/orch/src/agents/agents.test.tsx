@@ -264,6 +264,7 @@ describe("the agents' page (29.6)", () => {
 		fireEvent.click(
 			within(screen.getByLabelText("deepseek-a")).getByRole("button", { name: "Edit" }),
 		);
+		await settle();
 		const form = within(screen.getByRole("form", { name: "Edit deepseek-a" }));
 		expect((form.getByLabelText("Name") as HTMLInputElement).disabled).toBe(true);
 		expect((form.getByLabelText("Brief") as HTMLTextAreaElement).value).toBe("You build udl.");
@@ -284,6 +285,7 @@ describe("the agents' page (29.6)", () => {
 		await read();
 
 		fireEvent.click(screen.getByRole("button", { name: "New agent" }));
+		await settle();
 		const form = within(screen.getByRole("form", { name: "New agent" }));
 		expect(form.queryByRole("checkbox", { name: /^Assign/ })).toBeNull();
 
@@ -312,6 +314,7 @@ describe("the agents' page (29.6)", () => {
 		await read();
 
 		fireEvent.click(screen.getByRole("button", { name: "New agent" }));
+		await settle();
 		const form = within(screen.getByRole("form", { name: "New agent" }));
 		fireEvent.change(form.getByLabelText("Name"), { target: { value: "nobody" } });
 		fireEvent.click(form.getByRole("button", { name: "Save" }));
@@ -455,8 +458,10 @@ describe("the agents' page: a host that cannot say what it has (29.6)", () => {
 		await read();
 
 		fireEvent.click(screen.getByRole("button", { name: "New agent" }));
+		await settle();
 		const form = within(screen.getByRole("form", { name: "New agent" }));
-		// (A select with nothing in it is a dead end: it is a box to type in.)
+		// (A select with nothing in it is a dead end: it is a box to type in, once the read says
+		// no host has a harness.)
 		const runner = form.getByLabelText("Runner") as HTMLInputElement;
 		expect(runner.tagName).toBe("INPUT");
 		fireEvent.change(runner, { target: { value: "fake" } });
@@ -469,6 +474,80 @@ describe("the agents' page: a host that cannot say what it has (29.6)", () => {
 			name: "typed",
 			runner: "fake",
 		});
+	});
+});
+
+describe("an agent's editor: the harnesses answer after it opens (29.6)", () => {
+	it("draws the runner as loading, then a select, so nothing a person typed is swapped", async () => {
+		let said: (answer: unknown) => void = () => {};
+		const late = new Promise((done) => {
+			said = done;
+		});
+		const fake = fakeCtx((name) => {
+			if (name === "orch_list_runners") {
+				return late as never;
+			}
+			return ANSWERS[name] as never;
+		});
+		render(<AgentsPage ctx={fake.ctx} params={{}} path="agents" search={{}} />);
+		await screen.findByRole("heading", { level: 1, name: "Agents" });
+		fireEvent.click(screen.getByRole("button", { name: "New agent" }));
+		const form = within(screen.getByRole("form", { name: "New agent" }));
+
+		// (Before a host answers, the field is not one a person can type a runner into and lose
+		// when the answer replaces it: it says it is reading them, and takes nothing.)
+		const reading = form.getByLabelText("Runner") as HTMLInputElement;
+		expect(reading.disabled).toBe(true);
+		expect(reading.value).toBe("");
+
+		// (And Save is not a way to make an agent with no runner: the field it would read is
+		// still loading.)
+		expect((form.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+
+		said({
+			items: [{ host: "local", runner: "opencode", health: {}, models: [] }],
+			problems: [],
+		});
+		await settle();
+
+		expect((form.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(false);
+
+		// (Then it is the select a host's harnesses are chosen from.)
+		const runner = form.getByLabelText("Runner") as HTMLSelectElement;
+		expect(runner.tagName).toBe("SELECT");
+		expect(runner.disabled).toBe(false);
+		expect([...runner.options].map((one) => one.value)).toContain("opencode");
+	});
+});
+
+describe("an agent's editor: an edited agent while the read is out (29.6)", () => {
+	it("shows the agent's own runner while the read is still out", async () => {
+		let said: (answer: unknown) => void = () => {};
+		const late = new Promise((done) => {
+			said = done;
+		});
+		const fake = fakeCtx((name) => {
+			if (name === "orch_list_runners") {
+				return late as never;
+			}
+			return ANSWERS[name] as never;
+		});
+		render(<AgentsPage ctx={fake.ctx} params={{}} path="agents" search={{}} />);
+		await screen.findByRole("heading", { level: 1, name: "Agents" });
+		fireEvent.click(
+			within(screen.getByLabelText("deepseek-a")).getByRole("button", { name: "Edit" }),
+		);
+		const form = within(screen.getByRole("form", { name: "Edit deepseek-a" }));
+
+		// (The agent runs opencode, and the field says so before the harnesses answer: a disabled
+		// box cannot be typed into, so it may as well say what the agent runs on.)
+		const reading = form.getByLabelText("Runner") as HTMLInputElement;
+		expect(reading.disabled).toBe(true);
+		expect(reading.value).toBe("opencode");
+
+		said({ items: [], problems: ["jeff-wiggle: no answer"] });
+		await settle();
+		expect((form.getByLabelText("Runner") as HTMLInputElement).value).toBe("opencode");
 	});
 });
 
