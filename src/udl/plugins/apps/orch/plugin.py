@@ -18,6 +18,7 @@ import contextlib
 import logging
 from collections.abc import Awaitable, Sequence
 from datetime import datetime, timedelta
+from decimal import Decimal
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol
@@ -1180,16 +1181,20 @@ class Orch(AppPlugin[OrchSettings]):
             return UsageList()
         shapes = [as_shape(Agent, one) for one in sorted(agents, key=lambda one: one.name)]
         health_for, connection_for = await self._provider_healths(service, shapes)
-        return UsageList(
-            items=await usage_of_all(
-                self.records,
-                shapes,
-                health_for=health_for,
-                connection_for=connection_for,
-                allowance_for={one.name: allowance_of(self.settings, one.model) for one in shapes},
-                clock=self.clock,
-            )
+        rows = await usage_of_all(
+            self.records,
+            shapes,
+            health_for=health_for,
+            connection_for=connection_for,
+            allowance_for={one.name: allowance_of(self.settings, one.model) for one in shapes},
+            clock=self.clock,
         )
+        totals: dict[str, Decimal] = {}
+        for shape, row in zip(shapes, rows, strict=True):
+            name = connection_for.get(provider_of(shape.model), "")
+            if name:
+                totals[name] = totals.get(name, Decimal(0)) + (row.cost or Decimal(0))
+        return UsageList(items=rows, totals=totals)
 
     async def _provider_healths(
         self, service: UDLService, agents: list[Agent]
@@ -2745,7 +2750,7 @@ class Orch(AppPlugin[OrchSettings]):
             merger=merge.merger,
             questions=questions,
             actions=list(to_do.actions),
-            agents=await self._agent_lines(),
+            agents=await self._agent_lines(self.service),
             hosts=await self._host_lines(),
             updated_at=self.clock.now(),
         )
@@ -2817,11 +2822,28 @@ class Orch(AppPlugin[OrchSettings]):
             for host, kinds in sorted(by_host.items())
         ]
 
-    async def _agent_lines(self) -> list[AgentLine]:
-        """What every agent is doing, by name: its role, its state from its session, and the task
-        it is on (27.1's records and 27.7's sessions, derived — never stored)."""
+    async def _agent_lines(self, service: UDLService | None = None) -> list[AgentLine]:
+        """What every agent is doing, by name: its role, its state from its session, the task it
+        is on (27.1's records and 27.7's sessions, derived — never stored), and what it has left
+        (27.15, the same line `orch_usage` gives)."""
         agents = stored.AgentRecords(self.records)
         sessions = stored.SessionRecords(self.records)
+        stored_agents = await agents.agents()
+        shapes = [as_shape(agents_shape.Agent, one) for one in stored_agents]
+        health_for, connection_for = ({}, {})
+        if service is not None:
+            health_for, connection_for = await self._provider_healths(service, shapes)
+        rows = {
+            one.agent: one
+            for one in await usage_of_all(
+                self.records,
+                shapes,
+                health_for=health_for or None,
+                connection_for=connection_for,
+                allowance_for={one.name: allowance_of(self.settings, one.model) for one in shapes},
+                clock=self.clock,
+            )
+        }
         lines: list[AgentLine] = []
         for stored_agent in await agents.agents():
             current = await sessions.current(stored_agent.name)
@@ -2837,6 +2859,11 @@ class Orch(AppPlugin[OrchSettings]):
                 ),
                 task=current.task or None if current is not None else None,
                 since=current.updated_at if current is not None else None,
+                usage=(
+                    ""
+                    if rows.get(agent.name) is None or rows[agent.name].line == "nothing to measure"
+                    else rows[agent.name].line
+                ),
             )
             lines.append(
                 line.model_copy(

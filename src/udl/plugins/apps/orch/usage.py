@@ -421,3 +421,6 @@ class UsageList(BaseModel):
 
     items: list[AgentUsage] = Field(default_factory=list[AgentUsage])
     """One row per agent, by name."""
+    totals: dict[str, Decimal] = Field(default_factory=dict)
+    """What each account has spent today, in all its agents (27.15), keyed by the udl
+    connection the key was read through; empty when no connection could be read."""

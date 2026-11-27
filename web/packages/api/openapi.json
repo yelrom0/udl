@@ -959,6 +959,12 @@
             "minLength": 1,
             "title": "Title",
             "type": "string"
+          },
+          "usage": {
+            "default": "",
+            "description": "What it has left, in a line (27.15: `$3.36 of $8 left`, or `412 of 1,000 requests left,\nresets \u2026`); empty when it has nothing to measure.",
+            "title": "Usage",
+            "type": "string"
           }
         },
         "required": [
@@ -15797,6 +15803,14 @@
             },
             "title": "Items",
             "type": "array"
+          },
+          "totals": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "What each account has spent today, in all its agents (27.15), keyed by the udl\nconnection the key was read through; empty when no connection could be read.",
+            "title": "Totals",
+            "type": "object"
           }
         },
         "title": "UsageList",

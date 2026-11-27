@@ -3702,6 +3702,13 @@ export interface components {
              * @description How it is shown.
              */
             title: string;
+            /**
+             * Usage
+             * @description What it has left, in a line (27.15: `$3.36 of $8 left`, or `412 of 1,000 requests left,
+             *     resets …`); empty when it has nothing to measure.
+             * @default
+             */
+            usage: string;
         };
         /**
          * AgentRole
@@ -11967,6 +11974,14 @@ export interface components {
              * @description One row per agent, by name.
              */
             items?: components["schemas"]["AgentUsage"][];
+            /**
+             * Totals
+             * @description What each account has spent today, in all its agents (27.15), keyed by the udl
+             *     connection the key was read through; empty when no connection could be read.
+             */
+            totals?: {
+                [key: string]: string;
+            };
         };
         /**
          * UsageRequest

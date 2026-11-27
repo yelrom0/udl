@@ -50,7 +50,8 @@
       "state": "idle",
       "task": null,
       "since": null,
-      "line": "deepseek-a \u2014 idle"
+      "line": "deepseek-a \u2014 idle",
+      "usage": ""
     }
   ],
   "hosts": [],

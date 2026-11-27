@@ -576,3 +576,62 @@ def test_an_agent_with_no_provider_has_an_empty_usage_line(harness: Harness) -> 
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["usage"] == ""
+
+
+def test_the_usage_totals_are_per_account(harness: Harness) -> None:
+    """(27.15: the "in all" totals — what each account has spent today across its agents,
+    keyed by the udl connection the key was read through.)"""
+    _wire_openrouter(harness)
+
+    def seed(db: DBManager) -> Awaitable[object]:
+        return db.upsert_record(
+            AIProviderConnection(
+                name="openrouter",
+                plugin="openrouter",
+                options={"api_key": "sk-or-v1-test"},
+                default_model="fake-1",
+            )
+        )
+
+    harness.seed(seed)
+    harness.seed(_save_agents)
+
+    result = CLI(harness)("orch", "agents", "usage", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["totals"] == {"openrouter": "0"}
+
+
+async def _a_project(db: DBManager) -> None:
+    """(A project, so the inbox has one to be of.)"""
+    from udl.plugins.apps.orch.records import Project as ProjectRecord
+    from udl.plugins.apps.orch.records import ProjectRecords
+
+    await ProjectRecords(AppRecords(db)).save_project(ProjectRecord(name="udl", title="udl"))
+
+
+def test_the_inbox_s_agent_lines_carry_what_each_agent_has_left(harness: Harness) -> None:
+    """(27.15: `AgentLine.usage` — the inbox's one-line usage, the same line `orch_usage`
+    gives.)"""
+    _wire_openrouter(harness)
+
+    def seed(db: DBManager) -> Awaitable[object]:
+        return db.upsert_record(
+            AIProviderConnection(
+                name="openrouter",
+                plugin="openrouter",
+                options={"api_key": "sk-or-v1-test"},
+                default_model="fake-1",
+            )
+        )
+
+    harness.seed(seed)
+    harness.seed(_save_agents)
+    harness.seed(_a_project)
+
+    result = CLI(harness)("orch", "inbox", "--json")
+
+    assert result.exit_code == 0, result.output
+    lines = {one["name"]: one["usage"] for one in json.loads(result.stdout)["agents"]}
+    assert lines["deepseek-b"] == "$8.75 of $10 left"
+    assert lines["ernie-c"].startswith("1,000 of 1,000 requests")
