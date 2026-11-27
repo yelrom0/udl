@@ -359,8 +359,9 @@ _CLOSED: Final = "github.pr.closed"
 
 def _merged_by(text: str) -> str | None:
     """Who a done row was merged by, read from the note `after_merge` writes (`merge.py`), or None
-    when the note is not one. A name may hold a dot or a comma, so the note's own tail is what is
-    taken off, not the first punctuation mark: "Merged by a.b." is `a.b`."""
+    when the note is not one. A name may hold a dot, so the note's own tail is what comes off,
+    not the first full stop: "Merged by a.b." is `a.b`. The tail is `, and done: …`, so a comma
+    ends the name (a person's name does not hold one)."""
     if not text.startswith("Merged by "):
         return None
     rest = text[len("Merged by ") :]
@@ -2854,8 +2855,6 @@ class Orch(AppPlugin[OrchSettings]):
                 blockers = [f"its pull could not be read: {error}"]
         if task.hold is not None:
             blockers = [f"it is on hold: {task.hold}"]
-        # (The newest verdict on this pull: `changes asked` is the merger's, and a review of a
-        # head the pull has since moved past says nothing about this one.)
         # (Who merged it, for a row that is done: the note `after_merge` writes says so, and
         # whether it was the merger's own merge.)
         merged_by = ""
@@ -2868,6 +2867,8 @@ class Orch(AppPlugin[OrchSettings]):
                     merged_by = said
                     break
         reviews = await stored.ReviewRecords(self.records).for_task(project.name, task.key)
+        # (The newest verdict on this pull: `changes asked` is the merger's, and a review of a
+        # head the pull has since moved past says nothing about this one.)
         asked = reviews[0] if reviews else None
         if asked is not None and link.state.head_sha and asked.head != link.state.head_sha:
             asked = None

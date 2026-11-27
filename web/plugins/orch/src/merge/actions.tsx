@@ -1,7 +1,7 @@
 /**
- * -----------
+ * ---------------
  * - actions.tsx -
- * -----------
+ * ---------------
  *
  * What only a person can do (29.8): now, after a task merges, and later — each with what came
  * of it when it is finished. The rows are 28.2's, and finishing one calls `orch_finish_action`

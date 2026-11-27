@@ -198,7 +198,7 @@ export function Merge({ ctx, merge, project, refresh }: MergeProps) {
 							title={
 								merge.auto_merge || merge.merger !== null
 									? undefined
-									: "Name the merger first (29.x's page)"
+									: "Name the merger first, on the project's page"
 							}
 							type="button"
 						>

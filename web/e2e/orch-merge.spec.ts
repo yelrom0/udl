@@ -91,8 +91,6 @@ async function seeded(page: Page, name: string): Promise<void> {
 		link_kind: "pull",
 		url: `https://github.com/${REPO}/pull/${PULL}`,
 	});
-	// (A person pushing to the pull is what makes udl look at it again, and the link's head is
-	// what the merge is at.)
 	// (A subscription on the pulls' events: it is what has the github watcher look at the
 	// repository at all, and what keeps the pull link's head current.)
 	const act = await page.request.put("/actions/watch-pulls", {
@@ -134,6 +132,8 @@ test("a ready pull merges, and the task stacked on it is told to rebase (29.8)",
 			{ timeout: 60_000 },
 		)
 		.toBe(true);
+	// (A person pushing to the pull is what makes udl look at it again, and the link's head is
+	// what the merge is at.)
 	// (A person pushing to the pull is what makes udl look at it again, and the link's head is
 	// what the merge is at.)
 	const pushed = await page.request.post(`${controls}/github`, { data: { sha: "abc1235" } });
