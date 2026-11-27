@@ -333,7 +333,13 @@ function ConnectForm({
 						</select>
 					</label>
 				)}
-				{tokensWanted && <TokensEditor tokens={tokens} onChange={setTokens} />}
+				{tokensWanted && (
+					<TokensForm
+						schema={jsonObject(accounts.tokens_schema)}
+						tokens={tokens}
+						onChange={setTokens}
+					/>
+				)}
 				{optionsFields.length > 0 && (
 					<SchemaForm schema={optionsSchema} value={options} onChange={setOptions} />
 				)}
@@ -381,6 +387,32 @@ const CONNECT_METHODS = ["oauth", "tokens", "none"] as const;
 
 function isConnectMethod(value: string): value is (typeof CONNECT_METHODS)[number] {
 	return (CONNECT_METHODS as readonly string[]).includes(value);
+}
+
+/**
+ * The tokens an account is connected with: udl's own schema when it says which they are (29.9:
+ * its hints say how each is shown, and a secret is never drawn back), else the name-and-value
+ * boxes it has always taken — an integration that names its tokens only in its docs.
+ */
+function TokensForm({
+	schema,
+	tokens,
+	onChange,
+}: {
+	readonly schema: JsonObject;
+	readonly tokens: JsonObject;
+	readonly onChange: (tokens: JsonObject) => void;
+}) {
+	const fields = fieldsOf(schema);
+	if (fields.length === 0) {
+		return <TokensEditor tokens={tokens} onChange={onChange} />;
+	}
+	return (
+		<fieldset className="form-control gap-2">
+			<legend className="label-text">Tokens</legend>
+			<SchemaForm schema={schema} value={tokens} onChange={onChange} />
+		</fieldset>
+	);
 }
 
 /**

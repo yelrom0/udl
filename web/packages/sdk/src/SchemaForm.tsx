@@ -262,6 +262,7 @@ function Control({ id, field, value, onChange, onClear, disabled, invalid, secre
 				id={id}
 				className={className}
 				set={value !== undefined}
+				{...(field.placeholder === undefined ? {} : { placeholder: field.placeholder })}
 				disabled={disabled}
 				onChange={onChange}
 				onClear={onClear}
@@ -343,6 +344,19 @@ function Control({ id, field, value, onChange, onClear, disabled, invalid, secre
 			/>
 		);
 	}
+	if (field.widget === "lines") {
+		return (
+			<LinesBox
+				id={id}
+				value={value}
+				{...(field.placeholder === undefined ? {} : { placeholder: field.placeholder })}
+				disabled={disabled}
+				invalid={invalid}
+				onChange={onChange}
+				onClear={onClear}
+			/>
+		);
+	}
 	if (field.widget === "json") {
 		return (
 			<JsonBox id={id} value={value} onChange={onChange} onClear={onClear} disabled={disabled} />
@@ -366,6 +380,8 @@ interface SecretBoxProps {
 	readonly className: string;
 	/** Whether the form holds a value for it (it is not drawn back, only said to be set). */
 	readonly set: boolean;
+	/** What goes in it, when the field says (`x-udl-ui`'s placeholder). */
+	readonly placeholder?: string;
 	readonly disabled: boolean;
 	readonly onChange: (value: JsonValue) => void;
 	readonly onClear: () => void;
@@ -375,7 +391,15 @@ interface SecretBoxProps {
  * A password box that is never drawn back: it holds what was typed into it now, and never the
  * value the form holds — a secret that is set says so, and is not in the page's DOM.
  */
-function SecretBox({ id, className, set, disabled, onChange, onClear }: SecretBoxProps) {
+function SecretBox({
+	id,
+	className,
+	set,
+	placeholder,
+	disabled,
+	onChange,
+	onClear,
+}: SecretBoxProps) {
 	const [typed, setTyped] = useState("");
 	return (
 		<input
@@ -384,7 +408,10 @@ function SecretBox({ id, className, set, disabled, onChange, onClear }: SecretBo
 			className={className}
 			value={typed}
 			disabled={disabled}
-			placeholder={set ? "(set: type to replace)" : "(not set)"}
+			// (What the field says goes in it while it is empty: a token that may be an `op://`
+			// reference is not "(not set)". A value that is there still says so — it is never
+			// drawn back, so "(set)" is the only way to know.)
+			placeholder={set ? "(set: type to replace)" : (placeholder ?? "(not set)")}
 			onChange={(event) => {
 				setTyped(event.target.value);
 				if (event.target.value === "") {
@@ -393,6 +420,61 @@ function SecretBox({ id, className, set, disabled, onChange, onClear }: SecretBo
 				} else {
 					onChange(event.target.value);
 				}
+			}}
+		/>
+	);
+}
+
+interface LinesBoxProps {
+	readonly id: string;
+	readonly value: JsonValue | undefined;
+	/** What goes on a line, when the field says (`x-udl-ui`'s placeholder). */
+	readonly placeholder?: string;
+	readonly disabled: boolean;
+	readonly invalid: boolean;
+	readonly onChange: (value: JsonValue) => void;
+	readonly onClear: () => void;
+}
+
+/**
+ * A list of lines (29.9): one item a line, for the lists that are typed as lines rather than as
+ * a JSON array (`repos`, the plan files). What was typed is kept as it was, so a line that is
+ * half-typed is not turned into an item and then read back trimmed; the value is the lines that
+ * are not empty, each trimmed.
+ */
+function LinesBox({ id, value, placeholder, disabled, invalid, onChange, onClear }: LinesBoxProps) {
+	const printed = Array.isArray(value) ? value.map((item) => String(item)).join("\n") : "";
+	const [text, setText] = useState(printed);
+	const [was, setWas] = useState(printed);
+
+	// (The value changed from outside the box — a reset, a loaded one: draw it again. What was
+	// typed is what set it, so `was` follows the lines the box sent.)
+	if (printed !== was) {
+		setWas(printed);
+		setText(printed);
+	}
+
+	return (
+		<textarea
+			id={id}
+			className={`textarea w-full${invalid ? " textarea-error" : ""}`}
+			value={text}
+			disabled={disabled}
+			{...(placeholder === undefined ? {} : { placeholder })}
+			onChange={(event) => {
+				const typed = event.target.value;
+				setText(typed);
+				const lines = typed
+					.split("\n")
+					.map((line) => line.trim())
+					.filter((line) => line !== "");
+				setWas(lines.join("\n"));
+				if (lines.length === 0) {
+					// (Emptied: the field is taken out, not sent as `[]`, which a `min_length=1` list refuses.)
+					onClear();
+					return;
+				}
+				onChange(lines);
 			}}
 		/>
 	);

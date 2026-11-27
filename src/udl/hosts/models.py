@@ -17,6 +17,7 @@ from typing import Annotated, Self
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 # Local Imports
+from udl.core.operations import ui_field
 from udl.db.models import JsonObject
 from udl.hosts.shell import Host, HostTransport
 
@@ -38,10 +39,22 @@ class HostRequest(_Model):
 class SetHostRequest(_Model):
     """Add or change a host."""
 
-    host: Host
+    host: Host = Field(
+        json_schema_extra=ui_field(
+            label="Host",
+            help="Its name, how udl reaches it (local or ssh), and where worktrees go on it.",
+        )
+    )
     """The host to add, or (to change one) the name of the host to change: its transport, ssh
     and work_dir say which it is."""
-    update: JsonObject = Field(default_factory=dict)
+    update: JsonObject = Field(
+        default_factory=dict,
+        json_schema_extra=ui_field(
+            label="Changes",
+            widget="json",
+            help="What to change on a host that is already there: work_dir, env, ssh or enabled.",
+        ),
+    )
     """What to change on the host that is there: work_dir, env, ssh or enabled."""
 
 

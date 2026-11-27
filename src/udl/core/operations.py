@@ -75,6 +75,7 @@ Widget = Literal[
     "switch",
     "select",
     "multiselect",
+    "lines",
     "path",
     "url",
     "datetime",

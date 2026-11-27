@@ -95,6 +95,7 @@ describe("the guidance every UI plugin gives", () => {
 	it("is nothing when none gives any", () => {
 		expect(guidanceOf([], "gmail")).toEqual({
 			hide: [],
+			show: [],
 			groups: {},
 			groupOrder: [],
 			order: [],
@@ -183,6 +184,19 @@ describe("a guided page", () => {
 		);
 
 		expect(found.operations.map((one) => one.name)).toEqual(["gmail_list"]);
+	});
+
+	it("shows an operation its show names, though a hide matches it (29.9)", () => {
+		// (A plugin whose day-to-day operations have pages of their own, and whose setup ones are
+		// the page's: `hide: ["orch_*"]` with `show: ["orch_list_runners"]`.)
+		const page = plugin(operation("orch_assign"), operation("orch_list_runners"));
+
+		const found = guided(
+			page,
+			guidanceOf([ui("orch", { hide: ["orch_*"], show: ["orch_list_runners"] }, "orch")], "orch"),
+		);
+
+		expect(found.operations.map((one) => one.name)).toEqual(["orch_list_runners"]);
 	});
 
 	it("leaves a hidden operation out of the tabs' count too", () => {

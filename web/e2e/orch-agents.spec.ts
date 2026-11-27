@@ -160,20 +160,20 @@ test("an agent is made through the page's own form, and paused from it (29.6)", 
 	const form = page.getByRole("form", { name: "New agent" });
 	await form.getByLabel("Name").fill(made);
 	await form.getByLabel("Title").fill("Made by hand");
-	// (The editor reads the harnesses as it opens: until a host has answered it takes a name, and
-	// after that it offers them as a select. The read is the page's own, so the spec asks the
-	// same operation what it will find, and waits for the shape before filling it: a fill on a
-	// select fails, and CI's server answers before the click lands while a loaded machine does
-	// not.)
-	const offered = (
-		(await call(page, "list_runners", {})) as { items: { runner: string }[] }
-	).items.map((one) => one.runner);
-	if (offered.length === 0) {
-		await form.getByLabel("Runner", { exact: true }).fill("fake");
+	// (The editor reads the host's harnesses as it opens and shows the field as loading until
+	// they answer, so the spec waits for it: then it is a select when a host has harnesses, and a
+	// box to type a name in when none has.)
+	const runner = form.getByLabel("Runner", { exact: true });
+	await expect(runner).toBeEnabled();
+	if ((await runner.evaluate((one) => one.tagName)) === "SELECT") {
+		const offered = await runner
+			.locator("option")
+			.evaluateAll((ones) =>
+				ones.map((one) => (one as HTMLOptionElement).value).filter((value) => value !== ""),
+			);
+		await runner.selectOption(offered[0] ?? "fake");
 	} else {
-		const runners = form.getByRole("combobox", { name: "Runner", exact: true });
-		await expect(runners).toBeVisible();
-		await runners.selectOption(offered[0] ?? "fake");
+		await runner.fill("fake");
 	}
 	await form.getByRole("button", { name: "Save" }).click();
 

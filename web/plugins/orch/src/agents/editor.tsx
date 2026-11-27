@@ -52,7 +52,7 @@ function once(values: readonly string[]): string[] {
  */
 export function AgentEditor({ ctx, agent, onDone }: AgentEditorProps) {
 	const id = useId();
-	const { items: runners, problems, answered } = useRunners(ctx);
+	const { items: runners, problems, answered, loaded } = useRunners(ctx);
 	const editing = agent !== null;
 	const [name, setName] = useState(agent?.name ?? NEW.name);
 	const [title, setTitle] = useState(agent?.title ?? NEW.title);
@@ -132,7 +132,21 @@ export function AgentEditor({ ctx, agent, onDone }: AgentEditorProps) {
 				</label>
 				<label className="flex flex-col gap-1 text-xs" htmlFor={`${id}-runner`}>
 					Runner
-					{names.length === 0 ? (
+					{!loaded ? (
+						// (The read is the editor's own, and it lands after the form opens: a field
+						// that becomes a select under a person's typing would lose what they typed.
+						// Until it answers, the field is disabled and says so.)
+						<input
+							aria-label="Runner"
+							className="input input-bordered input-sm"
+							disabled
+							id={`${id}-runner`}
+							placeholder="Reading the harnesses…"
+							// (Disabled, so it takes nothing: an agent being edited still says what it
+							// runs on while the harnesses are read.)
+							value={runner}
+						/>
+					) : names.length === 0 ? (
 						// (No host answered what it has installed — a headless one, or a host that is
 						// not up yet. A select with nothing in it would be a dead end: a person may
 						// still name the runner their agent runs on.)
@@ -263,7 +277,12 @@ export function AgentEditor({ ctx, agent, onDone }: AgentEditorProps) {
 				<p className="text-xs opacity-60">{`Some hosts could not be asked: ${problems.join("; ")}`}</p>
 			)}
 			<div className="flex gap-2">
-				<button className="btn btn-sm btn-primary" disabled={saving} type="submit">
+				<button
+					className="btn btn-sm btn-primary"
+					// (A new agent saved before the harnesses answer would have no runner at all.)
+					disabled={saving || !loaded}
+					type="submit"
+				>
 					Save
 				</button>
 				<button className="btn btn-sm btn-ghost" onClick={onDone} type="button">

@@ -368,6 +368,53 @@ describe("a secret with no value", () => {
 		expect(box.getAttribute("placeholder")).toBe("(not set)");
 		expect(box.getAttribute("value")).toBe("");
 	});
+
+	it("still says it is set when the field has a placeholder too (29.9)", () => {
+		render(
+			<SchemaForm
+				schema={{
+					type: "object",
+					properties: {
+						key: {
+							type: "string",
+							writeOnly: true,
+							"x-udl-ui": { label: "API key", placeholder: "sk-… or op://vault/item/field" },
+						},
+					},
+				}}
+				value={{ key: "sk-live" }}
+				onChange={() => {}}
+			/>,
+		);
+
+		// (The value is never drawn back: "(set)" is the only way to know it is there.)
+		expect(screen.getByLabelText("API key").getAttribute("placeholder")).toBe(
+			"(set: type to replace)",
+		);
+	});
+
+	it("says what goes in it, when the field says (29.9)", () => {
+		render(
+			<SchemaForm
+				schema={{
+					type: "object",
+					properties: {
+						token: {
+							type: "string",
+							writeOnly: true,
+							"x-udl-ui": { label: "Token", placeholder: "ghp_… or op://vault/item/field" },
+						},
+					},
+				}}
+				value={{}}
+				onChange={() => {}}
+			/>,
+		);
+
+		expect(screen.getByLabelText("Token").getAttribute("placeholder")).toBe(
+			"ghp_… or op://vault/item/field",
+		);
+	});
 });
 
 describe("the form itself", () => {
@@ -442,5 +489,68 @@ describe("a field cleared", () => {
 		fireEvent.change(screen.getByLabelText(/Importance/), { target: { value: "" } });
 
 		expect(onChange).toHaveBeenCalledWith({});
+	});
+});
+
+describe("a list of lines (29.9)", () => {
+	const schema = {
+		type: "object" as const,
+		properties: {
+			repos: {
+				type: "array",
+				items: { type: "string" },
+				"x-udl-ui": {
+					label: "Repositories",
+					widget: "lines",
+					placeholder: "acme/widgets",
+				},
+			},
+		},
+	};
+
+	it("draws one line per item, and says what goes on them", () => {
+		render(
+			<SchemaForm schema={schema} value={{ repos: ["a/one", "b/two"] }} onChange={() => {}} />,
+		);
+
+		const box = screen.getByLabelText("Repositories");
+		expect(box.tagName).toBe("TEXTAREA");
+		expect(box.getAttribute("placeholder")).toBe("acme/widgets");
+		expect((box as HTMLTextAreaElement).value).toBe("a/one\nb/two");
+	});
+
+	it("takes the field out when every line is gone, as the other boxes do", () => {
+		const onChange = vi.fn();
+		render(<SchemaForm schema={schema} value={{ repos: ["a/one"] }} onChange={onChange} />);
+
+		fireEvent.change(screen.getByLabelText("Repositories"), { target: { value: "" } });
+
+		// (Out of the value, not sent as `[]`: a `min_length=1` list would be refused.)
+		expect(onChange).toHaveBeenLastCalledWith({});
+	});
+
+	it("draws what the form holds again when it changes from outside, focused or not", () => {
+		const { rerender } = render(
+			<SchemaForm schema={schema} value={{ repos: ["a/one"] }} onChange={() => {}} />,
+		);
+		const box = screen.getByLabelText("Repositories") as HTMLTextAreaElement;
+		// (Half-typed, as a person leaves it: the box holds what was typed, not the value.)
+		fireEvent.change(box, { target: { value: "a/one\nc" } });
+		box.focus();
+
+		rerender(<SchemaForm schema={schema} value={{ repos: ["b/two"] }} onChange={() => {}} />);
+
+		expect(box.value).toBe("b/two");
+	});
+
+	it("reads a typed line as an item, and leaves out the empty ones", () => {
+		const onChange = vi.fn();
+		render(<SchemaForm schema={schema} value={{}} onChange={onChange} />);
+
+		fireEvent.change(screen.getByLabelText("Repositories"), {
+			target: { value: "a/one\n\nb/two\n" },
+		});
+
+		expect(onChange).toHaveBeenLastCalledWith({ repos: ["a/one", "b/two"] });
 	});
 });

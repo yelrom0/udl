@@ -6422,7 +6422,11 @@
             "default": false,
             "description": "Whether to report what it would do, and write nothing.",
             "title": "Dry Run",
-            "type": "boolean"
+            "type": "boolean",
+            "x-udl-ui": {
+              "help": "Write nothing: say what the import would create and change.",
+              "label": "Only report what it would do"
+            }
           },
           "files": {
             "description": "The plan files, by path.",
@@ -6432,7 +6436,13 @@
             },
             "minItems": 1,
             "title": "Files",
-            "type": "array"
+            "type": "array",
+            "x-udl-ui": {
+              "help": "The plan files, by path: udl reads the tracker and the cards in them.",
+              "label": "Plan files",
+              "placeholder": "planning.md",
+              "widget": "lines"
+            }
           },
           "project": {
             "anyOf": [
@@ -12976,11 +12986,20 @@
         "properties": {
           "host": {
             "$ref": "#/components/schemas/Host",
-            "description": "The host to add, or (to change one) the name of the host to change: its transport, ssh\nand work_dir say which it is."
+            "description": "The host to add, or (to change one) the name of the host to change: its transport, ssh\nand work_dir say which it is.",
+            "x-udl-ui": {
+              "help": "Its name, how udl reaches it (local or ssh), and where worktrees go on it.",
+              "label": "Host"
+            }
           },
           "update": {
             "$ref": "#/components/schemas/JsonObject",
-            "description": "What to change on the host that is there: work_dir, env, ssh or enabled."
+            "description": "What to change on the host that is there: work_dir, env, ssh or enabled.",
+            "x-udl-ui": {
+              "help": "What to change on a host that is already there: work_dir, env, ssh or enabled.",
+              "label": "Changes",
+              "widget": "json"
+            }
           }
         },
         "required": [
@@ -13042,7 +13061,12 @@
           },
           "name": {
             "$ref": "#/components/schemas/Name",
-            "description": "The project's name (what it is found, and set, by)."
+            "description": "The project's name (what it is found, and set, by).",
+            "x-udl-ui": {
+              "help": "The project's name: what it is found, and set, by.",
+              "label": "Project",
+              "placeholder": "udl"
+            }
           },
           "promotion": {
             "anyOf": [
@@ -13196,11 +13220,21 @@
               }
             ],
             "description": "Its GitHub repository: owner/repo (needed when it is a new repo).",
-            "title": "Github"
+            "title": "Github",
+            "x-udl-ui": {
+              "help": "Its GitHub repository, owner/repo (needed when it is a new repo).",
+              "label": "On GitHub",
+              "placeholder": "yelrom0/udl"
+            }
           },
           "name": {
             "$ref": "#/components/schemas/Name",
-            "description": "What the repo is called within the project."
+            "description": "What the repo is called within the project.",
+            "x-udl-ui": {
+              "help": "What the repo is called within the project.",
+              "label": "Repo",
+              "placeholder": "udl"
+            }
           },
           "project": {
             "anyOf": [
@@ -13567,7 +13601,13 @@
             "minLength": 1,
             "title": "Token",
             "type": "string",
-            "writeOnly": true
+            "writeOnly": true,
+            "x-udl-ui": {
+              "help": "Kept in udl's own store: `op` is given it, and udl's own reads never are.",
+              "label": "Service account token",
+              "placeholder": "ops_\u2026",
+              "widget": "password"
+            }
           }
         },
         "required": [
