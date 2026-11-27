@@ -283,6 +283,27 @@ def test_a_comment_with_no_pull_is_refused_not_a_key_error() -> None:
         refuses(port, "/github/comment", {"repo": "acme/widgets", "text": "no number"}, 400)
 
 
+def test_a_body_that_does_not_fit_is_one_answer_and_not_two() -> None:
+    """(A control's body is a model: a body that fails validation gets its 400 and nothing else —
+    a second status line queued behind it would be read as the answer to the next call.)"""
+    control = Control()
+
+    with serving(control) as port, socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+        body = json.dumps({"repo": "acme/widgets"}).encode()
+        sock.sendall(
+            b"POST /github HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
+            + f"Content-Length: {len(body)}\r\n\r\n".encode()
+            + body
+        )
+        said = b""
+        while chunk := sock.recv(4096):
+            said += chunk
+
+    # (One answer, and its status is the refusal: the harness says 400 and ends the connection.)
+    assert said.count(b"HTTP/1.") == 1, said
+    assert b" 400 " in said.split(b"\r\n", 1)[0], said
+
+
 def test_the_control_api_says_a_branch_s_head_in_the_story_s_origin(tmp_path: Path) -> None:
     """(29.10: the commit a story's branch has in its origin, and "" for one it does not have.)"""
     control = Control()
@@ -540,6 +561,42 @@ def test_main_stops_on_sigterm() -> None:
         started.stdout.close()
     finally:
         if started.poll() is None:  # pragma: no cover - the server must have stopped
+            started.kill()
+            started.wait(timeout=10)
+
+
+def test_a_first_start_that_never_answers_says_so_and_ends_with_1() -> None:
+    """(A udl that never answers on the first start is the harness's own failure: it says so and
+    ends with 1 — not a traceback out of `main` — and the process it started is stopped.)"""
+    port = free_port()
+    script = (
+        "import pathlib\n"
+        "import support.e2e as e2e\n"
+        "e2e.SHELL_DIST = pathlib.Path('/nonexistent')\n"
+        "def never(*args: object, **kwargs: object) -> None:\n"
+        "    raise TimeoutError('udl serve did not answer')\n"
+        "e2e.wait_until = never\n"
+        f"raise SystemExit(e2e.main(port={port}))\n"
+    )
+    started = subprocess.Popen(  # noqa: S603 - the module under test
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        env=environment_for_the_test(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        assert started.stdout is not None
+        said = started.stdout.read()
+        assert started.wait(timeout=60) == 1, said
+        # (Said, not raised: the harness's own line, and no traceback.)
+        assert "e2e: udl serve did not answer" in said, said
+        assert "Traceback" not in said, said
+    finally:
+        if started.stdout is not None:
+            started.stdout.close()
+        if started.poll() is None:  # pragma: no cover - the harness must have ended
             started.kill()
             started.wait(timeout=10)
 

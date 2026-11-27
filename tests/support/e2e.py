@@ -353,8 +353,14 @@ def handler_for(control: Control) -> type[BaseHTTPRequestHandler]:
                     return
             except ValidationError as e:
                 self.fail(400, "; ".join(error["msg"] for error in e.errors()))
+                return
             except TimeoutError as e:
                 # (udl did not come back: the test hears it, rather than a reset connection.)
+                self.fail(503, str(e))
+                return
+            except RuntimeError as e:
+                # (A restart that udl did not survive, or one asked for while stopping: said, not
+                # a dropped connection.)
                 self.fail(503, str(e))
                 return
             except ValueError as e:
@@ -611,6 +617,9 @@ def main(
             # its own thread.)
             running: list[subprocess.Popen[bytes]] = []
             restarting = threading.Lock()
+            done = threading.Event()
+            """Set while the harness is stopping: a restart that was waiting for the lock when
+            the harness stopped refuses, rather than starting a udl nothing will stop."""
             # (A test that has to see why udl did what it did asks for its log by naming a file.)
             named = os.environ.get("UDL_E2E_LOG")
             with ExitStack() as opened:
@@ -638,23 +647,29 @@ def main(
                     start). The harness's own stop waits for this lock, so a stop mid-restart
                     stops the process the restart started, not the one before it."""
                     with restarting:
+                        if done.is_set():
+                            raise RuntimeError("the harness is stopping: no restart")
                         stop(running[-1])
                         launch()
 
                 control.restart = again
-                launch()
-                # (Both lines are printed before waiting: a server that is up must say so even
-                # if its /docs never answers, or the test would only time out.)
+                # (Said before waiting: a server that is up must say so even if its /docs never
+                # answers, or the test would only time out with nothing to read.)
                 print(f"e2e: udl serve on {url}", file=sys.stdout, flush=True)  # noqa: T201
                 print(f"e2e: github on {gh_url}", flush=True)  # noqa: T201
                 print(f"e2e: controls on :{controls_port}", flush=True)  # noqa: T201
                 try:
-                    stopping.wait(self_stop)  # (Playwright's webServer kills after a few minutes)
+                    launch()
+                    # (It ends when Playwright's webServer kills it after a few minutes, or on
+                    # its own after `self_stop` — and a udl that never answered is the failure
+                    # this try is for; what it started is stopped below either way.)
+                    stopping.wait(self_stop)
                 except TimeoutError as e:
                     print(f"e2e: {e}", file=sys.stderr, flush=True)  # noqa: T201
                     return 1
                 finally:
                     with restarting:
+                        done.set()
                         for one in running:
                             stop(one)
     return 0
