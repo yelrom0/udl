@@ -1,7 +1,7 @@
 /**
- * ----------------
+ * --------
  * - page.tsx -
- * ----------------
+ * --------
  *
  * The two pages 29.8 adds (29.1's screens): Ready to merge, and To action. Both read 28.4's
  * inbox, so both re-read on the same live events.

@@ -1,5 +1,6 @@
 import { createServer } from "node:net";
-import { dirname, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "@playwright/test";
 import { SIGNED_IN } from "./e2e/helpers";
@@ -27,6 +28,11 @@ async function freePort(): Promise<number> {
 const port = process.env.UDL_E2E_PORT ? Number(process.env.UDL_E2E_PORT) : await freePort();
 process.env.UDL_E2E_PORT = String(port);
 const url = `http://127.0.0.1:${port}`;
+// (The fake GitHub's address and token, written by the harness where this run alone can see:
+// a path of this run's own, so two runs — two worktrees — never overwrite each other's. Set in
+// the environment, as the ports are, so the workers' re-import of this file reads the same one.)
+const githubFile = process.env.UDL_E2E_GITHUB ?? join(tmpdir(), `udl-e2e-github-${port}.json`);
+process.env.UDL_E2E_GITHUB = githubFile;
 
 // The harness's control API (what a test asks a fake to answer with next), on a port of its own:
 // 29.12's chat writes the turns a scripted harness runs, so a spec reaches it directly.

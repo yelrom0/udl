@@ -52,8 +52,19 @@ function Row({
 			className="flex flex-wrap items-center gap-2 border-base-content/10 border-b py-2 text-sm last:border-b-0"
 		>
 			<span className="badge badge-ghost badge-sm">{`#${row.number}`}</span>
-			<a className="link" href={row.url}>
+			<a className="link inline-flex items-center gap-1" href={row.url}>
 				{row.title}
+				{/* (Q-8: the title is a link, and an icon says it goes to GitHub.) */}
+				<svg
+					aria-hidden="true"
+					className="size-3 opacity-60"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth={2}
+					viewBox="0 0 24 24"
+				>
+					<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+				</svg>
 			</a>
 			{row.task !== "" && <Key kind="tasks" name={row.task} />}
 			{row.checks !== "" && row.checks !== "none" && (
@@ -97,6 +108,7 @@ function Row({
 export function Merge({ ctx, merge, project, refresh }: MergeProps) {
 	const [merging, setMerging] = useState<string | null>(null);
 	const [refused, setRefused] = useState<string | null>(null);
+	const [failed, setFailed] = useState<string | null>(null);
 
 	const ask = async (row: MergeRow): Promise<void> => {
 		const what = `${row.repo}#${row.number}`;
@@ -109,12 +121,15 @@ export function Merge({ ctx, merge, project, refresh }: MergeProps) {
 		}
 		setMerging(row.task);
 		setRefused(null);
+		setFailed(null);
 		try {
 			await ctx.call("orch_merge", { project, key: row.task, confirm: what, sha: row.sha });
 			await refresh();
 		} catch (failure) {
-			// (The refusal is said here: the row is still on the list, and a person reads why.)
+			// (The refusal is said here, and the row it was about is marked: it is still on the
+			// list, and a person reads why.)
 			const said = failure instanceof Error ? failure.message : String(failure);
+			setFailed(row.task);
 			setRefused(said);
 		} finally {
 			setMerging(null);
@@ -139,7 +154,7 @@ export function Merge({ ctx, merge, project, refresh }: MergeProps) {
 				{rows.map((row) => (
 					<Row
 						busy={merging !== null}
-						failed={refused?.startsWith(`${row.repo}#${row.number}`) ?? false}
+						failed={failed === row.task}
 						key={`${row.task}-${row.number}`}
 						mergeable={mergeable}
 						onMerge={(found) => {
@@ -176,10 +191,15 @@ export function Merge({ ctx, merge, project, refresh }: MergeProps) {
 						</span>
 						<button
 							className="btn btn-xs"
-							disabled={merging !== null}
+							disabled={merging !== null || (!merge.auto_merge && merge.merger === null)}
 							onClick={() => {
 								void toggle(!merge.auto_merge);
 							}}
+							title={
+								merge.auto_merge || merge.merger !== null
+									? undefined
+									: "Name the merger first (29.x's page)"
+							}
 							type="button"
 						>
 							{merge.auto_merge ? "Turn off" : "Turn on"}

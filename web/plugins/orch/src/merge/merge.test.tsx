@@ -1,7 +1,7 @@
 /**
- * -------------
+ * ------------------
  * - merge.test.tsx -
- * -------------
+ * ------------------
  *
  * Ready to merge, and To action (29.8): the merge list as the inbox sends it, the project's auto
  * merge said, and what only a person can do. The merge is udl's — the page asks which pull it is,
@@ -81,6 +81,110 @@ describe("Ready to merge (29.8)", () => {
 		expect(screen.getByText("#3")).toBeTruthy();
 		expect(screen.getByText("#4")).toBeTruthy();
 		expect(screen.getByText("auto merge: off")).toBeTruthy();
+	});
+
+	it("turns auto merge on and off, and says a refusal", async () => {
+		const fake = draw();
+
+		const view = (extra: Partial<MergeList>) =>
+			render(<Merge ctx={fake.ctx} merge={list(extra)} project="udl" refresh={again(fake)} />);
+
+		// (Off, with a merger stored: the button turns it on, with the project.)
+		view({ auto_merge: false, merger: "claude" });
+		fireEvent.click(screen.getByRole("button", { name: "Turn on" }));
+		await waitFor(() => {
+			expect(
+				fake.calls.some(
+					(one) =>
+						one.name === "orch_set_auto_merge" &&
+						JSON.stringify(one.request) === JSON.stringify({ project: "udl", on: true }),
+				),
+			).toBe(true);
+		});
+
+		// (On: it turns it off, and the stored merger is kept.)
+		view({ auto_merge: true, merger: "claude" });
+		fireEvent.click(screen.getByRole("button", { name: "Turn off" }));
+		await waitFor(() => {
+			expect(
+				fake.calls.some(
+					(one) =>
+						one.name === "orch_set_auto_merge" &&
+						JSON.stringify(one.request) === JSON.stringify({ project: "udl", on: false }),
+				),
+			).toBe(true);
+		});
+	});
+
+	it("offers no switch to turn on without a merger", () => {
+		// (Turning it on needs a merger: with none stored the button is disabled, not a trap.)
+		const fake = draw();
+		render(
+			<Merge
+				ctx={fake.ctx}
+				merge={list({ auto_merge: false, merger: null })}
+				project="udl"
+				refresh={again(fake)}
+			/>,
+		);
+		expect((screen.getByRole("button", { name: "Turn on" }) as HTMLButtonElement).disabled).toBe(
+			true,
+		);
+	});
+
+	it("says what a refused switch was refused with", async () => {
+		const refused = fakeCtx((name) => {
+			if (name === "orch_set_auto_merge") {
+				throw new Error("only a person turns auto merge on or off");
+			}
+			return { inbox: INBOX } as JsonObject;
+		});
+		render(
+			<Merge
+				ctx={refused.ctx}
+				merge={list({ auto_merge: false, merger: "claude" })}
+				project="udl"
+				refresh={again(refused)}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Turn on" }));
+		await waitFor(() => {
+			const said = screen.getAllByRole("alert").map((one) => one.textContent ?? "");
+			expect(said.some((one) => one.includes("only a person"))).toBe(true);
+		});
+	});
+
+	it("draws the checks, the review, the merger and who merged it", () => {
+		const fake = draw();
+
+		render(
+			<Merge
+				ctx={fake.ctx}
+				merge={list({
+					ready: [row(3, { merger: "reviewing", checks: "pass", review: "approve" })],
+					done: [
+						row(2, {
+							state: "done",
+							merged_by: "claude (auto merge)",
+							followed: ["29.4"],
+						}),
+					],
+				})}
+				project="udl"
+				refresh={again(fake)}
+			/>,
+		);
+
+		// (Two rows carry the same words: the badge and the row's own line, so all of them.)
+		expect(screen.getAllByText("checks: pass").length).toBeGreaterThan(0);
+		expect(screen.getAllByText("review: approve").length).toBeGreaterThan(0);
+		expect(screen.getByText("reviewing")).toBeTruthy();
+		expect(screen.getByText("merged by claude (auto merge)")).toBeTruthy();
+		expect(screen.getByText("followed by 29.4")).toBeTruthy();
+		// (Q-8: the title is a link, and an icon says it goes to GitHub.)
+		expect(
+			document.querySelector('a[href="https://github.com/yelrom0/udl/pull/3"] svg'),
+		).toBeTruthy();
 	});
 
 	it("says whose merger does auto merge when it is on", () => {

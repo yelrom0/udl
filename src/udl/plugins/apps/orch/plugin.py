@@ -16,6 +16,7 @@ module does.
 import asyncio
 import contextlib
 import logging
+import re
 from collections.abc import Awaitable, Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -355,6 +356,9 @@ _MERGED: Final = "github.pr.merged"
 
 _CLOSED: Final = "github.pr.closed"
 """The event it publishes for one closed without merging."""
+
+_MERGED_BY: Final = re.compile(r"Merged by (.+?)( \(auto merge\))?[.,]")
+"""Who a done row was merged by, read from the note `after_merge` writes (`merge.py`)."""
 
 _UNSTARTED: Final = ("open", "blocked")
 """The states a task is split in: its spec is not yet being written (nor written)."""
@@ -2843,16 +2847,18 @@ class Orch(AppPlugin[OrchSettings]):
             blockers = [f"it is on hold: {task.hold}"]
         # (The newest verdict on this pull: `changes asked` is the merger's, and a review of a
         # head the pull has since moved past says nothing about this one.)
-        # (Who merged it, for a row that is done: the note `after_merge` writes says so.)
+        # (Who merged it, for a row that is done: the note `after_merge` writes says so, and
+        # whether it was the merger's own merge.)
         merged_by = ""
         if task.state in (MERGED, DONE):
             for note in reversed(
                 await stored.NoteRecords(self.records).for_owner(OwnerKind.TASK, task.id)
             ):
-                if note.text.startswith("Merged by "):
-                    merged_by = (
-                        note.text[len("Merged by ") :].split(" (auto merge)")[0].split(",")[0]
-                    )
+                found = _MERGED_BY.match(note.text)
+                if found is not None:
+                    merged_by = found.group(1)
+                    if found.group(2):
+                        merged_by += " (auto merge)"
                     break
         reviews = await stored.ReviewRecords(self.records).for_task(project.name, task.key)
         asked = reviews[0] if reviews else None

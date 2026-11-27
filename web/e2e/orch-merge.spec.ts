@@ -27,12 +27,16 @@ async function call(page: Page, name: string, body: object): Promise<unknown> {
  * `webServer` has started, so at load the file does not exist yet (and a previous run's would be
  * stale). */
 function harness(): { url: string; token: string; repo: string; controls: string } {
-	return JSON.parse(
-		readFileSync(
-			process.env.UDL_E2E_GITHUB ?? new URL("../playwright/.e2e-github.json", import.meta.url),
-			"utf8",
-		),
-	) as { url: string; token: string; repo: string; controls: string };
+	const path = process.env.UDL_E2E_GITHUB;
+	if (path === undefined) {
+		throw new Error("the harness did not say where it wrote the fake GitHub's address");
+	}
+	return JSON.parse(readFileSync(path, "utf8")) as {
+		url: string;
+		token: string;
+		repo: string;
+		controls: string;
+	};
 }
 const REPO = "acme/widgets";
 const PULL = 7;
@@ -130,6 +134,8 @@ test("a ready pull merges, and the task stacked on it is told to rebase (29.8)",
 			{ timeout: 60_000 },
 		)
 		.toBe(true);
+	// (A person pushing to the pull is what makes udl look at it again, and the link's head is
+	// what the merge is at.)
 	const pushed = await page.request.post(`${controls}/github`, { data: { sha: "abc1235" } });
 	expect(pushed.ok(), `the push answered ${pushed.status()}`).toBe(true);
 	// (The event the watcher published, then the link's head, read through the task.)

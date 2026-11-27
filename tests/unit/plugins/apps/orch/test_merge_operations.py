@@ -54,6 +54,7 @@ from udl.plugins.apps.orch.models import (
     PromoteRequest,
     PromotionList,
     PromotionRequest,
+    PullState,
     ReadyRequest,
     SetActionRequest,
 )
@@ -64,6 +65,7 @@ from udl.plugins.apps.orch.records import (
     Feature,
     FeatureRecords,
     LinkRecords,
+    Note,
     NoteRecords,
     Project,
     ProjectRecords,
@@ -305,6 +307,70 @@ async def test_a_ready_task_is_listed_with_its_pull(service: UDLService) -> None
     assert row.blockers == []
 
 
+async def test_a_row_carries_its_pulls_checks_and_review(service: UDLService) -> None:
+    """(29.8: the row says what the link's state says — the checks and the bot's word.)"""
+    records = AppRecords(service.db)
+    links = LinkRecords(records)
+    link = (await links.for_owner("udl", OwnerKind.TASK, "F-1.1"))[0]
+    await links.save(link.model_copy(update={"state": PullState(checks="fail", review="changes")}))
+
+    row = (await listed(service)).ready[0]
+
+    assert (row.checks, row.review) == ("fail", "changes")
+
+
+async def test_a_done_row_says_who_merged_it_and_whether_it_was_auto(
+    service: UDLService,
+) -> None:
+    """(A hand merge says who; the merger's own says so too — Q-8's Done.)"""
+    await add_task(service, "F-1.2", number=2)
+    records = AppRecords(service.db)
+    tasks = TaskRecords(records)
+    found = await tasks.task("udl", "F-1.2")
+    assert found is not None
+    moved = await tasks.move(found, MERGED, by=Principal(kind="human", name="human:owner"))
+    await NoteRecords(records).add(
+        Note(
+            owner_kind=OwnerKind.TASK,
+            owner=moved.id,
+            note_kind=NoteKind.SYSTEM,
+            text="Merged by claude.",
+        )
+    )
+
+    row = (await listed(service)).done[0]
+
+    assert row.merged_by == "claude"
+
+
+async def test_an_auto_merge_says_so_in_the_done_row(service: UDLService) -> None:
+    await add_task(service, "F-1.2", number=2)
+    records = AppRecords(service.db)
+    found = await TaskRecords(records).task("udl", "F-1.2")
+    assert found is not None
+    moved = await TaskRecords(records).move(
+        found, MERGED, by=Principal(kind="human", name="human:owner")
+    )
+    await NoteRecords(records).add(
+        Note(
+            owner_kind=OwnerKind.TASK,
+            owner=moved.id,
+            note_kind=NoteKind.SYSTEM,
+            text="Merged by claude (auto merge).",
+        )
+    )
+
+    row = (await listed(service)).done[0]
+
+    assert row.merged_by == "claude (auto merge)"
+
+
+async def test_a_row_that_was_not_merged_says_nobody(service: UDLService) -> None:
+    row = (await listed(service)).ready[0]
+
+    assert row.merged_by == ""
+
+
 async def test_a_pull_that_cannot_be_read_is_that_row_s_own_blocker(
     service: UDLService,
 ) -> None:
@@ -361,7 +427,7 @@ async def test_what_merged_lately_says_what_followed_it(service: UDLService) -> 
     tasks = TaskRecords(AppRecords(service.db))
     found = await tasks.task("udl", "F-1.1")
     assert found is not None
-    await tasks.move(found, MERGED, by=Principal(kind="system", role="merge"))
+    await tasks.move(found, MERGED, by=Principal(kind="human", name="human:owner"))
 
     listed_now = await listed(service)
 
@@ -382,7 +448,7 @@ async def test_what_merged_more_than_fourteen_days_ago_leaves_the_list(
         tasks = TaskRecords(records)
         found = await tasks.task("udl", "F-1.1")
         assert found is not None
-        await tasks.move(found, MERGED, by=Principal(kind="system", role="merge"))
+        await tasks.move(found, MERGED, by=Principal(kind="human", name="human:owner"))
 
         fresh = await listed(running)
         await clock.advance(timedelta(days=15))
@@ -674,7 +740,7 @@ async def test_promotion_lists_what_is_merged_and_not_done(service: UDLService) 
     tasks = TaskRecords(AppRecords(service.db))
     found = await tasks.task("udl", "F-1.1")
     assert found is not None
-    await tasks.move(found, MERGED, by=Principal(kind="system", role="merge"))
+    await tasks.move(found, MERGED, by=Principal(kind="human", name="human:owner"))
 
     listed_now = await service.call("orch_promotion", PromotionRequest())
 
@@ -687,7 +753,7 @@ async def test_promote_marks_them_done_with_its_note(service: UDLService) -> Non
     tasks = TaskRecords(AppRecords(service.db))
     found = await tasks.task("udl", "F-1.1")
     assert found is not None
-    await tasks.move(found, MERGED, by=Principal(kind="system", role="merge"))
+    await tasks.move(found, MERGED, by=Principal(kind="human", name="human:owner"))
 
     promoted = await service.call("orch_promote", PromoteRequest(tasks=["F-1.1"], note="In rc."))
 
@@ -711,7 +777,7 @@ async def test_promote_writes_nothing_when_one_of_them_is_refused(service: UDLSe
     tasks = TaskRecords(AppRecords(service.db))
     found = await tasks.task("udl", "F-1.1")
     assert found is not None
-    await tasks.move(found, MERGED, by=Principal(kind="system", role="merge"))
+    await tasks.move(found, MERGED, by=Principal(kind="human", name="human:owner"))
 
     with pytest.raises(DoesNotExist, match=r"F-1\.9"):
         await service.call("orch_promote", PromoteRequest(tasks=["F-1.1", "F-1.9"]))
@@ -726,7 +792,7 @@ async def test_promote_refuses_a_project_with_nothing_after_the_base(service: UD
     tasks = TaskRecords(AppRecords(service.db))
     found = await tasks.task("udl", "F-1.1")
     assert found is not None
-    await tasks.move(found, MERGED, by=Principal(kind="system", role="merge"))
+    await tasks.move(found, MERGED, by=Principal(kind="human", name="human:owner"))
 
     with pytest.raises(NotAllowed, match="no branches after its base"):
         await service.call("orch_promote", PromoteRequest(tasks=["F-1.1"]))
