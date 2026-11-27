@@ -7,6 +7,7 @@ Fixtures shared by every test
 """
 
 # System Imports
+import gc
 import logging
 import os
 from collections.abc import Iterator
@@ -95,6 +96,18 @@ def _restore_logging() -> Iterator[None]:
             handler.close()
     root.setLevel(levels[0])
     udl.setLevel(levels[1])
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _collected() -> Iterator[None]:
+    """Collect the garbage as each module ends, so a leak fails in the module that made it.
+
+    An unclosed socket or pipe left in a reference cycle warns only when it is collected, and on a
+    busy worker that was often inside a later, unrelated test, where nothing said whose it was
+    (Q-22, 27 Nov 2026). Collected here, it fails the module's last test at teardown instead.
+    """
+    yield
+    gc.collect()
 
 
 @pytest.hookimpl(tryfirst=True)  # before -m deselects anything
