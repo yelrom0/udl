@@ -329,7 +329,7 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
   - [x] 18.3 FastAPI serves the UI at `/ui` (from the package, SPA fallback, CSP, cache headers), and a page saying how to build it when it isn't built
   - [x] 18.4 Web sessions: sign in with the API key → a session cookie; a CSRF header and an Origin check on writes
   - [x] 18.5 The shell: layout, TanStack Router (file routes, auth guard, a splat route for plugin pages), Zustand stores, light / dark / system theme
-  - [r] 18.6 Live data: shared SSE connections feeding Zustand stores, reconnecting with backoff (fix: PR #117)
+  - [x] 18.6 Live data: shared SSE connections feeding Zustand stores, reconnecting with backoff (fix: PR #117)
   - [x] 18.7 `UIManifest` (Pydantic → JSON Schema → TypeScript), `ui` on every plugin kind, the `udl.ui` kind, local UI plugin dirs, `GET /ui/plugins.json`, UI availability in `list_plugins`
   - [x] 18.8 `@udl/ui-sdk`: `defineUIPlugin`, the mount contract, a React adapter, the plugin context, SDK version checks
   - [x] 18.9 The plugin host: `<PluginSlot>` (lazy import, Shadow DOM isolation, error boundary) and the contribution points
