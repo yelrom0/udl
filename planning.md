@@ -148,7 +148,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [~] 28.5 Events for all of it, and a `notify` example
   - [~] 28.6 End to end on fakes: task → agent → question → answer → PR → ready → merged
   - [x] 28.7 Auto merge: a project's merger (a reviewer or manager agent) merges its ready PRs after its own review
-  - [ ] 28.8 The checkout follows `main`: after a merge, each host's checkout of the repo fast-forwards to it
+  - [~] 28.8 The checkout follows `main`: after a merge, each host's checkout of the repo fast-forwards to it
 - [ ] **Phase 29: Screens (Google Stitch) and the `orch` UI plugin**
   - [x] 29.1 **(Claude)** A new Stitch project: design system from the shell's daisyUI themes; every screen below, desktop and phone, light and dark ([web/plugins/orch/design/](web/plugins/orch/design/README.md)); the user's changes (Q-8) made
   - [x] 29.2 The `orch` UI plugin's skeleton: manifest, routes, stores, live data
