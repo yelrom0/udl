@@ -2270,6 +2270,7 @@ class ImportPlanRequest(_Model):
         min_length=1,
         json_schema_extra=ui_field(
             label="Plan files",
+            widget="lines",
             placeholder="planning.md",
             help="The plan files, by path: udl reads the tracker and the cards in them.",
         ),

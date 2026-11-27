@@ -8,35 +8,9 @@ what goes in it — a token, or a 1Password reference — the repositories field
 and the operations are grouped and ordered so the page reads as pulls, checks and merge.
 """
 
-# Package Imports
-from collections.abc import Mapping
-from typing import cast
-
-from pydantic import JsonValue
-
 # Local Imports
-from udl.core.operations import Operation
-from udl.core.schemas import model_schema
+from support.generated import hints, place
 from udl.plugins.integrations.github.plugin import GitHubIntegration, GitHubOptions, GitHubToken
-
-
-def place(operation: Operation) -> tuple[str | None, int]:
-    """Where the page puts `operation`: its group and its place in it."""
-    found = operation.ui
-    assert found is not None
-    return found.group, found.order
-
-
-def hints(model: type, field: str) -> dict[str, JsonValue]:
-    """What `model`'s `field` says about how the page shows it."""
-    schema = model_schema(model)
-    properties = schema["properties"]
-    assert isinstance(properties, Mapping)
-    named = properties[field]
-    assert isinstance(named, Mapping)
-    said = named.get("x-udl-ui")
-    assert isinstance(said, dict)
-    return cast(dict[str, JsonValue], said)
 
 
 def test_the_token_says_it_may_be_a_reference() -> None:
@@ -53,6 +27,8 @@ def test_the_repositories_say_what_they_take() -> None:
     said = hints(GitHubOptions, "repos")
 
     assert said["label"] == "Repositories"
+    # (One per line: a box of JSON would take no placeholder, and `acme/widgets` is not JSON.)
+    assert said["widget"] == "lines"
     assert "owner/name" in str(said["help"])
     assert said["placeholder"] == "acme/widgets"
 

@@ -344,6 +344,18 @@ function Control({ id, field, value, onChange, onClear, disabled, invalid, secre
 			/>
 		);
 	}
+	if (field.widget === "lines") {
+		return (
+			<LinesBox
+				id={id}
+				value={value}
+				{...(field.placeholder === undefined ? {} : { placeholder: field.placeholder })}
+				disabled={disabled}
+				invalid={invalid}
+				onChange={onChange}
+			/>
+		);
+	}
 	if (field.widget === "json") {
 		return (
 			<JsonBox id={id} value={value} onChange={onChange} onClear={onClear} disabled={disabled} />
@@ -395,9 +407,10 @@ function SecretBox({
 			className={className}
 			value={typed}
 			disabled={disabled}
-			// (What the field says goes in it, when it says: a token that may be an `op://`
-			// reference is not "(not set)".)
-			placeholder={placeholder ?? (set ? "(set: type to replace)" : "(not set)")}
+			// (What the field says goes in it while it is empty: a token that may be an `op://`
+			// reference is not "(not set)". A value that is there still says so — it is never
+			// drawn back, so "(set)" is the only way to know.)
+			placeholder={set ? "(set: type to replace)" : (placeholder ?? "(not set)")}
 			onChange={(event) => {
 				setTyped(event.target.value);
 				if (event.target.value === "") {
@@ -407,6 +420,47 @@ function SecretBox({
 					onChange(event.target.value);
 				}
 			}}
+		/>
+	);
+}
+
+interface LinesBoxProps {
+	readonly id: string;
+	readonly value: JsonValue | undefined;
+	/** What goes on a line, when the field says (`x-udl-ui`'s placeholder). */
+	readonly placeholder?: string;
+	readonly disabled: boolean;
+	readonly invalid: boolean;
+	readonly onChange: (value: JsonValue) => void;
+}
+
+/**
+ * A list of lines (29.9): one item a line, for the lists that are typed as lines rather than as
+ * a JSON array (`repos`, the plan files). What was typed is kept as it was, so a line that is
+ * half-typed is not turned into an item and then read back trimmed; the value is the lines that
+ * are not empty, each trimmed.
+ */
+function LinesBox({ id, value, placeholder, disabled, invalid, onChange }: LinesBoxProps) {
+	const shown = Array.isArray(value) ? value.map((item) => String(item)).join("\n") : "";
+	const [typed, setTyped] = useState<string | null>(null);
+	return (
+		<textarea
+			id={id}
+			className={`textarea w-full${invalid ? " textarea-error" : ""}`}
+			value={typed ?? shown}
+			disabled={disabled}
+			{...(placeholder === undefined ? {} : { placeholder })}
+			onChange={(event) => {
+				const text = event.target.value;
+				setTyped(text);
+				onChange(
+					text
+						.split("\n")
+						.map((line) => line.trim())
+						.filter((line) => line !== ""),
+				);
+			}}
+			onBlur={() => setTyped(null)}
 		/>
 	);
 }

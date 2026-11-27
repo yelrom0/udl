@@ -6297,7 +6297,8 @@
             "x-udl-ui": {
               "help": "The plan files, by path: udl reads the tracker and the cards in them.",
               "label": "Plan files",
-              "placeholder": "planning.md"
+              "placeholder": "planning.md",
+              "widget": "lines"
             }
           },
           "project": {

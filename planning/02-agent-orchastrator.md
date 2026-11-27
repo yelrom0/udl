@@ -1714,7 +1714,7 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
 **29.9 Connections and import** · needs 24.7, 29.2
 - Build: no hand-built pages: `generated` manifest entries and `ui_field()` hints so the generated pages for `github`, `openrouter`, hosts, secrets status, runners, projects and repos read well (groups, order, labels, the `account` and `markdown` widgets), and two contributions: a `resultViews` one that renders `orch_import_plan`'s report (what a dry run would create, the unplaced lines), and an `operationViews` one for `orch_list_runners`, the **Machines** view: a card per host with each harness's version, update available, signed in and plan, limit state and guards, with Install / Update, Set up and Sign in buttons. Sign in opens the relay (25.11): the harness's link as a button, a box for the code, and the result. This is Phase 24's point proved on real plugins: write down in the phase's decisions anything the generated UI couldn't do and how it was solved.
 - Done when: a 1Password token, an OpenRouter key by `op://` reference, a GitHub account, a host and a project with a repo can all be set up from the web alone.
-- **Built (deepseek-a, 27 Nov 2026, PR #N):** the generated pages read well, and a page can show the few
+- **Built (deepseek-a, 27 Nov 2026, PR #112):** the generated pages read well, and a page can show the few
   operations a hand-built UI does not cover. udl says what a form draws: `GeneratedAccounts.tokens_schema`
   is the integration's `token_model` as a schema, so the accounts form draws each token's own labelled,
   secret box (an integration that declares none keeps the name-and-value editor), and a secret box shows
@@ -1727,8 +1727,13 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
   the page is for. Tests: `tests/unit/core/test_setup_pages.py`, `tests/unit/plugins/integrations/github/
   test_ui.py`, `tests/interface/web/test_generated.py` (the token schema), the shell's `Accounts` and
   `guidance` suites, and `web/e2e/setup-pages.spec.ts` (udl's hosts and secrets groups, the orchestrator's
-  four setup groups, in both themes). The Machines view and the import report are the card's other half
-  and come in a second PR; `29.10`'s e2e is still its own card.
+  four setup groups, in both themes). Two more came from the review: a `lines` widget (a `list[str]`, one
+  item a line) so github's repositories and the import's plan files are typed as lines rather than as a
+  JSON array, and `orch_set_auto_merge` in the page's Projects group — no hand-built page has its switch.
+  The Machines view and the import report are the card's other half, in **29.9-machines** (Claude, 27 Nov),
+  which also carries the Done when's proof (a 1Password token, an OpenRouter key by `op://` reference, a
+  GitHub account, a host and a project with a repo, all set up from the web alone): `setup-pages.spec.ts`
+  proves the groups and fields are drawn, not that a setup works. `29.10`'s e2e is still its own card.
 - **Screens (29.1, Google Stitch):** **Connections: a generated page**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=126785af99b04553983316310fb2fd68) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=b4193d88b702431088fb00a576accdd4), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=7272b669d4e243529dc6dd6406ee8579) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=80b6bb3f19c449829bd03c30c808b326); `web/plugins/orch/design/connections-{light,dark}-{desktop,phone}.png`.
 
 **29.10 End to end** · needs 29.3–29.9, 29.11, 29.12

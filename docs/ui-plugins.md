@@ -74,7 +74,9 @@ All of it optional; what a plugin does not say stays as udl answered it.
 **What a form draws comes from udl, not from the shell.** An operation's request and an integration's
 `account_model`/`token_model` are drawn from their JSON Schemas, and a field says how it is shown with
 `ui_field()` in its model (`Field(json_schema_extra=ui_field(label=…, placeholder=…, help=…,
-widget=…))`): its label, what goes in its box, the line under it, and which control draws it. An
+widget=…))`): its label, what goes in its box, the line under it, and which control draws it —
+`text`, `textarea`, `markdown`, `password`, `number`, `switch`, `select`, `multiselect`, `lines`
+(a `list[str]`, one item a line), `path`, `url`, `datetime`, `duration`, `json`, `account`, `code`. An
 operation says its group and place in it the same way (`UISpec(group=…, order=…)`). So a plugin's page
 reads well without a UI plugin at all — and a UI plugin's `fieldWidgets` replaces one of those controls,
 not the field's own words.

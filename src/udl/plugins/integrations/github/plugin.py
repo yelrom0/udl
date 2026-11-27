@@ -108,6 +108,7 @@ class GitHubOptions(AccountOptions):
         default_factory=list[Annotated[str, Field(pattern=r"^[^/\s]+/[^/\s]+$")]],
         json_schema_extra=ui_field(
             label="Repositories",
+            widget="lines",
             placeholder="acme/widgets",
             help="The repositories it works in, owner/name, one per line.",
         ),

@@ -38,6 +38,7 @@ describe("the orchestrator's manifest and its entry", () => {
 			"orch_list_projects",
 			"orch_get_project",
 			"orch_set_project",
+			"orch_set_auto_merge",
 			"orch_delete_project",
 			"orch_set_repo",
 			"orch_delete_repo",

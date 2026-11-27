@@ -8,43 +8,18 @@ the orchestrator's projects, repos, machines and import, each in its own group, 
 person does them — and the fields that take a token or a path say what goes in them.
 """
 
-# Package Imports
-from collections.abc import Mapping
-from typing import cast
-
-from pydantic import JsonValue
-
 # Local Imports
-from udl.core.operations import Operation, operations
-from udl.core.schemas import model_schema
+from support.generated import hints, place
+from udl.core.operations import operations
 from udl.hosts.models import SetHostRequest
 from udl.plugins.apps.orch.models import ImportPlanRequest, SetProjectRequest, SetRepoRequest
 from udl.plugins.secrets.models import SetToken
-
-
-def place(operation: Operation) -> tuple[str | None, int]:
-    """Where the page puts `operation`: its group and its place in it."""
-    found = operation.ui
-    assert found is not None
-    return found.group, found.order
 
 
 def places(names: list[str]) -> list[tuple[str | None, int]]:
     """Where udl's own page puts `names`."""
     found = operations()
     return [place(found[name]) for name in names]
-
-
-def hints(model: type, field: str) -> dict[str, JsonValue]:
-    """What `model`'s `field` says about how the page shows it."""
-    schema = model_schema(model)
-    properties = schema["properties"]
-    assert isinstance(properties, Mapping)
-    named = properties[field]
-    assert isinstance(named, Mapping)
-    said = named.get("x-udl-ui")
-    assert isinstance(said, dict)
-    return cast(dict[str, JsonValue], said)
 
 
 def test_a_host_is_added_and_checked_in_one_group() -> None:
@@ -82,9 +57,16 @@ def test_the_projects_and_repos_are_two_groups() -> None:
             "list_projects",
             "get_project",
             "set_project",
+            "set_auto_merge",
             "delete_project",
         )
-    ] == [("Projects", 0), ("Projects", 1), ("Projects", 2), ("Projects", 3)]
+    ] == [
+        ("Projects", 0),
+        ("Projects", 1),
+        ("Projects", 2),
+        ("Projects", 3),
+        ("Projects", 4),
+    ]
     assert [place(found[name]) for name in ("set_repo", "delete_repo")] == [
         ("Repos", 0),
         ("Repos", 1),
@@ -116,4 +98,5 @@ def test_a_project_and_a_repo_say_what_they_take() -> None:
     assert hints(SetRepoRequest, "github")["label"] == "On GitHub"
     assert hints(SetRepoRequest, "github")["placeholder"] == "yelrom0/udl"
     assert hints(ImportPlanRequest, "files")["label"] == "Plan files"
+    assert hints(ImportPlanRequest, "files")["widget"] == "lines"
     assert hints(ImportPlanRequest, "dry_run")["label"] == "Only report what it would do"

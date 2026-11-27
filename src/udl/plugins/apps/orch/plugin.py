@@ -760,13 +760,15 @@ class Orch(AppPlugin[OrchSettings]):
                 title="Turn auto merge on or off, with its merger",
                 hints=OperationHints(admin=True, mcp=False),
                 cli=CLISpec(path=(*_PROJECTS, "auto-merge"), arguments=("project",)),
+                # (Its switch has no hand-built page: the generated page's Projects group has it.)
+                ui=UISpec(group="Projects", order=3),
             ),
             cls.operation(
                 "delete_project",
                 title="Delete a project",
                 hints=OperationHints(destructive=True, idempotent=True, admin=True),
                 cli=CLISpec(path=(*_PROJECTS, "rm"), arguments=("name",)),
-                ui=UISpec(group="Projects", order=3),
+                ui=UISpec(group="Projects", order=4),
             ),
             cls.operation(
                 "set_repo",
