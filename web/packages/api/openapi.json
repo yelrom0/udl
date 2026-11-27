@@ -12219,6 +12219,12 @@
         "additionalProperties": false,
         "description": "Where udl keeps its secrets, and what reads the ones it does not keep.",
         "properties": {
+          "onepassword": {
+            "default": false,
+            "description": "Whether a 1Password service account token is kept, which is what `op` is given (never the\ntoken itself).",
+            "title": "Onepassword",
+            "type": "boolean"
+          },
           "resolvers": {
             "description": "What reads the secrets udl does not keep, and what checking each found.",
             "items": {

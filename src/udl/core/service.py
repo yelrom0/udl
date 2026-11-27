@@ -1659,6 +1659,7 @@ class UDLService:
         found = open_resolvers(self.registry, self.settings.secrets, store=store)
         return SecretsStatus(
             store=store.name,
+            onepassword=await store.get(TOKEN_REF) is not None,
             unavailable=store.unavailable(),
             resolvers=[await _resolver_status(resolver) for resolver in found],
         )

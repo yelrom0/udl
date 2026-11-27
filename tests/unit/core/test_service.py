@@ -88,6 +88,7 @@ from udl.plugins.registry import (
 )
 from udl.plugins.requirements import Requirement, RequirementKind
 from udl.plugins.secrets.keyring import KeyringSecretStore
+from udl.plugins.secrets.models import GetSecretsStatusRequest, SetToken
 from udl.plugins.sites.base import SitePlugin
 from udl.plugins.sites.youtube import YouTubePlugin
 
@@ -1317,6 +1318,19 @@ def test_a_cookies_from_browser_setting_udl_cannot_read_is_a_config_error(
 
     with pytest.raises(ConfigError, match="cookies_from_browser"):
         UDLService(config, registry=registry())
+
+
+async def test_the_secrets_status_says_whether_a_onepassword_token_is_kept(make: Make) -> None:
+    """A person who has signed in to 1Password is told so: the status carries whether a service
+    account token is kept, and never the token itself."""
+    service = await make()
+
+    before = await service.get_secrets_status(GetSecretsStatusRequest())
+    assert before.onepassword is False
+
+    after = await service.set_onepassword_token(SetToken(token=SecretStr("ops_a_token")))
+    assert after.onepassword is True
+    assert "ops_a_token" not in after.model_dump_json()
 
 
 async def test_the_config_says_when_its_secret_store_cannot_be_used(

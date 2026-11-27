@@ -4046,6 +4046,10 @@ the wizard. Examples for `docs/automations.md`:
   - `POST /ai/try/stream` is the playground's SSE: `ChatChunk`s, then the result.
 - Tests first: an interface test for each operation and its `MATRIX` row.
 - Done when: the parity test lists them all.
+- 29.9's Done when has a leg that is this card's: an OpenRouter key set by `op://` reference, from the web
+  alone — it needs `set_ai_provider` below, and no operation sets an AI provider today, so it moved here
+  (Claude, 28 Nov). 29.9's other legs (a 1Password token, a GitHub account, a host, a project with a repo)
+  are proved in `web/e2e/setup-from-the-web.spec.ts` (29.9-done-when, deepseek-a).
 
 **17.10 The `vision` solver** · needs 17.2, 13.5
 - Build: `udl/plugins/solvers/vision.py`: image challenges (reCAPTCHA's and hCaptcha's grids: "select
