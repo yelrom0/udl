@@ -277,7 +277,12 @@ export function AgentEditor({ ctx, agent, onDone }: AgentEditorProps) {
 				<p className="text-xs opacity-60">{`Some hosts could not be asked: ${problems.join("; ")}`}</p>
 			)}
 			<div className="flex gap-2">
-				<button className="btn btn-sm btn-primary" disabled={saving} type="submit">
+				<button
+					className="btn btn-sm btn-primary"
+					// (A new agent saved before the harnesses answer would have no runner at all.)
+					disabled={saving || !loaded}
+					type="submit"
+				>
 					Save
 				</button>
 				<button className="btn btn-sm btn-ghost" onClick={onDone} type="button">

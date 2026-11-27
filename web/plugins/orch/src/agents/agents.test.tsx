@@ -264,6 +264,7 @@ describe("the agents' page (29.6)", () => {
 		fireEvent.click(
 			within(screen.getByLabelText("deepseek-a")).getByRole("button", { name: "Edit" }),
 		);
+		await settle();
 		const form = within(screen.getByRole("form", { name: "Edit deepseek-a" }));
 		expect((form.getByLabelText("Name") as HTMLInputElement).disabled).toBe(true);
 		expect((form.getByLabelText("Brief") as HTMLTextAreaElement).value).toBe("You build udl.");
@@ -284,6 +285,7 @@ describe("the agents' page (29.6)", () => {
 		await read();
 
 		fireEvent.click(screen.getByRole("button", { name: "New agent" }));
+		await settle();
 		const form = within(screen.getByRole("form", { name: "New agent" }));
 		expect(form.queryByRole("checkbox", { name: /^Assign/ })).toBeNull();
 
@@ -312,6 +314,7 @@ describe("the agents' page (29.6)", () => {
 		await read();
 
 		fireEvent.click(screen.getByRole("button", { name: "New agent" }));
+		await settle();
 		const form = within(screen.getByRole("form", { name: "New agent" }));
 		fireEvent.change(form.getByLabelText("Name"), { target: { value: "nobody" } });
 		fireEvent.click(form.getByRole("button", { name: "Save" }));
@@ -497,11 +500,17 @@ describe("an agent's editor: the harnesses answer after it opens (29.6)", () => 
 		expect(reading.disabled).toBe(true);
 		expect(reading.value).toBe("");
 
+		// (And Save is not a way to make an agent with no runner: the field it would read is
+		// still loading.)
+		expect((form.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+
 		said({
 			items: [{ host: "local", runner: "opencode", health: {}, models: [] }],
 			problems: [],
 		});
 		await settle();
+
+		expect((form.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(false);
 
 		// (Then it is the select a host's harnesses are chosen from.)
 		const runner = form.getByLabelText("Runner") as HTMLSelectElement;
@@ -511,7 +520,7 @@ describe("an agent's editor: the harnesses answer after it opens (29.6)", () => 
 	});
 });
 
-describe("an agent's editor: the harnesses answer after it opens (29.6)", () => {
+describe("an agent's editor: an edited agent while the read is out (29.6)", () => {
 	it("shows the agent's own runner while the read is still out", async () => {
 		let said: (answer: unknown) => void = () => {};
 		const late = new Promise((done) => {
