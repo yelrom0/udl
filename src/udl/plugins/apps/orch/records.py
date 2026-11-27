@@ -32,7 +32,7 @@ import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Final, Self
+from typing import Final, Literal, Self
 from uuid import UUID
 
 # Package Imports
@@ -1702,6 +1702,8 @@ class AgentRecords:
                 await self._records.delete(SessionEvent, event.id)
             await self._records.delete(AgentSession, session.id)
         await self.tokens.delete_for(name)
+        for alert in await self._records.list(UsageAlert, RecordQuery(where={"agent": name})):
+            await self._records.delete(UsageAlert, alert.id)
         return await self._records.delete(Agent, agent.id)
 
     async def _check_hierarchy(self, agent: Agent) -> None:
@@ -2204,7 +2206,7 @@ class UsageAlert(Record):
 
     agent: Name
     """The agent it is of."""
-    usage_state: str
+    usage_state: Literal["ok", "low", "out"]
     """Where its usage was last read."""
     at: AwareDatetime
     """When it was read."""
@@ -2232,5 +2234,8 @@ class UsageAlertRecords:
         return found[0] if found else None
 
     async def save(self, alert: UsageAlert) -> UsageAlert:
-        """Store `alert` (by its id, so storing one again replaces it)."""
-        return await self._records.save(alert)
+        """Store `alert` (by its agent, so storing one again replaces it)."""
+        found = await self.get(alert.agent)
+        return await self._records.save(
+            alert if found is None else alert.model_copy(update={"id": found.id})
+        )

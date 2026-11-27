@@ -278,6 +278,7 @@ from udl.plugins.apps.orch.tokens import (
     issue_token as issue,
 )
 from udl.plugins.apps.orch.usage import (
+    LOW_RATIO,
     AgentUsage,
     UsageList,
     UsageRequest,
@@ -915,7 +916,8 @@ class Orch(AppPlugin[OrchSettings]):
             cls.operation(
                 "usage",
                 title="What each agent has left",
-                hints=OperationHints(read_only=True),
+                # (Not read-only: a crossing publishes an event and may raise a To action (27.15).)
+                hints=OperationHints(idempotent=True),
                 cli=CLISpec(path=(*_AGENTS, "usage"), options={"agent": "--agent"}),
             ),
             cls.operation(
@@ -1199,8 +1201,9 @@ class Orch(AppPlugin[OrchSettings]):
         totals: dict[str, Decimal] = {}
         for shape, row in zip(shapes, rows, strict=True):
             name = connection_for.get(provider_of(shape.model), "")
-            if name:
-                totals[name] = totals.get(name, Decimal(0)) + (row.cost or Decimal(0))
+            spent = row.paid.spent_today if row.paid is not None else None
+            if name and spent is not None:
+                totals[name] = totals.get(name, Decimal(0)) + spent
         return UsageList(items=rows, totals=totals)
 
     async def _usage_alerts(self, rows: list[AgentUsage]) -> None:
@@ -1219,34 +1222,47 @@ class Orch(AppPlugin[OrchSettings]):
             await alerts.save(
                 UsageAlert(agent=row.agent, usage_state=row.state, at=self.clock.now())
             )
+            # (The dedupe key names the crossing, not the state: an agent that goes low, ok,
+            # low again publishes twice — the bus drops a repeated (type, key) for good.)
+            at = self.clock.now()
             if row.state == "low":
                 await events.emit(
                     USAGE_LOW.name,
                     USAGE_LOW.data(agent=row.agent, line=row.line),
-                    dedupe_key=f"{row.agent}:low",
+                    dedupe_key=f"{row.agent}:low:{at:%Y-%m-%dT%H:%M:%S.%f}",
                 )
                 await self._raise_cap(row)
             elif row.state == "out":
                 await events.emit(
                     USAGE_OUT.name,
                     USAGE_OUT.data(agent=row.agent, line=row.line),
-                    dedupe_key=f"{row.agent}:out",
+                    dedupe_key=f"{row.agent}:out:{at:%Y-%m-%dT%H:%M:%S.%f}",
                 )
                 await self._raise_cap(row)
 
     async def _raise_cap(self, row: AgentUsage) -> None:
         """The To action a low paid key raises (27.15): "raise the cap?", once per key per cap
         (the cap in the title, so a new limit raises a new one)."""
-        if row.paid is None or row.paid.limit is None:
+        paid = row.paid
+        if paid is None or paid.limit is None or paid.left is None:
             return
-        title = f"Raise the cap for {row.paid.connection or row.agent} (limit ${row.paid.limit})"
+        # (Only the key's own money: a harness limit is `out` with a healthy key, and its
+        # remedy is the harness's, not a cap.)
+        if paid.left > paid.limit * Decimal(str(LOW_RATIO)):
+            return
+        title = f"Raise the cap for {paid.connection or row.agent} (limit ${paid.limit})"
         open_one = await self.records.list(
             stored.HumanAction, RecordQuery(where={"state": ActionState.OPEN})
         )
         if any(one.title == title for one in open_one):
             return
         project = await stored.AgentRecords(self.records).agent(row.agent)
-        name = project.projects[0] if project is not None and project.projects else "udl"
+        name = project.projects[0] if project is not None and project.projects else None
+        if name is None:
+            first = await self.records.list(stored.Project, RecordQuery())
+            if not first:
+                return
+            name = first[0].name
         await acted.set_action(
             acted.ActionRecords(self.records),
             project=name,
@@ -1281,10 +1297,9 @@ class Orch(AppPlugin[OrchSettings]):
         udl has no provider set up, or it does not answer — a provider that is down is not this
         call's failure (its own health operation says so)."""
         connections = await service.db.list_records(AIProviderConnection, RecordQuery())
-        picked = pick_connection(connections, provider_of(model))
-        if picked is None:
+        connection = pick_connection(connections, provider_of(model))
+        if connection is None:
             return None
-        connection = picked
         try:
             provider = service.registry.get(AI, connection.plugin)
             made = provider(
@@ -2805,6 +2820,8 @@ class Orch(AppPlugin[OrchSettings]):
             )
         ]
         to_do = await self.list_actions(ListActionsRequest(project=project))
+        agents, usage = await self._agent_lines(self.service)
+        await self._usage_alerts(usage)
         return Inbox(
             project=project,
             merge=merge,
@@ -2812,7 +2829,7 @@ class Orch(AppPlugin[OrchSettings]):
             merger=merge.merger,
             questions=questions,
             actions=list(to_do.actions),
-            agents=await self._agent_lines(self.service),
+            agents=agents,
             hosts=await self._host_lines(),
             updated_at=self.clock.now(),
         )
@@ -2884,7 +2901,9 @@ class Orch(AppPlugin[OrchSettings]):
             for host, kinds in sorted(by_host.items())
         ]
 
-    async def _agent_lines(self, service: UDLService | None = None) -> list[AgentLine]:
+    async def _agent_lines(
+        self, service: UDLService | None = None
+    ) -> tuple[list[AgentLine], list[AgentUsage]]:
         """What every agent is doing, by name: its role, its state from its session, the task it
         is on (27.1's records and 27.7's sessions, derived — never stored), and what it has left
         (27.15, the same line `orch_usage` gives)."""
@@ -2907,7 +2926,7 @@ class Orch(AppPlugin[OrchSettings]):
             )
         }
         lines: list[AgentLine] = []
-        for stored_agent in await agents.agents():
+        for stored_agent in stored_agents:
             current = await sessions.current(stored_agent.name)
             agent = as_shape(agents_shape.Agent, stored_agent)
             line = AgentLine(
@@ -2932,7 +2951,7 @@ class Orch(AppPlugin[OrchSettings]):
                     update={"line": agent_line(line.name, line.role, line.state, line.task)}
                 )
             )
-        return lines
+        return lines, list(rows.values())
 
     async def _merge_row(
         self,

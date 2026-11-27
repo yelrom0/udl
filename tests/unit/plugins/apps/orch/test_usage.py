@@ -406,6 +406,54 @@ def test_the_provider_s_own_free_count_is_used_when_it_gives_one() -> None:
     assert found.source == "provider"
 
 
+def test_the_provider_s_count_is_the_free_agent_s_own_and_a_paid_agent_keeps_its_count() -> None:
+    """(27.15: the provider's free-model count is the account's free total, so it is a free
+    agent's own figure; a paid agent's turns are its own money, not the free count.)"""
+    records = _records()
+    sessions = _sessions(
+        records,
+        **{"deepseek-b": [usage_event()], "ernie-c": [usage_event(), usage_event()]},
+    )
+    rows = asyncio.run(
+        usage_of_all(
+            records,
+            [
+                agent("deepseek-b", model="openrouter/deepseek/chat"),
+                agent("ernie-c", model="x/free"),
+            ],
+            sessions=sessions,
+            clock=clock(),
+            health_for={
+                "openrouter": health(label="k", spent="1", limit="10", left="9"),
+                "x": health(label="k", spent="1", limit="10", free_model_daily=7),
+            },
+        )
+    )
+    by = {one.agent: one for one in rows}
+
+    assert by["deepseek-b"].requests_today == 1
+    assert by["deepseek-b"].source == "provider"
+    assert by["ernie-c"].requests_today == 7
+    assert by["ernie-c"].source == "provider"
+    assert by["ernie-c"].free is not None
+    assert by["ernie-c"].free.left == ALLOWANCE_DEFAULT - 7
+
+
+def test_the_all_time_totals_are_over_every_session() -> None:
+    found = measured(
+        usage_event(at=NOW - timedelta(days=1)),
+        usage_event(),
+        who=agent(model="deepseek/free"),
+        health=None,
+        clock=clock(),
+    )
+
+    assert found.all_time.turns == 2
+    assert found.all_time.tokens_in == 20
+    assert found.all_time.cost == Decimal("0.002")
+    assert found.requests_today == 1
+
+
 def test_the_transcript_count_is_the_fallback_and_says_counted() -> None:
     found = measured(
         usage_event(),

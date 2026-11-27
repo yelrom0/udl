@@ -12,9 +12,11 @@ is set through one service and read through another (each CLI run makes its own)
 """
 
 # System Imports
+import asyncio
 import inspect
 import json
 from collections.abc import AsyncIterator, Awaitable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
 
@@ -582,7 +584,7 @@ def test_an_agent_with_no_provider_has_an_empty_usage_line(harness: Harness) -> 
 def test_the_usage_totals_are_per_account(harness: Harness) -> None:
     """(27.15: the "in all" totals — what each account has spent today across its agents,
     keyed by the udl connection the key was read through.)"""
-    _wire_openrouter(harness)
+    _wire_openrouter(harness, FakeOpenRouter(used_daily="0.42"))
 
     def seed(db: DBManager) -> Awaitable[object]:
         return db.upsert_record(
@@ -600,7 +602,7 @@ def test_the_usage_totals_are_per_account(harness: Harness) -> None:
     result = CLI(harness)("orch", "agents", "usage", "--json")
 
     assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout)["totals"] == {"openrouter": "0"}
+    assert json.loads(result.stdout)["totals"] == {"openrouter": "0.42"}
 
 
 async def _a_project(db: DBManager) -> None:
@@ -645,7 +647,7 @@ async def test_a_low_paid_key_raises_one_event_and_one_to_action(
     ("raise the cap?") for the key — not one a read.)"""
     from udl.plugins.apps.base import AppEvents
 
-    _wire_openrouter(harness, FakeOpenRouter(used="9.5", limit="10"))
+    fake = _wire_openrouter(harness, FakeOpenRouter(used="9.5", limit="10"))
 
     async with harness.service() as service:
         await _one_connection(service.db)
@@ -659,11 +661,10 @@ async def test_a_low_paid_key_raises_one_event_and_one_to_action(
         async with events.subscribe("orch.usage.*") as sub:
             await service.call("orch_usage", {})
             await service.call("orch_usage", {})
-            async for event in sub:
+            while len(seen) < 1:
+                event = await asyncio.wait_for(anext(sub), 2)
                 seen.append(event.type)
                 said.append(event.model_dump_json())
-                if len(seen) >= 1:
-                    break
         actions = await service.call("orch_list_actions", {})
 
     assert seen == ["orch.usage.low"]
@@ -672,6 +673,86 @@ async def test_a_low_paid_key_raises_one_event_and_one_to_action(
     assert "sk-or-v1-test" not in caplog.text
     assert all("sk-or-v1-test" not in one for one in said)
     assert all("sk-or-v1-xxx" not in one for one in said)
+    assert fake.used == "9.5"
+
+
+async def test_a_re_crossing_publishes_again_and_a_return_to_ok_is_quiet(
+    harness: Harness,
+) -> None:
+    """(27.15: the dedupe key names the crossing, so ok → low → ok → low publishes twice; the
+    return to `ok` is recorded without an event.)"""
+    from udl.plugins.apps.base import AppEvents
+
+    fake = _wire_openrouter(harness, FakeOpenRouter(used="1", limit="10"))
+
+    async with harness.service() as service:
+        await _one_connection(service.db)
+        await _a_project(service.db)
+        await _save_one_agent(service.db, "deepseek-b", "deepseek/chat")
+        app = await service.apps.get("orch")
+        assert isinstance(app, Orch)
+        events = AppEvents(service.bus, "orch", app.event_types())
+        seen: list[str] = []
+        async with events.subscribe("orch.usage.*") as sub:
+            await service.call("orch_usage", {})  # ok
+            fake.used = "9.5"
+            await service.call("orch_usage", {})  # low
+            fake.used = "1"
+            await service.call("orch_usage", {})  # ok, quiet
+            fake.used = "9.5"
+            await service.call("orch_usage", {})  # low again
+            while len(seen) < 2:
+                event = await asyncio.wait_for(anext(sub), 2)
+                seen.append(event.type)
+
+    assert seen == ["orch.usage.low", "orch.usage.low"]
+
+
+async def test_a_harness_limit_is_out_without_a_cap_action(harness: Harness) -> None:
+    """(27.15: `out` also covers a limited session, whose remedy is the harness's: a healthy
+    key gets no "raise the cap?" action.)"""
+    from udl.plugins.apps.base import AppEvents
+
+    _wire_openrouter(harness, FakeOpenRouter(used="1", limit="10"))
+
+    async with harness.service() as service:
+        await _one_connection(service.db)
+        await _a_project(service.db)
+        await _save_one_agent(service.db, "deepseek-b", "deepseek/chat")
+        await AppRecords(service.db).save(
+            AgentSession.example().model_copy(
+                update={
+                    "agent": "deepseek-b",
+                    "limited_until": datetime.now(UTC) + timedelta(hours=2),
+                }
+            )
+        )
+        app = await service.apps.get("orch")
+        assert isinstance(app, Orch)
+        events = AppEvents(service.bus, "orch", app.event_types())
+        seen: list[str] = []
+        async with events.subscribe("orch.usage.*") as sub:
+            await service.call("orch_usage", {})
+            event = await asyncio.wait_for(anext(sub), 2)
+            seen.append(event.type)
+        actions = await service.call("orch_list_actions", {})
+
+    assert seen == ["orch.usage.out"]
+    assert isinstance(actions, Actions)
+    assert actions.actions == []
+
+
+def test_the_totals_are_the_provider_s_spend_today(harness: Harness) -> None:
+    """(27.15: the "in all" totals are what the provider says the account spent today, not
+    udl's own transcript cost.)"""
+    _wire_openrouter(harness, FakeOpenRouter(used="1.25", limit="10", used_daily="0.42"))
+    harness.seed(_one_connection)
+    harness.seed(_save_agents)
+
+    result = CLI(harness)("orch", "agents", "usage", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["totals"] == {"openrouter": "0.42"}
 
 
 async def _one_connection(db: DBManager) -> None:

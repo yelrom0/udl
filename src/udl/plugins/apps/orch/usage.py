@@ -113,6 +113,21 @@ class FreeUsage(BaseModel):
     """When the allowance resets (00:00 UTC)."""
 
 
+class AllTime(BaseModel):
+    """An agent's turns, tokens and cost over all its sessions (27.15): the "in all" totals."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
+
+    turns: int = 0
+    """The turns it has taken."""
+    tokens_in: int = 0
+    """The tokens it was given."""
+    tokens_out: int = 0
+    """The tokens it wrote."""
+    cost: Decimal = Decimal(0)
+    """What its turns cost, when its harness says."""
+
+
 class AgentUsage(BaseModel):
     """What one agent has left (27.14)."""
 
@@ -140,6 +155,8 @@ class AgentUsage(BaseModel):
     """When its harness's quota is back, when its session says (27.7)."""
     state: UsageState = "ok"
     """Where its usage is: ok, low, or out."""
+    all_time: AllTime = Field(default_factory=AllTime)
+    """Its turns, tokens and cost over all its sessions (27.15)."""
     source: UsageSource = "none"
     """Where its figures came from: `counted` from its transcript, `provider` from the
     provider's own count, `none` when there was nothing to measure (27.15)."""
@@ -180,24 +197,38 @@ def _state(
     return "ok" if left > 0 else "out"
 
 
-async def _counts(
-    sessions: SessionRecords, agent: Agent, since: datetime
-) -> tuple[int, int, int, Decimal]:
-    """`agent`'s day: (requests, tokens in, tokens out, cost) since `since` (00:00 UTC). Each
-    `Usage` event is one request; the tokens and cost are the harness's own figures."""
-    today = tokens_in = tokens_out = 0
-    cost = Decimal(0)
+class _Counts(BaseModel):
+    """An agent's day and its all-time figures, from its transcript."""
+
+    today: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cost: Decimal = Decimal(0)
+    all_turns: int = 0
+    all_tokens_in: int = 0
+    all_tokens_out: int = 0
+    all_cost: Decimal = Decimal(0)
+
+
+async def _counts(sessions: SessionRecords, agent: Agent, since: datetime) -> _Counts:
+    """`agent`'s day and all time: each `Usage` event is one request; the tokens and cost are
+    the harness's own figures, and the day's are those since `since` (00:00 UTC)."""
+    out = _Counts()
     for session in await sessions.sessions(agent.name):
         for event in await sessions.transcript(session.id):
             if not isinstance(event.event, Usage):
                 continue
+            out.all_turns += 1
+            out.all_tokens_in += event.event.input_tokens
+            out.all_tokens_out += event.event.output_tokens
+            out.all_cost += event.event.cost or Decimal(0)
             if event.created_at < since:
                 continue
-            today += 1
-            tokens_in += event.event.input_tokens
-            tokens_out += event.event.output_tokens
-            cost += event.event.cost or Decimal(0)
-    return today, tokens_in, tokens_out, cost
+            out.today += 1
+            out.tokens_in += event.event.input_tokens
+            out.tokens_out += event.event.output_tokens
+            out.cost += event.event.cost or Decimal(0)
+    return out
 
 
 async def usage_of(
@@ -245,16 +276,16 @@ async def usage_of_all(
     it has an entry."""
     sessions = sessions or SessionRecords(records)
     since = clock.now().astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-    counts = [(one, *await _counts(sessions, one, since)) for one in agents]
+    counts = [(one, await _counts(sessions, one, since)) for one in agents]
     # (The allowance is one account's, and an account is its provider: free agents on different
     # providers (different `health_for` entries) each count their own account's requests.)
     per_account: dict[str, int] = {}
-    for one, today, *_ in counts:
+    for one, counted in counts:
         if _is_free(one.model):
             key = provider_of(one.model)
-            per_account[key] = per_account.get(key, 0) + today
+            per_account[key] = per_account.get(key, 0) + counted.today
     out: list[AgentUsage] = []
-    for one, today, tokens_in, tokens_out, cost in counts:
+    for one, counted in counts:
         own = health if health_for is None else health_for.get(provider_of(one.model), health)
         limited = await _limited_until(sessions, one, clock)
         account_today = per_account.get(provider_of(one.model)) if _is_free(one.model) else None
@@ -266,7 +297,7 @@ async def usage_of_all(
                 one,
                 own,
                 clock,
-                (today, tokens_in, tokens_out, cost),
+                counted,
                 account_today,
                 limited,
                 connection,
@@ -292,7 +323,7 @@ async def _row(
     agent: Agent,
     health: ProviderHealth | None,
     clock: Clock,
-    counts: tuple[int, int, int, Decimal],
+    counts: _Counts,
     account_today: int | None,
     limited: datetime | None,
     connection: str = "",
@@ -303,18 +334,28 @@ async def _row(
 
     A free agent's `requests_today` is the provider's own count when it gives one (27.15), and
     the transcript's count otherwise; `source` says which."""
-    today, tokens_in, tokens_out, cost = counts
     key = _key_usage(health, connection)
     provider_requests = key.free_model_daily_requests if key is not None else None
-    requests = provider_requests if provider_requests is not None else today
+    # (The provider's count is the account's free-model total: it is the free agent's own
+    # figure and what `left` is taken from at once, so one source, not two. A paid agent keeps
+    # its own counted requests.)
+    spent = provider_requests if provider_requests is not None else account_today
     free = _free_usage(
-        requests, key, clock, model=agent.model, account_today=account_today, allowance=allowance
+        counts.today,
+        key,
+        clock,
+        model=agent.model,
+        account_today=spent,
+        allowance=allowance,
+    )
+    requests = (
+        provider_requests if free is not None and provider_requests is not None else counts.today
     )
     if free is not None:
         key = None  # (a free agent's key is the account's, not its own: it is not reported as paid)
     source: UsageSource = (
         "provider"
-        if provider_requests is not None
+        if (free is not None and provider_requests is not None)
         else ("counted" if free is not None else ("provider" if key is not None else "none"))
     )
     return AgentUsage(
@@ -324,9 +365,15 @@ async def _row(
         paid=key,
         free=free,
         requests_today=requests,
-        tokens_in=tokens_in,
-        tokens_out=tokens_out,
-        cost=cost,
+        tokens_in=counts.tokens_in,
+        tokens_out=counts.tokens_out,
+        cost=counts.cost,
+        all_time=AllTime(
+            turns=counts.all_turns,
+            tokens_in=counts.all_tokens_in,
+            tokens_out=counts.all_tokens_out,
+            cost=counts.all_cost,
+        ),
         limited_until=limited,
         state=_state_of(key, free, limited=limited is not None),
         source=source,

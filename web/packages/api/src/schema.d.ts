@@ -3797,6 +3797,8 @@ export interface components {
         AgentUsage: {
             /** @description The agent it is of. */
             agent: components["schemas"]["Name"];
+            /** @description Its turns, tokens and cost over all its sessions (27.15). */
+            all_time?: components["schemas"]["AllTime"];
             /**
              * Cost
              * @description What its turns cost today, when its harness says.
@@ -3885,6 +3887,36 @@ export interface components {
              * @description The filters (two or more).
              */
             all: components["schemas"]["Filter-Output"][];
+        };
+        /**
+         * AllTime
+         * @description An agent's turns, tokens and cost over all its sessions (27.15): the "in all" totals.
+         */
+        AllTime: {
+            /**
+             * Cost
+             * @description What its turns cost, when its harness says.
+             * @default 0
+             */
+            cost: string;
+            /**
+             * Tokens In
+             * @description The tokens it was given.
+             * @default 0
+             */
+            tokens_in: number;
+            /**
+             * Tokens Out
+             * @description The tokens it wrote.
+             * @default 0
+             */
+            tokens_out: number;
+            /**
+             * Turns
+             * @description The turns it has taken.
+             * @default 0
+             */
+            turns: number;
         };
         /**
          * AnswerRequest

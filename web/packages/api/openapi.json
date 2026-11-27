@@ -1104,6 +1104,10 @@
             "$ref": "#/components/schemas/Name",
             "description": "The agent it is of."
           },
+          "all_time": {
+            "$ref": "#/components/schemas/AllTime",
+            "description": "Its turns, tokens and cost over all its sessions (27.15)."
+          },
           "cost": {
             "anyOf": [
               {
@@ -1263,6 +1267,38 @@
           "all"
         ],
         "title": "AllOf",
+        "type": "object"
+      },
+      "AllTime": {
+        "additionalProperties": false,
+        "description": "An agent's turns, tokens and cost over all its sessions (27.15): the \"in all\" totals.",
+        "properties": {
+          "cost": {
+            "default": "0",
+            "description": "What its turns cost, when its harness says.",
+            "title": "Cost",
+            "type": "string"
+          },
+          "tokens_in": {
+            "default": 0,
+            "description": "The tokens it was given.",
+            "title": "Tokens In",
+            "type": "integer"
+          },
+          "tokens_out": {
+            "default": 0,
+            "description": "The tokens it wrote.",
+            "title": "Tokens Out",
+            "type": "integer"
+          },
+          "turns": {
+            "default": 0,
+            "description": "The turns it has taken.",
+            "title": "Turns",
+            "type": "integer"
+          }
+        },
+        "title": "AllTime",
         "type": "object"
       },
       "AnswerRequest": {
