@@ -16,6 +16,7 @@ import {
 	mergeListOf,
 	movesFrom,
 	POINTS,
+	progressReportOf,
 	readinessOf,
 	runnersOf,
 	sessionOf,
@@ -652,5 +653,94 @@ describe("a chat", () => {
 		});
 
 		expect(chats.map((one) => one.id)).toEqual(["b", "a"]);
+	});
+});
+
+describe("reading a project's progress (29.11)", () => {
+	it("reads the burn-up, the forecast, the features, the models and the tasks merged lately", () => {
+		const progress = progressReportOf({
+			project: "udl",
+			series: [
+				{ day: "2026-11-13", points: 236, merged: 0 },
+				{ day: "2026-11-14", points: 236, merged: 3 },
+			],
+			pace: 20.5,
+			forecast: {
+				likely: "2026-11-27T00:00:00Z",
+				early: "2026-11-25T00:00:00Z",
+				late: "2026-11-29T00:00:00Z",
+				unsized: 2,
+			},
+			features: [
+				{
+					key: "29",
+					title: "Screens",
+					points: 26,
+					merged: 8,
+					forecast: {
+						likely: "2026-11-27T00:00:00Z",
+						early: "2026-11-25T00:00:00Z",
+						late: "2026-11-29T00:00:00Z",
+					},
+				},
+				{ key: "30", title: "Docs", points: 12, merged: 12, forecast: null },
+			],
+			models: [
+				{
+					model: "deepseek-v4.1-flash",
+					runner: "opencode",
+					tasks: 41,
+					hours_per_point: { hours: 0.9, source: "model" },
+					hours_per_size: { S: 0.8, M: 2.7, L: 4.4, XL: 7.0 },
+				},
+			],
+			recent: [
+				{
+					key: "27.6",
+					title: "Readiness",
+					size: "L",
+					estimate: "PT4H24M",
+					actual: "PT5H6M",
+				},
+			],
+			estimate_ratio: 1.16,
+		});
+
+		expect(progress.project).toBe("udl");
+		expect(progress.series).toEqual([
+			{ day: "2026-11-13", points: 236, merged: 0 },
+			{ day: "2026-11-14", points: 236, merged: 3 },
+		]);
+		expect(progress.pace).toBe(20.5);
+		expect(progress.forecast).toEqual({
+			likely: "2026-11-27T00:00:00Z",
+			early: "2026-11-25T00:00:00Z",
+			late: "2026-11-29T00:00:00Z",
+			unsized: 2,
+		});
+		expect(progress.features.map((one) => one.key)).toEqual(["29", "30"]);
+		expect(progress.features[1]?.forecast).toBeNull();
+		expect(progress.models[0]).toEqual({
+			model: "deepseek-v4.1-flash",
+			runner: "opencode",
+			tasks: 41,
+			hours_per_point: 0.9,
+			rate_source: "model",
+			hours_per_size: { S: 0.8, M: 2.7, L: 4.4, XL: 7.0 },
+		});
+		expect(progress.recent[0]?.estimate).toBe("PT4H24M");
+		expect(progress.estimate_ratio).toBe(1.16);
+	});
+
+	it("reads nothing at all from nothing, and a forecast that says nothing", () => {
+		const nothing = progressReportOf(undefined);
+
+		expect(nothing.project).toBe("");
+		expect(nothing.series).toEqual([]);
+		expect(nothing.features).toEqual([]);
+		expect(nothing.models).toEqual([]);
+		expect(nothing.recent).toEqual([]);
+		expect(nothing.forecast.likely).toBe("");
+		expect(nothing.forecast.unsized).toBe(0);
 	});
 });
