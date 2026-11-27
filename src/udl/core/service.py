@@ -150,6 +150,7 @@ from udl.errors import (
     ErrorInfo,
     NotAllowed,
     PluginError,
+    SecretStoreError,
     UDLError,
 )
 from udl.fetch.cookies import ImportedCookies
@@ -1659,7 +1660,7 @@ class UDLService:
         found = open_resolvers(self.registry, self.settings.secrets, store=store)
         return SecretsStatus(
             store=store.name,
-            onepassword=await store.get(TOKEN_REF) is not None,
+            onepassword=await _onepassword_kept(store),
             unavailable=store.unavailable(),
             resolvers=[await _resolver_status(resolver) for resolver in found],
         )
@@ -1913,6 +1914,20 @@ def _without_secrets(settings: Settings) -> Settings:
             "apps": {name: _hidden(table) for name, table in settings.apps.items()},
         }
     )
+
+
+async def _onepassword_kept(store: SecretStore) -> bool | None:
+    """Whether a 1Password service account token is kept: None when the store cannot say (a
+    locked keyring, no backend, an unreadable file). A store that cannot be read is a status —
+    its `unavailable` — not a failure to show the status, and reading it only to ask whether
+    something is there must not be what makes the answer fail."""
+    if store.unavailable() is not None:
+        return None
+    try:
+        return await store.get(TOKEN_REF) is not None
+    except SecretStoreError:
+        log.warning("Could not read whether a 1Password token is kept", exc_info=True)
+        return None
 
 
 async def _resolver_status(resolver: SecretResolver) -> ResolverStatus:

@@ -1812,7 +1812,7 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
   account (connecting one checks the token against GitHub, and a new repo needs that account), the repo
   (same), and the OpenRouter key (`set_ai_provider` is 17.9's and is not built). The 1Password token and
   the host are provable as they stand; how the rest is faked is a question for Claude.
-- **Built (deepseek-a, 28 Nov 2026, PR #N):** the Done when, proved where it can be: `web/e2e/
+- **Built (deepseek-a, 28 Nov 2026, PR #120):** the Done when, proved where it can be: `web/e2e/
   setup-from-the-web.spec.ts`, both themes, types into the generated pages and never calls the API
   to set anything (its API calls are read-backs only) — the 1Password token on udl's page (kept, and
   in no page, address or answer), a host (`e2e-host`, ssh) and `list_hosts` has it, a GitHub account

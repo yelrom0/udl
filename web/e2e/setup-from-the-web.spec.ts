@@ -56,7 +56,7 @@ test("a person sets udl up from the web alone, and each thing is there", async (
 	await expect(secrets.getByRole("heading", { name: "Resolvers" })).toBeVisible({
 		timeout: 30_000,
 	});
-	const kept = await read(page, "secrets");
+	const kept = await read(page, "/secrets");
 	expect(kept.store).toBe("memory");
 	// (udl says a token is kept — and never says which.)
 	expect(kept.onepassword).toBe(true);
@@ -73,9 +73,12 @@ test("a person sets udl up from the web alone, and each thing is there", async (
 	await hosts.getByRole("textbox", { name: "ssh" }).fill("e2e-host");
 	await hosts.getByRole("textbox", { name: "Work Dir" }).fill("/tmp/e2e-worktrees");
 	await hosts.getByRole("button", { name: "Run" }).click();
-	const listed = await read(page, "hosts");
-	const names = (listed.hosts as readonly { name: string }[]).map((one) => one.name);
-	expect(names).toContain("e2e-host");
+	// (Polled: the row lands when udl has it, not on the click.)
+	const hostNames = async (): Promise<readonly string[]> => {
+		const listed = await read(page, "/hosts");
+		return (listed.hosts as readonly { name: string }[]).map((one) => one.name);
+	};
+	await expect.poll(hostNames, { timeout: 30_000 }).toContain("e2e-host");
 
 	// -- a GitHub account, against the fake ------------------------------------------------
 	await page.goto("/ui/p/github/");
@@ -105,6 +108,16 @@ test("a person sets udl up from the web alone, and each thing is there", async (
 	await project.getByRole("textbox", { name: "Project" }).fill("web");
 	await project.getByRole("textbox", { name: "title" }).fill("The web");
 	await project.getByRole("button", { name: "Run" }).click();
+	// (The repo names the project, so the project's write must land first: a repo that arrives
+	// before it fails with "no project web", and the poll below would only time out.)
+	const projectExists = async (): Promise<boolean> => {
+		const answer = await page.request.post("/plugins/orch/get_project", {
+			headers: { "X-UDL-CSRF": "1", Origin: new URL(page.url()).origin },
+			data: { name: "web" },
+		});
+		return answer.ok();
+	};
+	await expect.poll(projectExists, { timeout: 30_000 }).toBe(true);
 
 	const repo = card(page, "Create or edit a repo");
 	await repo.getByRole("textbox", { name: "project" }).fill("web");
@@ -112,10 +125,12 @@ test("a person sets udl up from the web alone, and each thing is there", async (
 	await repo.getByRole("textbox", { name: "On GitHub" }).fill(github.repo);
 	await repo.getByRole("textbox", { name: "account" }).fill(`github:${account}`);
 	await repo.getByRole("button", { name: "Run" }).click();
+	// (A write udl refused is its own error, said on the card — not a poll that times out.)
+	await expect(repo.getByRole("alert")).toHaveCount(0);
 
 	// (The page's write lands when udl has it, not when the button was clicked: the project's own
 	// read is polled until the repo is on it.)
-	const project2 = async (): Promise<readonly string[]> => {
+	const reposOnTheProject = async (): Promise<readonly string[]> => {
 		const answer = await page.request.post("/plugins/orch/get_project", {
 			headers: { "X-UDL-CSRF": "1", Origin: new URL(page.url()).origin },
 			data: { name: "web" },
@@ -124,5 +139,5 @@ test("a person sets udl up from the web alone, and each thing is there", async (
 		const said = (await answer.json()) as { repos?: readonly { github: string }[] };
 		return (said.repos ?? []).map((one) => one.github);
 	};
-	await expect.poll(project2, { timeout: 30_000 }).toContain(github.repo);
+	await expect.poll(reposOnTheProject, { timeout: 30_000 }).toContain(github.repo);
 });

@@ -44,9 +44,9 @@ class SecretsStatus(_Frozen):
 
     store: str
     """The store [secrets] store names (keyring, file, memory, or auto's answer)."""
-    onepassword: bool = False
+    onepassword: bool | None = None
     """Whether a 1Password service account token is kept, which is what `op` is given (never the
-    token itself)."""
+    token itself); None when the store could not be read (its `unavailable` says why)."""
     unavailable: str | None = None
     """Why the store cannot keep secrets on this machine (None: it can)."""
     resolvers: list[ResolverStatus] = Field(default_factory=list[ResolverStatus])
