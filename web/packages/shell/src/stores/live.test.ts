@@ -65,4 +65,37 @@ describe("the live store", () => {
 		expect(seen).toEqual(["offline"]);
 		expect(useLive).toBeTypeOf("function");
 	});
+
+	it("keeps an event once, as its latest copy: stored, then dispatched (Q: 18.6-dupe)", () => {
+		// (18.6's stream sends an event twice by design: when it is stored, and when it is
+		// dispatched. The timeline is of events, not of notices.)
+		pushEvent({
+			name: "event",
+			at: "2026-11-28T01:00:00Z",
+			data: { id: "e-1", type: "custom.hello", status: "pending" },
+		});
+		pushEvent({
+			name: "event",
+			at: "2026-11-28T01:00:01Z",
+			data: { id: "e-1", type: "custom.hello", status: "dispatched" },
+		});
+		pushEvent({
+			name: "event",
+			at: "2026-11-28T01:00:02Z",
+			data: { id: "e-2", type: "custom.bye", status: "pending" },
+		});
+
+		const { events } = live.getState();
+
+		expect(events).toHaveLength(2);
+		expect(events[0]?.data).toMatchObject({ id: "e-1", status: "dispatched" });
+		expect(events[1]?.data).toMatchObject({ id: "e-2" });
+	});
+
+	it("keeps a run's notices as they come: they are not one event", () => {
+		pushEvent({ name: "run", at: "2026-11-28T01:00:00Z", data: { id: "r-1", status: "queued" } });
+		pushEvent({ name: "run", at: "2026-11-28T01:00:01Z", data: { id: "r-1", status: "done" } });
+
+		expect(live.getState().events).toHaveLength(2);
+	});
 });
