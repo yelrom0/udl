@@ -1241,8 +1241,8 @@ class Orch(AppPlugin[OrchSettings]):
                 await self._raise_cap(row)
 
     async def _raise_cap(self, row: AgentUsage) -> None:
-        """The To action a low paid key raises (27.15): "raise the cap?", once per key per cap
-        (the cap in the title, so a new limit raises a new one)."""
+        """The To action a low paid key raises (27.15): "Raise the cap for <key> (limit $N)",
+        once per key per cap (the title names both, so a new limit raises a new one)."""
         paid = row.paid
         if paid is None or paid.limit is None or paid.left is None:
             return
@@ -1251,13 +1251,12 @@ class Orch(AppPlugin[OrchSettings]):
         if paid.left > paid.limit * Decimal(str(LOW_RATIO)):
             return
         title = f"Raise the cap for {paid.connection or row.agent} (limit ${paid.limit})"
-        # (Once per key per cap: the key and the cap are the action's text, so a new limit is a
-        # new action and a repeat read is not.)
-        text = f"{paid.connection or row.agent}\n{paid.limit}"
+        # (Once per key per cap: the title names the key and the cap, so a new limit is a new
+        # action and a repeat read is not. The text is the line the owner reads.)
         open_one = await self.records.list(
             stored.HumanAction, RecordQuery(where={"state": ActionState.OPEN})
         )
-        if any(one.text == text for one in open_one):
+        if any(one.title == title for one in open_one):
             return
         project = await stored.AgentRecords(self.records).agent(row.agent)
         name = project.projects[0] if project is not None and project.projects else None
@@ -1270,7 +1269,7 @@ class Orch(AppPlugin[OrchSettings]):
             acted.ActionRecords(self.records),
             project=name,
             title=title,
-            text=text,
+            text=row.line,
             when=ActionWhen.NOW,
             after=None,
             task=None,
@@ -2823,7 +2822,7 @@ class Orch(AppPlugin[OrchSettings]):
             )
         ]
         to_do = await self.list_actions(ListActionsRequest(project=project))
-        agents, _ = await self._agent_lines(self.service)
+        agents = await self._agent_lines(self.service)
         return Inbox(
             project=project,
             merge=merge,
@@ -2903,9 +2902,7 @@ class Orch(AppPlugin[OrchSettings]):
             for host, kinds in sorted(by_host.items())
         ]
 
-    async def _agent_lines(
-        self, service: UDLService | None = None
-    ) -> tuple[list[AgentLine], list[AgentUsage]]:
+    async def _agent_lines(self, service: UDLService | None = None) -> list[AgentLine]:
         """What every agent is doing, by name: its role, its state from its session, the task it
         is on (27.1's records and 27.7's sessions, derived — never stored), and what it has left
         (27.15, the same line `orch_usage` gives)."""
@@ -2953,7 +2950,7 @@ class Orch(AppPlugin[OrchSettings]):
                     update={"line": agent_line(line.name, line.role, line.state, line.task)}
                 )
             )
-        return lines, list(rows.values())
+        return lines
 
     async def _merge_row(
         self,

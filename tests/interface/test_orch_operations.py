@@ -708,6 +708,9 @@ async def test_a_re_crossing_publishes_again_and_a_return_to_ok_is_quiet(
             while len(seen) < 2:
                 event = await asyncio.wait_for(anext(sub), 2)
                 seen.append(event.type)
+            # (No third: the second crossing is the last.)
+            with pytest.raises((TimeoutError, asyncio.TimeoutError)):
+                await asyncio.wait_for(anext(sub), 1)
 
     assert seen == ["orch.usage.low", "orch.usage.low"]
 
@@ -787,12 +790,22 @@ def test_the_totals_count_a_connection_once(harness: Harness) -> None:
         )
 
     harness.seed(seed)
-    harness.seed(_save_agents)
+    harness.seed(_save_two_paid)
 
     result = CLI(harness)("orch", "agents", "usage", "--json")
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["totals"] == {"openrouter": "0.42"}
+
+
+async def _save_two_paid(db: DBManager) -> None:
+    """(Two paid agents on one connection: one key, so its spend is counted once.)"""
+    await db.upsert_record(
+        Agent(name="deepseek-b", title="deepseek-b", runner="fake", model="deepseek/chat")
+    )
+    await db.upsert_record(
+        Agent(name="claude", title="claude", runner="fake", model="deepseek/chat")
+    )
 
 
 def test_an_allowance_key_that_is_not_provider_glob_is_refused() -> None:

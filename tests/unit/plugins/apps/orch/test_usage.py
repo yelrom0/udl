@@ -390,7 +390,7 @@ def test_free_agents_on_two_accounts_each_count_their_own() -> None:
     assert two.free.left == ALLOWANCE_DEFAULT - 1
 
 
-def test_the_provider_s_own_free_count_is_used_when_it_gives_one() -> None:
+def test_the_provider_s_own_count_is_the_account_s_left_not_the_agent_s_requests() -> None:
     """(27.15: `free_model_daily_requests` is the provider's count of the account's free
     requests today; the transcript count is the fallback, and `source` says which.)"""
     found = measured(
