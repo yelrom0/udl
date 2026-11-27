@@ -1155,11 +1155,14 @@ class Orch(AppPlugin[OrchSettings]):
             shapes = [
                 as_shape(Agent, one) for one in await stored.AgentRecords(self.records).agents()
             ]
-            health_for = {
-                prefix: await self._provider_health(service, model=prefix)
-                for prefix in {provider_of(one.model) for one in shapes}
-            }
-            rows = await usage_of_all(self.records, shapes, health_for=health_for, clock=self.clock)
+            health_for, connection_for = await self._provider_healths(service, shapes)
+            rows = await usage_of_all(
+                self.records,
+                shapes,
+                health_for=health_for,
+                connection_for=connection_for,
+                clock=self.clock,
+            )
             lines = {
                 one.agent: ("" if one.line == "nothing to measure" else one.line) for one in rows
             }
@@ -1174,17 +1177,33 @@ class Orch(AppPlugin[OrchSettings]):
         if not agents:
             return UsageList()
         shapes = [as_shape(Agent, one) for one in sorted(agents, key=lambda one: one.name)]
-        health_for = {
-            prefix: await self._provider_health(service, model=prefix)
-            for prefix in {provider_of(one.model) for one in shapes}
-        }
+        health_for, connection_for = await self._provider_healths(service, shapes)
         return UsageList(
-            items=await usage_of_all(self.records, shapes, health_for=health_for, clock=self.clock)
+            items=await usage_of_all(
+                self.records,
+                shapes,
+                health_for=health_for,
+                connection_for=connection_for,
+                clock=self.clock,
+            )
         )
+
+    async def _provider_healths(
+        self, service: UDLService, agents: list[Agent]
+    ) -> tuple[dict[str, ProviderHealth | None], dict[str, str]]:
+        """The provider health and the udl connection name for each provider prefix the agents
+        name (27.14/27.15): one read per prefix, and the connection the key is named by."""
+        health: dict[str, ProviderHealth | None] = {}
+        connection: dict[str, str] = {}
+        for prefix in sorted({provider_of(one.model) for one in agents}):
+            found = await self._provider_health(service, model=prefix)
+            health[prefix] = found[0] if found is not None else None
+            connection[prefix] = found[1] if found is not None else ""
+        return health, connection
 
     async def _provider_health(
         self, service: UDLService, *, model: str = ""
-    ) -> ProviderHealth | None:
+    ) -> tuple[ProviderHealth, str] | None:
         """The enabled AI provider connection's `health()` (27.14): what the account's key has.
         The connection is the one whose name is `model`'s provider prefix (`openrouter-ds-a/…`
         → `openrouter-ds-a`), else the one whose plugin is, else the first enabled one (a model
@@ -1192,9 +1211,10 @@ class Orch(AppPlugin[OrchSettings]):
         udl has no provider set up, or it does not answer — a provider that is down is not this
         call's failure (its own health operation says so)."""
         connections = await service.db.list_records(AIProviderConnection, RecordQuery())
-        connection = pick_connection(connections, provider_of(model))
-        if connection is None:
+        picked = pick_connection(connections, provider_of(model))
+        if picked is None:
             return None
+        connection = picked
         try:
             provider = service.registry.get(AI, connection.plugin)
             made = provider(
@@ -1205,7 +1225,7 @@ class Orch(AppPlugin[OrchSettings]):
                 http=service.http,
                 clock=self.clock,
             )
-            return await made.health()
+            return await made.health(), connection.name
         except (UDLError, PluginError, ValidationError, SecretStoreError) as error:
             log.warning("orch could not read the provider %s: %s", connection.plugin, error)
             return None

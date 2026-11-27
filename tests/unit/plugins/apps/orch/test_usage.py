@@ -112,8 +112,14 @@ def health(**key: object) -> ProviderHealth:
             left=_money(key.get("left")),
             spent_today=_money(key.get("spent_today")),
             is_free_tier=_flag(key.get("is_free_tier")),
+            free_model_daily_requests=_int(key.get("free_model_daily")),
         ),
     )
+
+
+def _int(value: object) -> int | None:
+    """`value` as a count, or None when it is not one."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _flag(value: object) -> bool | None:
@@ -134,6 +140,7 @@ def measured(
     health: ProviderHealth | None = None,
     clock: Clock | None = None,
     account_today: int | None = None,
+    connection: str = "",
 ) -> AgentUsage:
     """`usage_of` over a fake session whose transcript is `events`."""
     records = _records()
@@ -145,6 +152,7 @@ def measured(
             sessions=_sessions(records, **{who.name: list(events)}),
             clock=clock or FakeClock(start=NOW),
             account_today=account_today,
+            connection=connection,
         )
     )
 
@@ -160,10 +168,11 @@ def test_a_paid_key_s_money_left_is_read_from_the_provider() -> None:
         who=agent(model="deepseek/chat"),
         health=health(label="deepseek-b", spent="4.64", limit="8", left="3.36", spent_today="0.42"),
         clock=clock(),
+        connection="openrouter",
     )
 
     assert isinstance(found.paid, KeyUsage)
-    assert found.paid.label == "deepseek-b"
+    assert found.paid.connection == "openrouter"
     assert found.paid.left == Decimal("3.36")
     assert found.paid.limit == Decimal("8")
     assert found.paid.spent == Decimal("4.64")
@@ -377,6 +386,62 @@ def test_free_agents_on_two_accounts_each_count_their_own() -> None:
     assert two.free is not None
     assert one.free.left == ALLOWANCE_DEFAULT - 2
     assert two.free.left == ALLOWANCE_DEFAULT - 1
+
+
+def test_the_provider_s_own_free_count_is_used_when_it_gives_one() -> None:
+    """(27.15: `free_model_daily_requests` is the provider's count of the account's free
+    requests today; the transcript count is the fallback, and `source` says which.)"""
+    found = measured(
+        usage_event(),
+        usage_event(),
+        who=agent(model="deepseek/free"),
+        health=health(label="k", spent="1", limit="10", free_model_daily=7),
+        clock=clock(),
+    )
+
+    assert found.free is not None
+    assert found.requests_today == 7
+    assert found.source == "provider"
+
+
+def test_the_transcript_count_is_the_fallback_and_says_counted() -> None:
+    found = measured(
+        usage_event(),
+        who=agent(model="deepseek/free"),
+        health=health(label="k", spent="1", limit="10"),
+        clock=clock(),
+    )
+
+    assert found.source == "counted"
+    assert found.requests_today == 1
+
+
+def test_a_paid_key_is_read_from_the_provider_and_an_unmeasured_agent_is_none() -> None:
+    paid = measured(
+        who=agent(model="deepseek/chat"),
+        health=health(label="k", spent="1", limit="10", left="9"),
+        clock=clock(),
+    )
+    nothing = measured(who=agent(model="local/llama"), health=None, clock=clock())
+
+    assert paid.source == "provider"
+    assert nothing.source == "none"
+
+
+def test_the_masked_label_of_the_key_is_never_in_the_result() -> None:
+    """(27.15: OpenRouter's `label` is a masked preview of the key itself, not a name: it is
+    not carried into a result, a log or an event.)"""
+    preview = "sk-or-v1-xxx…yyy"
+    found = measured(
+        who=agent(model="deepseek/chat"),
+        health=health(label=preview, spent="1", limit="10", left="9"),
+        clock=clock(),
+        connection="openrouter-ds-a",
+    )
+
+    assert preview not in found.model_dump_json()
+    assert found.paid is not None
+    assert found.paid.connection == "openrouter-ds-a"
 
 
 def test_a_free_agent_s_line_says_the_allowance_and_the_reset() -> None:

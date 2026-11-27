@@ -1161,6 +1161,17 @@
             "$ref": "#/components/schemas/Name",
             "description": "The runner it runs."
           },
+          "source": {
+            "default": "none",
+            "description": "Where its figures came from: `counted` from its transcript, `provider` from the\nprovider's own count, `none` when there was nothing to measure (27.15).",
+            "enum": [
+              "counted",
+              "provider",
+              "none"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
           "state": {
             "default": "ok",
             "description": "Where its usage is: ok, low, or out.",
@@ -6956,6 +6967,24 @@
         "additionalProperties": false,
         "description": "What a provider key has left, as its provider says (25.3's `ProviderHealth.key`).",
         "properties": {
+          "connection": {
+            "default": "",
+            "description": "The udl connection the key was read through (27.15): the key is named by it, never by\nthe provider's label, which is a masked preview of the key itself.",
+            "title": "Connection",
+            "type": "string"
+          },
+          "free_model_daily_requests": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many free-model requests the account has sent today, when the provider counts them\n(OpenRouter's `free_model_daily_requests`); None when it does not say (27.15).",
+            "title": "Free Model Daily Requests"
+          },
           "free_tier": {
             "anyOf": [
               {
@@ -6967,12 +6996,6 @@
             ],
             "description": "Whether the account is on the free tier (OpenRouter's `is_free_tier`); None when the\nprovider does not say.",
             "title": "Free Tier"
-          },
-          "label": {
-            "default": "",
-            "description": "The provider's own label for the key (never the key itself).",
-            "title": "Label",
-            "type": "string"
           },
           "left": {
             "anyOf": [

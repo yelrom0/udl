@@ -3819,6 +3819,14 @@ export interface components {
             /** @description The runner it runs. */
             runner: components["schemas"]["Name"];
             /**
+             * Source
+             * @description Where its figures came from: `counted` from its transcript, `provider` from the
+             *     provider's own count, `none` when there was nothing to measure (27.15).
+             * @default none
+             * @enum {string}
+             */
+            source: "counted" | "provider" | "none";
+            /**
              * State
              * @description Where its usage is: ok, low, or out.
              * @default ok
@@ -6988,17 +6996,24 @@ export interface components {
          */
         KeyUsage: {
             /**
+             * Connection
+             * @description The udl connection the key was read through (27.15): the key is named by it, never by
+             *     the provider's label, which is a masked preview of the key itself.
+             * @default
+             */
+            connection: string;
+            /**
+             * Free Model Daily Requests
+             * @description How many free-model requests the account has sent today, when the provider counts them
+             *     (OpenRouter's `free_model_daily_requests`); None when it does not say (27.15).
+             */
+            free_model_daily_requests?: number | null;
+            /**
              * Free Tier
              * @description Whether the account is on the free tier (OpenRouter's `is_free_tier`); None when the
              *     provider does not say.
              */
             free_tier?: boolean | null;
-            /**
-             * Label
-             * @description The provider's own label for the key (never the key itself).
-             * @default
-             */
-            label: string;
             /**
              * Left
              * @description What is left, in USD (the provider's `limit_remaining`, or `limit - spent`).

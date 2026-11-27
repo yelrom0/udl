@@ -180,10 +180,10 @@ async def test_its_health_says_its_labels_usage_and_limit() -> None:
 
     assert health == ProviderHealth(
         ok=True,
-        detail="deepseek-b: used 1.25 of 10 USD (8.75 left)",
+        detail="sk-or-v1-xxx…yyy: used 1.25 of 10 USD (8.75 left)",
         credit_left=Decimal("8.75"),
         key=KeyStatus(
-            label="deepseek-b",
+            label="sk-or-v1-xxx…yyy",
             spent=Decimal("1.25"),
             limit=Decimal("10"),
             left=Decimal("8.75"),
@@ -198,7 +198,7 @@ async def test_its_health_carries_the_key_as_a_key_status() -> None:
     health = await provider(FakeOpenRouter()).health()
 
     assert health.key is not None
-    assert health.key.label == "deepseek-b"
+    assert health.key.label == "sk-or-v1-xxx…yyy"
     assert health.key.spent == Decimal("1.25")
     assert health.key.limit == Decimal("10")
     assert health.key.left == Decimal("8.75")
@@ -223,7 +223,7 @@ async def test_a_key_that_resets_says_what_is_left_now() -> None:
 
     assert health.credit_left == Decimal("4")
     # (All-time usage and a per-period limit are not the same period: say each plainly.)
-    assert health.detail == "deepseek-b: used 40 USD; 4 of 10 USD left"
+    assert health.detail == "sk-or-v1-xxx…yyy: used 40 USD; 4 of 10 USD left"
 
 
 async def test_a_key_with_a_limit_but_no_usage_still_says_its_limit() -> None:
@@ -232,7 +232,7 @@ async def test_a_key_with_a_limit_but_no_usage_still_says_its_limit() -> None:
     health = await provider(fake).health()
 
     assert health.credit_left == Decimal("10")
-    assert health.detail == "deepseek-b: 10 of 10 USD left"
+    assert health.detail == "sk-or-v1-xxx…yyy: 10 of 10 USD left"
 
 
 async def test_a_key_with_no_limit_has_no_credit_left() -> None:
@@ -240,7 +240,7 @@ async def test_a_key_with_no_limit_has_no_credit_left() -> None:
 
     assert (health.ok, health.detail, health.credit_left) == (
         True,
-        "deepseek-b: used 1.25 USD",
+        "sk-or-v1-xxx…yyy: used 1.25 USD",
         None,
     )
 

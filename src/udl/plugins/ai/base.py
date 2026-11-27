@@ -249,6 +249,9 @@ class KeyStatus(_Model):
     """What it has spent today, in USD, when the provider says (`usage_daily`)."""
     is_free_tier: bool | None = None
     """Whether the account is on the free tier (OpenRouter's `is_free_tier`)."""
+    free_model_daily_requests: int | None = None
+    """How many free-model requests the account has sent today, when the provider counts them
+    (OpenRouter's `free_model_daily_requests`); None when it does not say (27.15)."""
 
 
 class ProviderHealth(_Model):

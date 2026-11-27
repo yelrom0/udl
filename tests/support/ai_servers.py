@@ -368,8 +368,9 @@ class FakeOpenRouter(FakeOpenAI):
     """Each model's context length."""
     tool_models: tuple[str, ...] = ("fake-1",)
     """The models that take tools (the others do not say so in `supported_parameters`)."""
-    label: str = "deepseek-b"
-    """The key's label, as OpenRouter names it."""
+    label: str = "sk-or-v1-xxx…yyy"
+    """The key's label, as OpenRouter sends it: a masked preview of the key itself, not a name
+    (27.15)."""
     used: str | None = "1.25"
     """How much of the key's limit is used, in USD (None: it does not say)."""
     limit: str | None = "10"
@@ -380,6 +381,8 @@ class FakeOpenRouter(FakeOpenAI):
     """What a chat costs, as OpenRouter says."""
     used_daily: str | None = None
     """What the key has spent today, in USD (None: it does not say)."""
+    free_model_daily: int | None = None
+    """How many free-model requests the account has sent today (None: it does not say)."""
 
     def http(self) -> HttpClientFactory:
         """udl's client factory, reaching this fake in-process (and nothing else)."""
@@ -445,6 +448,7 @@ class FakeOpenRouter(FakeOpenAI):
                 "limit_remaining": self.limit_remaining,
                 "is_free_tier": self.limit is None,
                 "usage_daily": self.used_daily,
+                "free_model_daily_requests": self.free_model_daily,
             }
         }
         return JSONResponse(key)
