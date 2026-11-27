@@ -10,7 +10,8 @@ export interface Filters {
 }
 
 /** The board's own route, which its filters are written onto. */
-export const BOARD = "/ui/p/orch/board";
+/** The board's own route (`ctx.navigate`'s path of the page's, without the shell's base). */
+export const BOARD = "/p/orch/board";
 
 /** What the query says: the two filters, and nothing for what it does not name. */
 export function filtersOf(search: Readonly<Record<string, string>>): Filters {

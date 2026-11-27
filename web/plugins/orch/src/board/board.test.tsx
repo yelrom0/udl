@@ -194,7 +194,7 @@ describe("the board (29.4)", () => {
 		expect(fake.navigations).toEqual([]);
 		fireEvent.keyDown(box, { key: "Enter" });
 
-		expect(fake.navigations).toEqual(["/ui/p/orch/board?state=queued&text=inbox"]);
+		expect(fake.navigations).toEqual(["/p/orch/board?state=queued&text=inbox"]);
 	});
 
 	it("narrows the tasks by text, and says so when nothing is left", async () => {
@@ -408,7 +408,7 @@ describe("the board's other paths (29.4)", () => {
 
 		fireEvent.change(box, { target: { value: "pages" } });
 		fireEvent.blur(box);
-		expect(fake.navigations).toEqual(["/ui/p/orch/board?text=pages"]);
+		expect(fake.navigations).toEqual(["/p/orch/board?text=pages"]);
 	});
 
 	it("writes what the box holds when it is left, even if the board read again first", async () => {
@@ -424,7 +424,7 @@ describe("the board's other paths (29.4)", () => {
 		await settle();
 		fireEvent.blur(box);
 
-		expect(fake.navigations).toEqual(["/ui/p/orch/board?text=pages"]);
+		expect(fake.navigations).toEqual(["/p/orch/board?text=pages"]);
 	});
 
 	it("keeps the focus in the box after Enter, with the URL's text now its own", async () => {
@@ -443,7 +443,7 @@ describe("the board's other paths (29.4)", () => {
 		box.focus();
 		fireEvent.change(box, { target: { value: "inbox" } });
 		fireEvent.keyDown(box, { key: "Enter" });
-		expect(fake.navigations).toEqual(["/ui/p/orch/board?text=inbox"]);
+		expect(fake.navigations).toEqual(["/p/orch/board?text=inbox"]);
 
 		// (The URL now says what the box says: the page is given it again, and the box is the one
 		// that had the focus — refining the search needs no second click.)
@@ -478,7 +478,7 @@ describe("the board's other paths (29.4)", () => {
 			target: { value: "merged" },
 		});
 
-		expect(fake.navigations).toEqual(["/ui/p/orch/board?state=merged"]);
+		expect(fake.navigations).toEqual(["/p/orch/board?state=merged"]);
 	});
 
 	it("says when there is nothing to suggest, or no agents", async () => {
