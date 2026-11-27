@@ -125,8 +125,6 @@ test("a person sets udl up from the web alone, and each thing is there", async (
 	await repo.getByRole("textbox", { name: "On GitHub" }).fill(github.repo);
 	await repo.getByRole("textbox", { name: "account" }).fill(`github:${account}`);
 	await repo.getByRole("button", { name: "Run" }).click();
-	// (A write udl refused is its own error, said on the card — not a poll that times out.)
-	await expect(repo.getByRole("alert")).toHaveCount(0);
 
 	// (The page's write lands when udl has it, not when the button was clicked: the project's own
 	// read is polled until the repo is on it.)
@@ -140,4 +138,7 @@ test("a person sets udl up from the web alone, and each thing is there", async (
 		return (said.repos ?? []).map((one) => one.github);
 	};
 	await expect.poll(reposOnTheProject, { timeout: 30_000 }).toContain(github.repo);
+	// (And the card itself never said it failed: a write udl refused is its own error, said on the
+	// card — checked after the answer has landed, not before.)
+	await expect(repo.getByRole("alert")).toHaveCount(0);
 });

@@ -89,7 +89,9 @@ from udl.plugins.registry import (
     PluginRegistry,
 )
 from udl.plugins.requirements import Requirement, RequirementKind
+from udl.plugins.secrets.base import SecretRef, SecretStore
 from udl.plugins.secrets.keyring import KeyringSecretStore
+from udl.plugins.secrets.memory import MemorySecretStore
 from udl.plugins.secrets.models import GetSecretsStatusRequest, SetToken
 from udl.plugins.sites.base import SitePlugin
 from udl.plugins.sites.youtube import YouTubePlugin
@@ -115,12 +117,14 @@ async def make(tmp_path: Path) -> AsyncIterator[Make]:
         db: DBManager | None = None,
         lock: InstanceLock | None = None,
         site_plugins: Sequence[SitePlugin] | None = None,
+        secrets: SecretStore | None = None,
     ) -> UDLService:
         config = config or settings(tmp_path)
         service = UDLService(
             config,
             registry=plugins or registry(),
             databases=db,
+            secrets=secrets,
             cookies=cookies or StaticCookies(),
             site_plugins=site_plugins,
             retry=RetryPolicy(retries=0),
@@ -946,6 +950,21 @@ def test_a_sync_needs_other_connections_to_sync_into(fields: dict[str, Any]) -> 
         SyncDatabasesRequest.model_validate(fields)
 
 
+class UnusableSecretStore(MemorySecretStore):
+    """A memory store that says why it cannot be used, and counts every read of it."""
+
+    def __init__(self, settings: SecretsSettings) -> None:
+        super().__init__(settings)
+        self.reads = 0
+
+    def unavailable(self) -> str | None:
+        return "there is no keyring running here"
+
+    async def get(self, ref: SecretRef) -> SecretStr | None:
+        self.reads += 1
+        return await super().get(ref)
+
+
 class Unreachable(MemoryDatabase):
     """A memory database that cannot be connected to."""
 
@@ -1356,6 +1375,20 @@ async def test_the_secrets_status_still_answers_when_the_store_cannot_be_read(
 
     assert found.store == "keyring"
     assert found.onepassword is None
+
+
+async def test_the_secrets_status_does_not_read_a_store_that_cannot_be_used(make: Make) -> None:
+    """A store that says why it cannot keep secrets is not read at all (reading it is what would
+    fail, or what would ask a person to unlock something they cannot): the status says why, and
+    that it cannot say whether a token is kept."""
+    store = UnusableSecretStore(SecretsSettings())
+    service = await make(secrets=store)
+
+    found = await service.get_secrets_status(GetSecretsStatusRequest())
+
+    assert found.unavailable == store.unavailable()
+    assert found.onepassword is None
+    assert store.reads == 0
 
 
 async def test_the_config_says_when_its_secret_store_cannot_be_used(
