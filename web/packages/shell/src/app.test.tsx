@@ -687,6 +687,6 @@ describe("the page's panels (29.12)", () => {
 		udl();
 		draw("/ui/panel/nobody/chat");
 
-		expect(await screen.findByText(/nobody/)).toBeTruthy();
+		expect(await screen.findByRole("heading", { name: 'No plugin "nobody"' })).toBeTruthy();
 	});
 });

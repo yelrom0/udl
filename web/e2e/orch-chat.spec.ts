@@ -78,6 +78,21 @@ async function started(page: Page): Promise<void> {
 	await expect(inside(page, "Transcript")).toBeVisible();
 }
 
+test("the panel is a sheet the whole width of a phone", async ({ page }) => {
+	// (A phone has no room beside the page: the panel is the window, from the top to the bottom.)
+	await page.addInitScript(() => {
+		localStorage.setItem("udl.panels", JSON.stringify({ open: ["orch/chat"], width: 400 }));
+	});
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.goto("/ui/");
+
+	const drawn = panel(page);
+	await expect(drawn).toBeVisible();
+	const box = await drawn.boundingBox();
+	expect(box?.width).toBe(390);
+	expect(box?.height).toBe(844);
+});
+
 test("a person chats, answers what it asks, and keeps the chat across a reload and a window", async ({
 	page,
 	context,

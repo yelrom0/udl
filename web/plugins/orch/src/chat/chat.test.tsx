@@ -173,11 +173,38 @@ describe("the chat's panel", () => {
 		expect(fake.calls.some((one) => one.name === "orch_chat_send")).toBe(false);
 	});
 
-	it("is Stop while a turn runs, and ends the chat when it is pressed", async () => {
+	it("says what is said during a turn is queued for the next one", async () => {
+		// (The backend queues it: a chat takes one turn at a time, and the person's next words are
+		// the next turn — so the composer sends while one runs, rather than refusing.)
 		const { props, fake } = panel(answered({ state: "running" }));
 		render(<ChatPanel {...props} />);
 
-		fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
+		const box = await screen.findByLabelText("Message");
+		fireEvent.change(box, { target: { value: "and now the tests" } });
+		fireEvent.keyDown(box, { key: "Enter" });
+
+		await waitFor(() => {
+			expect(fake.calls.find((one) => one.name === "orch_chat_send")?.request).toEqual({
+				chat: "c-1",
+				text: "and now the tests",
+				wait: false,
+			});
+		});
+	});
+
+	it("ends the chat only when the person says so", async () => {
+		const { props, fake } = panel(answered({ state: "running" }));
+		render(<ChatPanel {...props} />);
+
+		fake.yes = false;
+		fireEvent.click(await screen.findByRole("button", { name: "End chat" }));
+
+		await waitFor(() => expect(fake.asked.length).toBe(1));
+		expect(fake.asked[0]).toContain("End this chat?");
+		expect(fake.calls.some((one) => one.name === "orch_chat_stop")).toBe(false);
+
+		fake.yes = true;
+		fireEvent.click(screen.getByRole("button", { name: "End chat" }));
 
 		await waitFor(() => {
 			expect(fake.calls.some((one) => one.name === "orch_chat_stop")).toBe(true);

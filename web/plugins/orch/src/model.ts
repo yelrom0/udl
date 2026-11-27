@@ -1064,7 +1064,7 @@ export function chatsOf(value: JsonValue | undefined): Chat[] {
 	return asArray(asObject(value).items).map(chatOf);
 }
 
-/** Whether `chat` is in a turn now (its composer shows Stop, and its answer is still coming). */
+/** Whether `chat` is in a turn now (its composer offers End chat, and its answer is coming). */
 export function isChatting(chat: Chat | null): boolean {
 	return chat !== null && (chat.state === "running" || chat.state === "starting");
 }

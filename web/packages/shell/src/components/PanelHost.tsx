@@ -33,14 +33,18 @@ function panelsOf(registry: Registry): readonly Contribution<PanelProps>[] {
 	return registry.point("panels").every();
 }
 
-/** Open `key`'s panel in a window of its own, and close the page's copy. */
+/** Open `key`'s panel in a window of its own, and close the page's copy — when a window came
+ * back: a browser that blocked the pop-up gave none, and closing the page's copy would leave the
+ * person with no panel at all. */
 function popOut(key: string): void {
 	const url = panelUrl(key);
 	if (url === "") {
 		return;
 	}
-	window.open(url, panelWindowName(key), "popup=yes,width=480,height=900");
-	closePanel(key);
+	const opened = window.open(url, panelWindowName(key), "popup=yes,width=480,height=900");
+	if (opened !== null) {
+		closePanel(key);
+	}
 }
 
 /**
@@ -108,6 +112,29 @@ export function PanelHost({
 	const open = usePanels();
 	const width = usePanelWidth();
 	const drag = useRef<Drag | null>(null);
+	// (The drag's own listeners, made once: what a drag adds is exactly what it — and an unmount
+	// in the middle of one — takes off again.)
+	const onPointerMove = useRef((event: PointerEvent): void => {
+		const start = drag.current;
+		if (start === null) {
+			return;
+		}
+		// (Dragging the left edge to the left makes the panel wider.)
+		setPanelWidth(start.width + (start.x - event.clientX));
+	});
+	const onPointerUp = useRef((): void => {
+		drag.current = null;
+		document.removeEventListener("pointermove", onPointerMove.current);
+		document.removeEventListener("pointerup", onPointerUp.current);
+	});
+	useEffect(
+		() => () => {
+			// (A panel closed mid-drag (Ctrl+J, a route change) leaves nothing listening.)
+			document.removeEventListener("pointermove", onPointerMove.current);
+			document.removeEventListener("pointerup", onPointerUp.current);
+		},
+		[],
+	);
 
 	// (Every panel's own key opens and closes it: Ctrl+J for the chat.)
 	useEffect(() => {
@@ -137,23 +164,10 @@ export function PanelHost({
 		return null;
 	}
 
-	const resize = (event: React.PointerEvent<HTMLDivElement>): void => {
-		const start = drag.current;
-		if (start === null) {
-			return;
-		}
-		// (Dragging the left edge to the left makes the panel wider.)
-		setPanelWidth(start.width + (start.x - event.clientX));
-	};
-	const end = (): void => {
-		drag.current = null;
-		document.removeEventListener("pointermove", resize as unknown as EventListener);
-		document.removeEventListener("pointerup", end);
-	};
 	const begin = (event: React.PointerEvent<HTMLDivElement>): void => {
 		drag.current = { x: event.clientX, width };
-		document.addEventListener("pointermove", resize as unknown as EventListener);
-		document.addEventListener("pointerup", end);
+		document.addEventListener("pointermove", onPointerMove.current);
+		document.addEventListener("pointerup", onPointerUp.current);
 	};
 
 	return (

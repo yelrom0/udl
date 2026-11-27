@@ -1773,11 +1773,27 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
   harness's turns are posted. Two bugs the e2e found and the unit tests had hidden: a read that
   answered after the person asked for a new chat put the old chat back on show, and the composer's
   keys were read from `items`, which no list operation answers (the fakes said `items`). The
-  board's e2e on a phone width, and the panel's placement there, wait for 29.10. Two more the CI
+  board's e2e on a phone width waits for 29.10 (the panel's own is in the chat's spec). Two more the CI
   found: 29.6's spec filled the agent editor's harness as text, which the e2e host no longer offers
   as text now that this branch gives it a harness of its own (it picks the first one offered, and
   still types when none is), and the popped-out chat's assertions now allow a new window the 30 s
   it takes to load the shell and the bundle again.
+- **The bot's first review, all five items fixed (deepseek-a, 27 Nov 2026, PR #108):** the drag's
+  pointer listeners are typed as the DOM's `PointerEvent` and made once, so no cast is needed and a
+  panel that goes mid-drag (Ctrl+J) removes them; a window of its own waits for udl's plugin list
+  (a spinner, `plugins.loaded`) before it says a panel is missing, and says "No plugin" when it is
+  the plugin that is not there — with a Vitest for the route (waiting, no such panel, no such
+  plugin, and closing back to the page); a blocked pop-up (`window.open` → `null`) leaves the
+  page's panel open instead of leaving the person with no chat; the composer sends while a turn
+  runs (the backend queues it, and the button says `Send (n waiting)`), so its docstring is true
+  and the label reachable; and the button that ends a chat is **End chat**, asked first through
+  `ctx.confirm`, since it stops the harness and the conversation takes no more turns.
+- **The card's gaps, said plainly:** Ctrl+J cannot be pressed in Chromium (it keeps it for its
+  downloads), so the shell's own `PanelHost` test opens and closes the panel with it, and the spec
+  says why; the panel at a phone width is now in the e2e (a 390×844 window, the sheet the whole
+  width and height); the "and on the Board" half of the done-when moves to **29.10**, whose card
+  is the end-to-end run and whose own line is "a chat that allows a permission and assigns a task"
+  — that turn changes the board, and it belongs to the run that checks the board.
 - **Asked… (deepseek-a, 24 Nov 2026):** nothing.
 
 **Phase 29 is done when:** with `udl serve` on real connections, the user assigns a task by dragging it, answers the agent's question, and merges its PR, all from `/ui/p/orch/`.

@@ -3,7 +3,7 @@ import { COMMANDS, completed, completing, matching } from "./keys";
 
 /** What the composer is given: what the chat is doing, and what a person's words do. */
 export interface ComposerProps {
-	/** Whether a turn is running (so the button is Stop). */
+	/** Whether a turn is running (so End chat is offered beside Send). */
 	readonly busy: boolean;
 	/** Whether the chat is over (it takes no more turns). */
 	readonly over: boolean;
@@ -18,8 +18,12 @@ export interface ComposerProps {
 /**
  * The chat's composer (29.12): what a person says to their harness. Enter sends and Shift+Enter
  * is a new line (as every chat is); `@` completes a task, a feature or a question, and `/` the
- * harness's own commands. While a turn runs the button is Stop: a chat takes one turn at a time,
- * so what is said meanwhile is queued for the next one.
+ * harness's own commands.
+ *
+ * A chat takes one turn at a time, so what is said while one runs is queued for the next one (the
+ * count beside Send says how many); the turn is not interrupted for it. Ending the chat is a
+ * different thing — its harness stops and the conversation takes no more turns — so that button
+ * says what it does, and the page asks before it does it.
  */
 export function Composer({ busy, over, pending, keys, onSend, onStop }: ComposerProps) {
 	const [text, setText] = useState("");
@@ -46,7 +50,7 @@ export function Composer({ busy, over, pending, keys, onSend, onStop }: Composer
 
 	const send = async (): Promise<void> => {
 		const said = text.trim();
-		if (said === "" || busy || over) {
+		if (said === "" || over) {
 			return;
 		}
 		setText("");
@@ -104,29 +108,30 @@ export function Composer({ busy, over, pending, keys, onSend, onStop }: Composer
 				<p className="text-xs opacity-60">
 					Enter sends · Shift+Enter is a new line · @ a task, a feature or a question
 				</p>
-				{busy ? (
+				{/* (Ending the chat is not the same as a turn ending: its harness stops, and the
+				    conversation takes no more turns — so it says that, and asks first.) */}
+				{busy && (
 					<button
 						type="button"
-						className="btn btn-sm ml-auto"
-						title="End the chat and its turn"
+						className="btn btn-ghost btn-sm ml-auto"
+						title="End the chat and its harness"
 						onClick={() => {
 							void onStop();
 						}}
 					>
-						Stop
-					</button>
-				) : (
-					<button
-						type="button"
-						className="btn btn-primary btn-sm ml-auto"
-						disabled={over || text.trim() === ""}
-						onClick={() => {
-							void send();
-						}}
-					>
-						{pending > 0 ? `Send (${pending} waiting)` : "Send"}
+						End chat
 					</button>
 				)}
+				<button
+					type="button"
+					className={`btn btn-primary btn-sm ${busy ? "" : "ml-auto"}`}
+					disabled={over || text.trim() === ""}
+					onClick={() => {
+						void send();
+					}}
+				>
+					{pending > 0 ? `Send (${pending} waiting)` : "Send"}
+				</button>
 			</div>
 		</div>
 	);

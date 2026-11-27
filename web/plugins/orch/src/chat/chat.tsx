@@ -94,7 +94,15 @@ export const ChatPanel: Component<PanelProps> = ({ ctx, close, popOut }) => {
 						await chat.send(text);
 					}}
 					onStop={async () => {
-						await chat.end();
+						// (Ending is not a turn's end: its harness stops and the conversation takes no
+						// more turns, so it is asked, as every such change is.)
+						const yes = await ctx.confirm(
+							"End this chat? Its harness stops, and this conversation takes no more turns.",
+							{ ok: "End chat", cancel: "Keep chatting" },
+						);
+						if (yes) {
+							await chat.end();
+						}
 					}}
 				/>
 			)}

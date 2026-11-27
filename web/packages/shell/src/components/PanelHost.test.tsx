@@ -99,7 +99,7 @@ describe("the panel host", () => {
 	});
 
 	it("pops a panel out into a window of its own, and closes the page's copy", async () => {
-		const opened = vi.spyOn(window, "open").mockImplementation(() => null);
+		const opened = vi.spyOn(window, "open").mockImplementation(() => window);
 		const { registry } = registryWith("orch/chat", ORCH, "Chat", "Ctrl+J");
 		openPanel("orch/chat");
 		render(<PanelHost registry={registry} />);
@@ -112,6 +112,19 @@ describe("the panel host", () => {
 			expect.stringContaining("popup"),
 		);
 		expect(isOpen("orch/chat")).toBe(false);
+	});
+
+	it("keeps the panel when the browser blocks the window it asked for", async () => {
+		// (A blocked pop-up gives no window: closing the page's copy would leave no chat at all.)
+		vi.spyOn(window, "open").mockImplementation(() => null);
+		const { registry } = registryWith("orch/chat", ORCH, "Chat", "Ctrl+J");
+		openPanel("orch/chat");
+		render(<PanelHost registry={registry} />);
+
+		fireEvent.click(await screen.findByText("Pop out the chat"));
+
+		expect(isOpen("orch/chat")).toBe(true);
+		expect(screen.getByRole("complementary")).toBeTruthy();
 	});
 
 	it("draws every open panel, in the order they were opened", () => {
@@ -169,6 +182,22 @@ describe("the panel host", () => {
 		fireEvent.pointerUp(document);
 
 		expect(panels.getState().width).toBe(DEFAULT_WIDTH + 60);
+	});
+
+	it("stops listening to the pointer when a panel goes in the middle of a drag", () => {
+		// (Ctrl+J closes it while the edge is held: the page must not keep resizing a panel that
+		// is gone, nor leave a listener on `document` for the next move.)
+		const { registry } = registryWith("orch/chat", ORCH, "Chat", "Ctrl+J");
+		openPanel("orch/chat");
+		const { unmount } = render(<PanelHost registry={registry} />);
+
+		const handle = screen.getByRole("separator", { name: "Resize the panel" });
+		fireEvent.pointerDown(handle, { clientX: 1_000 });
+		unmount();
+		fireEvent.pointerMove(document, { clientX: 700 });
+		fireEvent.pointerUp(document);
+
+		expect(panels.getState().width).toBe(DEFAULT_WIDTH);
 	});
 });
 
