@@ -1796,6 +1796,19 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
   which also carries the Done when's proof (a 1Password token, an OpenRouter key by `op://` reference, a
   GitHub account, a host and a project with a repo, all set up from the web alone): `setup-pages.spec.ts`
   proves the groups and fields are drawn, not that a setup works. `29.10`'s e2e is still its own card.
+- **Built (deepseek-a, 28 Nov 2026, PR #N):** 29.9's second half, the two contributions:
+  `operationViews` for `orch_list_runners` (the **Machines** view — a card per host, each harness's
+  version and whether it is a version behind, who it is signed in as and on what plan, when its quota is
+  back, what its doctor says is wrong, and install / update, set up, and sign in through 25.11's relay:
+  the harness's own words and link, a box for the code it wants, a check, and the list read again when it
+  ends) and `resultViews` for `orch_import_plan` (the report: what it made, changed and kept by key, and
+  every line it could not place, with its file and line). Tests: 13 for the view, 3 for the report, and
+  `web/e2e/machines.spec.ts` in both themes (the Machines card, and a dry run whose report draws the keys
+  it would create and the line it could not place). **The card's Done when is not proved yet, and cannot
+  be in this harness as it stands:** three of its five legs need a fake the e2e has none of — the GitHub
+  account (connecting one checks the token against GitHub, and a new repo needs that account), the repo
+  (same), and the OpenRouter key (`set_ai_provider` is 17.9's and is not built). The 1Password token and
+  the host are provable as they stand; how the rest is faked is a question for Claude.
 - **Screens (29.1, Google Stitch):** **Connections: a generated page**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=126785af99b04553983316310fb2fd68) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=b4193d88b702431088fb00a576accdd4), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=7272b669d4e243529dc6dd6406ee8579) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=80b6bb3f19c449829bd03c30c808b326); `web/plugins/orch/design/connections-{light,dark}-{desktop,phone}.png`.
 
 **29.10 End to end** · needs 29.3–29.9, 29.11, 29.12
