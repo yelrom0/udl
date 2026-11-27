@@ -31,19 +31,21 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Generator
 from contextlib import AbstractContextManager, contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import FrameType
-from typing import Final
+from typing import IO, Final
 
 # Package Imports
 from pydantic import TypeAdapter, ValidationError
 
 # Local Imports
 from support.fixture_site import FixtureSite
+from support.git import git
 from support.github import FakeGitHub
 
 # The repo root (web/e2e runs from it, with PYTHONPATH=tests).
@@ -82,6 +84,8 @@ JSON = "application/json"
 _MAIL: Final = TypeAdapter(dict[str, object])
 # A test's push: the commit that is now at a pull's head.
 _GH_PUSH: Final = TypeAdapter(dict[str, str])
+# A review bot's comment on a pull (29.10's story: what the bot says, and where).
+_COMMENT: Final = TypeAdapter(dict[str, object])
 _AI: Final = TypeAdapter(list[str])
 # A scripted runner's turns: a list of objects (29.12's chat, and 28.6's orchestration).
 _TURNS: Final = TypeAdapter(list[dict[str, object]])
@@ -98,7 +102,11 @@ url = "sqlite+aiosqlite:///{database}"
 primary = true
 
 [secrets]
-store = "memory"
+# (A file in the harness's own temp home, not memory: 29.10's story starts udl again once its
+# agents exist — the dispatcher reads them at start (27.7) — and an account connected before the
+# restart is still connected after it, as a person's is.)
+store = "file"
+file = "{root}/secrets.json"
 
 [api]
 host = "127.0.0.1"
@@ -112,6 +120,11 @@ ui_plugin_dirs = {ui}
 [automations]
 # (On: the integrations' watchers run, so a pull's link is kept current as it is in a real one.)
 enabled = true
+
+[apps.orch.health]
+# (29.10: a turn needs a healthy host, and the harness's disks are its temp folder's — a few
+# gigabytes, where a real host's are not. Everything else is the default.)
+disk_min = "1GiB"
 
 [integrations.scripted]
 dir = "{root}"
@@ -184,6 +197,12 @@ class Control:
         self.ai: list[str] = []
         self.fake_github: FakeGitHub | None = None
         """The fake GitHub, once it is running (what a test's push is made on)."""
+        self.restart: Callable[[], None] | None = None
+        """Start udl again, while the block runs (29.10: the dispatcher reads its agents when it
+        starts, so a story makes them first and starts udl after)."""
+        self.repo: tuple[Path, Path] | None = None
+        """The story's own repository: its checkout and its bare origin, once they are made
+        (29.10: an agent works in the checkout and pushes to the origin, as it does for real)."""
 
     def deliver(self, mail: dict[str, object]) -> None:
         with self.lock:
@@ -211,12 +230,33 @@ class Control:
         bytecode under the GIL, which is enough for a test that only looks for a call it made."""
         return list(self.fake_github.calls) if self.fake_github is not None else []
 
-    def push(self, sha: str) -> None:
+    def push(self, sha: str, *, repo: str = GITHUB_REPO, number: int = 7) -> None:
         """What the fake GitHub is asked to do: a new commit on the pull's head (a test's stand-in
         for a person pushing, which is what makes the watcher look again)."""
         with self.lock:
             if self.fake_github is not None:
-                self.fake_github.push(sha)
+                self.fake_github.push(sha, repo=repo, number=number)
+
+    def comment(self, *, repo: str, number: int, text: str, login: str) -> None:
+        """Put a comment on a pull as `login` — the review bot's own words, as GitHub has them."""
+        with self.lock:
+            if self.fake_github is not None:
+                self.fake_github.comment_as(text, login=login, repo=repo, number=number)
+
+    def pulls(self, repo: str) -> list[dict[str, object]]:
+        """A repository's pulls: its number, its head's branch and commit, and its state."""
+        with self.lock:
+            found = list(self.fake_github.pulls.get(repo, [])) if self.fake_github else []
+        return [
+            {"number": one.number, "head": one.head.sha, "branch": one.head.ref, "state": one.state}
+            for one in found
+        ]
+
+    def restart_udl(self) -> None:
+        """Start udl again (a test's stand-in for a person restarting the service)."""
+        if self.restart is None:
+            raise ValueError("this control has no udl to start")
+        self.restart()
 
     def next_ai(self) -> str:
         """The next answer the fake AI gives (a default one when nothing is scripted)."""
@@ -232,12 +272,27 @@ def handler_for(control: Control) -> type[BaseHTTPRequestHandler]:
         """POST /mail, /slack, /ai and /turns: each adds what a fake should answer with next."""
 
         def do_GET(self) -> None:
-            # (A test's look at the fake GitHub: what it has been asked, to tell a watcher that
-            # never looked from one that did.)
-            if self.path.rstrip("/") != "/github-calls":
+            asked = urllib.parse.urlsplit(self.path)
+            path = asked.path.rstrip("/")
+            if path == "/github-pulls":
+                # (29.10: the pulls a story's agent opened, and the head each has now.)
+                repo = urllib.parse.parse_qs(asked.query).get("repo", [""])[0]
+                body = json.dumps({"pulls": control.pulls(repo)}).encode()
+            elif path == "/repo/head":
+                # (29.10: a branch's commit in the story's origin — "" until it is pushed.)
+                branch = urllib.parse.parse_qs(asked.query).get("branch", [""])[0]
+                body = json.dumps({"sha": _head_of(control, branch)}).encode()
+            elif path == "/repo":
+                # (29.10: where the story's checkout and its origin are.)
+                made = control.repo or (Path(), Path())
+                body = json.dumps({"checkout": str(made[0]), "origin": str(made[1])}).encode()
+            elif path == "/github-calls":
+                # (A test's look at the fake GitHub: what it has been asked, to tell a watcher that
+                # never looked from one that did.)
+                body = json.dumps({"calls": control.calls()}).encode()
+            else:
                 self.fail(404, "no such control")
                 return
-            body = json.dumps({"calls": control.calls()}).encode()
             self.send_response(200)
             self.send_header("Content-Type", JSON)
             self.send_header("Content-Length", str(len(body)))
@@ -261,8 +316,23 @@ def handler_for(control: Control) -> type[BaseHTTPRequestHandler]:
                     control.script(*_AI.validate_python(body))
                 elif path == "/turns":
                     control.script_turns(list(_TURNS.validate_python(body)))
+                elif path == "/restart":
+                    control.restart_udl()
                 elif path == "/github":
-                    control.push(str(_GH_PUSH.validate_python(body)["sha"]))
+                    pushed = _GH_PUSH.validate_python(body)
+                    control.push(
+                        str(pushed["sha"]),
+                        repo=str(pushed.get("repo") or GITHUB_REPO),
+                        number=int(pushed.get("number") or 7),
+                    )
+                elif path == "/github/comment":
+                    said = _COMMENT.validate_python(body)
+                    control.comment(
+                        repo=str(said["repo"]),
+                        number=int(str(said["number"])),
+                        text=str(said["text"]),
+                        login=str(said.get("login") or "claude"),
+                    )
                 else:
                     self.fail(404, "no such control")
                     return
@@ -315,6 +385,43 @@ def github() -> Generator[tuple[FakeGitHub, int]]:
     finally:
         server.should_exit = True
         thread.join(timeout=10)
+
+
+def _head_of(control: Control, branch: str) -> str:
+    """The commit at `branch` in the story's origin, or "" when it has no such branch."""
+    if control.repo is None or branch == "":
+        return ""
+    origin = control.repo[1]
+    try:
+        return git("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", cwd=origin)
+    except AssertionError:
+        return ""  # (git answers 1 for a branch it does not have)
+
+
+@contextmanager
+def repo(root: Path) -> Generator[tuple[Path, Path]]:
+    """The story's repository, while the block runs (29.10): a bare origin and a checkout of it,
+    with a `main` that has one commit and a gate that passes, so an agent's worktree, gate and
+    push are real git in a temp folder (never the user's).
+
+    Every call goes through `support.git.git`, which strips the variables a git hook exports —
+    with them, `git init --bare` re-initialises the repository the hook runs in."""
+    bare = root / "origin.git"
+    bare.mkdir()
+    git("init", "--bare", "-b", "main", cwd=bare)
+    checkout = root / "checkout"
+    checkout.mkdir()
+    git("init", "-b", "main", cwd=checkout)
+    git("config", "user.name", "udl", cwd=checkout)
+    git("config", "user.email", "udl@example.com", cwd=checkout)
+    git("config", "commit.gpgsign", "false", cwd=checkout)
+    (checkout / "Makefile").write_text("check:\n\t@true\n")
+    (checkout / "README.md").write_text("a small repo\n")
+    git("add", "-A", cwd=checkout)
+    git("commit", "-m", "the first commit", cwd=checkout)
+    git("remote", "add", "origin", str(bare), cwd=checkout)
+    git("push", "-u", "origin", "main", cwd=checkout)
+    yield checkout, bare
 
 
 @contextmanager
@@ -448,7 +555,7 @@ def main(
     ):
         home = Path(work)
         control = Control(home)
-        with serving(control, controls or 0) as controls_port:
+        with serving(control, controls or 0) as controls_port, repo(home) as made:
             # (A port somebody else holds is said, not fought over: Playwright passes the free one
             # it picked in web/playwright.config.ts, so a taken one was taken since.)
             with socket.socket() as sock:
@@ -459,6 +566,8 @@ def main(
             gh_url = f"http://127.0.0.1:{gh_port}"
             # (A test's push: what the fake's watcher sees as a new head, so a link is refreshed.)
             control.fake_github = gh
+            # (29.10's story: the checkout an agent works in, and the origin it pushes to.)
+            control.repo = made
             # (Where the tests read the fake's address and token: the browser's environment is
             # not this process's, and a token never goes in a command line.)
             written = Path(
@@ -476,28 +585,51 @@ def main(
                     }
                 )
             )
-            udl = subprocess.Popen(
-                [sys.executable, "-m", "udl", "serve"],
-                cwd=ROOT,
-                env=environment(config, home),
-                stdout=subprocess.DEVNULL,
-            )
             # (udl answers /docs whether or not the UI is built, so it is what says it is up; the
             # shell's own /ui/ comes with 18.3, and until then a test asks for it and gets a 404.)
             url = f"http://127.0.0.1:{port}/docs"
+            running: list[subprocess.Popen[bytes]] = []
+
+            # (A test that has to see why udl did what it did asks for its log by naming a file.)
+            named = os.environ.get("UDL_E2E_LOG")
+            logged: IO[bytes] | int = (
+                Path(named).open("ab") if named else subprocess.DEVNULL  # noqa: SIM115 - (kept open)
+            )
+
+            def launch() -> None:
+                """Start udl, and wait for it to answer."""
+                started = subprocess.Popen(  # noqa: S603 - (a test's own argv)
+                    # (--verbose when a test asked for the log: udl's own lines are why it did.)
+                    [sys.executable, "-m", "udl", "--verbose", "serve"]
+                    if named
+                    else [sys.executable, "-m", "udl", "serve"],
+                    cwd=ROOT,
+                    env=environment(config, home),
+                    stdout=logged,
+                    stderr=subprocess.STDOUT,
+                )
+                running.append(started)
+                wait_until(url, started)
+
+            def again() -> None:
+                """Stop udl and start it again (29.10: the dispatcher reads its agents at start)."""
+                stop(running[-1])
+                launch()
+
+            control.restart = again
+            launch()
             # (Both lines are printed before waiting: a server that is up must say so even if its
             # /docs never answers, or the test would only time out.)
             print(f"e2e: udl serve on {url}", file=sys.stdout, flush=True)  # noqa: T201
             print(f"e2e: github on {gh_url}", flush=True)  # noqa: T201
             print(f"e2e: controls on :{controls_port}", flush=True)  # noqa: T201
             try:
-                wait_until(url, udl)
                 stopping.wait(self_stop)  # (Playwright's webServer kills after a few minutes)
             except TimeoutError as e:
                 print(f"e2e: {e}", file=sys.stderr, flush=True)  # noqa: T201
                 return 1
             finally:
-                stop(udl)
+                stop(running[-1])
     return 0
 
 

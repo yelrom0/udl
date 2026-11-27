@@ -34,11 +34,13 @@ from support.e2e import (
     half_built,
     main,
     port_from,
+    repo,
     serving,
     stop,
     wait_until,
     write_config,
 )
+from support.git import git
 from udl.config import APISettings
 
 E2E_PLUGINS = Path(__file__).resolve().parents[2] / "support" / "e2e_plugins"
@@ -91,10 +93,13 @@ def test_the_config_is_what_the_server_reads(tmp_path: Path) -> None:
     assert f'plugin_dirs = ["{E2E_PLUGINS}", "{ORCH_E2E_PLUGINS}"]' in text
     # (29.12's chat: the scripted runner, whose turns are a file in this test's folder.)
     assert f'[integrations.scripted]\ndir = "{tmp_path}"' in text
-    # (Secrets are the memory store, so no keyring is opened; the web UI is served — a browser is
+    # (Secrets are a file in the harness's temp home — no keyring is opened, and 29.10's story,
+    # which starts udl again, keeps its account connected; the web UI is served — a browser is
     # what most e2e tests are — and its plugins are the fixtures the repo has, not the user's
     # ~/.config/udl/ui-plugins: a working one, and one that throws, for 18.9's plugin host.)
-    assert '[secrets]\nstore = "memory"' in text
+    assert "[secrets]" in text
+    assert 'store = "file"' in text
+    assert f'file = "{tmp_path / "secrets.json"}"' in text
     assert "[web]\nenabled = true" in text
     # (A key, so a browser test signs in as a user does; 18.4's session is what the UI uses.)
     assert 'api_key = "e2e-key"' in text
@@ -210,6 +215,99 @@ def test_the_control_api_holds_the_fake_github_and_says_what_it_was_asked() -> N
             assert asked.status == 200
             assert json.loads(asked.read())["calls"] == []
         assert gh_port > 0
+
+
+def test_the_control_api_puts_a_comment_on_a_pull_as_the_bot(tmp_path: Path) -> None:
+    """(29.10: the review bot's words are a comment on the pull, as GitHub has them.)"""
+    control = Control()
+
+    with serving(control) as port, github() as (fake, _):
+        control.fake_github = fake
+        fake.open_pull(repo="acme/widgets", number=9, head="feat/story", sha="c0ffee")
+        post(
+            port,
+            "/github/comment",
+            {
+                "repo": "acme/widgets",
+                "number": 9,
+                "text": "**Verdict: changes needed**",
+                "login": "claude",
+            },
+        )
+
+    said = fake.comments["acme/widgets#9"]
+    assert [(one.user.login, one.body) for one in said] == [
+        ("claude", "**Verdict: changes needed**")
+    ]
+
+
+def test_the_control_api_says_a_repository_s_pulls_and_their_heads() -> None:
+    """(29.10: the pull a story's agent opened, and the head it has now.)"""
+    control = Control()
+
+    with serving(control) as port, github() as (fake, _):
+        control.fake_github = fake
+        fake.open_pull(repo="acme/widgets", number=9, head="feat/story", sha="c0ffee")
+        fake.push("d00d1e", repo="acme/widgets", number=9)
+
+        answer = urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/github-pulls?repo=acme/widgets", timeout=5
+        )
+        with answer:
+            found = json.loads(answer.read())["pulls"]
+
+    assert {"number": 9, "head": "d00d1e", "branch": "feat/story", "state": "open"} in found
+
+
+def test_a_push_can_name_its_own_repository_and_pull() -> None:
+    """(29.8's push is a person's: 29.10's story pushes its own pull, not the default one.)"""
+    control = Control()
+
+    with serving(control) as port, github() as (fake, _):
+        control.fake_github = fake
+        fake.open_pull(repo="acme/widgets", number=9, head="feat/story", sha="c0ffee")
+        post(port, "/github", {"sha": "d00d1e", "repo": "acme/widgets", "number": "9"})
+
+    assert fake.pull_of("acme/widgets", 9).head.sha == "d00d1e"
+    assert fake.pull_of("acme/widgets", 7).head.sha != "d00d1e"
+
+
+def test_the_story_s_repository_is_a_checkout_of_its_own_origin(tmp_path: Path) -> None:
+    """(29.10: an agent's worktree, gate and push are real git in a temp folder.)"""
+    with repo(tmp_path) as (checkout, origin):
+        assert (checkout / ".git").is_dir()
+        assert (origin / "HEAD").is_file()
+        assert git("rev-parse", "--abbrev-ref", "HEAD", cwd=checkout).strip() == "main"
+        assert (checkout / "Makefile").read_text() == "check:\n\t@true\n"
+
+        answer = None
+        with serving(control := Control()) as port:
+            control.repo = (checkout, origin)
+            asked = urllib.request.urlopen(f"http://127.0.0.1:{port}/repo", timeout=5)
+            with asked:
+                answer = json.loads(asked.read())
+        assert answer == {"checkout": str(checkout), "origin": str(origin)}
+
+
+def test_the_control_api_starts_udl_again() -> None:
+    """(29.10: the dispatcher reads its agents when udl starts, so a story starts it again.)"""
+    control = Control()
+    started: list[str] = []
+    control.restart = lambda: started.append("again")
+
+    with serving(control) as port:
+        post(port, "/restart", {})
+
+    assert started == ["again"]
+
+
+def test_a_control_with_no_udl_refuses_a_restart() -> None:
+    control = Control()
+
+    with serving(control) as port:
+        refuses(port, "/restart", {}, 400)
+
+    assert control.restart is None
 
 
 def test_the_control_api_says_no_to_what_it_does_not_take() -> None:
