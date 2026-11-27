@@ -36,8 +36,10 @@ export interface Plotted {
 	readonly forecast: readonly Point[];
 	/** The likely range: today's point, then the scope's end on its early and late days. */
 	readonly band: readonly Point[];
-	/** Today's own place, and the points merged by then. */
+	/** Today's own place, and the points merged by then (the baseline's included). */
 	readonly today: Point;
+	/** The points merged by today, baseline and all. */
+	readonly todayPoints: number;
 	/** The scope's points at its end (the number the forecast aims at). */
 	readonly scopeAtEnd: number;
 	readonly yTicks: readonly Tick[];
@@ -112,6 +114,7 @@ export function plot(
 	forecast: Forecast,
 	today: Date,
 	size: { readonly width: number; readonly height: number } = SIZE,
+	baseline = 0,
 ): Plotted | null {
 	const first = series[0];
 	const last = series.at(-1);
@@ -128,9 +131,9 @@ export function plot(
 	const tall = size.height - PAD.top - PAD.bottom;
 	const x = (day: Date): number => PAD.left + ((day.getTime() - start.getTime()) / span) * wide;
 
-	let mergedBy = 0;
+	let mergedBy = baseline;
 	const merged: Point[] = [];
-	let highest = 0;
+	let highest = Math.max(baseline, 0);
 	for (const one of series) {
 		mergedBy += one.merged;
 		highest = Math.max(highest, mergedBy, one.points);
@@ -140,7 +143,7 @@ export function plot(
 	const top = Math.max(step, Math.ceil(Math.max(highest, 1) / step) * step);
 	const y = (points: number): number => PAD.top + tall - (points / top) * tall;
 
-	mergedBy = 0;
+	mergedBy = baseline;
 	for (const one of series) {
 		mergedBy += one.merged;
 		merged.push({ x: x(dayOf(one.day)), y: y(mergedBy) });
@@ -158,7 +161,7 @@ export function plot(
 	const todayDay = dayOf(today.toISOString());
 	const todayX = Math.min(Math.max(x(todayDay), PAD.left), PAD.left + wide);
 	const upToToday = series.filter((one) => dayOf(one.day).getTime() <= todayDay.getTime());
-	const mergedToday = upToToday.reduce((total, one) => total + one.merged, 0);
+	const mergedToday = baseline + upToToday.reduce((total, one) => total + one.merged, 0);
 	const todayPoint = { x: todayX, y: y(mergedToday) };
 
 	const earlyDay = forecast.early === "" ? todayDay : dayOf(forecast.early);
@@ -194,6 +197,7 @@ export function plot(
 		forecast: forecastLine,
 		band,
 		today: todayPoint,
+		todayPoints: mergedToday,
 		scopeAtEnd,
 		yTicks,
 		xTicks,
@@ -213,14 +217,16 @@ export interface BurnUpProps {
 	readonly series: readonly SeriesPoint[];
 	readonly forecast: Forecast;
 	readonly today: Date;
+	/** The points merged before the series' first day (what a windowed series cannot hold). */
+	readonly baseline?: number;
 }
 
 /**
  * The burn-up (29.11): the scope, the points merged, the forecast to its likely day, and the
  * band it is likely to land in — two lines and a band, so no chart library.
  */
-export function BurnUp({ series, forecast, today }: BurnUpProps) {
-	const drawnUp = plot(series, forecast, today);
+export function BurnUp({ series, forecast, today, baseline = 0 }: BurnUpProps) {
+	const drawnUp = plot(series, forecast, today, SIZE, baseline);
 	if (drawnUp === null) {
 		return <p className="text-sm opacity-70">Nothing is sized yet, so there is no burn-up.</p>;
 	}
@@ -312,11 +318,7 @@ export function BurnUp({ series, forecast, today }: BurnUpProps) {
 					x={drawnUp.today.x}
 					y={drawnUp.today.y - 8}
 				>
-					{Math.round(
-						series
-							.filter((one) => dayOf(one.day).getTime() <= dayOf(today.toISOString()).getTime())
-							.reduce((total, one) => total + one.merged, 0),
-					)}
+					{drawnUp.todayPoints}
 				</text>
 				<text
 					className="fill-base-content/60"

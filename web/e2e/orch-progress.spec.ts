@@ -145,4 +145,8 @@ test("the progress page keeps the project and the day in the URL (29.11)", async
 		);
 	await since.selectOption(choices[0] ?? "");
 	await expect(page).toHaveURL(/since=\d{4}-\d{2}-\d{2}/);
+	// (And the page draws again for that day: udl takes the date as the aware datetime it is.)
+	await expect(named(page, "Burn-up")).toBeVisible();
+	await expect(page.getByRole("group", { name: "Forecast" })).toBeVisible();
+	await expect(page.locator(".text-error")).toHaveCount(0);
 });

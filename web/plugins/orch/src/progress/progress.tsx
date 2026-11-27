@@ -2,13 +2,14 @@ import type { RouteProps } from "@udl/ui-sdk";
 import type { Component } from "@udl/ui-sdk/react";
 import { useProgress } from "../hooks";
 import { KeyLink } from "../keyLink";
-import type { FeatureProgress, ModelRow, ProgressReport, RecentTask } from "../model";
+import { asSize, type FeatureProgress, type ModelRow, type RecentTask } from "../model";
 import { Page, Said } from "../page";
 import { SizeChip } from "../sizeChip";
 import { BurnUp, dayLabel, longDayLabel } from "./burnUp";
 
-/** The page's own route, which its project and day are written onto. */
-export const PROGRESS = "/ui/p/orch/progress";
+/** The page's own route, which its project and day are written onto (`ctx.navigate`'s path of
+ * the page's: the shell puts its own base in front of it). */
+export const PROGRESS = "/p/orch/progress";
 
 /** The days a person may start the burn-up from, before udl's own thirty. */
 const SINCE_DAYS: readonly number[] = [14, 90];
@@ -16,7 +17,7 @@ const SINCE_DAYS: readonly number[] = [14, 90];
 /** A card with a clear edge (DESIGN.md's rule: a base-content 20 % border and a shadow). */
 const CARD = "card border border-base-content/20 bg-base-100 shadow-sm";
 
-/** The days between two timestamps, as a duration's hours (`PT4H24M` is `4.4`). */
+/** A duration, in hours (`PT4H24M` is `4.4`). */
 function hoursOf(duration: string): number {
 	const match = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$/.exec(duration);
 	if (match === null) {
@@ -146,7 +147,7 @@ function FeatureRow({ feature }: { readonly feature: FeatureProgress }) {
 function RecentRow({ task }: { readonly task: RecentTask }) {
 	const estimated = hoursOf(task.estimate);
 	const actual = hoursOf(task.actual);
-	const ratio = estimated === 0 ? 0 : actual / estimated;
+	const ratio = estimated === 0 ? null : actual / estimated;
 	return (
 		<tr>
 			<td>
@@ -154,11 +155,13 @@ function RecentRow({ task }: { readonly task: RecentTask }) {
 				<span className="opacity-80">{task.title}</span>
 			</td>
 			<td>
-				<SizeChip size={task.size as "S" | "M" | "L" | "XL"} />
+				<SizeChip size={asSize(task.size)} />
 			</td>
 			<td className="text-right tabular-nums">{hours(estimated)}</td>
 			<td className="text-right tabular-nums">{hours(actual)}</td>
-			<td className={`text-right tabular-nums ${ratioClass(ratio)}`}>{times(ratio)}</td>
+			<td className={`text-right tabular-nums ${ratio === null ? "" : ratioClass(ratio)}`}>
+				{ratio === null ? "–" : times(ratio)}
+			</td>
 		</tr>
 	);
 }
@@ -204,8 +207,14 @@ export const ProgressPage: Component<RouteProps> = ({ ctx, search }) => {
 	// (What the pickers show and what a change carries: the project the page is of — the one it
 	// was opened with, or the one udl took for an empty URL — and the day it starts at.)
 	const shown = { project: project !== "" ? project : (report?.project ?? ""), since };
-	const merged = (report?.series ?? []).reduce((total, one) => total + one.merged, 0);
-	const scope = report?.series.at(-1)?.points ?? 0;
+	const merged = report?.merged ?? 0;
+	const scope = report?.points ?? 0;
+	// (What was merged before the series' first day: a window cannot hold it, and the line that
+	// starts at nothing would say the work began when the window did.)
+	const baseline = Math.max(
+		0,
+		merged - (report?.series ?? []).reduce((total, one) => total + one.merged, 0),
+	);
 	const left = Math.max(0, scope - merged);
 	const forecast = report?.forecast;
 	const spread =
@@ -369,6 +378,3 @@ export const ProgressPage: Component<RouteProps> = ({ ctx, search }) => {
 		</Page>
 	);
 };
-
-/** What a project's report says it is, when a page wants the whole of it. */
-export type { ProgressReport };

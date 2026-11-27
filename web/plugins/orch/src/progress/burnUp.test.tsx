@@ -86,6 +86,20 @@ describe("the burn-up's geometry (29.11)", () => {
 		expect(values).toEqual([...values].sort((one, two) => one - two));
 	});
 
+	it("starts the merged line at what was merged before the window, and says what is merged today", () => {
+		// (A project whose first thirty days are not in the series: 100 points were merged before
+		// the first day it holds.)
+		const drawn = plot(SERIES, FORECAST, TODAY, undefined, 100);
+
+		expect(drawn?.merged.map((one) => one.y)).toEqual([
+			drawn?.y(100),
+			drawn?.y(103),
+			drawn?.y(105),
+		]);
+		expect(drawn?.todayPoints).toBe(105);
+		expect(drawn?.top).toBeGreaterThanOrEqual(105);
+	});
+
 	it("rounds a scale's step up to the first of 1, 2, 2.5, 5 and 10 of its magnitude", () => {
 		expect(niceStep(0)).toBe(1);
 		expect(niceStep(1)).toBe(1);

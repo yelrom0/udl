@@ -134,6 +134,14 @@ class Reporting:
             series=[
                 SeriesPoint(day=one.day, points=one.points, merged=one.merged) for one in points
             ],
+            # (The whole of the work, not only the days the series holds: a page that shows the
+            # last thirty days still says how much of all of it is done.)
+            points=sum(card.points for card in cards),
+            merged=sum(
+                card.points
+                for card in cards
+                if card.merged_at is not None and card.cancelled_at is None
+            ),
             pace=pace(points),
             forecast=_info(
                 _forecast_of(

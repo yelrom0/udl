@@ -729,6 +729,10 @@ export interface RecentTask {
 export interface ProgressReport {
 	readonly project: string;
 	readonly series: readonly SeriesPoint[];
+	/** The whole scope: every sized task's points, merged or not. */
+	readonly points: number;
+	/** The points merged, all of them (not only those the series' days hold). */
+	readonly merged: number;
 	/** The points merged a day over the last seven. */
 	readonly pace: number;
 	readonly forecast: Forecast;
@@ -804,6 +808,8 @@ export function progressReportOf(value: JsonValue | undefined): ProgressReport {
 	return {
 		project: asText(progress.project),
 		series: asArray(progress.series).map(seriesPointOf),
+		points: asNumber(progress.points),
+		merged: asNumber(progress.merged),
 		pace: asNumber(progress.pace),
 		forecast: forecastOf(progress.forecast),
 		features: asArray(progress.features).map(featureProgressOf),

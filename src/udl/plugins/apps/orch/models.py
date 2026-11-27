@@ -2073,7 +2073,11 @@ class Progress(_Model):
     project: Name
     """The project it is of."""
     series: list[SeriesPoint] = Field(default_factory=list[SeriesPoint])
-    """The burn-up, a day at a time."""
+    """The burn-up, a day at a time (from the day asked for, so the days before it are not here)."""
+    points: NonNegativeInt = 0
+    """The whole scope: the points of every sized task, merged or not (not only the series')."""
+    merged: NonNegativeInt = 0
+    """The points merged, all of them (not only those the series' days hold)."""
     pace: float = 0.0
     """The points merged a day over the last seven."""
     forecast: ForecastInfo

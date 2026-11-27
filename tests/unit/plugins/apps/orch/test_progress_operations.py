@@ -142,6 +142,23 @@ async def test_the_burn_up_counts_a_day_s_scope_and_what_merged(service: UDLServ
     assert found.series[-1].points == 8  # (the five merged, and the three-point one)
 
 
+async def test_the_whole_of_the_work_is_counted_even_after_the_series_s_start(
+    service: UDLService,
+) -> None:
+    """A window that starts after a merge cannot count it, and the page still must: 29.11 draws
+    the points merged of all of them, not of the days it happens to show."""
+    found = await service.call(
+        "orch_progress", {"project": "udl", "since": NOW - timedelta(days=1)}
+    )
+
+    assert isinstance(found, Progress)
+    # (Three merges are older than the window, so the series holds the two that are not…)
+    assert sum(one.merged for one in found.series) == 2
+    # (…and the whole of the work is still what the page is told.)
+    assert found.merged == 5
+    assert found.points == 8
+
+
 async def test_the_forecast_is_the_queued_work_at_the_model_s_rate(service: UDLService) -> None:
     found = await service.call("orch_progress", {"project": "udl"})
 

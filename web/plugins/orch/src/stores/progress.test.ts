@@ -63,7 +63,12 @@ describe("the progress store (29.11)", () => {
 		const { store, stop } = progressStore(fake.ctx, "", "2026-11-13");
 		await settle();
 
-		expect(fake.calls[1]?.request).toEqual({ project: "udl", since: "2026-11-13" });
+		// (The page's day is a date; udl's `since` is an aware datetime, and a bare date is
+		// refused as naive.)
+		expect(fake.calls[1]?.request).toEqual({
+			project: "udl",
+			since: "2026-11-13T00:00:00Z",
+		});
 		expect(store.getState().project).toBe("udl");
 		stop();
 	});

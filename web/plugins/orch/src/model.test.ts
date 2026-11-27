@@ -664,6 +664,8 @@ describe("reading a project's progress (29.11)", () => {
 				{ day: "2026-11-13", points: 236, merged: 0 },
 				{ day: "2026-11-14", points: 236, merged: 3 },
 			],
+			points: 236,
+			merged: 148,
 			pace: 20.5,
 			forecast: {
 				likely: "2026-11-27T00:00:00Z",
@@ -711,6 +713,8 @@ describe("reading a project's progress (29.11)", () => {
 			{ day: "2026-11-13", points: 236, merged: 0 },
 			{ day: "2026-11-14", points: 236, merged: 3 },
 		]);
+		expect(progress.points).toBe(236);
+		expect(progress.merged).toBe(148);
 		expect(progress.pace).toBe(20.5);
 		expect(progress.forecast).toEqual({
 			likely: "2026-11-27T00:00:00Z",
@@ -736,6 +740,8 @@ describe("reading a project's progress (29.11)", () => {
 		const nothing = progressReportOf(undefined);
 
 		expect(nothing.project).toBe("");
+		expect(nothing.points).toBe(0);
+		expect(nothing.merged).toBe(0);
 		expect(nothing.series).toEqual([]);
 		expect(nothing.features).toEqual([]);
 		expect(nothing.models).toEqual([]);

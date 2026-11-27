@@ -19,6 +19,9 @@ const ANSWERS: Record<string, unknown> = {
 			{ day: "2026-11-14", points: 236, merged: 100 },
 			{ day: "2026-11-27", points: 236, merged: 48 },
 		],
+		// (The whole scope, and all of the points merged: 40 of them before the window's days.)
+		points: 236,
+		merged: 148,
 		pace: 20,
 		forecast: {
 			likely: "2026-11-29T00:00:00Z",
@@ -160,6 +163,29 @@ describe("the progress page (29.11)", () => {
 		const merged = within(screen.getByLabelText("Recently merged"));
 		expect(merged.getByText("0.0 h")).toBeTruthy();
 		expect(merged.getByText("2.0 h")).toBeTruthy();
+		// (No estimate is no ratio: a dash, not a green nothing.)
+		expect(merged.getByText("–")).toBeTruthy();
+	});
+
+	it("counts the whole of the work, not only the days the window holds", async () => {
+		const fake = fakeCtx((name) =>
+			name === "orch_progress"
+				? ({
+						...(ANSWERS.orch_progress as object),
+						// (40 points merged before the series' first day.)
+						series: [
+							{ day: "2026-11-13", points: 236, merged: 60 },
+							{ day: "2026-11-27", points: 236, merged: 48 },
+						],
+					} as never)
+				: (ANSWERS[name] as never),
+		);
+		render(<ProgressPage ctx={fake.ctx} params={{}} path="progress" search={{}} />);
+		await read();
+
+		const stat = within(screen.getByText("Merged").closest("fieldset") as HTMLElement);
+		expect(stat.getByText("148")).toBeTruthy();
+		expect(stat.getByText("of 236 points · 63 %")).toBeTruthy();
 	});
 
 	it("colours a ratio: amber over 1.25×, green under 0.9×, and plain in between", async () => {
@@ -188,23 +214,29 @@ describe("the progress page (29.11)", () => {
 
 		fireEvent.change(screen.getByLabelText("Project"), { target: { value: "other" } });
 		await read();
-		expect(fake.navigations.at(-1)).toBe("/ui/p/orch/progress?project=other");
+		expect(fake.navigations.at(-1)).toBe("/p/orch/progress?project=other");
 
 		rerender(view({ project: "other" }));
 		await read();
 		fireEvent.change(screen.getByLabelText("Since"), { target: { value: "2026-11-13" } });
 		await read();
-		expect(fake.navigations.at(-1)).toBe("/ui/p/orch/progress?project=other&since=2026-11-13");
+		expect(fake.navigations.at(-1)).toBe("/p/orch/progress?project=other&since=2026-11-13");
 		rerender(view({ project: "other", since: "2026-11-13" }));
 		await read();
-		expect(fake.calls.at(-1)?.request).toEqual({ project: "other", since: "2026-11-13" });
+		expect(fake.calls.at(-1)?.request).toEqual({
+			project: "other",
+			since: "2026-11-13T00:00:00Z",
+		});
 	});
 
 	it("reads the project the URL names, and the day it names", async () => {
 		const fake = drawn({ project: "other", since: "2026-11-13" });
 		await read();
 
-		expect(fake.calls.at(-1)?.request).toEqual({ project: "other", since: "2026-11-13" });
+		expect(fake.calls.at(-1)?.request).toEqual({
+			project: "other",
+			since: "2026-11-13T00:00:00Z",
+		});
 		expect((screen.getByLabelText("Project") as HTMLSelectElement).value).toBe("other");
 		expect((screen.getByLabelText("Since") as HTMLSelectElement).value).toBe("2026-11-13");
 	});

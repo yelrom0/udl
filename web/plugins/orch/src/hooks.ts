@@ -137,7 +137,7 @@ export function useBoard(ctx: UIContext): Refreshable<BoardState> {
 	return useLoaded(ctx, boardStore, NO_BOARD);
 }
 
-/** The questions before they are read. */
+/** The progress page before it is read. */
 const NO_PROGRESS: ProgressState = {
 	projects: [],
 	project: "",

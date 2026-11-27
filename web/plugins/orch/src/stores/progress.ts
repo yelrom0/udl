@@ -19,8 +19,8 @@ export interface ProgressState {
 
 /**
  * What moves what the page draws (28.5): a task changing state, a pull readied or merged, a link
- * refreshed, and an agent's session starting, ending or failing — a merge is what a burn-up
- * counts, and a session's end is when its task's working time is known.
+ * refreshed, and an agent's session starting, ending or failing or running out of quota — a
+ * merge is what a burn-up counts, and a session's end is when its task's working time is known.
  */
 const WATCHED: readonly string[] = [
 	"orch.task.changed",
@@ -61,7 +61,10 @@ export function progressStore(
 				.map((one) => asText(asObject(one).name))
 				.filter((name) => name !== "");
 			const wanted = project !== "" ? project : (projects[0] ?? "");
-			const asked = since === "" ? { project: wanted } : { project: wanted, since };
+			// (The day is a date in the URL and an aware datetime to udl: `2026-11-13` is midnight
+			// UTC, which is what a request of `since` takes.)
+			const asked =
+				since === "" ? { project: wanted } : { project: wanted, since: `${since}T00:00:00Z` };
 			const report = wanted === "" ? undefined : await ctx.call("orch_progress", asked);
 			if (!stopped) {
 				store.setState({
