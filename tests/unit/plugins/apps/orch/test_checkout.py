@@ -10,12 +10,13 @@ one, one on another branch and one that diverged are left as they are, each name
 note and an `orch.checkout.behind` event. A host that cannot be reached is noted too.
 """
 
-# ruff: noqa: S603, S607  (a test's own git, with fixed argv)
+# ruff: noqa: S603  (a test's own git, with fixed argv)
 
 # System Imports
 import subprocess
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Final
 
 # Package Imports
 import pytest
@@ -25,7 +26,7 @@ from support.engine import settings
 from support.harnesses import ScriptedShell
 from udl.core.service import UDLService
 from udl.errors import PluginFailed
-from udl.hosts.shell import HostShell
+from udl.hosts.shell import HostShell, inherited
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.checkout import CHECKOUT_BEHIND, CheckoutBehind, follow
 from udl.plugins.apps.orch.models import OwnerKind
@@ -42,10 +43,26 @@ from udl.plugins.apps.orch.records import (
 )
 from udl.process import ProcessResult
 
+# (The repo a test makes is its own: no signing, which the machine's git does with 1Password and
+# which refuses under load, and no hooks from the machine's own settings. The variables a hook
+# exports are dropped, so a `make check` under the pre-commit hook never works on the repo it was
+# run from — `tests/support/git.py` says the same.)
+GIT: Final[list[str]] = [
+    "git",
+    "-c",
+    "commit.gpgsign=false",
+    "-c",
+    "tag.gpgsign=false",
+    "-c",
+    "core.hooksPath=/dev/null",
+]
+
 
 def git(cwd: Path, *args: str) -> str:
     """Run `git <args>` in `cwd` and answer what it printed."""
-    done = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True)
+    done = subprocess.run(
+        [*GIT, *args], cwd=cwd, env=inherited(), capture_output=True, text=True, check=True
+    )
     return done.stdout.strip()
 
 
