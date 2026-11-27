@@ -38,6 +38,7 @@ from udl.plugins.ai.base import AIProviderConnection
 from udl.plugins.ai.openrouter import OpenRouterProvider
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.agents import AgentRole, ManagerPowers, SessionState
+from udl.plugins.apps.orch.models import Actions
 from udl.plugins.apps.orch.plugin import Orch
 from udl.plugins.apps.orch.records import Agent, AgentRecords, AgentSession, SessionRecords
 from udl.plugins.registry import AI, APPS, RUNNERS
@@ -457,10 +458,10 @@ async def _save_agents(db: DBManager) -> None:
     )
 
 
-def _wire_openrouter(harness: Harness) -> FakeOpenRouter:
+def _wire_openrouter(harness: Harness, fake: FakeOpenRouter | None = None) -> FakeOpenRouter:
     """(The fake OpenRouter, as the provider's transport: the service's HTTP client is the
     fake's, so nothing here patches the provider itself.)"""
-    fake = FakeOpenRouter()
+    fake = fake or FakeOpenRouter()
     harness.registry.register(AI, OpenRouterProvider)
     harness.http = fake.http()
     return fake
@@ -635,3 +636,51 @@ def test_the_inbox_s_agent_lines_carry_what_each_agent_has_left(harness: Harness
     lines = {one["name"]: one["usage"] for one in json.loads(result.stdout)["agents"]}
     assert lines["deepseek-b"] == "$8.75 of $10 left"
     assert lines["ernie-c"].startswith("1,000 of 1,000 requests")
+
+
+async def test_a_low_paid_key_raises_one_event_and_one_to_action(
+    harness: Harness, caplog: pytest.LogCaptureFixture
+) -> None:
+    """(27.15: a crossing into `low` publishes `orch.usage.low` once, and raises one To action
+    ("raise the cap?") for the key — not one a read.)"""
+    from udl.plugins.apps.base import AppEvents
+
+    _wire_openrouter(harness, FakeOpenRouter(used="9.5", limit="10"))
+
+    async with harness.service() as service:
+        await _one_connection(service.db)
+        await _a_project(service.db)
+        await _save_one_agent(service.db, "deepseek-b", "deepseek/chat")
+        app = await service.apps.get("orch")
+        assert isinstance(app, Orch)
+        events = AppEvents(service.bus, "orch", app.event_types())
+        seen: list[str] = []
+        said: list[str] = []
+        async with events.subscribe("orch.usage.*") as sub:
+            await service.call("orch_usage", {})
+            await service.call("orch_usage", {})
+            async for event in sub:
+                seen.append(event.type)
+                said.append(event.model_dump_json())
+                if len(seen) >= 1:
+                    break
+        actions = await service.call("orch_list_actions", {})
+
+    assert seen == ["orch.usage.low"]
+    assert isinstance(actions, Actions)
+    assert [one.title for one in actions.actions] == ["Raise the cap for openrouter (limit $10)"]
+    assert "sk-or-v1-test" not in caplog.text
+    assert all("sk-or-v1-test" not in one for one in said)
+    assert all("sk-or-v1-xxx" not in one for one in said)
+
+
+async def _one_connection(db: DBManager) -> None:
+    """(The openrouter connection the usage tests read through.)"""
+    await db.upsert_record(
+        AIProviderConnection(
+            name="openrouter",
+            plugin="openrouter",
+            options={"api_key": "sk-or-v1-test"},
+            default_model="fake-1",
+        )
+    )

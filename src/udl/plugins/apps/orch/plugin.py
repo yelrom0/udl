@@ -146,6 +146,7 @@ from udl.plugins.apps.orch.models import (
     Action,
     Actions,
     ActionState,
+    ActionWhen,
     AddLinkRequest,
     AddNoteRequest,
     AgentLine,
@@ -251,7 +252,7 @@ from udl.plugins.apps.orch.models import (
 )
 from udl.plugins.apps.orch.readiness import TASK_READY, Pull, TaskReady
 from udl.plugins.apps.orch.readiness import readiness as assess
-from udl.plugins.apps.orch.records import scan_links
+from udl.plugins.apps.orch.records import UsageAlert, UsageAlertRecords, scan_links
 from udl.plugins.apps.orch.reporting import Reporting
 from udl.plugins.apps.orch.sessions import (
     AGENT_LIMITED,
@@ -265,6 +266,8 @@ from udl.plugins.apps.orch.sessions import (
     SESSION_EVENT,
     SESSION_FAILED,
     SESSION_STARTED,
+    USAGE_LOW,
+    USAGE_OUT,
 )
 from udl.plugins.apps.orch.settings import OrchSettings
 from udl.plugins.apps.orch.tokens import (
@@ -275,6 +278,7 @@ from udl.plugins.apps.orch.tokens import (
     issue_token as issue,
 )
 from udl.plugins.apps.orch.usage import (
+    AgentUsage,
     UsageList,
     UsageRequest,
     provider_of,
@@ -542,6 +546,8 @@ class Orch(AppPlugin[OrchSettings]):
             QUESTION_ANSWERED,
             ACTION_NEEDED,
             AGENT_LIMITED,
+            USAGE_LOW,
+            USAGE_OUT,
             AGENT_IDLE,
             AGENT_CHANGED,
             HOST_UNHEALTHY,
@@ -1189,12 +1195,68 @@ class Orch(AppPlugin[OrchSettings]):
             allowance_for={one.name: allowance_of(self.settings, one.model) for one in shapes},
             clock=self.clock,
         )
+        await self._usage_alerts(rows)
         totals: dict[str, Decimal] = {}
         for shape, row in zip(shapes, rows, strict=True):
             name = connection_for.get(provider_of(shape.model), "")
             if name:
                 totals[name] = totals.get(name, Decimal(0)) + (row.cost or Decimal(0))
         return UsageList(items=rows, totals=totals)
+
+    async def _usage_alerts(self, rows: list[AgentUsage]) -> None:
+        """Publish a crossing (27.15): `orch.usage.low`/`orch.usage.out` once, when an agent's
+        state changes into `low` or `out`, and a To action for a low paid key (once per key per
+        cap). A return to `ok` is recorded without an event."""
+        service = self.service
+        if service is None:
+            return
+        alerts = UsageAlertRecords(self.records)
+        events = AppEvents(service.bus, self.name, self.event_types())
+        for row in rows:
+            last = await alerts.get(row.agent)
+            if last is not None and last.usage_state == row.state:
+                continue
+            await alerts.save(
+                UsageAlert(agent=row.agent, usage_state=row.state, at=self.clock.now())
+            )
+            if row.state == "low":
+                await events.emit(
+                    USAGE_LOW.name,
+                    USAGE_LOW.data(agent=row.agent, line=row.line),
+                    dedupe_key=f"{row.agent}:low",
+                )
+                await self._raise_cap(row)
+            elif row.state == "out":
+                await events.emit(
+                    USAGE_OUT.name,
+                    USAGE_OUT.data(agent=row.agent, line=row.line),
+                    dedupe_key=f"{row.agent}:out",
+                )
+                await self._raise_cap(row)
+
+    async def _raise_cap(self, row: AgentUsage) -> None:
+        """The To action a low paid key raises (27.15): "raise the cap?", once per key per cap
+        (the cap in the title, so a new limit raises a new one)."""
+        if row.paid is None or row.paid.limit is None:
+            return
+        title = f"Raise the cap for {row.paid.connection or row.agent} (limit ${row.paid.limit})"
+        open_one = await self.records.list(
+            stored.HumanAction, RecordQuery(where={"state": ActionState.OPEN})
+        )
+        if any(one.title == title for one in open_one):
+            return
+        project = await stored.AgentRecords(self.records).agent(row.agent)
+        name = project.projects[0] if project is not None and project.projects else "udl"
+        await acted.set_action(
+            acted.ActionRecords(self.records),
+            project=name,
+            title=title,
+            text=row.line,
+            when=ActionWhen.NOW,
+            after=None,
+            task=None,
+            assignee=None,
+        )
 
     async def _provider_healths(
         self, service: UDLService, agents: list[Agent]
