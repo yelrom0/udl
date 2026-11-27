@@ -138,6 +138,11 @@ export type Tabs = ("operations" | "settings" | "accounts" | "events")[];
  */
 export type Hide = string[];
 /**
+ * The operations to show even so (a name, or a `*` prefix): what a plugin's own pages do
+ * not cover, while the rest of its operations have pages of their own (29.9).
+ */
+export type Show = string[];
+/**
  * The operations to put first, in this order.
  */
 export type Order = string[];
@@ -208,6 +213,7 @@ export interface Generated {
   nav?: Nav1;
   tabs?: Tabs;
   hide?: Hide;
+  show?: Show;
   groups?: Groups;
   order?: Order;
   labels?: Labels;

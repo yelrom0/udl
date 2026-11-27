@@ -27,10 +27,19 @@ from udl.config import APISettings, WebSettings
 from udl.core.operations import operations, resolved_view, route
 from udl.interfaces.web.generated import UDL, GeneratedPlugin, GeneratedUI, generated
 from udl.interfaces.web.sessions import SESSION_COOKIE
+from udl.plugins.integrations.base import ConnectMethod
 from udl.plugins.registry import INTEGRATIONS, SITES
 from udl.plugins.ui.base import UIBundle
 
 MANIFEST: Final = {"name": "chores", "version": "0.1.0", "sdk": "^1.0", "entry": "index.js"}
+
+
+class FakeIntegrationNoTokens(FakeIntegration):
+    """The same, with no tokens to take (a source that needs no login)."""
+
+    name = "fake-none"
+    token_model = None
+    connect = (ConnectMethod.NONE,)
 
 
 def ui_of(harness: Harness) -> GeneratedUI:
@@ -177,6 +186,33 @@ def test_an_integration_says_how_its_accounts_connect(tmp_path: Path) -> None:
     assert accounts.access_levels == list(FakeIntegration.access_levels)
     assert isinstance(accounts.options_schema, dict)
     assert accounts.options_schema["type"] == "object"
+
+
+def test_an_integration_says_which_tokens_its_accounts_take(tmp_path: Path) -> None:
+    """The account form is drawn from them (29.9): a name and a password box were all the page
+    could show before, because a token's fields were only in the integration's own docs."""
+    harness = Harness(tmp_path)
+    harness.registry.register(INTEGRATIONS, FakeIntegration)
+
+    accounts = by_name(ui_of(harness))["fake"].accounts
+
+    assert accounts is not None
+    schema = accounts.tokens_schema
+    assert isinstance(schema, dict)
+    assert schema["type"] == "object"
+    properties = schema["properties"]
+    assert isinstance(properties, dict)
+    assert list(properties) == ["api_key"]
+
+
+def test_an_integration_that_takes_no_tokens_says_so(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    harness.registry.register(INTEGRATIONS, FakeIntegrationNoTokens)
+
+    accounts = by_name(ui_of(harness))["fake-none"].accounts
+
+    assert accounts is not None
+    assert accounts.tokens_schema == {}
 
 
 def test_a_plugin_that_is_not_an_integration_has_no_accounts(tmp_path: Path) -> None:

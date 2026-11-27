@@ -48,7 +48,9 @@ from udl.plugins.integrations.base import (
     ItemsPage,
     OperationHints,
     StateStore,
+    UISpec,
     integration_operation,
+    ui_field,
 )
 from udl.plugins.integrations.github.client import (
     DEFAULT_API_URL,
@@ -103,7 +105,13 @@ class GitHubOptions(AccountOptions):
     """A github account's options."""
 
     repos: list[Annotated[str, Field(pattern=r"^[^/\s]+/[^/\s]+$")]] = Field(
-        default_factory=list[Annotated[str, Field(pattern=r"^[^/\s]+/[^/\s]+$")]]
+        default_factory=list[Annotated[str, Field(pattern=r"^[^/\s]+/[^/\s]+$")]],
+        json_schema_extra=ui_field(
+            label="Repositories",
+            widget="lines",
+            placeholder="acme/widgets",
+            help="The repositories it works in, owner/name, one per line.",
+        ),
     )
     """The repositories it works in (owner/name, e.g. acme/widgets): its operations and its
     watcher only ever touch these."""
@@ -116,7 +124,17 @@ class GitHubToken(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
-    token: SecretStr
+    token: SecretStr = Field(
+        json_schema_extra=ui_field(
+            label="Token",
+            placeholder="ghp_… or op://vault/item/field",
+            help=(
+                "A fine-grained personal access token for the account's repositories, with Pull "
+                "requests: read and write (and Actions: write, to run a pull's failed checks "
+                "again) — or a 1Password reference, read when it is used and never stored."
+            ),
+        )
+    )
     """A fine-grained personal access token for the account's repositories, with Pull requests:
     read and write (and Actions: write, to run a pull's failed checks again)."""
 
@@ -662,6 +680,7 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
         title="List pull requests",
         hints=OperationHints(read_only=True, idempotent=True, open_world=True),
         fan_out=True,
+        ui=UISpec(group="Pulls", order=0),
     )
     async def list_pulls(
         self, account: AccountHandle[GitHubOptions], request: ListPullsRequest
@@ -683,6 +702,7 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
         "get_pull",
         title="Read a pull request",
         hints=OperationHints(read_only=True, idempotent=True, open_world=True),
+        ui=UISpec(group="Pulls", order=1),
     )
     async def get_pull(
         self, account: AccountHandle[GitHubOptions], request: GetPullRequest
@@ -711,6 +731,7 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
         "open_pull",
         title="Open a pull request",
         hints=OperationHints(open_world=True, idempotent=True),
+        ui=UISpec(group="Pulls", order=2),
     )
     async def open_pull(
         self, account: AccountHandle[GitHubOptions], request: OpenPullRequest
@@ -756,6 +777,7 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
         "comment",
         title="Comment on a pull request",
         hints=OperationHints(open_world=True),
+        ui=UISpec(group="Pulls", order=3),
     )
     async def comment(
         self, account: AccountHandle[GitHubOptions], request: CommentRequest
@@ -769,6 +791,7 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
         "rerun_checks",
         title="Rerun a pull's failed checks",
         hints=OperationHints(open_world=True),
+        ui=UISpec(group="Checks", order=0),
     )
     async def rerun_checks(
         self, account: AccountHandle[GitHubOptions], request: RerunRequest
@@ -794,6 +817,7 @@ class GitHubIntegration(Integration[GitHubSettings, GitHubOptions]):
         "merge_pull",
         title="Merge a pull request",
         hints=OperationHints(destructive=True, open_world=True, admin=True, mcp=False),
+        ui=UISpec(group="Merge", order=0),
     )
     async def merge_pull(
         self, account: AccountHandle[GitHubOptions], request: MergePullRequest

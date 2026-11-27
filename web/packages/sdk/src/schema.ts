@@ -25,6 +25,7 @@ export type FieldWidget =
 	| "switch"
 	| "select"
 	| "multiselect"
+	| "lines"
 	| "path"
 	| "url"
 	| "datetime"
@@ -43,6 +44,7 @@ export const fieldWidgets: readonly FieldWidget[] = [
 	"switch",
 	"select",
 	"multiselect",
+	"lines",
 	"path",
 	"url",
 	"datetime",

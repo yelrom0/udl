@@ -174,6 +174,9 @@ class Generated(_Frozen):
     """Which tabs stay, in this order (all of them, as udl lists them, when this is empty)."""
     hide: list[str] = Field(default_factory=list[str])
     """The operations not to show (a name, or a `*` prefix: `gmail_send_*`)."""
+    show: list[str] = Field(default_factory=list[str])
+    """The operations to show even so (a name, or a `*` prefix): what a plugin's own pages do
+    not cover, while the rest of its operations have pages of their own (29.9)."""
     groups: dict[str, list[str]] = Field(default_factory=dict[str, list[str]])
     """The operations to move under a group of this name (the group's own order is the dict's)."""
     order: list[str] = Field(default_factory=list[str])
@@ -309,7 +312,8 @@ class UIPluginList(_Frozen):
 
 
 def guidance_problems(manifest: UIManifest, operations: Iterable[str]) -> list[str]:
-    """What `manifest`'s guidance names that `operations` have not: a `hide` that matches none,
+    """What `manifest`'s guidance names that `operations` have not: a `hide` or a `show` that
+    matches none,
     or a label, a group, an order, an operation view or a result view for an operation it has
     not. `operations` is its own plugin's, or (a UI-only bundle's, whose guidance every page
     takes) every operation udl knows. They are problems, not errors: the bundle is still
@@ -322,6 +326,9 @@ def guidance_problems(manifest: UIManifest, operations: Iterable[str]) -> list[s
         for pattern in guidance.hide:
             if not any(matches(pattern, name) for name in names):
                 problems.append(f'its guidance hides "{pattern}", and no operation matches')
+        for pattern in guidance.show:
+            if not any(matches(pattern, name) for name in names):
+                problems.append(f'its guidance shows "{pattern}", and no operation matches')
         for what, named in [
             ("labels", guidance.labels),
             ("groups", [one for group in guidance.groups.values() for one in group]),

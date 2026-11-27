@@ -10,6 +10,9 @@ resolver found (never a value), and 1Password's service account token.
 # Package Imports
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
+# Local Imports
+from udl.core.operations import ui_field
+
 __all__ = ["GetSecretsStatusRequest", "SecretsStatus", "SetToken"]
 
 
@@ -50,5 +53,13 @@ class SecretsStatus(_Frozen):
 class SetToken(_Frozen):
     """1Password's service account token, which `op` is given (never udl's own reads)."""
 
-    token: SecretStr = Field(min_length=1)
+    token: SecretStr = Field(
+        min_length=1,
+        json_schema_extra=ui_field(
+            label="Service account token",
+            widget="password",
+            placeholder="ops_…",
+            help="Kept in udl's own store: `op` is given it, and udl's own reads never are.",
+        ),
+    )
     """The token (asked for hidden, kept in udl's own store, never in a log line)."""

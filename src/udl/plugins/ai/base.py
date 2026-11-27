@@ -40,6 +40,7 @@ from pydantic import (
 
 # Local Imports
 from udl.clock import Clock
+from udl.core.operations import ui_field
 from udl.db.models import JsonObject
 from udl.db.records import Name, Record
 from udl.errors import ConfigError, PluginError, ProviderUnavailable
@@ -268,7 +269,18 @@ class ProviderOptions(_Model):
 
     url: str = ""
     """Where its API is; empty means the provider's own default."""
-    api_key: SecretField | None = None
+    api_key: SecretField | None = Field(
+        default=None,
+        json_schema_extra=ui_field(
+            label="API key",
+            widget="password",
+            placeholder="sk-… or op://vault/item/field",
+            help=(
+                "The key it is used with, or where udl's secret store has it — or a 1Password "
+                "reference, read when it is used and never kept."
+            ),
+        ),
+    )
     """The key it is used with, or where udl's secret store has it."""
 
 
