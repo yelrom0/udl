@@ -348,9 +348,7 @@ async def _row(
         account_today=spent,
         allowance=allowance,
     )
-    requests = (
-        provider_requests if free is not None and provider_requests is not None else counts.today
-    )
+    requests = counts.today  # (each agent's own count; the provider's is the account's)
     if free is not None:
         key = None  # (a free agent's key is the account's, not its own: it is not reported as paid)
     source: UsageSource = (

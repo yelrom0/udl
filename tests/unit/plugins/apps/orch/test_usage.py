@@ -402,7 +402,8 @@ def test_the_provider_s_own_free_count_is_used_when_it_gives_one() -> None:
     )
 
     assert found.free is not None
-    assert found.requests_today == 7
+    assert found.requests_today == 2
+    assert found.free.left == ALLOWANCE_DEFAULT - 7
     assert found.source == "provider"
 
 
@@ -433,8 +434,8 @@ def test_the_provider_s_count_is_the_free_agent_s_own_and_a_paid_agent_keeps_its
 
     assert by["deepseek-b"].requests_today == 1
     assert by["deepseek-b"].source == "provider"
-    assert by["ernie-c"].requests_today == 7
-    assert by["ernie-c"].source == "provider"
+    assert by["ernie-c"].requests_today == 2  # (its own count, not the account's)
+    assert by["ernie-c"].source == "provider"  # (the left came from the provider's count)
     assert by["ernie-c"].free is not None
     assert by["ernie-c"].free.left == ALLOWANCE_DEFAULT - 7
 

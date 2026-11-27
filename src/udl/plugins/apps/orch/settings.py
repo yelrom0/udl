@@ -121,6 +121,9 @@ class OrchSettings(AppSettings):
     failure. None: no cap."""
 
     allowances: dict[str, PositiveInt] = Field(default_factory=dict)
+    """A per-account free allowance override (27.15), keyed `provider:model-glob` (e.g.
+    `openrouter:deepseek/*`): a free agent whose model matches gets that many requests a day
+    instead of the provider's own 50 or 1,000. Empty: the provider's rule stands."""
 
     @field_validator("allowances")
     @classmethod
@@ -132,10 +135,6 @@ class OrchSettings(AppSettings):
             if not sep or not provider or not glob:
                 raise ValueError(f"an allowance key is `provider:model-glob`, not {key!r}")
         return value
-
-    """A per-account free allowance override (27.15), keyed `provider:model-glob` (e.g.
-    `openrouter:deepseek/*`): a free agent whose model matches gets that many requests a day
-    instead of the provider's own 50 or 1,000. Empty: the provider's rule stands."""
 
     health: HealthSettings = Field(default_factory=HealthSettings)
     """What counts as a host in trouble, and what udl does about it (27.13)."""

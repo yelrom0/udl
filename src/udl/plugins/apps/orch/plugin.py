@@ -1202,8 +1202,8 @@ class Orch(AppPlugin[OrchSettings]):
         for shape, row in zip(shapes, rows, strict=True):
             name = connection_for.get(provider_of(shape.model), "")
             spent = row.paid.spent_today if row.paid is not None else None
-            if name and spent is not None:
-                totals[name] = totals.get(name, Decimal(0)) + spent
+            if name and spent is not None and name not in totals:
+                totals[name] = spent  # (the key's figure, once per connection, not per agent)
         return UsageList(items=rows, totals=totals)
 
     async def _usage_alerts(self, rows: list[AgentUsage]) -> None:
@@ -1251,10 +1251,13 @@ class Orch(AppPlugin[OrchSettings]):
         if paid.left > paid.limit * Decimal(str(LOW_RATIO)):
             return
         title = f"Raise the cap for {paid.connection or row.agent} (limit ${paid.limit})"
+        # (Once per key per cap: the key and the cap are the action's text, so a new limit is a
+        # new action and a repeat read is not.)
+        text = f"{paid.connection or row.agent}\n{paid.limit}"
         open_one = await self.records.list(
             stored.HumanAction, RecordQuery(where={"state": ActionState.OPEN})
         )
-        if any(one.title == title for one in open_one):
+        if any(one.text == text for one in open_one):
             return
         project = await stored.AgentRecords(self.records).agent(row.agent)
         name = project.projects[0] if project is not None and project.projects else None
@@ -1267,7 +1270,7 @@ class Orch(AppPlugin[OrchSettings]):
             acted.ActionRecords(self.records),
             project=name,
             title=title,
-            text=row.line,
+            text=text,
             when=ActionWhen.NOW,
             after=None,
             task=None,
@@ -2820,8 +2823,7 @@ class Orch(AppPlugin[OrchSettings]):
             )
         ]
         to_do = await self.list_actions(ListActionsRequest(project=project))
-        agents, usage = await self._agent_lines(self.service)
-        await self._usage_alerts(usage)
+        agents, _ = await self._agent_lines(self.service)
         return Inbox(
             project=project,
             merge=merge,

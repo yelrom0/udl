@@ -665,6 +665,10 @@ async def test_a_low_paid_key_raises_one_event_and_one_to_action(
                 event = await asyncio.wait_for(anext(sub), 2)
                 seen.append(event.type)
                 said.append(event.model_dump_json())
+            # (Once: a third read is not a third event.)
+            await service.call("orch_usage", {})
+            with pytest.raises((TimeoutError, asyncio.TimeoutError)):
+                await asyncio.wait_for(anext(sub), 1)
         actions = await service.call("orch_list_actions", {})
 
     assert seen == ["orch.usage.low"]
@@ -765,3 +769,37 @@ async def _one_connection(db: DBManager) -> None:
             default_model="fake-1",
         )
     )
+
+
+def test_the_totals_count_a_connection_once(harness: Harness) -> None:
+    """(27.15: two agents on one connection share one key, so its `spent_today` is counted
+    once, not once per agent.)"""
+    _wire_openrouter(harness, FakeOpenRouter(used_daily="0.42"))
+
+    def seed(db: DBManager) -> Awaitable[object]:
+        return db.upsert_record(
+            AIProviderConnection(
+                name="openrouter",
+                plugin="openrouter",
+                options={"api_key": "sk-or-v1-test"},
+                default_model="fake-1",
+            )
+        )
+
+    harness.seed(seed)
+    harness.seed(_save_agents)
+
+    result = CLI(harness)("orch", "agents", "usage", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["totals"] == {"openrouter": "0.42"}
+
+
+def test_an_allowance_key_that_is_not_provider_glob_is_refused() -> None:
+    """(27.15: a malformed key would silently match nothing, so it is refused.)"""
+    from pydantic import ValidationError
+
+    from udl.plugins.apps.orch.settings import OrchSettings
+
+    with pytest.raises(ValidationError):
+        OrchSettings.model_validate({"allowances": {"openrouter": 5}})
