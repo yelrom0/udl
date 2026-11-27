@@ -424,46 +424,50 @@ describe("the machines view (29.9)", () => {
 	});
 
 	it("says so when it cannot ask how a sign-in is going, and stops asking", async () => {
-		let asked = 0;
-		const fake = fakeCtx((name) => {
-			if (name === "orch_runner_login") {
-				return {
-					id: "login-4",
-					host: "local",
-					runner: "opencode",
-					prompt: "Sign in in your browser",
-					expects: "none",
-					done: false,
-					ok: null,
-				};
-			}
-			if (name === "orch_runner_login_status") {
-				asked += 1;
-				throw new Error("the attempt has expired");
-			}
-			return answer;
-		});
-		render(<Machines ctx={fake.ctx} operation={operation} schema={{}} run={async () => answer} />);
-
-		fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
-
-		await waitFor(() =>
-			expect(fake.toasts).toContainEqual({
-				message: "the attempt has expired",
-				kind: "error",
-			}),
-		);
-		// (The ticks that would have come: they do not.)
-		vi.useFakeTimers();
+		// (Fake timers before the render: the polling's interval is made on this clock, so the
+		// advance below really runs the ticks that would have come.)
+		vi.useFakeTimers({ shouldAdvanceTime: true });
 		try {
+			let asked = 0;
+			const fake = fakeCtx((name) => {
+				if (name === "orch_runner_login") {
+					return {
+						id: "login-4",
+						host: "local",
+						runner: "opencode",
+						prompt: "Sign in in your browser",
+						expects: "none",
+						done: false,
+						ok: null,
+					};
+				}
+				if (name === "orch_runner_login_status") {
+					asked += 1;
+					throw new Error("the attempt has expired");
+				}
+				return answer;
+			});
+			render(
+				<Machines ctx={fake.ctx} operation={operation} schema={{}} run={async () => answer} />,
+			);
+
+			fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+
+			await waitFor(() =>
+				expect(fake.toasts).toContainEqual({
+					message: "the attempt has expired",
+					kind: "error",
+				}),
+			);
+			// (Six seconds of ticks: the interval was made on this clock, so they would run.)
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(6_000);
 			});
 			expect(asked).toBe(1);
+			// (And the box says it ended, rather than waiting forever.)
+			expect(screen.getByText("It ended without signing in.")).toBeTruthy();
 		} finally {
 			vi.useRealTimers();
 		}
-		// (And the box says it ended, rather than waiting forever.)
-		expect(screen.getByText("It ended without signing in.")).toBeTruthy();
 	});
 });
