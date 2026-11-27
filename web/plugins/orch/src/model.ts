@@ -5,7 +5,7 @@
  */
 
 import type { JsonObject, JsonValue } from "@udl/ui-sdk";
-import { asArray, asDecimal, asFlag, asNumber, asObject, asText } from "./json";
+import { asArray, asDecimal, asFlag, asNumber, asObject, asText, isObject } from "./json";
 
 /** The pull open on a task: its number, and where it is. */
 export interface OpenPull {
@@ -663,6 +663,159 @@ export function progressOf(value: JsonValue | undefined): Progress {
 	return {
 		features: asArray(progress.features).map(featurePointsOf),
 		models: asArray(progress.models).map(modelRateOf),
+	};
+}
+
+/** One day of the burn-up, as `orch_progress` sends it (27.10). */
+export interface SeriesPoint {
+	/** The day, `YYYY-MM-DD`. */
+	readonly day: string;
+	/** The scope's points at its end. */
+	readonly points: number;
+	/** The points merged in it. */
+	readonly merged: number;
+}
+
+/** When the work is done, and the spread around it (27.10). */
+export interface Forecast {
+	/** When the last agent finishes, at its own rate. */
+	readonly likely: string;
+	/** The earliest it could be done (the spread's 25th percentile). */
+	readonly early: string;
+	/** The latest (its 75th). */
+	readonly late: string;
+	/** The tasks left out of it, because nobody sized them. */
+	readonly unsized: number;
+}
+
+/** One feature's points and its own forecast (27.10). */
+export interface FeatureProgress {
+	readonly key: string;
+	readonly title: string;
+	readonly points: number;
+	readonly merged: number;
+	/** When what is left of it is done (null: nothing sized is left). */
+	readonly forecast: Forecast | null;
+}
+
+/** One model's work, as the progress page shows it (27.10). */
+export interface ModelRow {
+	/** The model, as its runner was given it. */
+	readonly model: string;
+	/** The runner that runs it. */
+	readonly runner: string;
+	/** How many merged, sized tasks its rate is learned from. */
+	readonly tasks: number;
+	/** What a point costs it, in hours. */
+	readonly hours_per_point: number;
+	/** Which rate answered: its own, its project's, or an hour a point. */
+	readonly rate_source: string;
+	/** What each size came to, in hours. */
+	readonly hours_per_size: Readonly<Record<string, number>>;
+}
+
+/** A merged, sized task: what it was estimated at, and what it took (27.10). */
+export interface RecentTask {
+	readonly key: string;
+	readonly title: string;
+	readonly size: string;
+	/** Its size's hours, as an ISO 8601 duration (`PT4H24M`). */
+	readonly estimate: string;
+	/** Its working time, as an ISO 8601 duration. */
+	readonly actual: string;
+}
+
+/** A project's progress (27.10), as the progress page draws it. */
+export interface ProgressReport {
+	readonly project: string;
+	readonly series: readonly SeriesPoint[];
+	/** The whole scope: every sized task's points, merged or not. */
+	readonly points: number;
+	/** The points merged, all of them (not only those the series' days hold). */
+	readonly merged: number;
+	/** The points merged a day over the last seven. */
+	readonly pace: number;
+	readonly forecast: Forecast;
+	readonly features: readonly FeatureProgress[];
+	readonly models: readonly ModelRow[];
+	readonly recent: readonly RecentTask[];
+	/** The median of actual ÷ estimated over them. */
+	readonly estimate_ratio: number;
+}
+
+/** A forecast, as `orch_progress` sends it, or one that says nothing. */
+function forecastOf(value: JsonValue | undefined): Forecast {
+	const one = asObject(value);
+	return {
+		likely: asText(one.likely),
+		early: asText(one.early),
+		late: asText(one.late),
+		unsized: asNumber(one.unsized),
+	};
+}
+
+/** One day of the burn-up, as `orch_progress` sends it. */
+function seriesPointOf(value: JsonValue): SeriesPoint {
+	const one = asObject(value);
+	return { day: asText(one.day), points: asNumber(one.points), merged: asNumber(one.merged) };
+}
+
+/** One feature's points and forecast, as `orch_progress` sends them. */
+function featureProgressOf(value: JsonValue): FeatureProgress {
+	const one = asObject(value);
+	return {
+		key: asText(one.key),
+		title: asText(one.title),
+		points: asNumber(one.points),
+		merged: asNumber(one.merged),
+		forecast: isObject(one.forecast) ? forecastOf(one.forecast) : null,
+	};
+}
+
+/** One model's learned hours, as `orch_progress` sends them. */
+function modelRowOf(value: JsonValue): ModelRow {
+	const one = asObject(value);
+	const rate = asObject(one.hours_per_point);
+	const sizes: Record<string, number> = {};
+	for (const [size, hours] of Object.entries(asObject(one.hours_per_size))) {
+		sizes[size] = asNumber(hours);
+	}
+	return {
+		model: asText(one.model),
+		runner: asText(one.runner),
+		tasks: asNumber(one.tasks),
+		hours_per_point: asNumber(rate.hours),
+		rate_source: asText(rate.source),
+		hours_per_size: sizes,
+	};
+}
+
+/** A merged, sized task, as `orch_progress` sends it. */
+function recentTaskOf(value: JsonValue): RecentTask {
+	const one = asObject(value);
+	return {
+		key: asText(one.key),
+		title: asText(one.title),
+		size: asText(one.size),
+		estimate: asText(one.estimate),
+		actual: asText(one.actual),
+	};
+}
+
+/** A project's progress (27.10), as `orch_progress` sends it. */
+export function progressReportOf(value: JsonValue | undefined): ProgressReport {
+	const progress = asObject(value);
+	return {
+		project: asText(progress.project),
+		series: asArray(progress.series).map(seriesPointOf),
+		points: asNumber(progress.points),
+		merged: asNumber(progress.merged),
+		pace: asNumber(progress.pace),
+		forecast: forecastOf(progress.forecast),
+		features: asArray(progress.features).map(featureProgressOf),
+		models: asArray(progress.models).map(modelRowOf),
+		recent: asArray(progress.recent).map(recentTaskOf),
+		estimate_ratio: asNumber(progress.estimate_ratio),
 	};
 }
 

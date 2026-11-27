@@ -142,6 +142,53 @@ async def test_the_burn_up_counts_a_day_s_scope_and_what_merged(service: UDLServ
     assert found.series[-1].points == 8  # (the five merged, and the three-point one)
 
 
+async def test_the_whole_of_the_work_is_counted_even_after_the_series_s_start(
+    service: UDLService,
+) -> None:
+    """A window that starts after a merge cannot count it, and the page still must: 29.11 draws
+    the points merged of all of them, not of the days it happens to show."""
+    found = await service.call(
+        "orch_progress", {"project": "udl", "since": NOW - timedelta(days=1)}
+    )
+
+    assert isinstance(found, Progress)
+    # (Three merges are older than the window, so the series holds the two that are not…)
+    assert sum(one.merged for one in found.series) == 2
+    # (…and the whole of the work is still what the page is told.)
+    assert found.merged == 5
+    assert found.points == 8
+
+
+async def test_a_cancelled_task_is_not_in_the_scope_it_said_was_left(
+    service: UDLService,
+) -> None:
+    """A cancelled task is work nobody will do, so the page's "of N points" must not hold it:
+    it would say more was left than the burn-up's own scope line."""
+    records = AppRecords(service.db)
+    tasks = TaskRecords(records)
+    cancelled = await tasks.save_task(
+        Task(project="udl", feature="26", key="26.10", title="Called off", size="L")
+    )
+    await tasks.import_task(cancelled.model_copy(update={"state": CANCELLED}))
+    # (A real cancellation writes its move: it is what the series reads as the day it left.)
+    await records.save_all(
+        [
+            StateChange(
+                task=cancelled.id,
+                from_state=OPEN,
+                to_state=CANCELLED,
+                at=NOW - timedelta(days=1),
+                by="person",
+            )
+        ]
+    )
+
+    found = await service.call("orch_progress", {"project": "udl"})
+
+    assert isinstance(found, Progress)
+    assert found.points == found.series[-1].points == 8
+
+
 async def test_the_forecast_is_the_queued_work_at_the_model_s_rate(service: UDLService) -> None:
     found = await service.call("orch_progress", {"project": "udl"})
 

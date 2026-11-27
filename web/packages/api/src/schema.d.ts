@@ -8141,6 +8141,12 @@ export interface components {
             /** @description When the open, sized work is done. */
             forecast: components["schemas"]["ForecastInfo"];
             /**
+             * Merged
+             * @description The points merged, all of them (not only those the series' days hold).
+             * @default 0
+             */
+            merged: number;
+            /**
              * Models
              * @description What a point costs each model.
              */
@@ -8151,6 +8157,12 @@ export interface components {
              * @default 0
              */
             pace: number;
+            /**
+             * Points
+             * @description The whole scope: the points of every sized task, merged or not (not only the series').
+             * @default 0
+             */
+            points: number;
             /** @description The project it is of. */
             project: components["schemas"]["Name"];
             /**
@@ -8160,7 +8172,7 @@ export interface components {
             recent?: components["schemas"]["RecentTask"][];
             /**
              * Series
-             * @description The burn-up, a day at a time.
+             * @description The burn-up, a day at a time (from the day asked for, so the days before it are not here).
              */
             series?: components["schemas"]["SeriesPoint"][];
         };

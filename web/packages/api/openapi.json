@@ -8969,6 +8969,13 @@
             "$ref": "#/components/schemas/ForecastInfo",
             "description": "When the open, sized work is done."
           },
+          "merged": {
+            "default": 0,
+            "description": "The points merged, all of them (not only those the series' days hold).",
+            "minimum": 0.0,
+            "title": "Merged",
+            "type": "integer"
+          },
           "models": {
             "description": "What a point costs each model.",
             "items": {
@@ -8983,6 +8990,13 @@
             "title": "Pace",
             "type": "number"
           },
+          "points": {
+            "default": 0,
+            "description": "The whole scope: the points of every sized task, merged or not (not only the series').",
+            "minimum": 0.0,
+            "title": "Points",
+            "type": "integer"
+          },
           "project": {
             "$ref": "#/components/schemas/Name",
             "description": "The project it is of."
@@ -8996,7 +9010,7 @@
             "type": "array"
           },
           "series": {
-            "description": "The burn-up, a day at a time.",
+            "description": "The burn-up, a day at a time (from the day asked for, so the days before it are not here).",
             "items": {
               "$ref": "#/components/schemas/SeriesPoint"
             },

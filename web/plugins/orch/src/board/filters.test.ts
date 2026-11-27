@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterPath, filtersOf } from "./filters";
+import { BOARD, filterPath, filtersOf } from "./filters";
 
 describe("the board's filters, kept in the URL (29.4)", () => {
 	it("reads what the query says, and nothing when it says nothing", () => {
@@ -13,18 +13,14 @@ describe("the board's filters, kept in the URL (29.4)", () => {
 	});
 
 	it("writes a filter back into the query, and drops one that is cleared", () => {
-		expect(filterPath("/ui/p/orch/board", {}, { state: "queued" })).toBe(
-			"/ui/p/orch/board?state=queued",
+		expect(filterPath(BOARD, {}, { state: "queued" })).toBe(`${BOARD}?state=queued`);
+		expect(filterPath(BOARD, { state: "queued" }, { text: "a b" })).toBe(
+			`${BOARD}?state=queued&text=a+b`,
 		);
-		expect(filterPath("/ui/p/orch/board", { state: "queued" }, { text: "a b" })).toBe(
-			"/ui/p/orch/board?state=queued&text=a+b",
-		);
-		expect(filterPath("/ui/p/orch/board", { state: "queued", text: "board" }, { text: "" })).toBe(
-			"/ui/p/orch/board?state=queued",
+		expect(filterPath(BOARD, { state: "queued", text: "board" }, { text: "" })).toBe(
+			`${BOARD}?state=queued`,
 		);
 		// (Everything cleared is the page with no query at all.)
-		expect(filterPath("/ui/p/orch/board", { state: "queued" }, { state: "" })).toBe(
-			"/ui/p/orch/board",
-		);
+		expect(filterPath(BOARD, { state: "queued" }, { state: "" })).toBe(BOARD);
 	});
 });

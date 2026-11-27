@@ -13,6 +13,7 @@ import {
 } from "./stores/chat";
 import { type FeatureState, featureStore } from "./stores/feature";
 import { type InboxState, inboxStore, type Loaded } from "./stores/inbox";
+import { type ProgressState, progressStore } from "./stores/progress";
 import { type QuestionsState, questionsStore } from "./stores/questions";
 import { type RunnersState, runnersStore } from "./stores/runners";
 import { type SessionsState, sessionsStore } from "./stores/sessions";
@@ -134,6 +135,28 @@ export function useQuestions(ctx: UIContext): Refreshable<QuestionsState> {
 /** The board's four lists (29.4). */
 export function useBoard(ctx: UIContext): Refreshable<BoardState> {
 	return useLoaded(ctx, boardStore, NO_BOARD);
+}
+
+/** The progress page before it is read. */
+const NO_PROGRESS: ProgressState = {
+	projects: [],
+	project: "",
+	report: null,
+	loaded: false,
+	error: null,
+};
+
+/** A project's progress (29.11): its burn-up, forecast, features and learned hours. */
+export function useProgress(
+	ctx: UIContext,
+	project: string,
+	since: string,
+): Refreshable<ProgressState> {
+	const make = useCallback(
+		(one: UIContext) => progressStore(one, project, since),
+		[project, since],
+	);
+	return useLoaded(ctx, make, NO_PROGRESS);
 }
 
 /** The harnesses an agent may be given (29.6, 25.11). */

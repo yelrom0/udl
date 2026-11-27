@@ -6,16 +6,10 @@ import { BoardPage } from "./board/board";
 import { FeaturePage } from "./feature/feature";
 import { InboxPage } from "./inbox/inbox";
 import { Page, Said } from "./page";
+import { ProgressPage } from "./progress/progress";
 import { QuestionPageView } from "./qa/page";
 import { QaPage } from "./qa/qa";
 import { TaskPage } from "./task/task";
-
-/** Progress (29.11's page): what is merged, the burn-up and the forecast (27.10). */
-const ProgressPage: Component<RouteProps> = () => (
-	<Page title="Progress">
-		<Said>Points merged, the burn-up, and when each feature is likely done.</Said>
-	</Page>
-);
 
 /** The questions (29.7's page): what agents are asking, and what was decided. */
 const QuestionsPage: Component<RouteProps> = (props) => <QaPage {...props} />;
