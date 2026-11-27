@@ -593,6 +593,15 @@ def test_a_first_start_that_never_answers_says_so_and_ends_with_1() -> None:
         # (Said, not raised: the harness's own line, and no traceback.)
         assert "e2e: udl serve did not answer" in said, said
         assert "Traceback" not in said, said
+        # (And the udl it started is stopped with it, not left answering on the port.)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            with socket.socket() as probe:
+                if probe.connect_ex(("127.0.0.1", port)) != 0:
+                    break
+            time.sleep(0.1)
+        else:
+            raise AssertionError("the udl the harness started is still answering")
     finally:
         if started.stdout is not None:
             started.stdout.close()
