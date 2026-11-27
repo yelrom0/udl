@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { RouteProps } from "@udl/ui-sdk";
 import { beforeEach, describe, expect, it } from "vitest";
 import { fakeCtx, settle } from "../testing/fake";
@@ -421,7 +421,13 @@ describe("the board's other paths (29.4)", () => {
 		const box = screen.getByRole("searchbox", { name: /text/i }) as HTMLInputElement;
 		box.value = "pages";
 		fake.emit("orch.task.changed", { key: "29.2" });
-		await settle();
+		// (The read's render is waited for, not raced: the point is a render landing between the
+		// typing and the leaving, so the test holds still until it has landed — on CI's slower
+		// machine a bare macrotask could let the blur run first and pin nothing.)
+		await act(async () => {
+			await settle();
+		});
+		expect(box.value).toBe("pages");
 		fireEvent.blur(box);
 
 		expect(fake.navigations).toEqual(["/p/orch/board?text=pages"]);

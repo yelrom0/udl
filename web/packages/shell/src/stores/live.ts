@@ -39,10 +39,35 @@ export function setConnection(connection: Connection): void {
 	live.setState({ connection });
 }
 
-/** Add an event to the timeline, dropping the oldest when it is full. */
+/** What makes two notices the same event: its id, for an `event` notice and no other. A run's
+ * or a job's notices are its history, and each is its own line. */
+function keyOf(event: LiveEvent): string | null {
+	if (event.name !== "event" || typeof event.data !== "object" || event.data === null) {
+		return null;
+	}
+	if (!("id" in event.data)) {
+		return null;
+	}
+	const id = event.data.id;
+	return typeof id === "string" ? id : null;
+}
+
+/**
+ * Add an event to the timeline, dropping the oldest when it is full.
+ *
+ * 18.6's stream sends one event twice by design — when it is stored, and again when it is
+ * dispatched — so the timeline keeps the event once: its newest `data`, in the place and at
+ * the time it first took (a list of what happened, not of what udl said about it, and in the
+ * order it happened — the time a row shows is the time it is ordered by).
+ */
 export function pushEvent(event: LiveEvent): void {
 	live.setState(({ events }) => {
-		const kept = [...events, event];
+		const key = keyOf(event);
+		const found = key === null ? -1 : events.findIndex((one) => keyOf(one) === key);
+		const kept =
+			found === -1
+				? [...events, event]
+				: events.map((one, i) => (i === found ? { ...event, at: one.at } : one));
 		return { events: kept.length > LIMIT ? kept.slice(kept.length - LIMIT) : kept };
 	});
 }
