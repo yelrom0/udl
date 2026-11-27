@@ -228,6 +228,31 @@ describe("Ready to merge (29.8)", () => {
 		});
 	});
 
+	it("marks the row a refused merge was about", async () => {
+		const fake = fakeCtx((name) => {
+			if (name === "orch_merge") {
+				throw new Error("29.3 has moved since it was listed");
+			}
+			return { inbox: INBOX } as JsonObject;
+		});
+
+		render(
+			<Merge
+				ctx={fake.ctx}
+				merge={list({ ready: [row(3), row(4)] })}
+				project="udl"
+				refresh={again(fake)}
+			/>,
+		);
+		fireEvent.click(screen.getAllByRole("button", { name: "Merge" })[0] as HTMLElement);
+
+		await waitFor(() => {
+			const marked = document.querySelectorAll('[aria-invalid="true"]');
+			expect(marked).toHaveLength(1);
+			expect(marked[0]?.textContent).toContain("#3");
+		});
+	});
+
 	it("says what the merge was refused with, rather than losing the reason", async () => {
 		const fake = fakeCtx((name) => {
 			if (name === "orch_merge") {

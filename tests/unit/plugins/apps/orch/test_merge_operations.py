@@ -365,6 +365,29 @@ async def test_an_auto_merge_says_so_in_the_done_row(service: UDLService) -> Non
     assert row.merged_by == "claude (auto merge)"
 
 
+async def test_a_merged_by_name_holds_a_dot_and_a_comma(service: UDLService) -> None:
+    """(A person's name is not cut at its first dot or comma.)"""
+    await add_task(service, "F-1.2", number=2)
+    records = AppRecords(service.db)
+    found = await TaskRecords(records).task("udl", "F-1.2")
+    assert found is not None
+    moved = await TaskRecords(records).move(
+        found, MERGED, by=Principal(kind="human", name="human:owner")
+    )
+    await NoteRecords(records).add(
+        Note(
+            owner_kind=OwnerKind.TASK,
+            owner=moved.id,
+            note_kind=NoteKind.SYSTEM,
+            text="Merged by a.b, and done: nothing follows the base.",
+        )
+    )
+
+    row = (await listed(service)).done[0]
+
+    assert row.merged_by == "a.b"
+
+
 async def test_a_row_that_was_not_merged_says_nobody(service: UDLService) -> None:
     row = (await listed(service)).ready[0]
 

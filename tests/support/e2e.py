@@ -461,10 +461,12 @@ def main(
             control.fake_github = gh
             # (Where the tests read the fake's address and token: the browser's environment is
             # not this process's, and a token never goes in a command line.)
-            Path(
+            written = Path(
                 os.environ.get("UDL_E2E_GITHUB")
                 or str(ROOT / "web" / "playwright" / ".e2e-github.json")
-            ).write_text(
+            )
+            written.parent.mkdir(parents=True, exist_ok=True)
+            written.write_text(
                 json.dumps(
                     {
                         "url": gh_url,

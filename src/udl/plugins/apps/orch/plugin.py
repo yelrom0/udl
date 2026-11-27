@@ -16,7 +16,6 @@ module does.
 import asyncio
 import contextlib
 import logging
-import re
 from collections.abc import Awaitable, Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -357,8 +356,18 @@ _MERGED: Final = "github.pr.merged"
 _CLOSED: Final = "github.pr.closed"
 """The event it publishes for one closed without merging."""
 
-_MERGED_BY: Final = re.compile(r"Merged by (.+?)( \(auto merge\))?[.,]")
-"""Who a done row was merged by, read from the note `after_merge` writes (`merge.py`)."""
+
+def _merged_by(text: str) -> str | None:
+    """Who a done row was merged by, read from the note `after_merge` writes (`merge.py`), or None
+    when the note is not one. A name may hold a dot or a comma, so the note's own tail is what is
+    taken off, not the first punctuation mark: "Merged by a.b." is `a.b`."""
+    if not text.startswith("Merged by "):
+        return None
+    rest = text[len("Merged by ") :]
+    auto = " (auto merge)" in rest
+    who = rest.replace(" (auto merge)", "").split(",")[0].rstrip(".")
+    return f"{who} (auto merge)" if auto else who
+
 
 _UNSTARTED: Final = ("open", "blocked")
 """The states a task is split in: its spec is not yet being written (nor written)."""
@@ -2854,11 +2863,9 @@ class Orch(AppPlugin[OrchSettings]):
             for note in reversed(
                 await stored.NoteRecords(self.records).for_owner(OwnerKind.TASK, task.id)
             ):
-                found = _MERGED_BY.match(note.text)
-                if found is not None:
-                    merged_by = found.group(1)
-                    if found.group(2):
-                        merged_by += " (auto merge)"
+                said = _merged_by(note.text)
+                if said is not None:
+                    merged_by = said
                     break
         reviews = await stored.ReviewRecords(self.records).for_task(project.name, task.key)
         asked = reviews[0] if reviews else None
