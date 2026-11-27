@@ -1037,6 +1037,7 @@ class Orch(AppPlugin[OrchSettings]):
                 clock=self.clock,
                 permission_minutes=self.settings.chat_permission_minutes,
                 memory=self.settings.session_memory,
+                idle=timedelta(hours=self.settings.chat_idle),
             )
         return self._chats
 

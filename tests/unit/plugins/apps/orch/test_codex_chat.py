@@ -86,7 +86,7 @@ async def test_an_approval_is_asked_and_the_answer_reaches_the_harness() -> None
         asked.append((tool, given, call))
         return CodexQuestion(allowed=True)
 
-    events = await said(driver(ask, mode="approval"))
+    events = await said(driver(ask, mode="command"))
 
     assert asked
     assert asked[0][0] == "Bash"
@@ -98,7 +98,7 @@ async def test_a_denied_approval_says_so_to_the_harness() -> None:
     async def ask(tool: str, given: JsonObject, call: str) -> CodexQuestion:
         return CodexQuestion(allowed=False, message="not this one")
 
-    events = await said(driver(ask, mode="approval"))
+    events = await said(driver(ask, mode="command"))
 
     assert any(isinstance(one, TextDelta) and "decline" in one.text for one in events)
 
@@ -107,7 +107,7 @@ async def test_allow_for_the_chat_is_the_harness_s_own_word_for_it() -> None:
     async def ask(tool: str, given: JsonObject, call: str) -> CodexQuestion:
         return CodexQuestion(allowed=True, for_chat=True)
 
-    events = await said(driver(ask, mode="approval"))
+    events = await said(driver(ask, mode="command"))
 
     assert any(isinstance(one, TextDelta) and "acceptForSession" in one.text for one in events)
 

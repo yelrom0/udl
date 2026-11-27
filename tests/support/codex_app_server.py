@@ -10,12 +10,15 @@ It is a program of its own (a test points the codex runner's `cli` at it), so wh
 the real thing: a process, lines in, lines out. What it does is what `argv[1]` says:
 
 - `turn` — a turn that says one line and ends;
-- `approval` — a turn that asks to run a command first, and says what the answer was;
-- `resume` — a thread that is already open, so a second turn resumes it;
+- `command` — a turn that asks to run a command (v2's `item/commandExecution/requestApproval`,
+  whose `command` is a string), and says what the answer was;
+- `file` — a turn that asks to change a file (v2's `item/fileChange/requestApproval`);
+- `legacy-exec` and `legacy-patch` — the older `execCommandApproval` and `applyPatchApproval`,
+  answered in `ReviewDecision`'s words;
 - `no-server` — `app-server --help` fails, as a Codex without it does.
 
-The scenario is on stdin's side: udl writes a request, the fake answers, and the notifications
-come back as lines.
+Every message it sends is validated against `tests/fixtures/codex-app-server/` by a test, so the
+fake cannot drift from the schemas the driver reads.
 """
 
 # System Imports
@@ -27,8 +30,16 @@ from typing import Any
 THREAD = "thread-1"
 """The thread the fake has open."""
 
-APPROVAL = "item/commandExecution/requestApproval"
-"""What it asks when a turn wants to run something."""
+TURN = "turn-1"
+"""The turn it is in."""
+
+APPROVALS: dict[str, str] = {
+    "command": "item/commandExecution/requestApproval",
+    "file": "item/fileChange/requestApproval",
+    "legacy-exec": "execCommandApproval",
+    "legacy-patch": "applyPatchApproval",
+}
+"""Each mode's approval request, and the method it is sent as."""
 
 
 def send(message: dict[str, Any]) -> None:
@@ -47,29 +58,84 @@ def notification(method: str, params: dict[str, Any]) -> None:
     send({"jsonrpc": "2.0", "method": method, "params": params})
 
 
-def item(kind: str, **fields: Any) -> dict[str, Any]:
-    """One thread item, as the notifications carry it."""
-    return {"id": f"item-{kind}", "type": kind, **fields}
-
-
 def say(text: str) -> None:
-    """The harness's answer, as the deltas it comes in, and the turn's end."""
+    """The harness's answer, as the deltas it comes in, the usage, and the turn's end."""
     notification(
         "item/agentMessage/delta",
-        {"delta": text, "itemId": "item-agent", "threadId": THREAD, "turnId": "turn-1"},
+        {"delta": text, "itemId": "item-agent", "threadId": THREAD, "turnId": TURN},
+    )
+    notification(
+        "thread/tokenUsage/updated",
+        {
+            "threadId": THREAD,
+            "turnId": TURN,
+            "tokenUsage": {
+                "total": _counts(10, 5),
+                "last": _counts(4, 2),
+            },
+        },
     )
     notification(
         "turn/completed",
-        {"threadId": THREAD, "turn": {"id": "turn-1", "items": [], "completedAt": 1}},
+        {"threadId": THREAD, "turn": {"id": TURN, "status": "completed", "items": []}},
     )
 
 
+def _counts(asked: int, said: int) -> dict[str, int]:
+    """One `TokenUsageBreakdown` (the schema's own fields)."""
+    return {
+        "cachedInputTokens": 0,
+        "inputTokens": asked,
+        "outputTokens": said,
+        "reasoningOutputTokens": 0,
+        "totalTokens": asked + said,
+    }
+
+
+def _approval(mode: str) -> dict[str, Any]:
+    """What the mode's approval asks, in the shape its own schema has."""
+    if mode == "command":  # (v2: the command is a string, and the item names it)
+        return {
+            "itemId": "item-command",
+            "threadId": THREAD,
+            "turnId": TURN,
+            "startedAtMs": 1,
+            "command": "git status",
+        }
+    if mode == "file":
+        return {
+            "itemId": "item-file",
+            "threadId": THREAD,
+            "turnId": TURN,
+            "startedAtMs": 1,
+            "grantRoot": None,
+            "reason": "it needs to write a file",
+        }
+    if mode == "legacy-exec":
+        return {
+            "callId": "call-1",
+            "conversationId": THREAD,
+            "cwd": str(Path(__file__).parent),
+            "command": ["git", "status"],
+            "parsedCmd": [],
+            "approvalId": None,
+            "reason": None,
+        }
+    return {
+        "callId": "call-1",
+        "conversationId": THREAD,
+        "fileChanges": {"a.txt": {"type": "update", "unified_diff": "@@ one line @@"}},
+        "grantRoot": None,
+        "reason": None,
+    }
+
+
 def main(argv: list[str]) -> int:
-    """Read requests until the client closes its end, answering each as the scenario says."""
-    if len(argv) > 1 and argv[1] == "no-server":
+    """Read requests until the client closes its end, answering each as the mode says."""
+    mode = argv[1] if len(argv) > 1 else "turn"
+    if mode == "no-server":
         sys.stderr.write("this codex has no app-server\n")
         return 1
-    asked: dict[str, Any] | None = None
     for line in sys.stdin:
         if not line.strip():
             continue
@@ -80,30 +146,21 @@ def main(argv: list[str]) -> int:
         elif method == "thread/start":
             answer(message, {"thread": {"id": THREAD, "cliVersion": "0.171.0"}})
         elif method == "turn/start":
-            asked = message
-            if len(argv) > 1 and argv[1] == "approval":
+            answer(message, {"turn": {"id": TURN, "status": "inProgress"}})
+            if mode in APPROVALS:
                 send(
                     {
                         "jsonrpc": "2.0",
                         "id": "approval-1",
-                        "method": APPROVAL,
-                        "params": {
-                            "callId": "call-1",
-                            "command": ["git", "status"],
-                            "cwd": str(Path(__file__).parent),
-                            "parsedCmd": [],
-                            "conversationId": THREAD,
-                        },
+                        "method": APPROVALS[mode],
+                        "params": _approval(mode),
                     }
                 )
             else:
-                answer(message, {"turn": {"id": "turn-1"}})
                 say("hello from codex")
         elif message.get("id") == "approval-1":
             answered: dict[str, Any] = message.get("result") or {}
-            decision = answered.get("decision")
-            answer(asked or {"id": "turn-1"}, {"turn": {"id": "turn-1"}})
-            say(f"it was {decision}")
+            say(f"it was {answered.get('decision')}")
         else:
             answer(message, {})
     return 0

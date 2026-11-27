@@ -335,6 +335,7 @@ class Chats:
         clock: Clock,
         permission_minutes: int = 10,
         memory: int | None = None,
+        idle: timedelta = timedelta(hours=24),
     ) -> None:
         self._service = service
         self._records = records
@@ -345,6 +346,9 @@ class Chats:
         self._memory = memory
         """What a chat's turn may use (27.12): a chat is a harness running a person's work, and a
         runaway in it is that turn's failure, not the host's."""
+        self._idle = idle
+        """How long a chat's Codex server may live untouched (`[apps.orch] chat_idle`): the same
+        setting the chat's token keeps working by, so the two cannot drift apart."""
         self._codex: dict[UUID, CodexChat] = {}
         """The `app-server` driver of each Codex chat (27.11's Codex half): its harness is a
         process of the chat's own, not a runner's turn."""
@@ -426,7 +430,7 @@ class Chats:
             shell=runner.shell,
             clock=self._clock,
             ask=self._codex_ask(chat),
-            within=timedelta(hours=24),
+            within=self._idle,
         )
         if not await driver.available():
             raise NotAllowed(
@@ -560,6 +564,18 @@ class Chats:
             return
         runner = await self._harnesses.runner(chat.host, chat.runner)
         driver = self._codex.get(chat.id)
+        if chat.runner == "codex" and driver is None:
+            # (A Codex chat whose server is gone is not handed to the `codex exec` runner: that
+            # one has no approvals at all, which is what the refusal in start() prevents.)
+            await self._ended(
+                chat,
+                "",
+                ended=TurnEnded(
+                    reason=TurnReason.ERROR, text="Its harness is gone: start the chat again."
+                ),
+                failed=None,
+            )
+            return
         said: list[str] = []
         ended: TurnEnded | None = None
         failed: RunnerFailed | None = None

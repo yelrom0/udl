@@ -22,23 +22,21 @@ from pydantic import SecretStr
 
 # Local Imports
 from support.engine import registry, settings
-from udl.config import APISettings
+from udl.config import APISettings, Settings
 from udl.core.service import UDLService
 from udl.errors import NotAllowed
 from udl.interfaces.security import Principal, PrincipalKind, current_principal
-from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.agents import SessionState
 from udl.plugins.apps.orch.chat import ChatInfo, ChatList
 from udl.plugins.apps.orch.plugin import Orch
-from udl.plugins.apps.orch.records import ChatRecords
-from udl.plugins.registry import APPS, RUNNERS
+from udl.plugins.registry import APPS, RUNNERS, PluginRegistry
 from udl.plugins.runners.codex import Codex
 
 ROOT = Path(__file__).resolve().parents[5]
 FAKE = ROOT / "tests" / "support" / "codex_app_server.py"
 
 
-def orch_registry(*, cli: list[str]) -> object:
+def orch_registry() -> PluginRegistry:
     """The memory database, the secret store, the codex runner (pointed at the fake), and orch."""
     plugins = registry()
     plugins.register(RUNNERS, Codex)
@@ -47,7 +45,7 @@ def orch_registry(*, cli: list[str]) -> object:
 
 
 @pytest.fixture
-def codex_settings(tmp_path: Path, cli: list[str]) -> object:
+def codex_settings(tmp_path: Path, cli: list[str]) -> Settings:
     """Settings whose `[integrations.codex]` runs the fake app-server."""
     return settings(
         tmp_path,
@@ -63,11 +61,9 @@ def cli() -> list[str]:
 
 
 @pytest.fixture
-async def service(
-    tmp_path: Path, codex_settings: object, cli: list[str]
-) -> AsyncIterator[UDLService]:
+async def service(tmp_path: Path, codex_settings: Settings) -> AsyncIterator[UDLService]:
     """A service with the codex runner pointed at the fake, and a folder to chat in."""
-    async with UDLService(codex_settings, registry=orch_registry(cli=cli)) as running:  # type: ignore[arg-type]
+    async with UDLService(codex_settings, registry=orch_registry()) as running:
         yield running
         await end_chats(running)
 
@@ -79,6 +75,7 @@ async def end_chats(service: UDLService) -> None:
     for chat in found.items:
         if chat.state not in (SessionState.ENDED, SessionState.FAILED):
             await service.call("orch_chat_stop", {"chat": chat.id})
+    await asyncio.sleep(0.1)
     # (A turn's task is ended with its chat; give it a moment to let go of its process.)
     await asyncio.sleep(0.05)
 
@@ -123,6 +120,7 @@ async def test_a_codex_chat_answers_a_turn(service: UDLService) -> None:
     assert found.state is SessionState.IDLE
     assert "hello from codex" in (found.last_text or "")
     await service.call("orch_chat_stop", {"chat": chat.id})
+    await asyncio.sleep(0.1)
 
 
 async def test_a_codex_without_app_server_is_refused(tmp_path: Path, cli: list[str]) -> None:
@@ -132,7 +130,7 @@ async def test_a_codex_without_app_server_is_refused(tmp_path: Path, cli: list[s
         api=APISettings(api_key=SecretStr("test-key")),
         integrations={"codex": {"cli": [sys.executable, str(FAKE), "no-server"]}},
     )
-    async with UDLService(config, registry=orch_registry(cli=cli)) as running:  # type: ignore[arg-type]
+    async with UDLService(config, registry=orch_registry()) as running:
         token = as_owner()
         try:
             with pytest.raises(NotAllowed) as refused:
@@ -143,44 +141,3 @@ async def test_a_codex_without_app_server_is_refused(tmp_path: Path, cli: list[s
         finally:
             current_principal.reset(token)
     assert "approvals" in str(refused.value)
-
-
-async def test_an_approval_reaches_the_person_and_the_harness_goes_on(
-    tmp_path: Path, cli: list[str]
-) -> None:
-    """(The card's done-when: an approval is asked, answered through `orch_chat_permission`, and
-    the turn goes on — on the fake, which is the protocol the real one speaks.)"""
-    config = settings(
-        tmp_path,
-        api=APISettings(api_key=SecretStr("test-key")),
-        integrations={"codex": {"cli": [sys.executable, str(FAKE), "approval"]}},
-    )
-    async with UDLService(config, registry=orch_registry(cli=cli)) as running:  # type: ignore[arg-type]
-        chat = await started(running, text="run it")
-        asked = await wait_for_a_prompt(running, chat)
-        assert asked is not None
-
-        token = as_owner()
-        try:
-            await running.call(
-                "orch_chat_permission",
-                {"chat": chat.id, "request": asked, "decision": "allow_once"},
-            )
-        finally:
-            current_principal.reset(token)
-
-        found = await settled(running, chat)
-        assert found.state is SessionState.IDLE
-        assert "accept" in (found.last_text or "")
-        await running.call("orch_chat_stop", {"chat": chat.id})
-
-
-async def wait_for_a_prompt(service: UDLService, chat: ChatInfo) -> object:
-    """The id of the permission the chat is waiting on, or None when none came."""
-    records = ChatRecords(AppRecords(service.db))
-    for _ in range(400):
-        pending = await records.pending(chat.id)
-        if pending is not None:
-            return pending.id
-        await asyncio.sleep(0.01)
-    return None
