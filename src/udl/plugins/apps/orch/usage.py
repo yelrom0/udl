@@ -209,6 +209,7 @@ async def usage_of(
     clock: Clock,
     account_today: int | None = None,
     connection: str = "",
+    allowance: int | None = None,
 ) -> AgentUsage:
     """`agent`'s usage (27.14): its paid key from `health` (25.3's `ProviderHealth.key`), or
     its free allowance counted from its sessions' `Usage` events today. Never raises: an agent
@@ -221,7 +222,7 @@ async def usage_of(
     since = clock.now().astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     counts = await _counts(sessions, agent, since)
     limited = await _limited_until(sessions, agent, clock)
-    return await _row(agent, health, clock, counts, account_today, limited, connection)
+    return await _row(agent, health, clock, counts, account_today, limited, connection, allowance)
 
 
 async def usage_of_all(
@@ -231,6 +232,7 @@ async def usage_of_all(
     health: ProviderHealth | None = None,
     health_for: Mapping[str, ProviderHealth | None] | None = None,
     connection_for: Mapping[str, str] | None = None,
+    allowance_for: Mapping[str, int | None] | None = None,
     sessions: SessionRecords | None = None,
     clock: Clock,
 ) -> list[AgentUsage]:
@@ -268,6 +270,7 @@ async def usage_of_all(
                 account_today,
                 limited,
                 connection,
+                None if allowance_for is None else allowance_for.get(one.name),
             )
         )
     return out
@@ -293,6 +296,7 @@ async def _row(
     account_today: int | None,
     limited: datetime | None,
     connection: str = "",
+    allowance: int | None = None,
 ) -> AgentUsage:
     """One agent's row from its counts: the paid key, or the free allowance (the account's
     `left`), plus its own turns and its session's limit.
@@ -303,7 +307,9 @@ async def _row(
     key = _key_usage(health, connection)
     provider_requests = key.free_model_daily_requests if key is not None else None
     requests = provider_requests if provider_requests is not None else today
-    free = _free_usage(requests, key, clock, model=agent.model, account_today=account_today)
+    free = _free_usage(
+        requests, key, clock, model=agent.model, account_today=account_today, allowance=allowance
+    )
     if free is not None:
         key = None  # (a free agent's key is the account's, not its own: it is not reported as paid)
     source: UsageSource = (
@@ -361,6 +367,7 @@ def _free_usage(
     *,
     model: str = "",
     account_today: int | None = None,
+    allowance: int | None = None,
 ) -> FreeUsage | None:
     """A free model's allowance: 50 a day, or 1,000 once the account has bought credits. A paid
     model — one whose id does not end `:free` or `/free`, and an empty model (the runner's
@@ -374,7 +381,11 @@ def _free_usage(
         return None
     # (The allowance is 1,000 once the account has bought credits — a key that is not on the
     # free tier — 50 otherwise. A key that does not say is a free one.)
-    allowance = ALLOWANCE_PAID if key is not None and key.free_tier is False else ALLOWANCE_DEFAULT
+    allowance = (
+        allowance
+        if allowance is not None
+        else (ALLOWANCE_PAID if key is not None and key.free_tier is False else ALLOWANCE_DEFAULT)
+    )
     spent = account_today if account_today is not None else today
     return FreeUsage(
         requests_today=today,

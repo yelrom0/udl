@@ -27,7 +27,7 @@ from udl.db.manager import DBManager
 from udl.plugins.ai.base import KeyStatus, ProviderHealth
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.agents import Agent
-from udl.plugins.apps.orch.plugin import pick_connection
+from udl.plugins.apps.orch.plugin import allowance_of, pick_connection
 from udl.plugins.apps.orch.records import AgentSession, SessionEvent, SessionRecords
 from udl.plugins.apps.orch.usage import (
     ALLOWANCE_DEFAULT,
@@ -141,6 +141,7 @@ def measured(
     clock: Clock | None = None,
     account_today: int | None = None,
     connection: str = "",
+    allowance: int | None = None,
 ) -> AgentUsage:
     """`usage_of` over a fake session whose transcript is `events`."""
     records = _records()
@@ -153,6 +154,7 @@ def measured(
             clock=clock or FakeClock(start=NOW),
             account_today=account_today,
             connection=connection,
+            allowance=allowance,
         )
     )
 
@@ -492,6 +494,35 @@ def test_the_connection_is_picked_by_name_then_plugin_then_first() -> None:
     assert pick_connection([first, second, other], "openrouter") is first
     assert pick_connection([first, second, other], "deepseek") is first
     assert pick_connection([conn("openai", "openai", enabled=False), second], "openai") is second
+
+
+def test_an_allowance_override_is_keyed_by_provider_and_model_glob() -> None:
+    """(27.15: `[apps.orch] allowances` gives a free agent its own daily count, keyed
+    `provider:model-glob`; a model that matches no entry keeps the provider's rule.)"""
+    from udl.plugins.apps.orch.settings import OrchSettings
+
+    settings = OrchSettings.model_validate(
+        {"allowances": {"openrouter:deepseek/*": 200, "openrouter:ernie-*": 300}}
+    )
+
+    assert allowance_of(settings, "openrouter/deepseek/free") == 200
+    assert allowance_of(settings, "openrouter/ernie-c") == 300
+    assert allowance_of(settings, "openrouter/other/free") is None
+    assert allowance_of(settings, "x/deepseek/free") is None
+
+
+def test_an_allowance_override_wins_over_the_provider_s_rule() -> None:
+    found = measured(
+        usage_event(),
+        who=agent(model="deepseek/free"),
+        health=health(label="k", spent="1", limit="10", is_free_tier=False),
+        clock=clock(),
+        allowance=200,
+    )
+
+    assert found.free is not None
+    assert found.free.allowance == 200
+    assert found.free.left == 199
 
 
 def test_a_model_s_provider_is_its_prefix() -> None:

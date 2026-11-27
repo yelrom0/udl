@@ -18,6 +18,7 @@ import contextlib
 import logging
 from collections.abc import Awaitable, Sequence
 from datetime import datetime, timedelta
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol
 from uuid import UUID, uuid4
@@ -1161,6 +1162,7 @@ class Orch(AppPlugin[OrchSettings]):
                 shapes,
                 health_for=health_for,
                 connection_for=connection_for,
+                allowance_for={one.name: allowance_of(self.settings, one.model) for one in shapes},
                 clock=self.clock,
             )
             lines = {
@@ -1184,6 +1186,7 @@ class Orch(AppPlugin[OrchSettings]):
                 shapes,
                 health_for=health_for,
                 connection_for=connection_for,
+                allowance_for={one.name: allowance_of(self.settings, one.model) for one in shapes},
                 clock=self.clock,
             )
         )
@@ -3724,6 +3727,17 @@ def _action(found: stored.HumanAction) -> Action:
         state=found.state,
         result=found.result,
     )
+
+
+def allowance_of(settings: OrchSettings, model: str) -> int | None:
+    """The free allowance `settings` gives `model` (27.15): the first `[apps.orch] allowances`
+    entry whose `provider:model-glob` matches it, else None (the provider's own rule)."""
+    provider = provider_of(model)
+    for key, value in settings.allowances.items():
+        named, _, glob = key.partition(":")
+        if named == provider and fnmatch(model, f"{provider}/{glob}"):
+            return value
+    return None
 
 
 def pick_connection(
