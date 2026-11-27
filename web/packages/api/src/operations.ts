@@ -91,6 +91,7 @@ export const operations = {
 	orch_get_queue: { method: "post", path: "/plugins/orch/get_queue" },
 	orch_get_session: { method: "post", path: "/plugins/orch/get_session" },
 	orch_get_task: { method: "post", path: "/plugins/orch/get_task" },
+	orch_host_health: { method: "post", path: "/plugins/orch/host_health" },
 	orch_import_plan: { method: "post", path: "/plugins/orch/import_plan" },
 	orch_inbox: { method: "post", path: "/plugins/orch/inbox" },
 	orch_issue_token: { method: "post", path: "/plugins/orch/issue_token" },

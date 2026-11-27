@@ -136,8 +136,8 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 27.9 Operations (agents, queues, sessions, suggestions) via CLI, API and MCP
   - [x] 27.10 Working time, hours per point learned per model, forecasts: `orch_progress`
   - [~] 27.11 Chat sessions: Claude Code or Codex as the user, its permission prompts relayed to the web UI, a token per chat
-  - [ ] 27.12 Resource limits: gates and sessions under a memory cap; `gates_per_host` (default 1)
-  - [ ] 27.13 Host health (memory, swap, disk and btrfs, I/O pressure, harness services) and what udl does about it (`on_breach`, default act and tell)
+  - [~] 27.12 Resource limits: gates and sessions under a memory cap; `gates_per_host` (default 1)
+  - [~] 27.13 Host health (memory, swap, disk and btrfs, I/O pressure, harness services) and what udl does about it (`on_breach`, default act and tell)
   - [ ] 27.14 Usage left per agent: a paid key's money left, a free tier's requests left (counted), on the CLI, API, MCP and web
 - [ ] **Phase 28: Human comms: Q&A, Ready to merge, To action**
   - [x] 28.1 `Question` records and their thread; an answer reaches the agent and is written into the tasks it concerns

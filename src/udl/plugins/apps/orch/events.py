@@ -28,12 +28,16 @@ from udl.automations.events import EventType
 __all__ = [
     "ACTION_NEEDED",
     "AGENT_IDLE",
+    "HOST_HEALTHY",
+    "HOST_UNHEALTHY",
     "QUESTION_ANSWERED",
     "QUESTION_ASKED",
     "TASK_BLOCKED",
     "TASK_CHANGED",
     "ActionNeeded",
     "AgentIdle",
+    "HostHealthy",
+    "HostUnhealthy",
     "QuestionAnswered",
     "QuestionAsked",
     "TaskBlocked",
@@ -45,6 +49,35 @@ class _Model(BaseModel):
     model_config = ConfigDict(
         frozen=True, extra="forbid", populate_by_name=True, use_attribute_docstrings=True
     )
+
+
+class HostIssueSaid(_Model):
+    """One issue a host has, as an event carries it (27.13)."""
+
+    host: str
+    """The host."""
+    kind: str
+    """What is wrong (`memory`, `disk`, `btrfs_unallocated` …)."""
+    detail: str
+    """The numbers, in a line."""
+
+
+class HostUnhealthy(_Model):
+    """A host is in trouble (27.13): what a check found that a person or a tool should know."""
+
+    host: str
+    """The host."""
+    issues: list[HostIssueSaid] = Field(default_factory=list[HostIssueSaid])
+    """The issues this check opened (the ones already open are not news again)."""
+
+
+class HostHealthy(_Model):
+    """A host is healthy again (27.13): what cleared, so a subscription can say it is over."""
+
+    host: str
+    """The host."""
+    cleared: list[HostIssueSaid] = Field(default_factory=list[HostIssueSaid])
+    """The issues that cleared since the last check."""
 
 
 class TaskChanged(_Model):
@@ -225,3 +258,40 @@ AGENT_CHANGED: Final = EventType(
     source="orch",
 )
 """What orch publishes when an agent itself changes (29.6): the tree and its page read again."""
+HOST_UNHEALTHY: Final = EventType(
+    name="orch.host.unhealthy",
+    data=HostUnhealthy,
+    summary="A host is in trouble",
+    example=HostUnhealthy(
+        host="jeff-wiggle",
+        issues=[
+            HostIssueSaid(
+                host="jeff-wiggle",
+                kind="btrfs_unallocated",
+                detail="/home/yelrom0 has 0 B unallocated",
+            )
+        ],
+    ),
+    subject=lambda event: f"{event.host} is in trouble: {len(event.issues)} issue(s)",
+    source="orch",
+)
+"""What orch publishes when a check finds a host in trouble (27.13)."""
+
+HOST_HEALTHY: Final = EventType(
+    name="orch.host.healthy",
+    data=HostHealthy,
+    summary="A host is healthy again",
+    example=HostHealthy(
+        host="jeff-wiggle",
+        cleared=[
+            HostIssueSaid(
+                host="jeff-wiggle",
+                kind="btrfs_unallocated",
+                detail="/home/yelrom0 has 0 B unallocated",
+            )
+        ],
+    ),
+    subject=lambda event: f"{event.host} is healthy again",
+    source="orch",
+)
+"""What orch publishes when a check finds a host healthy again (27.13)."""

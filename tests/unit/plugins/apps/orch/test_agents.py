@@ -59,6 +59,9 @@ from udl.plugins.apps.orch.records import (
     Feature as FeatureRecord,
 )
 from udl.plugins.apps.orch.records import (
+    HostIssue as HostIssueRecord,
+)
+from udl.plugins.apps.orch.records import (
     Link as LinkRecord,
 )
 from udl.plugins.apps.orch.records import (
@@ -466,6 +469,7 @@ def test_orch_brings_its_kinds() -> None:
         QuestionRecord,
         MessageRecord,
         ReviewRecord,
+        HostIssueRecord,
     }
 
 

@@ -463,6 +463,42 @@ class HumanAction(Record):
         )
 
 
+class HostIssue(Record):
+    """Something wrong with a host (27.13), as it is stored: one per host and kind while it
+    lasts, closed when a check finds it gone.
+
+    Its `kind` is the record's, so what is wrong is `issue` (the `HealthKind` it is). A record
+    is looked up by its host and its issue, which is what keeps one check from opening a second
+    one; `action` is the human action a person reads about it, when `on_breach` says to tell."""
+
+    kind = "orch_host_issue"
+    indexed = ("host", "issue", "closed_at", "action")
+
+    host: Name
+    """The host it is on."""
+    issue: str
+    """What is wrong: a `HealthKind`'s value (`memory`, `disk`, `btrfs_unallocated` …)."""
+    detail: str = ""
+    """The numbers, in a line."""
+    hint: str = ""
+    """What a person can do about it."""
+    project: Name | None = None
+    """The project the action for it is in, when one was raised."""
+    action: Key | None = None
+    """The human action a person reads about it (`A-<n>`), while it is open."""
+    closed_at: AwareDatetime | None = None
+    """When a check found it gone (None: it is still there)."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(
+            host="jeff-wiggle",
+            issue="btrfs_unallocated",
+            detail="/home/yelrom0 has 0 B unallocated",
+            hint="A data balance frees it: `sudo btrfs balance start -dusage=10 /home/yelrom0`.",
+        )
+
+
 class Question(Record):
     """Something an agent cannot answer itself (28.1), as it is stored: what orch.models.Question
     is.
@@ -1815,6 +1851,42 @@ class WaitRecords:
         return list(
             await self._records.save_all([one.model_copy(update={"end": at}) for one in open_ones])
         )
+
+
+class HostIssueRecords:
+    """Where a host's issues are kept (27.13): the open ones, by host, and the closed ones for
+    what they were.
+
+    A check opens one per host and kind and closes it when the kind is gone, so a host that
+    stays in trouble is one record and one action, not one a check."""
+
+    def __init__(self, records: AppRecords) -> None:
+        self._records = records
+
+    @property
+    def records(self) -> AppRecords:
+        """The records the issues are kept in."""
+        return self._records
+
+    async def open(self) -> list[HostIssue]:
+        """Every issue no check has found gone, by host then kind."""
+        found = await self._records.list(HostIssue, RecordQuery(where={"closed_at": None}))
+        return sorted(found, key=lambda one: (one.host, one.issue))
+
+    async def for_host(self, host: str) -> list[HostIssue]:
+        """`host`'s open issues, by kind."""
+        found = await self._records.list(
+            HostIssue, RecordQuery(where={"host": host, "closed_at": None})
+        )
+        return sorted(found, key=lambda one: one.issue)
+
+    async def save(self, issue: HostIssue) -> HostIssue:
+        """Store `issue` (by its id, so storing one again replaces it)."""
+        return await self._records.save(issue)
+
+    async def close(self, issue: HostIssue, *, at: datetime) -> HostIssue:
+        """Close `issue` at `at`: a check found it gone."""
+        return await self._records.save(issue.model_copy(update={"closed_at": at}))
 
 
 class NoteRecords:

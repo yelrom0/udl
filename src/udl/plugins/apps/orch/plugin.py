@@ -34,7 +34,7 @@ from udl.db.manager import DBManager
 from udl.db.models import JsonObject
 from udl.db.records import Record, RecordQuery
 from udl.errors import ConfigError, DoesNotExist, NotAllowed, PluginError, UDLError
-from udl.hosts import LOCAL
+from udl.hosts import LOCAL, Host
 from udl.interfaces import security
 from udl.plugins.ai.base import AIProviderConnection
 from udl.plugins.apps.base import (
@@ -46,6 +46,7 @@ from udl.plugins.apps.base import (
 )
 from udl.plugins.apps.orch import actions as acted
 from udl.plugins.apps.orch import agents as agents_shape
+from udl.plugins.apps.orch import health as healths
 from udl.plugins.apps.orch import managers as bosses
 from udl.plugins.apps.orch import merge as merged
 from udl.plugins.apps.orch import questions as asked
@@ -97,6 +98,8 @@ from udl.plugins.apps.orch.events import (
     ACTION_NEEDED,
     AGENT_CHANGED,
     AGENT_IDLE,
+    HOST_HEALTHY,
+    HOST_UNHEALTHY,
     QUESTION_ANSWERED,
     QUESTION_ASKED,
     TASK_BLOCKED,
@@ -158,6 +161,10 @@ from udl.plugins.apps.orch.models import (
     GetProjectRequest,
     GetQuestionRequest,
     GetTaskRequest,
+    HostHealth,
+    HostHealthList,
+    HostHealthRequest,
+    HostLine,
     ImportPlanRequest,
     ImportReport,
     Inbox,
@@ -294,6 +301,10 @@ _TASKS: Final = ("orch", "tasks")
 """The CLI group the tasks' commands are under (`udl orch tasks`)."""
 _LINKS: Final = ("orch", "links")
 """The CLI group the links' commands are under (`udl orch links`)."""
+_HOSTS: Final = ("orch", "hosts")
+"""The hosts' own command (`udl orch hosts`): how each one is, and what is wrong with it
+(27.13)."""
+
 _INBOX: Final = ("orch", "inbox")
 """The inbox's own command (`udl orch inbox`): the one thing a person reads first (28.4)."""
 
@@ -470,6 +481,7 @@ class Orch(AppPlugin[OrchSettings]):
             stored.Question,
             stored.Message,
             stored.Review,
+            stored.HostIssue,
         )
 
     async def issue_token(
@@ -502,6 +514,8 @@ class Orch(AppPlugin[OrchSettings]):
             AGENT_LIMITED,
             AGENT_IDLE,
             AGENT_CHANGED,
+            HOST_UNHEALTHY,
+            HOST_HEALTHY,
             SESSION_STARTED,
             SESSION_EVENT,
             SESSION_ENDED,
@@ -520,6 +534,11 @@ class Orch(AppPlugin[OrchSettings]):
         super().__init__(settings, clock=clock, records=records)
         self._harnesses: Harnesses | None = None
         self._chats: Chats | None = None
+        self._monitor: healths.Health | None = None
+        """The hosts' health (27.13), made on first use: the dispatcher's checks and a push's
+        freshness are the same monitor."""
+        self._monitor_for: UDLService | None = None
+        """The service the monitor reads (a service is one per udl, but a test makes more)."""
 
     @property
     def harnesses(self) -> Harnesses:
@@ -694,6 +713,12 @@ class Orch(AppPlugin[OrchSettings]):
                 title="Sign a harness out",
                 hints=OperationHints(admin=True, destructive=True),
                 cli=CLISpec(path=(*_RUNNERS, "logout"), arguments=("host", "runner", "confirm")),
+            ),
+            cls.operation(
+                "host_health",
+                title="How the hosts are",
+                hints=OperationHints(read_only=True),
+                cli=CLISpec(path=(*_HOSTS, "health"), options={"host": "--host"}),
             ),
             cls.operation(
                 "inbox",
@@ -1997,7 +2022,10 @@ class Orch(AppPlugin[OrchSettings]):
         if self.service is None:  # (an app made outside a service has no agents to dispatch to)
             await keeping
             return
-        await asyncio.gather(keeping, Dispatcher(ctx, harnesses=self.harnesses).run())
+        await asyncio.gather(
+            keeping,
+            Dispatcher(ctx, harnesses=self.harnesses, health=self.monitor(ctx.service)).run(),
+        )
 
     async def _keep_links(
         self,
@@ -2569,8 +2597,76 @@ class Orch(AppPlugin[OrchSettings]):
             questions=questions,
             actions=list(to_do.actions),
             agents=await self._agent_lines(),
+            hosts=await self._host_lines(),
             updated_at=self.clock.now(),
         )
+
+    def monitor(self, service: UDLService) -> healths.Health:
+        """The hosts' health as this app keeps it (27.13): one monitor per service, so the
+        dispatcher's checks and a push's freshness are the same ones."""
+        if self._monitor is None or self._monitor_for is not service:
+            self._monitor = healths.Health(
+                records=self.records,
+                db=service.db,
+                clock=self.clock,
+                settings=self.settings.health,
+                reading=self._reading(service),
+                gates_allowed=self.settings.gates_per_host,
+            )
+            self._monitor_for = service
+        return self._monitor
+
+    def _reading(self, service: UDLService) -> healths.Reading:
+        """How one host is read: its own shell, the paths udl uses there, and the clock."""
+
+        async def reading(name: str) -> HostHealth:
+            host = await service.hosts.get(name)
+            shell = await service.hosts.shell(name)
+            return await healths.read(
+                name, shell=shell, paths=await self._paths_of(host), clock=self.clock
+            )
+
+        return reading
+
+    async def _paths_of(self, host: Host) -> list[str]:
+        """Every path udl uses on `host`: its work directory, and each repo's checkout there."""
+        paths = [host.work_dir]
+        for project in await stored.ProjectRecords(self.records).projects():
+            for repo in await stored.RepoRecords(self.records).repos(project.name):
+                found = repo.checkouts.get(host.name)
+                if found and found not in paths:
+                    paths.append(found)
+        return paths
+
+    async def host_health(
+        self, request: HostHealthRequest, *, service: UDLService
+    ) -> HostHealthList:
+        """How each host is (27.13): its memory, swap, I/O pressure, disks, harnesses and gates,
+        with what the thresholds make of them. It reads: the dispatcher's own check is what
+        opens and closes issues, and raises the action a person reads."""
+        await service.hosts.get(LOCAL)  # (it is made the first time it is asked for)
+        names = (
+            [request.host]
+            if request.host is not None
+            else [one.name for one in await service.hosts.all()]
+        )
+        return HostHealthList(hosts=await self.monitor(service).see(names))
+
+    async def _host_lines(self) -> list[HostLine]:
+        """The hosts that are in trouble (27.13), one line each: what the inbox strip shows
+        beside the agents, so a person reading it knows why nothing is moving."""
+        held = self.settings.health.on_breach in ("act", "act_and_tell")
+        by_host: dict[str, list[str]] = {}
+        for one in await stored.HostIssueRecords(self.records).open():
+            by_host.setdefault(one.host, []).append(one.issue.replace("_", " "))
+        return [
+            HostLine(
+                name=host,
+                held=held,
+                line=f"{host} — {'held' if held else 'in trouble'}: {', '.join(kinds)}",
+            )
+            for host, kinds in sorted(by_host.items())
+        ]
 
     async def _agent_lines(self) -> list[AgentLine]:
         """What every agent is doing, by name: its role, its state from its session, and the task
@@ -3335,6 +3431,15 @@ class Orch(AppPlugin[OrchSettings]):
         )
         hosts = service.hosts
         host = await hosts.get(agent.host if agent is not None else LOCAL)
+        monitor = self.monitor(service)
+        await monitor.freshly(host.name)
+        if await monitor.held(host.name):
+            issues = await stored.HostIssueRecords(self.records).for_host(host.name)
+            raise NotAllowed(
+                f"{host.name!r} is held: it is in trouble",
+                hint="\n".join(f"{one.issue}: {one.detail} {one.hint}" for one in issues)
+                or "A check found it unhealthy; `udl orch hosts health` says what.",
+            )
         return await space.push(
             task,
             repo=repo,
