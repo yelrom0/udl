@@ -38,10 +38,20 @@ export interface MergeRow {
 	readonly feature: string;
 	readonly title: string;
 	readonly number: number;
+	/** The GitHub repository it is in (`owner/name`): what a merge is confirmed by. */
+	readonly repo: string;
 	readonly url: string;
 	readonly sha: string;
+	/** How its pull's checks are: pass, fail, pending or none. */
+	readonly checks: string;
+	/** What its pull's review says: approve, changes, commented or none. */
+	readonly review: string;
+	/** Who merged it (a done row's; empty for one not merged). */
+	readonly merged_by: string;
 	readonly state: string;
 	readonly blockers: readonly string[];
+	/** The tasks that needed it (what followed a merge: they rebase and push again). */
+	readonly followed: readonly string[];
 	readonly merger: string | null;
 }
 
@@ -480,10 +490,15 @@ function mergeRowOf(value: JsonValue, project: string): MergeRow {
 		feature: asText(row.feature),
 		title: asText(row.title),
 		number: asNumber(row.number),
+		repo: asText(row.repo),
 		url: asText(row.url),
 		sha: asText(row.sha),
+		checks: asText(row.checks),
+		review: asText(row.review),
+		merged_by: asText(row.merged_by),
 		state: asText(row.state),
 		blockers: asArray(row.blockers).map((one) => asText(one)),
+		followed: asArray(row.followed).map((one) => asText(one)),
 		merger: typeof row.merger === "string" ? row.merger : null,
 	};
 }

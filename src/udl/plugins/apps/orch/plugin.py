@@ -2843,6 +2843,17 @@ class Orch(AppPlugin[OrchSettings]):
             blockers = [f"it is on hold: {task.hold}"]
         # (The newest verdict on this pull: `changes asked` is the merger's, and a review of a
         # head the pull has since moved past says nothing about this one.)
+        # (Who merged it, for a row that is done: the note `after_merge` writes says so.)
+        merged_by = ""
+        if task.state in (MERGED, DONE):
+            for note in reversed(
+                await stored.NoteRecords(self.records).for_owner(OwnerKind.TASK, task.id)
+            ):
+                if note.text.startswith("Merged by "):
+                    merged_by = (
+                        note.text[len("Merged by ") :].split(" (auto merge)")[0].split(",")[0]
+                    )
+                    break
         reviews = await stored.ReviewRecords(self.records).for_task(project.name, task.key)
         asked = reviews[0] if reviews else None
         if asked is not None and link.state.head_sha and asked.head != link.state.head_sha:
@@ -2867,6 +2878,9 @@ class Orch(AppPlugin[OrchSettings]):
             number=number,
             url=link.url,
             sha=link.state.head_sha,
+            checks=link.state.checks,
+            review=link.state.review,
+            merged_by=merged_by,
             state=task.state,
             needs=list(task.needs),
             blockers=blockers,

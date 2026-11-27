@@ -44,6 +44,7 @@ from pydantic import TypeAdapter, ValidationError
 
 # Local Imports
 from support.fixture_site import FixtureSite
+from support.github import FakeGitHub
 
 # The repo root (web/e2e runs from it, with PYTHONPATH=tests).
 ROOT: Final[Path] = Path(__file__).resolve().parents[2]
@@ -70,11 +71,17 @@ READY_TIMEOUT: Final[float] = 30
 SELF_STOP: Final[float] = 600
 # The API key the e2e server asks for, and the browser tests sign in with.
 API_KEY: Final = "e2e-key"
+# The GitHub the e2e tests merge against: the fake's own token and repository, so a test that
+# merges a pull is merging the fake's, never github.com's.
+GITHUB_TOKEN: Final = "ghp_fake_token"  # noqa: S105 - (the fake's own)
+GITHUB_REPO: Final = "acme/widgets"
 # A control call's answer.
 JSON = "application/json"
 
 # A control call's body: an object (a mail, a Slack message) or a list of strings (the AI's).
 _MAIL: Final = TypeAdapter(dict[str, object])
+# A test's push: the commit that is now at a pull's head.
+_GH_PUSH: Final = TypeAdapter(dict[str, str])
 _AI: Final = TypeAdapter(list[str])
 # A scripted runner's turns: a list of objects (29.12's chat, and 28.6's orchestration).
 _TURNS: Final = TypeAdapter(list[dict[str, object]])
@@ -103,10 +110,15 @@ enabled = true
 ui_plugin_dirs = {ui}
 
 [automations]
-enabled = false
+# (On: the integrations' watchers run, so a pull's link is kept current as it is in a real one.)
+enabled = true
 
 [integrations.scripted]
 dir = "{root}"
+
+[integrations.github]
+# (Often enough that a test sees a pull's event in a few seconds, not the 60 s default.)
+poll_every = "2s"
 """
 
 
@@ -170,6 +182,8 @@ class Control:
         self.mails: list[dict[str, object]] = []
         self.messages: list[dict[str, object]] = []
         self.ai: list[str] = []
+        self.fake_github: FakeGitHub | None = None
+        """The fake GitHub, once it is running (what a test's push is made on)."""
 
     def deliver(self, mail: dict[str, object]) -> None:
         with self.lock:
@@ -190,6 +204,20 @@ class Control:
         with self.lock:
             (self.root / "turns.json").write_text(json.dumps(turns))
 
+    def calls(self) -> list[str]:
+        """Every call the fake GitHub has had (what the watcher looked at).
+
+        The fake appends from uvicorn's thread, without this lock: `list()` of a list is one
+        bytecode under the GIL, which is enough for a test that only looks for a call it made."""
+        return list(self.fake_github.calls) if self.fake_github is not None else []
+
+    def push(self, sha: str) -> None:
+        """What the fake GitHub is asked to do: a new commit on the pull's head (a test's stand-in
+        for a person pushing, which is what makes the watcher look again)."""
+        with self.lock:
+            if self.fake_github is not None:
+                self.fake_github.push(sha)
+
     def next_ai(self) -> str:
         """The next answer the fake AI gives (a default one when nothing is scripted)."""
         with self.lock:
@@ -202,6 +230,19 @@ def handler_for(control: Control) -> type[BaseHTTPRequestHandler]:
 
     class Handler(BaseHTTPRequestHandler):
         """POST /mail, /slack, /ai and /turns: each adds what a fake should answer with next."""
+
+        def do_GET(self) -> None:
+            # (A test's look at the fake GitHub: what it has been asked, to tell a watcher that
+            # never looked from one that did.)
+            if self.path.rstrip("/") != "/github-calls":
+                self.fail(404, "no such control")
+                return
+            body = json.dumps({"calls": control.calls()}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", JSON)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
         def do_POST(self) -> None:
             length = int(self.headers.get("Content-Length") or 0)
@@ -220,6 +261,8 @@ def handler_for(control: Control) -> type[BaseHTTPRequestHandler]:
                     control.script(*_AI.validate_python(body))
                 elif path == "/turns":
                     control.script_turns(list(_TURNS.validate_python(body)))
+                elif path == "/github":
+                    control.push(str(_GH_PUSH.validate_python(body)["sha"]))
                 else:
                     self.fail(404, "no such control")
                     return
@@ -245,6 +288,33 @@ def handler_for(control: Control) -> type[BaseHTTPRequestHandler]:
             pass  # (the server is quiet)
 
     return Handler
+
+
+@contextmanager
+def github() -> Generator[tuple[FakeGitHub, int]]:
+    """The fake GitHub, answering on a free port while the block runs (uvicorn, in a thread).
+
+    It is a real HTTP server, because udl runs as its own process and reaches it as it would
+    github.com: the account's `api_url` option points here."""
+    import uvicorn
+
+    fake = FakeGitHub()
+    # (Port 0: the OS picks, as it does for the harness's own port, and a test that monkeypatches
+    # `free_port` cannot make this one collide.)
+    server = uvicorn.Server(uvicorn.Config(fake.app(), host="127.0.0.1", port=0, log_level="error"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + READY_TIMEOUT
+    while not server.started:
+        if thread.is_alive() is False or time.monotonic() > deadline:
+            raise RuntimeError("the fake GitHub did not start")
+        time.sleep(0.05)
+    port = int(server.servers[0].sockets[0].getsockname()[1])
+    try:
+        yield fake, port
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
 
 
 @contextmanager
@@ -371,10 +441,14 @@ def main(
     signal.signal(signal.SIGTERM, by_signal)
     signal.signal(signal.SIGINT, by_signal)
 
-    with tempfile.TemporaryDirectory(prefix="udl-e2e-") as work:
+    with (
+        tempfile.TemporaryDirectory(prefix="udl-e2e-") as work,
+        github() as (gh, gh_port),
+        (make_site or FixtureSite.serve)(),
+    ):
         home = Path(work)
         control = Control(home)
-        with serving(control, controls or 0) as controls_port, (make_site or FixtureSite.serve)():
+        with serving(control, controls or 0) as controls_port:
             # (A port somebody else holds is said, not fought over: Playwright passes the free one
             # it picked in web/playwright.config.ts, so a taken one was taken since.)
             with socket.socket() as sock:
@@ -382,6 +456,21 @@ def main(
                     print(f"e2e: {port} is taken", file=sys.stderr, flush=True)  # noqa: T201
                     return 1
             config = write_config(home, port)
+            gh_url = f"http://127.0.0.1:{gh_port}"
+            # (A test's push: what the fake's watcher sees as a new head, so a link is refreshed.)
+            control.fake_github = gh
+            # (Where the tests read the fake's address and token: the browser's environment is
+            # not this process's, and a token never goes in a command line.)
+            (ROOT / "web" / "playwright" / ".e2e-github.json").write_text(
+                json.dumps(
+                    {
+                        "url": gh_url,
+                        "token": GITHUB_TOKEN,
+                        "repo": GITHUB_REPO,
+                        "controls": f"http://127.0.0.1:{controls_port}",
+                    }
+                )
+            )
             udl = subprocess.Popen(
                 [sys.executable, "-m", "udl", "serve"],
                 cwd=ROOT,
@@ -394,6 +483,7 @@ def main(
             # (Both lines are printed before waiting: a server that is up must say so even if its
             # /docs never answers, or the test would only time out.)
             print(f"e2e: udl serve on {url}", file=sys.stdout, flush=True)  # noqa: T201
+            print(f"e2e: github on {gh_url}", flush=True)  # noqa: T201
             print(f"e2e: controls on :{controls_port}", flush=True)  # noqa: T201
             try:
                 wait_until(url, udl)

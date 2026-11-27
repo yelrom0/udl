@@ -1451,6 +1451,12 @@ class MergeRow(_Model):
     """Its pull's page."""
     sha: str
     """The commit at its pull's head."""
+    checks: PullChecksWord = "none"
+    """How its pull's checks are: pass, fail, pending or none."""
+    review: PullReviewWord = "none"
+    """What its pull's review says: approve, changes, commented or none."""
+    merged_by: str = ""
+    """Who merged it (a done row's; empty for one not merged)."""
     state: State
     """Where the task is."""
     merger: MergerState | None = None

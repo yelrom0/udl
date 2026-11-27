@@ -34,7 +34,8 @@ test("an event shows up live", async ({ page }) => {
 	});
 
 	expect(answer.ok()).toBe(true);
-	await expect(page.getByText("The page is watching")).toBeVisible();
+	// (The list holds it once per look: the live one and the read one, with automations on.)
+	await expect(page.getByText("The page is watching").first()).toBeVisible();
 });
 
 // What the harness is for today: a real `udl serve`, answering a browser.

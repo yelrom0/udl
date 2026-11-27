@@ -13,6 +13,7 @@
 			"!**/test-results",
 			"!**/playwright-report",
 			"!**/playwright/.auth",
+			"!**/playwright/.e2e-github.json",
 			"!pnpm-lock.yaml",
 			"!packages/api/openapi.json",
 			"!packages/api/src/schema.d.ts",

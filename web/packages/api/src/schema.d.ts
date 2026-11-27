@@ -7452,6 +7452,13 @@ export interface components {
              */
             blockers?: string[];
             /**
+             * Checks
+             * @description How its pull's checks are: pass, fail, pending or none.
+             * @default none
+             * @enum {string}
+             */
+            checks: "pass" | "fail" | "pending" | "none";
+            /**
              * Feature
              * @description The feature it belongs to.
              */
@@ -7467,6 +7474,12 @@ export interface components {
              * @default false
              */
             hold: boolean;
+            /**
+             * Merged By
+             * @description Who merged it (a done row's; empty for one not merged).
+             * @default
+             */
+            merged_by: string;
             /** @description What the merger is doing with it (28.7; None while auto merge is off). */
             merger?: components["schemas"]["MergerState"] | null;
             /**
@@ -7486,6 +7499,13 @@ export interface components {
              * @description Its repo, in full (`owner/name`).
              */
             repo: string;
+            /**
+             * Review
+             * @description What its pull's review says: approve, changes, commented or none.
+             * @default none
+             * @enum {string}
+             */
+            review: "approved" | "changes" | "pending" | "none";
             /**
              * Sha
              * @description The commit at its pull's head.
