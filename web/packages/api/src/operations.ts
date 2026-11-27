@@ -138,6 +138,7 @@ export const operations = {
 	orch_stop_session: { method: "post", path: "/plugins/orch/stop_session" },
 	orch_suggest: { method: "post", path: "/plugins/orch/suggest" },
 	orch_unassign: { method: "post", path: "/plugins/orch/unassign" },
+	orch_usage: { method: "post", path: "/plugins/orch/usage" },
 	preview_schedule: { method: "post", path: "/schedules/preview" },
 	probe_url: { method: "post", path: "/probe" },
 	replay_event: { method: "post", path: "/events/{id}/replay" },

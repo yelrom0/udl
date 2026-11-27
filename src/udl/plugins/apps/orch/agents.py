@@ -308,6 +308,9 @@ class AgentInfo(_Model):
     """Its tasks, in the order it will work them."""
     reports: list[Name] = Field(default_factory=list[Name])
     """The agents that report to it."""
+    usage: str = ""
+    """What it has left, in one line (27.14: `$3.36 of $8 left`, or `412 of 1,000 requests
+    left, resets 11:00`); empty for an agent with nothing to measure."""
 
 
 class ListAgentsRequest(_Model):
