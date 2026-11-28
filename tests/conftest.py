@@ -67,8 +67,10 @@ def pytest_configure(config: pytest.Config) -> None:
     WAIT_SLOT_HELD for what it runs. A run with coverage is a whole suite (`make check`, and so a
     commit's hook and `agent-push`): one started by hand beside the others' made a fourth on 28 Nov,
     so it stops here, before any test. CI, and a person's own runs, never set UDL_REQUIRE_SLOT.
+    It asks for a slot only when that is `1`; WAIT_SLOT_HELD names the slot held (`slot0`…), so any
+    value of it counts.
     """
-    if not os.environ.get("UDL_REQUIRE_SLOT") or os.environ.get("WAIT_SLOT_HELD"):
+    if os.environ.get("UDL_REQUIRE_SLOT") != "1" or os.environ.get("WAIT_SLOT_HELD"):
         return
     if config.getoption("cov_source", default=None) and not config.getoption(
         "no_cov", default=False

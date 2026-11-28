@@ -36,13 +36,21 @@ CLEAN = "tests/unit/support/probes/clean.py"
 
 
 def child_pytest(
-    *args: str, env: dict[str, str] | None = None, cov: bool = False
+    *args: str, env: dict[str, str] | None = None, coverage_in: Path | None = None
 ) -> subprocess.CompletedProcess[str]:
-    """Run the repo's pytest on `args` in a child process, as a run of the suite has it (`cov`: with
-    coverage, as `make check` runs it, its report and its floor left out)."""
-    coverage = ["--cov", "--cov-report=", "--cov-fail-under=0"] if cov else ["--no-cov"]
+    """Run the repo's pytest on `args` in a child process, as a run of the suite has it.
+
+    With `coverage_in`, it runs with coverage, as `make check` does (its report and its floor left
+    out), and keeps its data there: in the repo's own `.coverage` it would erase and combine the
+    data of the run it is part of."""
+    flags = ["--cov", "--cov-report=", "--cov-fail-under=0"] if coverage_in else ["--no-cov"]
+    if coverage_in is not None:
+        env = {
+            **(os.environ if env is None else env),
+            "COVERAGE_FILE": str(coverage_in / ".coverage"),
+        }
     return subprocess.run(  # noqa: S603 - (this Python, running the repo's own tests)
-        [sys.executable, "-m", "pytest", *args, "-q", "-p", "no:cacheprovider", *coverage],
+        [sys.executable, "-m", "pytest", *args, "-q", "-p", "no:cacheprovider", *flags],
         cwd=ROOT,
         env=env,
         capture_output=True,
@@ -91,10 +99,10 @@ def without_slots(**names: str) -> dict[str, str]:
     return {**kept, **names}
 
 
-def test_a_whole_suite_run_outside_a_slot_is_refused_where_one_is_required() -> None:
+def test_a_whole_suite_run_outside_a_slot_is_refused_where_one_is_required(tmp_path: Path) -> None:
     """(An agent's `make check` by hand, or a bare `agent-push`, runs pytest with coverage and no
     slot: it stops before any test, saying how to run it.)"""
-    done = child_pytest(CLEAN, env=without_slots(UDL_REQUIRE_SLOT="1"), cov=True)
+    done = child_pytest(CLEAN, env=without_slots(UDL_REQUIRE_SLOT="1"), coverage_in=tmp_path)
 
     out = done.stdout + done.stderr
     assert done.returncode == pytest.ExitCode.USAGE_ERROR, out
@@ -108,13 +116,22 @@ def test_a_whole_suite_run_outside_a_slot_is_refused_where_one_is_required() -> 
         ({"UDL_REQUIRE_SLOT": "1", "WAIT_SLOT_HELD": "slot0"}, True),
         ({"UDL_REQUIRE_SLOT": "1"}, False),
         ({}, True),
+        ({"UDL_REQUIRE_SLOT": "0"}, True),
     ],
-    ids=["in-a-slot", "a-few-files-without-coverage", "where-no-slot-is-required"],
+    ids=[
+        "in-a-slot",
+        "a-few-files-without-coverage",
+        "where-no-slot-is-required",
+        "where-it-is-turned-off",
+    ],
 )
 def test_a_run_in_a_slot_a_targeted_run_and_a_run_elsewhere_go_ahead(
-    names: dict[str, str], cov: bool
+    names: dict[str, str], cov: bool, tmp_path: Path
 ) -> None:
-    """(Through `wait-slot`, a quick run of a few files, and CI or a person's own run all go on.)"""
-    done = child_pytest(CLEAN, env=without_slots(**names), cov=cov)
+    """(Through `wait-slot`, a quick run of a few files, and CI or a person's own run all go on; so
+    does a machine whose UDL_REQUIRE_SLOT is anything but `1`.)"""
+    done = child_pytest(CLEAN, env=without_slots(**names), coverage_in=tmp_path if cov else None)
 
     assert done.returncode == 0, done.stdout + done.stderr
+    # (A run with coverage keeps its data where it was told, never in the repo's own `.coverage`.)
+    assert (tmp_path / ".coverage").exists() == cov
