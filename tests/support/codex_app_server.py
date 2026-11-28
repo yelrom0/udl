@@ -152,8 +152,7 @@ def main(argv: list[str]) -> int:
     mode = argv[1] if len(argv) > 1 else "turn"
     if len(argv) > 2:
         _SAID.append(argv[2])
-    if _SAID:
-        Path(_SAID[0]).touch()
+        Path(argv[2]).touch()
     if mode == "error":
         sys.stdout.write(
             json.dumps(
