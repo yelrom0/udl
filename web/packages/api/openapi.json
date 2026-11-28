@@ -12228,7 +12228,7 @@
                 "type": "null"
               }
             ],
-            "description": "Whether a 1Password service account token is kept, which is what `op` is given (never the\ntoken itself); None when the store could not be read (its `unavailable` says why).",
+            "description": "Whether a 1Password service account token is kept, which is what `op` is given (never the\ntoken itself). None when the answer cannot be had: the store says why it cannot be used (its\n`unavailable`, and it is not read), or it was read and refused (a locked keyring, say).",
             "title": "Onepassword"
           },
           "resolvers": {

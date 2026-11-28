@@ -15,6 +15,46 @@ import { SIGNED_IN } from "./helpers";
 
 test.use({ storageState: SIGNED_IN });
 
+/** What this run made, so it is undone even when a leg fails: a leftover project and host break
+ * every spec after this one, and the failure that left them is the one worth reading. */
+interface Made {
+	readonly account: string;
+	host: boolean;
+	project: boolean;
+	connected: boolean;
+}
+
+let made: Made | null = null;
+
+// (In `afterEach`, not at the end of the body: a failure in the light project must not leave a
+// project and a host behind for the dark one. Soft, so the cleanup never hides the first error.)
+test.afterEach(async ({ page }) => {
+	const mine = made;
+	made = null;
+	if (mine === null) {
+		return;
+	}
+	const headers = { "X-UDL-CSRF": "1", Origin: new URL(page.url()).origin };
+	if (mine.host) {
+		const forgot = await page.request.delete("/hosts/e2e-host", { headers });
+		expect.soft(forgot.ok(), `delete host answered ${forgot.status()}`).toBe(true);
+		expect.soft(((await forgot.json()) as { deleted: boolean }).deleted).toBe(true);
+	}
+	if (mine.project) {
+		const dropped = await page.request.post("/plugins/orch/delete_project", {
+			headers,
+			data: { name: "web" },
+		});
+		expect.soft(dropped.ok(), await dropped.text()).toBe(true);
+		expect.soft(((await dropped.json()) as { deleted: boolean }).deleted).toBe(true);
+	}
+	if (mine.connected) {
+		const unlinked = await page.request.delete(`/accounts/github:${mine.account}`, { headers });
+		expect.soft(unlinked.ok(), `disconnect answered ${unlinked.status()}`).toBe(true);
+		expect.soft(((await unlinked.json()) as { deleted: boolean }).deleted).toBe(true);
+	}
+});
+
 /** The fake GitHub the harness serves: its address, its token and its repository (the harness
  * writes them, since a token never goes in a command line). Read inside the test, not at load:
  * Playwright lists the tests before `webServer` has written it. */
@@ -44,6 +84,7 @@ test("a person sets udl up from the web alone, and each thing is there", async (
 	// (A name of its own per run: both themes answer from one server, so a fixed name would find
 	// the other theme's account already there rather than connecting one.)
 	const account = `e2e-${String(Date.now())}`;
+	made = { account, host: false, project: false, connected: false };
 
 	// -- the 1Password token: udl's own page, its Secrets group ---------------------------
 	await page.goto("/ui/p/udl/");
@@ -79,6 +120,9 @@ test("a person sets udl up from the web alone, and each thing is there", async (
 		return (listed.hosts as readonly { name: string }[]).map((one) => one.name);
 	};
 	await expect.poll(hostNames, { timeout: 30_000 }).toContain("e2e-host");
+	if (made !== null) {
+		made.host = true;
+	}
 
 	// -- a GitHub account, against the fake ------------------------------------------------
 	await page.goto("/ui/p/github/");
@@ -99,6 +143,9 @@ test("a person sets udl up from the web alone, and each thing is there", async (
 		return said.accounts.map((one) => one.name);
 	};
 	await expect.poll(connected, { timeout: 30_000 }).toContain(account);
+	if (made !== null) {
+		made.connected = true;
+	}
 	await expect(page.getByRole("row", { name: new RegExp(account) })).toContainText("Connected");
 
 	// -- a project with a repo, on the orchestrator's page ----------------------------------
@@ -118,6 +165,9 @@ test("a person sets udl up from the web alone, and each thing is there", async (
 		return answer.ok();
 	};
 	await expect.poll(projectExists, { timeout: 30_000 }).toBe(true);
+	if (made !== null) {
+		made.project = true;
+	}
 
 	const repo = card(page, "Create or edit a repo");
 	await repo.getByRole("textbox", { name: "project" }).fill("web");
@@ -129,6 +179,9 @@ test("a person sets udl up from the web alone, and each thing is there", async (
 	// (The page's write lands when udl has it, not when the button was clicked: the project's own
 	// read is polled until the repo is on it.)
 	const reposOnTheProject = async (): Promise<readonly string[]> => {
+		// (A write udl refused says why on the card: that is the failure to report, not a wait
+		// that times out 30 s later.)
+		expect((await repo.getByRole("alert").allInnerTexts()).join(" ")).toBe("");
 		const answer = await page.request.post("/plugins/orch/get_project", {
 			headers: { "X-UDL-CSRF": "1", Origin: new URL(page.url()).origin },
 			data: { name: "web" },
@@ -138,23 +191,4 @@ test("a person sets udl up from the web alone, and each thing is there", async (
 		return (said.repos ?? []).map((one) => one.github);
 	};
 	await expect.poll(reposOnTheProject, { timeout: 30_000 }).toContain(github.repo);
-	// (And the card itself never said it failed: a write udl refused is its own error, said on the
-	// card — checked after the answer has landed, not before.)
-	await expect(repo.getByRole("alert")).toHaveCount(0);
-
-	// -- and udl is left as it was found ------------------------------------------------
-	// (Both themes answer from one server, and the specs after this one seed their own project and
-	// read the hosts udl has: a second project makes the board ask which one it is for, and a host
-	// that is nobody's adds a card to the Machines view. So the setup is undone once it is proved.)
-	const origin = new URL(page.url()).origin;
-	const headers = { "X-UDL-CSRF": "1", Origin: origin };
-	const forgot = await page.request.delete("/hosts/e2e-host", { headers });
-	expect(forgot.ok(), `delete host answered ${forgot.status()}`).toBe(true);
-	const dropped = await page.request.post("/plugins/orch/delete_project", {
-		headers,
-		data: { name: "web" },
-	});
-	expect(dropped.ok(), await dropped.text()).toBe(true);
-	const unlinked = await page.request.delete(`/accounts/github:${account}`, { headers });
-	expect(unlinked.ok(), `disconnect answered ${unlinked.status()}`).toBe(true);
 });

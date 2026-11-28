@@ -10049,7 +10049,8 @@ export interface components {
             /**
              * Onepassword
              * @description Whether a 1Password service account token is kept, which is what `op` is given (never the
-             *     token itself); None when the store could not be read (its `unavailable` says why).
+             *     token itself). None when the answer cannot be had: the store says why it cannot be used (its
+             *     `unavailable`, and it is not read), or it was read and refused (a locked keyring, say).
              */
             onepassword?: boolean | null;
             /**
