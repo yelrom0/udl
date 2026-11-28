@@ -894,3 +894,79 @@ def test_a_plan_file_is_markdown(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="markdown"):
         read_plan_file(str(given))
+
+
+def test_a_phase_s_spec_leaves_its_cards_out() -> None:
+    """(26.7: a phase's feature spec is its own prose — the cards are its tasks, not its spec,
+    and prose after a card's bullets is the phase's, not the card's.)"""
+    plan = parse_plan(
+        "# A plan\n\n"
+        "## Phase 26: Work tracking\n\n"
+        "The phase's own words.\n\n"
+        "**26.1 Projects** · needs 26.0\n"
+        "- a step\n"
+        "  - a sub-step\n\n"
+        "**Phase 26 is done when:** the work is tracked.\n\n"
+        "**26.2 Links**\n",
+        source="a.md",
+    )
+
+    found = feature_of(plan, "26")
+    said = " ".join(found.spec.split())
+    assert said == "The phase's own words. **Phase 26 is done when:** the work is tracked."
+    assert sorted(task.key for task in found.tasks) == ["26.1", "26.2"]
+    assert " ".join(task_of(plan, "26.1").spec.split()) == "a step a sub-step"
+    assert task_of(plan, "26.2").spec == ""
+
+
+def test_the_plan_files_have_no_spec_over_the_limit() -> None:
+    """(26.7: udl's own three plan files parse with no spec over `SPEC_MAX` and no phase's spec
+    holding a Built note — a phase's spec no longer holds its cards a second time.)"""
+    for name, stem in (
+        ("planning.md", "planning"),
+        ("02-agent-orchastrator.md", "02-agent-orchastrator"),
+        ("03-proxmox.md", "03-proxmox"),
+    ):
+        plan = parse_plan((PLANS / name).read_text(), source=name, stem=stem)
+        for feature in plan.features:
+            assert len(feature.spec) <= SPEC_MAX, feature.key
+            assert "**Built (" not in feature.spec, feature.key
+            for task in feature.tasks:
+                assert len(task.spec) <= SPEC_MAX, task.key
+
+
+def test_an_indented_continuation_is_the_card_s_and_not_the_phase_s() -> None:
+    """(26.7: a bullet continued on an indented line is the card's, so the phase's spec leaves
+    it out — every line the card takes, not only the bullet's first.)"""
+    plan = parse_plan(
+        "# A plan\n\n"
+        "## Phase 26: Work tracking\n\n"
+        "**26.1 Projects**\n"
+        "- a step\n"
+        "  continued here\n\n"
+        "Prose.\n",
+        source="a.md",
+    )
+
+    assert " ".join(task_of(plan, "26.1").spec.split()) == "a step continued here"
+    assert " ".join(feature_of(plan, "26").spec.split()) == "Prose."
+
+
+def test_a_phase_s_cards_are_in_no_spec_and_nothing_is_dropped() -> None:
+    """(Every line is in a spec or in the report as unplaced: the cards are not lost, and no
+    card's words are in the feature's spec.)"""
+    plan = parse_plan(
+        "# A plan\n\n"
+        "## Phase 26: Work tracking\n\n"
+        "Prose.\n\n"
+        "**26.1 Projects**\n"
+        "- a step\n\n"
+        "**26.2 Links**\n",
+        source="a.md",
+    )
+
+    said = "\n".join(task.spec for feature in plan.features for task in feature.tasks)
+    assert "a step" in said
+    feature = feature_of(plan, "26")
+    assert " ".join(feature.spec.split()) == "Prose."
+    assert plan.unplaced == []
