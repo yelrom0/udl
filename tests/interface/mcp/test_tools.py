@@ -11,18 +11,22 @@ read and act on
 # System Imports
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 # Package Imports
 import pytest
 from mcp import Client
 from mcp_types import CallToolResult, TextContent
+from pydantic import BaseModel, TypeAdapter
 
 # Local Imports
 from support.engine import connection, script
 from support.interfaces import A, B, Harness
 from support.mcp import client_for
+from support.orch import orch_registry
 from support.settings import Configurable
+from support.tasks import held
+from udl.config import APISettings
 from udl.core.models import (
     ConfigInfo,
     DatabaseList,
@@ -90,6 +94,55 @@ async def test_every_tool_is_an_operation_and_documented_as_one(client: Client) 
         assert tool.output_schema is not None
         assert tool.annotations is not None
         assert tool.annotations.title
+
+
+async def test_a_tool_s_schema_allows_what_its_response_sends(tmp_path: Path) -> None:
+    """Every tool's output schema is its response as udl *sends* it: a computed field is in the
+    schema too, so a client that validates the answer against it accepts it. (29.10's story: an
+    agent's own `get_task` came back refused — `points` was in what udl sent and not in the
+    schema, which was the validation one.)"""
+    # (The orch app, whose task carries a computed field: the story's own `get_task`.)
+    harness = Harness(tmp_path, api=APISettings(allowed_output_roots=[tmp_path]))
+    harness.registry = orch_registry()
+    async with held(client_for(harness)) as client:
+        tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+
+    def properties(schema: object) -> dict[str, set[str]]:
+        """Each model's property names, by the name its definition has."""
+        document = _OBJECT.validate_python(schema)
+        found = {
+            where: _names(_OBJECT.validate_python(definition))
+            for where, definition in _defs(document).items()
+        }
+        found[""] = _names(document)
+        return found
+
+    async with harness.service() as service:
+        every = list(service.operations)
+    for op in every:
+        if not op.hints.mcp:
+            continue
+        name = op.name
+        sent = TypeAdapter[BaseModel](op.response).json_schema(mode="serialization")
+        assert tools[name].output_schema is not None
+        allowed = properties(tools[name].output_schema or {})
+        for where, props in properties(sent).items():
+            missing = props - allowed.get(where, set())
+            assert not missing, f"{name}: {where or 'the response'} sends {sorted(missing)}"
+
+
+# A JSON object, as a schema's document or one of its definitions is.
+_OBJECT: Final = TypeAdapter[dict[str, object]](dict[str, object])
+
+
+def _defs(document: dict[str, object]) -> dict[str, object]:
+    """A schema's `$defs`: its definitions, by the name each has."""
+    return _OBJECT.validate_python(document.get("$defs") or {})
+
+
+def _names(definition: dict[str, object]) -> set[str]:
+    """A schema node's property names (none, for a node that has no properties)."""
+    return set(_OBJECT.validate_python(definition.get("properties") or {}))
 
 
 # What each tool said it does when its hints lived in the MCP server (Phase 4): (title,

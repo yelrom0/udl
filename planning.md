@@ -139,7 +139,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [~] 27.12 Resource limits: gates and sessions under a memory cap; `gates_per_host` (default 1)
   - [~] 27.13 Host health (memory, swap, disk and btrfs, I/O pressure, harness services) and what udl does about it (`on_breach`, default act and tell)
   - [~] 27.14 Usage left per agent: a paid key's money left, a free tier's requests left (counted), on the CLI, API, MCP and web
-  - [ ] 27.15 Usage left, the rest: the `orch.usage.low`/`orch.usage.out` events, the To action a low paid key raises, `[apps.orch] allowances` (a per-account allowance override), the test that the key never reaches a log or an event, `AgentLine.usage`, the "in all" totals and `source = "counted"` (follow-up to 27.14, which built the operation and the counting)
+  - [~] 27.15 Usage left, the rest: the `orch.usage.low`/`orch.usage.out` events, the To action a low paid key raises, `[apps.orch] allowances` (a per-account allowance override), the test that the key never reaches a log or an event, `AgentLine.usage`, the "in all" totals and `source = "counted"` (follow-up to 27.14, which built the operation and the counting)
 - [ ] **Phase 28: Human comms: Q&A, Ready to merge, To action**
   - [x] 28.1 `Question` records and their thread; an answer reaches the agent and is written into the tasks it concerns
   - [x] 28.2 `HumanAction` records ("To action") with a result
@@ -159,7 +159,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [~] 29.7 Q&A
   - [~] 29.8 Ready to merge and To action
   - [~] 29.9 Connections and import (generated pages, guided by the manifest)
-  - [ ] 29.10 End to end (Playwright) on fakes, both themes
+  - [~] 29.10 End to end (Playwright) on fakes, both themes
   - [~] 29.11 Progress: the burn-up, the forecast, hours per point
   - [~] 29.12 The chat sidebar: a `panels` point in the shell, and the chat
 - [ ] **Phase 30: Moving in, docs and the live check**

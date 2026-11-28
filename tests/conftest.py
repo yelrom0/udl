@@ -51,6 +51,33 @@ _PLAYWRIGHT_BROWSERS_PATH = os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or str(
 )
 
 
+NEEDS_A_SLOT = (
+    "A whole suite runs here only in one of the full-suite slots (rule 9 of "
+    "planning/agent-queues/_rules.md: at most three at once). Commit with "
+    "`~/.local/share/udl-agents/wait-slot git commit …` and push with "
+    "`~/.local/share/udl-agents/wait-slot agent-push`, which run it for you; to check a few "
+    "files first, run them without coverage: `uv run pytest <paths> -q --no-cov`."
+)
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Refuse a whole suite run outside a slot where the machine asks for one.
+
+    The build agents' service sets UDL_REQUIRE_SLOT on jeff-wiggle, and `wait-slot` sets
+    WAIT_SLOT_HELD for what it runs. A run with coverage is a whole suite (`make check`, and so a
+    commit's hook and `agent-push`): one started by hand beside the others' made a fourth on 28 Nov,
+    so it stops here, before any test. CI, and a person's own runs, never set UDL_REQUIRE_SLOT.
+    It asks for a slot only when that is `1`; WAIT_SLOT_HELD names the slot held (`slot0`…), so any
+    value of it counts.
+    """
+    if os.environ.get("UDL_REQUIRE_SLOT") != "1" or os.environ.get("WAIT_SLOT_HELD"):
+        return
+    if config.getoption("cov_source", default=None) and not config.getoption(
+        "no_cov", default=False
+    ):
+        pytest.exit(NEEDS_A_SLOT, returncode=pytest.ExitCode.USAGE_ERROR)
+
+
 @pytest.fixture(autouse=True)
 def isolated_user_dirs(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch

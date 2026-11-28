@@ -18,6 +18,8 @@ import contextlib
 import logging
 from collections.abc import Awaitable, Sequence
 from datetime import datetime, timedelta
+from decimal import Decimal
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol
 from uuid import UUID, uuid4
@@ -144,6 +146,7 @@ from udl.plugins.apps.orch.models import (
     Action,
     Actions,
     ActionState,
+    ActionWhen,
     AddLinkRequest,
     AddNoteRequest,
     AgentLine,
@@ -249,7 +252,7 @@ from udl.plugins.apps.orch.models import (
 )
 from udl.plugins.apps.orch.readiness import TASK_READY, Pull, TaskReady
 from udl.plugins.apps.orch.readiness import readiness as assess
-from udl.plugins.apps.orch.records import scan_links
+from udl.plugins.apps.orch.records import UsageAlert, UsageAlertRecords, scan_links
 from udl.plugins.apps.orch.reporting import Reporting
 from udl.plugins.apps.orch.sessions import (
     AGENT_LIMITED,
@@ -263,6 +266,8 @@ from udl.plugins.apps.orch.sessions import (
     SESSION_EVENT,
     SESSION_FAILED,
     SESSION_STARTED,
+    USAGE_LOW,
+    USAGE_OUT,
 )
 from udl.plugins.apps.orch.settings import OrchSettings
 from udl.plugins.apps.orch.tokens import (
@@ -273,6 +278,8 @@ from udl.plugins.apps.orch.tokens import (
     issue_token as issue,
 )
 from udl.plugins.apps.orch.usage import (
+    LOW_RATIO,
+    AgentUsage,
     UsageList,
     UsageRequest,
     provider_of,
@@ -540,6 +547,8 @@ class Orch(AppPlugin[OrchSettings]):
             QUESTION_ANSWERED,
             ACTION_NEEDED,
             AGENT_LIMITED,
+            USAGE_LOW,
+            USAGE_OUT,
             AGENT_IDLE,
             AGENT_CHANGED,
             HOST_UNHEALTHY,
@@ -907,7 +916,8 @@ class Orch(AppPlugin[OrchSettings]):
             cls.operation(
                 "usage",
                 title="What each agent has left",
-                hints=OperationHints(read_only=True),
+                # (Not read-only: a crossing publishes an event and may raise a To action (27.15).)
+                hints=OperationHints(idempotent=True),
                 cli=CLISpec(path=(*_AGENTS, "usage"), options={"agent": "--agent"}),
             ),
             cls.operation(
@@ -1156,11 +1166,15 @@ class Orch(AppPlugin[OrchSettings]):
             shapes = [
                 as_shape(Agent, one) for one in await stored.AgentRecords(self.records).agents()
             ]
-            health_for = {
-                prefix: await self._provider_health(service, model=prefix)
-                for prefix in {provider_of(one.model) for one in shapes}
-            }
-            rows = await usage_of_all(self.records, shapes, health_for=health_for, clock=self.clock)
+            health_for, connection_for = await self._provider_healths(service, shapes)
+            rows = await usage_of_all(
+                self.records,
+                shapes,
+                health_for=health_for,
+                connection_for=connection_for,
+                allowance_for={one.name: allowance_of(self.settings, one.model) for one in shapes},
+                clock=self.clock,
+            )
             lines = {
                 one.agent: ("" if one.line == "nothing to measure" else one.line) for one in rows
             }
@@ -1175,17 +1189,110 @@ class Orch(AppPlugin[OrchSettings]):
         if not agents:
             return UsageList()
         shapes = [as_shape(Agent, one) for one in sorted(agents, key=lambda one: one.name)]
-        health_for = {
-            prefix: await self._provider_health(service, model=prefix)
-            for prefix in {provider_of(one.model) for one in shapes}
-        }
-        return UsageList(
-            items=await usage_of_all(self.records, shapes, health_for=health_for, clock=self.clock)
+        health_for, connection_for = await self._provider_healths(service, shapes)
+        rows = await usage_of_all(
+            self.records,
+            shapes,
+            health_for=health_for,
+            connection_for=connection_for,
+            allowance_for={one.name: allowance_of(self.settings, one.model) for one in shapes},
+            clock=self.clock,
         )
+        await self._usage_alerts(rows)
+        totals: dict[str, Decimal] = {}
+        for shape, row in zip(shapes, rows, strict=True):
+            name = connection_for.get(provider_of(shape.model), "")
+            spent = row.paid.spent_today if row.paid is not None else None
+            if name and spent is not None and name not in totals:
+                totals[name] = spent  # (the key's figure, once per connection, not per agent)
+        return UsageList(items=rows, totals=totals)
+
+    async def _usage_alerts(self, rows: list[AgentUsage]) -> None:
+        """Publish a crossing (27.15): `orch.usage.low`/`orch.usage.out` once, when an agent's
+        state changes into `low` or `out`, and a To action for a low paid key (once per key per
+        cap). A return to `ok` is recorded without an event."""
+        service = self.service
+        if service is None:
+            return
+        alerts = UsageAlertRecords(self.records)
+        events = AppEvents(service.bus, self.name, self.event_types())
+        for row in rows:
+            last = await alerts.get(row.agent)
+            if last is not None and last.usage_state == row.state:
+                continue
+            await alerts.save(
+                UsageAlert(agent=row.agent, usage_state=row.state, at=self.clock.now())
+            )
+            # (The dedupe key names the crossing, not the state: an agent that goes low, ok,
+            # low again publishes twice — the bus drops a repeated (type, key) for good.)
+            at = self.clock.now()
+            if row.state == "low":
+                await events.emit(
+                    USAGE_LOW.name,
+                    USAGE_LOW.data(agent=row.agent, line=row.line),
+                    dedupe_key=f"{row.agent}:low:{at:%Y-%m-%dT%H:%M:%S.%f}",
+                )
+                await self._raise_cap(row)
+            elif row.state == "out":
+                await events.emit(
+                    USAGE_OUT.name,
+                    USAGE_OUT.data(agent=row.agent, line=row.line),
+                    dedupe_key=f"{row.agent}:out:{at:%Y-%m-%dT%H:%M:%S.%f}",
+                )
+                await self._raise_cap(row)
+
+    async def _raise_cap(self, row: AgentUsage) -> None:
+        """The To action a low paid key raises (27.15): "Raise the cap for <key> (limit $N)",
+        once per key per cap (the title names both, so a new limit raises a new one)."""
+        paid = row.paid
+        if paid is None or paid.limit is None or paid.left is None:
+            return
+        # (Only the key's own money: a harness limit is `out` with a healthy key, and its
+        # remedy is the harness's, not a cap.)
+        if paid.left > paid.limit * Decimal(str(LOW_RATIO)):
+            return
+        title = f"Raise the cap for {paid.connection or row.agent} (limit ${paid.limit})"
+        # (Once per key per cap: the title names the key and the cap, so a new limit is a new
+        # action and a repeat read is not. The text is the line the owner reads.)
+        open_one = await self.records.list(
+            stored.HumanAction, RecordQuery(where={"state": ActionState.OPEN})
+        )
+        if any(one.title == title for one in open_one):
+            return
+        project = await stored.AgentRecords(self.records).agent(row.agent)
+        name = project.projects[0] if project is not None and project.projects else None
+        if name is None:
+            first = await self.records.list(stored.Project, RecordQuery())
+            if not first:
+                return
+            name = first[0].name
+        await acted.set_action(
+            acted.ActionRecords(self.records),
+            project=name,
+            title=title,
+            text=row.line,
+            when=ActionWhen.NOW,
+            after=None,
+            task=None,
+            assignee=None,
+        )
+
+    async def _provider_healths(
+        self, service: UDLService, agents: list[Agent]
+    ) -> tuple[dict[str, ProviderHealth | None], dict[str, str]]:
+        """The provider health and the udl connection name for each provider prefix the agents
+        name (27.14/27.15): one read per prefix, and the connection the key is named by."""
+        health: dict[str, ProviderHealth | None] = {}
+        connection: dict[str, str] = {}
+        for prefix in sorted({provider_of(one.model) for one in agents}):
+            found = await self._provider_health(service, model=prefix)
+            health[prefix] = found[0] if found is not None else None
+            connection[prefix] = found[1] if found is not None else ""
+        return health, connection
 
     async def _provider_health(
         self, service: UDLService, *, model: str = ""
-    ) -> ProviderHealth | None:
+    ) -> tuple[ProviderHealth, str] | None:
         """The enabled AI provider connection's `health()` (27.14): what the account's key has.
         The connection is the one whose name is `model`'s provider prefix (`openrouter-ds-a/…`
         → `openrouter-ds-a`), else the one whose plugin is, else the first enabled one (a model
@@ -1206,7 +1313,7 @@ class Orch(AppPlugin[OrchSettings]):
                 http=service.http,
                 clock=self.clock,
             )
-            return await made.health()
+            return await made.health(), connection.name
         except (UDLError, PluginError, ValidationError, SecretStoreError) as error:
             log.warning("orch could not read the provider %s: %s", connection.plugin, error)
             return None
@@ -2716,6 +2823,7 @@ class Orch(AppPlugin[OrchSettings]):
             )
         ]
         to_do = await self.list_actions(ListActionsRequest(project=project))
+        agents = await self._agent_lines(self.service)
         return Inbox(
             project=project,
             merge=merge,
@@ -2723,7 +2831,7 @@ class Orch(AppPlugin[OrchSettings]):
             merger=merge.merger,
             questions=questions,
             actions=list(to_do.actions),
-            agents=await self._agent_lines(),
+            agents=agents,
             hosts=await self._host_lines(),
             updated_at=self.clock.now(),
         )
@@ -2795,13 +2903,30 @@ class Orch(AppPlugin[OrchSettings]):
             for host, kinds in sorted(by_host.items())
         ]
 
-    async def _agent_lines(self) -> list[AgentLine]:
-        """What every agent is doing, by name: its role, its state from its session, and the task
-        it is on (27.1's records and 27.7's sessions, derived — never stored)."""
+    async def _agent_lines(self, service: UDLService | None = None) -> list[AgentLine]:
+        """What every agent is doing, by name: its role, its state from its session, the task it
+        is on (27.1's records and 27.7's sessions, derived — never stored), and what it has left
+        (27.15, the same line `orch_usage` gives)."""
         agents = stored.AgentRecords(self.records)
         sessions = stored.SessionRecords(self.records)
+        stored_agents = await agents.agents()
+        shapes = [as_shape(agents_shape.Agent, one) for one in stored_agents]
+        health_for, connection_for = ({}, {})
+        if service is not None:
+            health_for, connection_for = await self._provider_healths(service, shapes)
+        rows = {
+            one.agent: one
+            for one in await usage_of_all(
+                self.records,
+                shapes,
+                health_for=health_for or None,
+                connection_for=connection_for,
+                allowance_for={one.name: allowance_of(self.settings, one.model) for one in shapes},
+                clock=self.clock,
+            )
+        }
         lines: list[AgentLine] = []
-        for stored_agent in await agents.agents():
+        for stored_agent in stored_agents:
             current = await sessions.current(stored_agent.name)
             agent = as_shape(agents_shape.Agent, stored_agent)
             line = AgentLine(
@@ -2815,6 +2940,11 @@ class Orch(AppPlugin[OrchSettings]):
                 ),
                 task=current.task or None if current is not None else None,
                 since=current.updated_at if current is not None else None,
+                usage=(
+                    ""
+                    if rows.get(agent.name) is None or rows[agent.name].line == "nothing to measure"
+                    else rows[agent.name].line
+                ),
             )
             lines.append(
                 line.model_copy(
@@ -3705,6 +3835,17 @@ def _action(found: stored.HumanAction) -> Action:
         state=found.state,
         result=found.result,
     )
+
+
+def allowance_of(settings: OrchSettings, model: str) -> int | None:
+    """The free allowance `settings` gives `model` (27.15): the first `[apps.orch] allowances`
+    entry whose `provider:model-glob` matches it, else None (the provider's own rule)."""
+    provider = provider_of(model)
+    for key, value in settings.allowances.items():
+        named, _, glob = key.partition(":")
+        if named == provider and fnmatch(model, f"{provider}/{glob}"):
+            return value
+    return None
 
 
 def pick_connection(

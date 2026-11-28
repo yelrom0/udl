@@ -14,7 +14,7 @@ other knobs come with 27.7.
 from typing import Annotated, Final, Literal
 
 # Package Imports
-from pydantic import BaseModel, ConfigDict, Field, PositiveInt
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator
 
 # Local Imports
 from udl.config import ByteSize
@@ -119,6 +119,22 @@ class OrchSettings(AppSettings):
     session_memory: ByteSize | None = 20 * 1024**3
     """The memory one agent's turn may use (27.12), so a runaway in a turn is that turn's
     failure. None: no cap."""
+
+    allowances: dict[str, PositiveInt] = Field(default_factory=dict)
+    """A per-account free allowance override (27.15), keyed `provider:model-glob` (e.g.
+    `openrouter:deepseek/*`): a free agent whose model matches gets that many requests a day
+    instead of the provider's own 50 or 1,000. Empty: the provider's rule stands."""
+
+    @field_validator("allowances")
+    @classmethod
+    def _allowance_keys(cls, value: dict[str, PositiveInt]) -> dict[str, PositiveInt]:
+        """Every key is `provider:model-glob`, both parts non-empty (27.15): a malformed key
+        would silently match nothing."""
+        for key in value:
+            provider, sep, glob = key.partition(":")
+            if not sep or not provider or not glob:
+                raise ValueError(f"an allowance key is `provider:model-glob`, not {key!r}")
+        return value
 
     health: HealthSettings = Field(default_factory=HealthSettings)
     """What counts as a host in trouble, and what udl does about it (27.13)."""

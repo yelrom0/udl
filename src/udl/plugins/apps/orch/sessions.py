@@ -22,6 +22,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict
 
 # Local Imports
 from udl.automations.events import EventType
+from udl.db.records import Name
 
 __all__ = [
     "AGENT_LIMITED",
@@ -35,6 +36,8 @@ __all__ = [
     "SESSION_EVENT",
     "SESSION_FAILED",
     "SESSION_STARTED",
+    "USAGE_LOW",
+    "USAGE_OUT",
     "AgentLimited",
     "ChatAnswered",
     "ChatEnded",
@@ -172,6 +175,45 @@ AGENT_LIMITED: Final = EventType(
     source="orch",
 )
 """What orch publishes when an agent's harness is out of quota (27.7)."""
+
+
+class UsageLow(_Model):
+    """An agent's usage is running low (27.15)."""
+
+    agent: Name
+    """The agent it is of."""
+    line: str
+    """What it has left, in a line (`$0.50 of $8 left`)."""
+
+
+class UsageOut(_Model):
+    """An agent's usage is out (27.15)."""
+
+    agent: Name
+    """The agent it is of."""
+    line: str
+    """What it has left, in a line (`0 of 50 requests left`)."""
+
+
+USAGE_LOW: Final = EventType(
+    name="orch.usage.low",
+    data=UsageLow,
+    summary="An agent's usage is running low",
+    example=UsageLow(agent="deepseek-b", line="$0.50 of $8 left"),
+    subject=lambda event: f"{event.agent}'s usage is low: {event.line}",
+    source="orch",
+)
+"""What orch publishes when an agent's usage crosses into `low` (27.15): once a crossing."""
+
+USAGE_OUT: Final = EventType(
+    name="orch.usage.out",
+    data=UsageOut,
+    summary="An agent's usage is out",
+    example=UsageOut(agent="deepseek-b", line="0 of 50 requests left"),
+    subject=lambda event: f"{event.agent}'s usage is out: {event.line}",
+    source="orch",
+)
+"""What orch publishes when an agent's usage crosses into `out` (27.15): once a crossing."""
 
 
 class ChatStarted(_Model):
