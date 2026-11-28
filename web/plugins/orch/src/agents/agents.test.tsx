@@ -250,6 +250,9 @@ describe("the agents' page (29.6)", () => {
 		const form = within(screen.getByRole("form", { name: "New agent" }));
 		fireEvent.change(form.getByLabelText("Runner"), { target: { value: "codex" } });
 		fireEvent.change(form.getByLabelText("Host"), { target: { value: "jeff-wiggle" } });
+		// (The models are the page's own read, which answers after the change: a slow machine
+		// has not had the answer yet when the change returns.)
+		await settle();
 
 		const models = within(form.getByLabelText("Model"));
 		expect(models.getByRole("option", { name: "GPT-5" })).toBeTruthy();
