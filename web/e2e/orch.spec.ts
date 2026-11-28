@@ -407,11 +407,47 @@ async function tidy(page: Page, left: Left, origin: string): Promise<void> {
 			await call(page, "pause_agent", { name });
 		}
 	}
+	// (A blocking question is pinned on the inbox and counts in the nav, so one left open would
+	// be a second one to the specs that follow — and the other colour's run. An agent made
+	// after udl started is dispatched to now (27.7), so one this spec assigned a task it has no
+	// turn for is nudged until it stalls and asks; answering it closes it, as a person would.)
+	// (Up to three passes: a turn already running when the agent was paused can still end and ask
+	// after the first.)
+	const theirs = (one: AskedQuestion): boolean =>
+		one.state === "open" && [left.worker, left.watcher].includes(one.asked_by);
+	for (let pass = 0; pass < 3; pass += 1) {
+		const open = (await asked(page)).filter(theirs);
+		if (open.length === 0) {
+			break;
+		}
+		for (const one of open) {
+			await call(page, "answer", { key: one.key, answer: "Answered by the tidy." });
+		}
+		await page.waitForTimeout(500);
+	}
+	// (It must be closed now: an open one would be pinned on the next spec's inbox.)
+	expect((await asked(page)).filter(theirs).map((one) => `${one.key} ${one.asked_by}`)).toEqual([]);
 	const gone = await page.request.delete(`/accounts/${encodeURIComponent(left.account)}`, {
 		headers,
 	});
 	// (404: a test that never connected it; 401: one that never signed in, so there is nothing.)
 	expect([200, 204, 401, 404]).toContain(gone.status());
+}
+
+/** A question as `list_questions` answers with it: enough of it to tell whether it is still
+ * open, and whose it is. */
+interface AskedQuestion {
+	readonly key: string;
+	readonly state: string;
+	readonly asked_by: string;
+}
+
+/** The project's questions, as udl has them. */
+async function asked(page: Page): Promise<AskedQuestion[]> {
+	const found = (await call(page, "list_questions", { project: "udl" })) as {
+		questions?: AskedQuestion[];
+	};
+	return found.questions ?? [];
 }
 
 /** Where a task is now, as udl has it. */
@@ -676,6 +712,13 @@ test("the chat allows a permission and assigns a task, and the Board has it (29.
 	test.setTimeout(600_000);
 	await page.goto("/ui/");
 	const seeded = await setup(page, `${testInfo.project.name}-chat`);
+
+	// (The agent the chat assigns to is paused before it: udl dispatches to an agent made while it
+	// runs now (27.7), and this spec's scripted harness has a turn for the chat's prompt, not for
+	// an agent session's — an agent nudged `max_nudges` times without progress stalls and asks a
+	// blocking question, which the specs that follow would see pinned. This spec is about the
+	// chat's permission and the Board, and neither needs the agent to work.)
+	await call(page, "pause_agent", { name: seeded.watcher });
 
 	// (The harness asks before it acts, and its next step is the assignment: the person's answer
 	// is what lets the turn go on.)

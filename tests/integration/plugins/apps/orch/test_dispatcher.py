@@ -3323,14 +3323,17 @@ class _AHost:
     def __init__(self, health: HostHealth) -> None:
         self.health = health
         self.asked = 0
+        self.names: list[str] = []
+        """Every host the check asked about, in order."""
         self.fails = False
         """Whether the read raises, as a host whose `df` is missing does."""
 
     async def __call__(self, name: str) -> HostHealth:
         self.asked += 1
+        self.names.append(name)
         if self.fails:
             raise RuntimeError("df: not found")
-        return self.health
+        return self.health.model_copy(update={"host": name})
 
 
 def _health_over(service: UDLService, said: _AHost, *, on_breach: Breach = "act") -> Health:
@@ -3442,3 +3445,353 @@ async def test_a_host_that_gets_better_lets_its_agent_go(service: UDLService) ->
     await check.check(["local"])
 
     assert await check.held("local") is False
+
+
+# ---------------------------------------------------------------------------------------------
+# An agent made or enabled while udl runs is dispatched to, without a restart (27.7, fix)
+# ---------------------------------------------------------------------------------------------
+
+
+async def a_late_agent(service: UDLService, *, key: str = "F-1.3", host: str = "local") -> Task:
+    """An agent made while the dispatcher runs, with a queued task of its own."""
+    agents = AgentRecords(AppRecords(service.db))
+    await agents.save_agent(
+        Agent(name="late", title="Late", runner="fake", host=host, brief="Build it.")
+    )
+    return await a_late_task(service, key=key)
+
+
+async def a_late_task(service: UDLService, *, key: str = "F-1.3", agent: str = "late") -> Task:
+    """A queued task of its own for `agent`, with the pull `orch_ready` finds."""
+    tasks = TaskRecords(AppRecords(service.db))
+    task = Task(project="udl", feature="F-1", key=key, title="Late one", assignee=agent)
+    await tasks.save_task(task)
+    await tasks.move(task, QUEUED, by=Principal(kind="system", role="assign"))
+    await LinkRecords(AppRecords(service.db)).add(
+        project="udl", owner_kind=OwnerKind.TASK, owner=key, kind="pull", url=PULL
+    )
+    return task
+
+
+async def test_an_agent_made_after_the_start_gets_its_first_turn(service: UDLService) -> None:
+    """(A person making an agent on the Agents page must not have to restart udl: the next tick
+    reads the enabled agents and gives the new one a loop.)"""
+    agents = AgentRecords(AppRecords(service.db))
+    first = await agents.agent(AGENT)
+    assert first is not None
+    await agents.save_agent(first.model_copy(update={"enabled": False}))
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        await clock.advance(timedelta(seconds=31))  # (nothing is enabled: nothing runs)
+        assert STORE.turns == 0
+        await a_late_agent(service)
+        await scripted(service, "F-1.3")
+        for _ in range(4):
+            if STORE.turns:
+                break
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert STORE.turns >= 1, f"the agent made after the start was never given a turn: {PROMPTS}"
+    session = await session_of(service, "late")
+    assert session is not None
+    task = (await tasks_of(service))["F-1.3"]
+    assert task.state == READY
+
+
+async def test_an_agent_enabled_after_the_start_gets_its_first_turn(service: UDLService) -> None:
+    """(The same for one the fixture made disabled, then a person enables: its loop starts on the
+    next tick, and it works its queue.)"""
+    agents = AgentRecords(AppRecords(service.db))
+    first = await agents.agent(AGENT)
+    assert first is not None
+    await agents.save_agent(first.model_copy(update={"enabled": False}))
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        await clock.advance(timedelta(seconds=31))
+        assert STORE.turns == 0
+        await agents.save_agent(first.model_copy(update={"enabled": True}))
+        await scripted(service, "F-1.1")
+        for _ in range(4):
+            if STORE.turns:
+                break
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert STORE.turns >= 1, f"the agent enabled after the start was never given a turn: {PROMPTS}"
+    session = await session_of(service)
+    assert session is not None
+    assert session.agent == AGENT
+
+
+async def test_a_new_agent_gets_one_loop_and_not_two(service: UDLService) -> None:
+    """(A tick that finds the agent already running starts nothing: one loop, one session, and a
+    second tick does not double it.)"""
+    agents = AgentRecords(AppRecords(service.db))
+    first = await agents.agent(AGENT)
+    assert first is not None
+    await agents.save_agent(first.model_copy(update={"enabled": False}))
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        await clock.advance(timedelta(seconds=31))
+        await a_late_agent(service)
+        await scripted(service, "F-1.3")
+        for _ in range(4):
+            if STORE.turns:
+                break
+            await clock.advance(timedelta(seconds=31))
+        assert found.running == ("late",)
+        for _ in range(4):
+            await clock.advance(timedelta(seconds=31))
+        assert found.running == ("late",)
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    sessions = await SessionRecords(AppRecords(service.db)).sessions("late")
+    assert len(sessions) == 1, f"one session per agent, not one per tick: {sessions}"
+
+
+async def test_stop_ends_a_loop_started_later_too(service: UDLService) -> None:
+    """(The card's stop cancels every task, including the ones the watcher started after `run()`
+    began: nothing of the dispatcher's outlives it.)"""
+    agents = AgentRecords(AppRecords(service.db))
+    first = await agents.agent(AGENT)
+    assert first is not None
+    await agents.save_agent(first.model_copy(update={"enabled": False}))
+
+    clock = FakeClock()
+    found, ctx = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    await clock.advance(timedelta(seconds=31))
+    await a_late_agent(service)
+    for _ in range(4):
+        if found.running:
+            break
+        await clock.advance(timedelta(seconds=31))
+    assert found.running == ("late",)
+    loop = found._loops["late"]  # pyright: ignore[reportPrivateUsage]  (the task itself)
+
+    ctx.stop.set()
+    await asyncio.wait_for(running, timeout=10)
+
+    assert loop.done(), "the loop started later outlived the dispatcher"
+    assert loop.cancelled()
+
+
+async def test_a_new_agent_s_host_is_checked(service: UDLService) -> None:
+    """(A host only a new agent is on must be checked like any other: the health check reads the
+    enabled agents each round, not the list it was given at start.)"""
+    agents = AgentRecords(AppRecords(service.db))
+    first = await agents.agent(AGENT)
+    assert first is not None
+    await agents.save_agent(first.model_copy(update={"enabled": False}))
+
+    said = _AHost(_a_host(io=1.0))
+    check = _health_over(service, said, on_breach="act")
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock, health=check)
+    running = asyncio.ensure_future(found.run())
+    try:
+        await clock.advance(timedelta(seconds=31))
+        assert "far" not in said.names
+        await a_late_agent(service, host="far")
+        for _ in range(20):
+            if "far" in said.names:
+                break
+            await clock.advance(timedelta(minutes=1))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert "far" in said.names, f"the new agent's host was never checked: {said.names}"
+
+
+async def test_an_agent_made_through_the_page_is_dispatched_to_at_once(service: UDLService) -> None:
+    """(29.6's `orch.agent.changed`: a person making an agent gives it a loop as it is made, not
+    at the next tick — the clock is never advanced here.)"""
+    agents = AgentRecords(AppRecords(service.db))
+    first = await agents.agent(AGENT)
+    assert first is not None
+    await agents.save_agent(first.model_copy(update={"enabled": False}))
+
+    clock = FakeClock()
+    counted = _Counted(service.db)
+    found, _ = await dispatcher(service, clock=clock, records=counted)
+    running = asyncio.ensure_future(found.run())
+    try:
+        # (The agent is made after the watcher's first read and after the subscription is up, so
+        # only the event can give it a loop: made before either, the read would find it — or the
+        # event would be published before anything listens — and the test would prove nothing.)
+        await until(lambda: _answered(counted.reads >= 1 and found._listening.is_set()))  # pyright: ignore[reportPrivateUsage]
+        await service.call(
+            "orch_set_agent",
+            {
+                "name": "late",
+                "title": "Late",
+                "runner": "fake",
+                "host": "local",
+                "brief": "Build it.",
+            },
+        )
+        await a_late_task(service)
+        await scripted(service, "F-1.3")
+        await until(lambda: _answered(bool(STORE.turns)))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert STORE.turns >= 1, f"the agent made through the page was never given a turn: {PROMPTS}"
+
+
+async def _answered(what: bool) -> bool:
+    """`what`, as `until` asks it (the value is already read when the test writes it)."""
+    return what
+
+
+async def test_a_remade_agent_is_checked_again(service: UDLService) -> None:
+    """(An agent deleted and made again under the same name — on another host — gets its host
+    checked again: the check is forgotten with the agent, not kept for the whole run.)"""
+    agents = AgentRecords(AppRecords(service.db))
+    first = await agents.agent(AGENT)
+    assert first is not None
+    await agents.save_agent(first.model_copy(update={"enabled": False}))
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        await clock.advance(timedelta(seconds=31))
+        await agents.save_agent(
+            Agent(name="late", title="Late", runner="fake", host="nowhere", brief="Build it.")
+        )
+        for _ in range(4):
+            await clock.advance(timedelta(seconds=31))
+        gone = await agents.agent("late")
+        assert gone is not None
+        assert gone.offline, "a host that does not answer makes its agent offline"
+        assert await agents.delete_agent("late")
+        for _ in range(2):
+            await clock.advance(timedelta(seconds=31))
+        assert found.running == ()
+        await agents.save_agent(
+            Agent(name="late", title="Late", runner="fake", host="nowhere", brief="Build it.")
+        )
+        for _ in range(4):
+            again = await agents.agent("late")
+            if again is not None and again.offline:
+                break
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    again = await agents.agent("late")
+    assert again is not None
+    assert again.offline, "the agent made again was never checked"
+
+
+async def test_an_agent_edited_to_another_host_is_checked_again(service: UDLService) -> None:
+    """(An agent moved to another host while udl runs is checked there: a check is the answer for
+    one host, not for the agent's name — kept by name alone, the new host was never asked.)"""
+    agents = AgentRecords(AppRecords(service.db))
+    first = await agents.agent(AGENT)
+    assert first is not None
+    await agents.save_agent(first.model_copy(update={"enabled": False}))
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        await agents.save_agent(
+            Agent(name="late", title="Late", runner="fake", host="nowhere", brief="Build it.")
+        )
+        for _ in range(4):
+            await clock.advance(timedelta(seconds=31))
+        gone = await agents.agent("late")
+        assert gone is not None
+        assert gone.offline, "a host that does not answer makes its agent offline"
+        # (Moved to a host of its own: the check of the old one is not the new one's answer.)
+        await agents.save_agent(gone.model_copy(update={"host": "elsewhere"}))
+        for _ in range(4):
+            await clock.advance(timedelta(seconds=31))
+            if ("late", "elsewhere") in found._checks:  # pyright: ignore[reportPrivateUsage]
+                break
+        await clock.advance(timedelta(seconds=31))
+        checks = set(found._checks)  # pyright: ignore[reportPrivateUsage]
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert ("late", "elsewhere") in checks, "the new host was never checked"
+    assert ("late", "nowhere") not in checks, "the old host's check was kept"
+
+
+class _Counted(AppRecords):
+    """A store that counts its reads of the agents, so a test can wait for the watcher's own."""
+
+    reads = 0
+
+    async def list[R: Record](self, kind: type[R], query: RecordQuery | None = None) -> list[R]:
+        if kind is Agent:
+            self.reads += 1
+        return await super().list(kind, query)
+
+
+async def test_a_read_that_fails_does_not_end_the_watcher(service: UDLService) -> None:
+    """(A read that raises — a locked database — is logged, and the next tick reads again: an
+    agent made after it is still dispatched to, and `stop` still ends everything.)"""
+
+    class _OnceUnreadable(AppRecords):
+        """A store whose first read of the agents fails, as a locked database does."""
+
+        failures = 1
+
+        async def list[R: Record](self, kind: type[R], query: RecordQuery | None = None) -> list[R]:
+            if kind is Agent and self.failures:
+                self.failures -= 1
+                raise RuntimeError("the database is locked")
+            return await super().list(kind, query)
+
+    agents = AgentRecords(AppRecords(service.db))
+    first = await agents.agent(AGENT)
+    assert first is not None
+    await agents.save_agent(first.model_copy(update={"enabled": False}))
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock, records=_OnceUnreadable(service.db))
+    running = asyncio.ensure_future(found.run())
+    try:
+        await clock.advance(timedelta(seconds=31))  # (the first read fails here)
+        await a_late_agent(service)
+        await scripted(service, "F-1.3")
+        for _ in range(4):
+            if STORE.turns:
+                break
+            await clock.advance(timedelta(seconds=31))
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert STORE.turns >= 1, f"the watcher died on a read that failed: {PROMPTS}"

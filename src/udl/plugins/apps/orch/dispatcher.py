@@ -29,7 +29,15 @@ import logging
 import os
 import re
 import socket
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Coroutine,
+    Mapping,
+    Sequence,
+)
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -304,6 +312,27 @@ class Dispatcher:
         seconds, and an agent on a host that is in trouble is in trouble all of them."""
         self._wakes: dict[str, asyncio.Event] = {}
         """One wake per agent: an event that may concern it, or its tick."""
+        self._loops: dict[str, asyncio.Task[None]] = {}
+        """The loop of each agent being dispatched to, by name: an agent that has none gets one
+        on the next read (a person's make, enable or un-pause needs no restart)."""
+        self._checks: dict[tuple[str, str], asyncio.Task[None]] = {}
+        """The host check of each agent, by its name and its host: started with its loop, and
+        kept for the run — an agent edited to another host needs a check of that one, since a
+        check is one host's answer for one agent, and ends when the agent leaves that host."""
+        self._listening = asyncio.Event()
+        """Set once `orch.agent.changed` is subscribed to: what a test waits for before making an
+        agent, so that only the event — not the watcher's next read — can dispatch to it."""
+        self._all: set[asyncio.Task[None]] = set()
+        """Every task this dispatcher started: `stop` ends the ones started later too."""
+        self._changed = asyncio.Event()
+        """Set when an agent is made, edited, paused, resumed or deleted (29.6's event), so the
+        watcher reads the agents at once rather than at the next tick."""
+
+    @property
+    def running(self) -> tuple[str, ...]:
+        """The agents this dispatcher has a loop for, in name order: what a person's change to an
+        agent is read back as, and what `stop` empties."""
+        return tuple(sorted(self._loops))
 
     # -- running -------------------------------------------------------------------------------
 
@@ -320,28 +349,104 @@ class Dispatcher:
             )
             await self._stop.wait()
             return
-        agents = [one for one in await stored.AgentRecords(self._records).agents() if one.enabled]
-        if not agents:
-            await self._stop.wait()
-            return
         await self._pruned()
-        for agent in agents:
-            self._wakes[agent.name] = asyncio.Event()
-        loops = [asyncio.create_task(self._loop(agent)) for agent in agents]
-        waking = asyncio.create_task(self._woken_by_events())
-        pruning = asyncio.create_task(self._pruning())
-        reaching = [asyncio.create_task(self._reaching(agent)) for agent in agents]
-        checking = asyncio.create_task(self._checking(agents))
-        stopping = asyncio.create_task(self._stop.wait())
-        everything = [*loops, *reaching, waking, pruning, checking, stopping]
+        # (No agent is enabled yet, or one is made or enabled while this runs: the watcher reads
+        # them, so a person's change needs no restart. Nothing at all without an api key, above.)
+        self._spawn(self._watching())
+        self._spawn(self._woken_by_events())
+        self._spawn(self._pruning())
+        self._spawn(self._checking())
+        self._spawn(self._agent_writes())
         try:
             await self._stop.wait()  # (a loop never ends on its own: it logs and carries on)
         finally:
+            # (Every task is cancelled before anything is awaited, so the watcher — the one task
+            # that starts others — cannot start another in between. `return_exceptions` because a
+            # task that ended on its own error must not keep the rest from ending here.)
+            everything = set(self._all)
             for task in everything:
                 task.cancel()
-            for task in everything:
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+            await asyncio.gather(*everything, return_exceptions=True)
+            self._all.clear()
+            self._loops.clear()
+            self._checks.clear()
+
+    def _spawn(self, coro: Coroutine[object, object, None]) -> asyncio.Task[None]:
+        """Start a task and remember it: `stop` ends every one, including those started later."""
+        task = asyncio.create_task(coro)
+        self._all.add(task)
+        task.add_done_callback(self._all.discard)
+        return task
+
+    async def _watching(self) -> None:
+        """Give every enabled agent a loop and a host check, for as long as udl runs.
+
+        It reads the enabled agents every time, not once: an agent a person makes, enables or
+        un-pauses while udl runs is dispatched to on the next tick (or at once, on 29.6's
+        `orch.agent.changed`), instead of doing nothing until udl restarts. An agent that already
+        has a loop gets nothing, so a tick never doubles one; a deleted agent's loop ends by
+        itself (`fresh is None`) and is forgotten here, so its name may be used again."""
+        while True:
+            # (Cleared before the read: an event that lands while it is in flight wakes the wait
+            # below at once instead of being cleared with it.)
+            self._changed.clear()
+            try:
+                await self._staffed()
+            except Exception:  # (one read's trouble is not the watcher's end)
+                log.warning("reading the agents to dispatch to", exc_info=True)
+            await self._ticked_or_changed()
+
+    async def _staffed(self) -> None:
+        """Start what the enabled agents have not got yet: a loop, its wake and its host check."""
+        agents = [one for one in await stored.AgentRecords(self._records).agents() if one.enabled]
+        enabled = {(agent.name, agent.host) for agent in agents}
+        for key in [one for one in self._checks if one not in enabled]:
+            # (A deleted or disabled agent's check ends with it, and so does one of a host it is
+            # no longer on: an agent made again under the same name — or moved to another host —
+            # gets a check of its own.)
+            self._checks.pop(key).cancel()
+        for agent in agents:
+            self._wakes.setdefault(agent.name, asyncio.Event())
+            if agent.name not in self._loops:
+                task = self._spawn(self._loop(agent))
+                self._loops[agent.name] = task
+                task.add_done_callback(lambda _, name=agent.name: self._forget(name))
+            key = (agent.name, agent.host)
+            if key not in self._checks:
+                self._checks[key] = self._spawn(self._reaching(agent))
+
+    def _forget(self, name: str) -> None:
+        """Forget `name`'s loop, if it has ended (it was deleted, or udl is stopping): a new
+        agent of that name is given a loop of its own."""
+        task = self._loops.get(name)
+        if task is not None and task.done():
+            del self._loops[name]
+
+    async def _ticked_or_changed(self) -> None:
+        """Wait for the tick, or for an agent's write to say one changed: whichever is first."""
+        ticking = asyncio.ensure_future(self._clock.sleep(self._tick))
+        changed = asyncio.ensure_future(self._changed.wait())
+        waiting = (ticking, changed)
+        try:
+            await asyncio.wait(set(waiting), return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in waiting:
+                task.cancel()
+            await asyncio.gather(*waiting, return_exceptions=True)
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                # (A stop that landed on the wait is not one to swallow: the watcher must end.)
+                raise asyncio.CancelledError
+
+    async def _agent_writes(self) -> None:
+        """Wake the watcher on each `orch.agent.changed` (29.6): an agent made, edited, paused,
+        resumed or deleted takes effect at once, not at the next tick."""
+        async with self._events.subscribe("orch.agent.changed") as changed:
+            # (Listening: what a test waits for before making an agent, so that only the event —
+            # not the watcher's next read — can be what dispatches to it.)
+            self._listening.set()
+            async for _ in changed:
+                self._changed.set()
 
     async def _pruned(self) -> None:
         """Forget the transcripts older than `session_days` (when the app starts, and on every
@@ -360,17 +465,20 @@ class Dispatcher:
             with contextlib.suppress(PluginError, UDLError):
                 await self._pruned()
 
-    async def _checking(self, agents: Sequence[stored.Agent]) -> None:
-        """Check every agent's host on `check_minutes`, for as long as udl runs (27.13): what
-        opens and closes a host's issues, and raises the action a person reads about one. The
-        first check is at once — a udl that starts on a host with no room left should say so
-        before it starts anything."""
+    async def _checking(self) -> None:
+        """Check every enabled agent's host on `check_minutes`, for as long as udl runs (27.13):
+        what opens and closes a host's issues, and raises the action a person reads about one.
+        The first check is at once — a udl that starts on a host with no room left should say so
+        before it starts anything — and the agents are read each round, so a host only a new
+        agent is on is checked like any other."""
         if self._health is None:
             return
-        hosts = sorted({agent.host for agent in agents})
         while True:
             try:
-                await self._health.check(hosts)
+                agents = [
+                    one for one in await stored.AgentRecords(self._records).agents() if one.enabled
+                ]
+                await self._health.check(sorted({agent.host for agent in agents}))
             except Exception:
                 log.warning("checking the hosts' health", exc_info=True)
             await self._clock.sleep(timedelta(minutes=self._settings.health.check_minutes))
