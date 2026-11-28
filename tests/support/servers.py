@@ -34,8 +34,9 @@ _START_TIMEOUT: Final[float] = 600
 _READY_TIMEOUT: Final[float] = 60
 # Containers the tests start carry this label (`docker ps --filter label=udl-tests`).
 _LABEL: Final[str] = "udl-tests"
-# Which run started a container: a run that is killed never reaches `serving`'s finally, so the
-# container outlives it and has to be found afterwards (`docker ps` reports the label).
+# Which run started a container (its owner's pid): a run that is killed never reaches
+# `Run.end()`, so the container outlives it and has to be found afterwards (`docker ps` reports
+# the label).
 _PID_LABEL: Final[str] = "udl-tests.pid"
 # Which machine started it: a pid only means anything on the machine that wrote it (a daemon may
 # be shared), so a container from another machine is left to the age rule.
@@ -43,7 +44,7 @@ _HOST_LABEL: Final[str] = "udl-tests.host"
 # A container this old is a leftover, whatever its pid says (a pid may be reused, and a container
 # of a run that is still going is never this old).
 _OLD: Final[timedelta] = timedelta(days=1)
-# The run a process's tests belong to: the pid of the process that owns it, which pytest-xdist's
+# The run a process's tests belong to, as `<owner's pid>:<its directory>`, which pytest-xdist's
 # workers inherit from their controller's environment.
 RUN_VAR: Final[str] = "UDL_TESTS_RUN"
 # In the run's directory: every container the run started, one a line (whether it ever answered).
@@ -98,29 +99,25 @@ class Run:
     is gone. The run's directory is where its workers find what the first of them started."""
 
     owner: int
-
-    @property
-    def directory(self) -> Path:
-        return Path(tempfile.gettempdir()) / f"udl-tests-{self.owner}"
+    directory: Path
 
     @classmethod
     def begin(cls) -> Run:
         """The run this process owns, passed down (in the environment) to the workers it starts.
 
-        What a killed run of the same pid left in the directory is cleared: its URLs name
-        containers that are gone."""
-        run = cls(os.getpid())
-        shutil.rmtree(run.directory, ignore_errors=True)
-        os.environ[RUN_VAR] = str(run.owner)
+        Its directory is made fresh, for this user alone (`mkdtemp`, 0700): a name nobody else can
+        have made first, so no URL in it is anyone's but the run's."""
+        run = cls(os.getpid(), Path(tempfile.mkdtemp(prefix="udl-tests-")))
+        os.environ[RUN_VAR] = f"{run.owner}:{run.directory}"
         return run
 
     @classmethod
     def joined(cls) -> Run:
         """The run a worker belongs to: its controller's, else (nothing said one) its own."""
-        try:
-            return cls(int(os.environ[RUN_VAR]))
-        except KeyError, ValueError:
-            return cls.begin()
+        owner, _, directory = os.environ.get(RUN_VAR, "").partition(":")
+        if owner.isdigit() and directory:
+            return cls(int(owner), Path(directory))
+        return cls.begin()
 
     def end(self) -> None:
         """Stop every container the run started (one `docker stop` for them all), and clear its
@@ -149,7 +146,7 @@ def serve(server: Server, env_var: str, ready: Callable[[str], bool], run: Run) 
     the server answers, so a start that failed is tried again rather than handed on."""
     if url := os.environ.get(env_var):
         return url
-    run.directory.mkdir(exist_ok=True)
+    run.directory.mkdir(mode=0o700, exist_ok=True)
     name = server.image.partition(":")[0]
     with _held(run.directory / f"{name}.lock"):
         if (known := run.directory / f"{name}.url").exists():

@@ -102,11 +102,20 @@ def docker(monkeypatch: pytest.MonkeyPatch) -> FakeDocker:
 
 
 @pytest.fixture
-def run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> servers.Run:
+def run(tmp_path: Path) -> servers.Run:
     """A run of the tests of its own, owned by a pid that is not this one (as a worker's run is
     its controller's), with its directory under the test's own."""
+    return servers.Run(owner=os.getppid(), directory=tmp_path / "run")
+
+
+@pytest.fixture
+def temp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """The temporary directory a run begun in the test makes its own in: the test's, never the
+    machine's, where the run this test is part of keeps its servers (without xdist that is this
+    very process's run)."""
     monkeypatch.setattr(servers.tempfile, "gettempdir", lambda: str(tmp_path))
-    return servers.Run(owner=os.getppid())
+    monkeypatch.delenv(servers.RUN_VAR, raising=False)
+    return tmp_path
 
 
 def ps_line(container: str, pid: str, age: timedelta, host: str = "") -> str:
@@ -459,54 +468,64 @@ def test_without_docker_a_test_that_needs_a_server_is_skipped(
         servers.serve(servers.POSTGRES, "UDL_TEST_POSTGRES_URL", _answers, run)
 
 
-def test_a_run_begun_here_is_passed_down_to_the_workers_it_starts(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_run_begun_here_is_passed_down_to_the_workers_it_starts(temp: Path) -> None:
     """The controller begins the run before xdist starts its workers, which inherit its
     environment: a worker joins the controller's run, not one of its own."""
-    monkeypatch.delenv(servers.RUN_VAR, raising=False)
-
     begun = servers.Run.begin()
 
     assert begun.owner == os.getpid()
-    assert os.environ[servers.RUN_VAR] == str(os.getpid())
+    assert begun.directory.parent == temp
+    assert os.environ[servers.RUN_VAR] == f"{os.getpid()}:{begun.directory}"
     assert servers.Run.joined() == begun
 
 
-def test_a_worker_with_no_run_to_join_has_one_of_its_own(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_run_s_directory_is_its_own_and_only_its_owner_s(temp: Path) -> None:
+    """Made fresh, under a name nobody can guess, for its owner alone: another user on the machine
+    cannot have made it first and left a URL of their own in it."""
+    first, second = servers.Run.begin(), servers.Run.begin()
+
+    assert first.directory != second.directory
+    assert first.directory.is_dir()
+    assert first.directory.stat().st_mode & 0o777 == 0o700
+
+
+def test_a_worker_with_no_run_to_join_has_one_of_its_own(temp: Path) -> None:
     """(It never happens under xdist, but a worker that found nothing would otherwise have no one
     to stop its containers.)"""
-    monkeypatch.delenv(servers.RUN_VAR, raising=False)
+    own = servers.Run.joined()
 
-    assert servers.Run.joined().owner == os.getpid()
+    assert own.owner == os.getpid()
+    assert own.directory.parent == temp
 
 
-def test_a_run_whose_variable_is_not_a_pid_is_one_of_its_own(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("said", ["not-a-pid", "4242", "x:/tmp/somewhere", ":/tmp/a"])
+def test_a_run_variable_that_does_not_say_a_run_is_a_run_of_its_own(
+    temp: Path, monkeypatch: pytest.MonkeyPatch, said: str
 ) -> None:
-    monkeypatch.setenv(servers.RUN_VAR, "not-a-pid")
+    monkeypatch.setenv(servers.RUN_VAR, said)
 
-    assert servers.Run.joined().owner == os.getpid()
+    own = servers.Run.joined()
+
+    assert own.owner == os.getpid()
+    assert own.directory.parent == temp
 
 
-def test_a_run_begun_on_a_reused_pid_starts_its_own_servers(
-    docker: FakeDocker, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_a_directory_planted_where_a_run_s_used_to_be_is_never_read_nor_removed(
+    docker: FakeDocker, temp: Path
 ) -> None:
-    """A run that was killed leaves its directory, and its URLs name containers the reap has since
-    stopped: a new run on the same pid starts afresh."""
-    monkeypatch.setattr(servers.tempfile, "gettempdir", lambda: str(tmp_path))
-    monkeypatch.delenv(servers.RUN_VAR, raising=False)
-    left = tmp_path / f"udl-tests-{os.getpid()}"
-    left.mkdir()
-    (left / "postgres.url").write_text("postgresql://udl:udl@127.0.0.1:1/postgres")
+    """A run's directory used to be named for its pid, and a run begun on a pid cleared what was
+    there: a name anyone can make first, and a clearing that, without xdist, took the live run's
+    own directory when a test began a run (#125's review). Neither is so now."""
+    planted = temp / f"udl-tests-{os.getpid()}"
+    planted.mkdir()
+    (planted / "postgres.url").write_text("postgresql://udl:udl@127.0.0.1:1/postgres")
 
     run = servers.Run.begin()
     url = servers.serve(servers.POSTGRES, "UDL_TEST_POSTGRES_URL", _answers, run)
 
     assert len(docker.started()) == 1
     assert url.endswith("127.0.0.1:5000/postgres")
+    assert (planted / "postgres.url").exists()
 
 
 def test_the_shared_mongodb_keeps_a_small_cache(docker: FakeDocker, run: servers.Run) -> None:
