@@ -407,6 +407,36 @@ async function tidy(page: Page, left: Left, origin: string): Promise<void> {
 			await call(page, "pause_agent", { name });
 		}
 	}
+	// (A blocking question is pinned on the inbox and counts in the nav, so one left open would
+	// be a second one to the specs that follow — and the other colour's run. An agent made
+	// after udl started is dispatched to now (27.7), so one this spec assigned a task it has no
+	// turn for is nudged until it stalls and asks; answering it closes it, as a person would.)
+	// (Up to three passes: a turn already running when the agent was paused can still end and ask
+	// after the first.)
+	for (let pass = 0; pass < 3; pass += 1) {
+		const asked = (await call(page, "list_questions", { project: "udl" })) as {
+			questions?: { key: string; state: string; asked_by: string }[];
+		};
+		const open = (asked.questions ?? []).filter(
+			(one) => one.state === "open" && [left.worker, left.watcher].includes(one.asked_by),
+		);
+		if (open.length === 0) {
+			break;
+		}
+		for (const one of open) {
+			await call(page, "answer", { key: one.key, answer: "Answered by the tidy." });
+		}
+		await page.waitForTimeout(500);
+	}
+	// (It must be closed now: an open one would be pinned on the next spec's inbox.)
+	const left_open = (await call(page, "list_questions", { project: "udl" })) as {
+		questions?: { key: string; state: string; asked_by: string }[];
+	};
+	expect(
+		(left_open.questions ?? [])
+			.filter((one) => one.state === "open" && [left.worker, left.watcher].includes(one.asked_by))
+			.map((one) => `${one.key} ${one.asked_by}`),
+	).toEqual([]);
 	const gone = await page.request.delete(`/accounts/${encodeURIComponent(left.account)}`, {
 		headers,
 	});
@@ -676,6 +706,13 @@ test("the chat allows a permission and assigns a task, and the Board has it (29.
 	test.setTimeout(600_000);
 	await page.goto("/ui/");
 	const seeded = await setup(page, `${testInfo.project.name}-chat`);
+
+	// (The agent the chat assigns to is paused before it: udl dispatches to an agent made while it
+	// runs now (27.7), and this spec's scripted harness has a turn for the chat's prompt, not for
+	// an agent session's — an agent nudged `max_nudges` times without progress stalls and asks a
+	// blocking question, which the specs that follow would see pinned. This spec is about the
+	// chat's permission and the Board, and neither needs the agent to work.)
+	await call(page, "pause_agent", { name: seeded.watcher });
 
 	// (The harness asks before it acts, and its next step is the assignment: the person's answer
 	// is what lets the turn go on.)
