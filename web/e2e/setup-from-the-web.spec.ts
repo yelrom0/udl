@@ -98,10 +98,10 @@ test("a person sets udl up from the web alone, and each thing is there", async (
 		timeout: 30_000,
 	});
 	const kept = await read(page, "/secrets");
-	// (Which store it is is the harness's business — CI runs udl with a file store, this machine
-	// with the memory one — but udl names it, and it says a token is kept, never which.)
-	expect(typeof kept.store).toBe("string");
-	expect(kept.store).not.toBe("");
+	// (The harness writes a file store, so an account connected before a restart is still
+	// connected after it: udl reports the store it was configured with, and says a token is kept,
+	// never which.)
+	expect(kept.store).toBe("file");
 	expect(kept.onepassword).toBe(true);
 	expect(JSON.stringify(kept)).not.toContain(token);
 	// (Nowhere on the page, and nowhere in its address.)
