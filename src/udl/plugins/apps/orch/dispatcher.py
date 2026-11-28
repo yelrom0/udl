@@ -315,11 +315,13 @@ class Dispatcher:
         self._loops: dict[str, asyncio.Task[None]] = {}
         """The loop of each agent being dispatched to, by name: an agent that has none gets one
         on the next read (a person's make, enable or un-pause needs no restart)."""
-        # (A check is one host's answer for one agent: an agent edited to another host needs a
-        # new one, so the key is both.)
         self._checks: dict[tuple[str, str], asyncio.Task[None]] = {}
+        """The host check of each agent, by its name and its host: started with its loop, and
+        kept for the run — an agent edited to another host needs a check of that one, since a
+        check is one host's answer for one agent, and ends when the agent leaves that host."""
         self._listening = asyncio.Event()
-        """The host check of each agent, by name: started with its loop, and kept for the run."""
+        """Set once `orch.agent.changed` is subscribed to: what a test waits for before making an
+        agent, so that only the event — not the watcher's next read — can dispatch to it."""
         self._all: set[asyncio.Task[None]] = set()
         """Every task this dispatcher started: `stop` ends the ones started later too."""
         self._changed = asyncio.Event()

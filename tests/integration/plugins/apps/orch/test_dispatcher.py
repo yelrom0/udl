@@ -3754,7 +3754,6 @@ class _Counted(AppRecords):
 
     async def list[R: Record](self, kind: type[R], query: RecordQuery | None = None) -> list[R]:
         if kind is Agent:
-            _Counted.reads += 1
             self.reads += 1
         return await super().list(kind, query)
 
