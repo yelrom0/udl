@@ -213,6 +213,7 @@ def test_udls_own_messages_are_the_protocol(tmp_path: Path) -> None:
         process.stdin.close()
         process.communicate(timeout=30)
         assert process.returncode == 0, f"{mode} exited {process.returncode}"
+
         for line in kept.read_text().splitlines():
             check(V1, name, _OBJECT.validate_python(json.loads(line).get("result")))
 
