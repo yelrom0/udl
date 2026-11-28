@@ -326,7 +326,13 @@ class CodexChat:
         tool, wanted = _asked(kind, message.params or {}, session.paths)
         answer = await self._ask(tool, wanted, str(message.id if message.id is not None else ""))
         if not answer.allowed:
-            decision = _OLD_DECLINE if kind == "legacy" else _DECLINE
+            # (The older `ReviewDecision` denies with an object, and its `rejection` is where the
+            # person's reason reaches Codex: a bare word is a shape the schema refuses.)
+            decision = (
+                {"denied": {"rejection": answer.message or "denied"}}
+                if kind == "legacy"
+                else _DECLINE
+            )
         elif answer.for_chat:
             decision = _OLD_ANSWER_FOR_CHAT if kind == "legacy" else _ANSWER_FOR_CHAT
         else:

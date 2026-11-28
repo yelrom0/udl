@@ -16,8 +16,11 @@ from datetime import timedelta
 from pathlib import Path
 
 # Package Imports
+import pytest
+
 # Local Imports
 from udl.db.models import JsonObject
+from udl.errors import PluginFailed
 from udl.hosts.shell import Host, LocalShell
 from udl.plugins.apps.orch.codex_chat import Ask, CodexChat, CodexQuestion
 from udl.plugins.runners.base import (
@@ -218,6 +221,24 @@ async def test_two_pathless_file_approvals_are_both_asked() -> None:
     assert "file_path" not in asked[1][1]
     assert asked[1][1].get("reason")
     assert not rememberable(asked[1][0], asked[1][1])
+
+
+async def test_an_error_answer_is_raised_and_the_session_is_gone() -> None:
+    """(A JSON-RPC `error` is a failure, never an empty answer: the caller must not read it as a
+    started thread.)"""
+    driver_ = driver(mode="error")
+
+    with pytest.raises(PluginFailed, match="refused"):
+        await driver_.start(SessionSpec(cwd=str(ROOT)))
+
+    assert vars(driver_)["_sessions"] == {}
+
+
+async def test_a_server_that_dies_mid_call_is_a_failure_not_a_wait() -> None:
+    driver_ = driver(mode="dies")
+
+    with pytest.raises(PluginFailed):
+        await driver_.start(SessionSpec(cwd=str(ROOT)))
 
 
 async def test_a_ref_that_is_gone_says_so_rather_than_hanging() -> None:

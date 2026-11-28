@@ -75,8 +75,6 @@ MODES = ("turn", "command", "file", "legacy-exec", "legacy-patch")
 _OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 """One answer's `result`, as the JSON object it is."""
 
-SCHEMA = "tests/fixtures/codex-app-server"
-
 
 def schema(document: dict[str, Any], name: str) -> dict[str, Any]:
     """One definition of a document, with its own `$ref`s resolved inside it."""
@@ -88,17 +86,23 @@ def check(document: dict[str, Any], name: str, message: dict[str, Any]) -> None:
     jsonschema.validate(message, schema(document, name))
 
 
-def said(mode: str, *requests: dict[str, Any]) -> list[dict[str, Any]]:
-    """What the fake says for `mode`, given the requests udl would send it."""
+def said(mode: str, *requests: object) -> list[dict[str, Any]]:
+    """What the fake says for `mode`, given the requests udl would send it (a trailing string is
+    where it keeps the answers udl wrote)."""
+    argv = [sys.executable, str(FAKE), mode]
+    rest: list[object] = list(requests)
+    if rest and isinstance(rest[-1], str):
+        argv.append(rest[-1])
+        rest = rest[:-1]
     process = subprocess.Popen(  # noqa: S603 - the fake is the program under test
-        [sys.executable, str(FAKE), mode],
+        argv,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
     )
     assert process.stdin is not None
     assert process.stdout is not None
-    for request in requests:
+    for request in rest:
         process.stdin.write(json.dumps(request) + "\n")
         process.stdin.flush()
     process.stdin.close()
@@ -178,28 +182,39 @@ OLD_OUT: list[dict[str, Any]] = [
 """The same, in the older vocabulary (`ReviewDecision`)."""
 
 
-def test_udls_own_messages_are_the_protocol() -> None:
-    """(What the driver writes: each request is the `ClientRequest` variant its method names, and
-    each answer is the response that variant's title names.)"""
+def test_udls_own_messages_are_the_protocol(tmp_path: Path) -> None:
+    """(What the driver *actually writes*: the fake keeps every answer udl sent, and each is
+    validated against the response its own request names — v2's and the older vocabulary.)"""
     client = V2["definitions"]["ClientRequest"]["oneOf"]
     for message in OUT:
         method = message.get("method")
         if method is None:
             continue
-        entry = next(one for one in client if one["properties"]["method"]["enum"] == [method])
-        assert entry["properties"]["method"]["enum"] == [method]
         check(V2, "ClientRequest", message)
-    # (An answer is the response's own `result`, not the whole message: the schemas describe the
-    # params/result, and the envelope around them is udl's.)
-    for message, name in [(one, "ExecCommandApprovalResponse") for one in OLD_OUT] + [
-        (one, "CommandExecutionRequestApprovalResponse") for one in OUT if "result" in one
-    ]:
-        result = message.get("result")
-        if not isinstance(result, dict):
-            continue
-        # (The answer's own `result`, as the response schema has it.)
-        clean = _OBJECT.validate_python(result)
-        check(V1, name, clean)
+        assert method in [one["properties"]["method"]["enum"][0] for one in client]
+    for mode, name in (
+        ("command", "CommandExecutionRequestApprovalResponse"),
+        ("file", "FileChangeRequestApprovalResponse"),
+        ("legacy-exec", "ExecCommandApprovalResponse"),
+        ("legacy-patch", "ApplyPatchApprovalResponse"),
+    ):
+        kept = tmp_path / f"{mode}.jsonl"
+        process = subprocess.Popen(  # noqa: S603 - the fake is the program under test
+            [sys.executable, str(FAKE), mode, str(kept)],
+            cwd=str(ROOT),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        assert process.stdin is not None
+        for request in (START, THREAD, TURN, ANSWER):
+            process.stdin.write(json.dumps(request) + "\n")
+            process.stdin.flush()
+        process.stdin.close()
+        process.communicate(timeout=30)
+        assert process.returncode == 0, f"{mode} exited {process.returncode}"
+        for line in kept.read_text().splitlines():
+            check(V1, name, _OBJECT.validate_python(json.loads(line).get("result")))
 
 
 def test_the_schema_has_the_requests_the_driver_writes() -> None:

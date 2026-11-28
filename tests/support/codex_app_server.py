@@ -27,6 +27,7 @@ fake cannot drift from the schemas the driver reads.
 
 # System Imports
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,15 @@ APPROVALS: dict[str, str] = {
     "legacy-patch": "applyPatchApproval",
 }
 """Each mode's approval request, and the method it is sent as."""
+
+
+_SAID: list[str] = []
+"""Where the answers udl wrote are kept (set from argv, read by `said_file`)."""
+
+
+def said_file() -> str:
+    """Where the answers udl wrote are kept (the test reads them back)."""
+    return _SAID[0] if _SAID else os.devnull
 
 
 def send(message: Json) -> None:
@@ -140,6 +150,25 @@ def _approval(mode: str) -> Json:
 def main(argv: list[str]) -> int:
     """Read requests until the client closes its end, answering each as the mode says."""
     mode = argv[1] if len(argv) > 1 else "turn"
+    if len(argv) > 2:
+        _SAID.append(argv[2])
+    if _SAID:
+        Path(_SAID[0]).touch()
+    if mode == "error":
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "2",
+                    "error": {"code": -32000, "message": "the thread was refused"},
+                }
+            )
+            + "\n"
+        )
+        sys.stdout.flush()
+        return 0
+    if mode == "dies":
+        return 0
     if mode == "no-server":
         sys.stderr.write("this codex has no app-server\n")
         return 1
@@ -152,6 +181,8 @@ def main(argv: list[str]) -> int:
         if method == "initialize":
             answer(message, {"userAgent": "codex-cli 0.171.0"})
         elif method == "thread/start":
+            if mode == "dies":
+                return 0
             answer(message, {"thread": {"id": THREAD, "cliVersion": "0.171.0"}})
         elif method == "turn/start":
             answer(message, {"turn": {"id": TURN, "status": "inProgress"}})
@@ -266,6 +297,9 @@ def main(argv: list[str]) -> int:
                 }
             )
         elif message.get("id") in (0, 1):
+            # (What udl answered, kept for the test that validates it against the schema.)
+            with Path(said_file()).open("a") as out:
+                out.write(json.dumps(message) + "\n")
             answered: Json | None = message.get("result")
             said = answered or {}
             say(f"it was {said.get('decision')}")
