@@ -66,6 +66,7 @@ class Server:
     url: Callable[[str], str]  # the server's URL, given the "host:port" it is published on
     env: dict[str, str] = field(default_factory=dict[str, str])
     options: tuple[str, ...] = ()  # more for `docker run`
+    command: tuple[str, ...] = ()  # more for the server itself (after the image)
 
 
 POSTGRES: Final = Server(
@@ -81,6 +82,9 @@ MONGODB: Final = Server(
     # Each collection and index is a file MongoDB keeps open, and every test makes a database of
     # them: Docker's usual limit (1024) runs out partway (MongoDB asks for 64000).
     options=("--ulimit", "nofile=64000:64000"),
+    # Its cache is half the machine's memory by default, and one server holds every worker's
+    # databases: a test's data needs a fraction of it (it grew to 1.6 GiB in a suite, 28 Nov).
+    command=("--wiredTigerCacheSizeGB", "0.25"),
 )
 
 
@@ -193,6 +197,7 @@ def _start(server: Server, env_var: str, owner: int) -> str:
         *env,
         *server.options,
         server.image,
+        *server.command,
         timeout=_START_TIMEOUT,
     )
     if started.returncode != 0:

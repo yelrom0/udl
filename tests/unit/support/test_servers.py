@@ -367,7 +367,8 @@ def test_each_server_is_a_container_of_its_own(docker: FakeDocker, run: servers.
     postgres = servers.serve(servers.POSTGRES, "UDL_TEST_POSTGRES_URL", _answers, run)
     mongodb = servers.serve(servers.MONGODB, "UDL_TEST_MONGODB_URL", _answers, run)
 
-    assert [started[-1] for started in docker.started()] == ["postgres:18-alpine", "mongo:8"]
+    images = [servers.POSTGRES.image, servers.MONGODB.image]
+    assert [next(arg for arg in call if arg in images) for call in docker.started()] == images
     assert postgres.endswith("127.0.0.1:5000/postgres")
     assert mongodb == "mongodb://127.0.0.1:5001"
 
@@ -506,3 +507,13 @@ def test_a_run_begun_on_a_reused_pid_starts_its_own_servers(
 
     assert len(docker.started()) == 1
     assert url.endswith("127.0.0.1:5000/postgres")
+
+
+def test_the_shared_mongodb_keeps_a_small_cache(docker: FakeDocker, run: servers.Run) -> None:
+    """MongoDB's cache is half the machine's memory by default, and one server holding every
+    worker's databases grew to 1.6 GiB in a suite (28 Nov): a test's data needs a fraction of it.
+    The size is for `mongod`, so it comes after the image."""
+    servers.serve(servers.MONGODB, "UDL_TEST_MONGODB_URL", _answers, run)
+
+    [started] = docker.started()
+    assert started[-3:] == ("mongo:8", "--wiredTigerCacheSizeGB", "0.25")
