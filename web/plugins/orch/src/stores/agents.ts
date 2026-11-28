@@ -40,6 +40,9 @@ const WATCHED: readonly string[] = [
 	"orch.session.failed",
 	"orch.agent.idle",
 	"orch.agent.limited",
+	// (A key or allowance that crosses into low or out is the line's news: it is what colours it.)
+	"orch.usage.low",
+	"orch.usage.out",
 ];
 
 /** The agents' page (29.6): the tree, read when the store is made and again when any of the
@@ -122,6 +125,8 @@ const ONE_WATCHED: readonly string[] = [
 	"orch.task.ready",
 	"orch.task.merged",
 	"orch.link.changed",
+	"orch.usage.low",
+	"orch.usage.out",
 ];
 
 /**
@@ -151,6 +156,10 @@ export function agentStore(ctx: UIContext, name: string): Loaded<AgentState> {
 			];
 			// (Each of these is beside the agent, not the agent: one udl cannot answer — no
 			// GitHub account is connected, say — leaves its own card unsaid, and the page stands.)
+			// (`orch_get_agent` answers `usage` too, as one line; the card needs the numbers behind
+			// it — what a key spent of its cap and today, and its own turns — so it asks
+			// `orch_usage` once beside the page. One extra read per refresh, coalesced with the
+			// rest, and the page stays standing when the provider cannot be asked.)
 			const [list, usage, ...beside] = await Promise.all([
 				orNone(ctx.call("orch_list_agents", {})),
 				orNone(ctx.call("orch_usage", { agent: name })),

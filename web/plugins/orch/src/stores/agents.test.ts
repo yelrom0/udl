@@ -208,10 +208,20 @@ describe("the agents' store (29.6)", () => {
 		await settle();
 		expect(fake.calls.filter((one) => one.name === "orch_list_agents")).toHaveLength(4);
 
+		// (A key that crosses into low or out is the line's news: the tree reads again, since
+		// that is what colours it.)
+		fake.emit("orch.usage.low", { agent: "deepseek-a", line: "$0.40 of $8 left" });
+		await settle();
+		expect(fake.calls.filter((one) => one.name === "orch_list_agents")).toHaveLength(5);
+
+		fake.emit("orch.usage.out", { agent: "deepseek-a", line: "$0 of $8 left" });
+		await settle();
+		expect(fake.calls.filter((one) => one.name === "orch_list_agents")).toHaveLength(6);
+
 		loaded.stop();
 		fake.emit("orch.agent.limited", { agent: "boss" });
 		await settle();
-		expect(fake.calls.filter((one) => one.name === "orch_list_agents")).toHaveLength(4);
+		expect(fake.calls.filter((one) => one.name === "orch_list_agents")).toHaveLength(6);
 		expect(fake.listeners()).toBe(0);
 	});
 });
@@ -328,10 +338,15 @@ describe("an agent's store (29.6)", () => {
 		await settle();
 		expect(fake.calls.filter((one) => one.name === "orch_get_agent")).toHaveLength(2);
 
+		// (Its key crossing into low is its usage card's news.)
+		fake.emit("orch.usage.low", { agent: "deepseek-a", line: "$0.40 of $8 left" });
+		await settle();
+		expect(fake.calls.filter((one) => one.name === "orch_get_agent")).toHaveLength(3);
+
 		loaded.stop();
 		fake.emit("orch.task.changed", { key: "29.6" });
 		await settle();
-		expect(fake.calls.filter((one) => one.name === "orch_get_agent")).toHaveLength(2);
+		expect(fake.calls.filter((one) => one.name === "orch_get_agent")).toHaveLength(3);
 	});
 
 	it("does not re-read everything for every line a running session says", async () => {

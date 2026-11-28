@@ -83,15 +83,32 @@ describe("an agent's usage, in a line (29.6-usage)", () => {
 	});
 
 	it("says a harness's own limit, when its session is out of quota", () => {
+		// (udl reports a limited session as `out`, whatever its key or allowance still has:
+		// `usage._state_of`.)
 		const limited = usageOf_({
 			model: "deepseek-v4.1",
 			paid: null,
 			free: null,
 			limited_until: "2026-11-28T12:00:00Z",
+			state: "out",
 		});
 
 		// (Read in the reader's own time zone, as the reset is.)
 		expect(usageLineOf(limited)).toBe(`limited until ${momentOf("2026-11-28T12:00:00Z")}`);
-		expect(usageToneOf(limited)).toBe("text-warning");
+		expect(usageToneOf(limited)).toBe("text-error");
+	});
+
+	it("writes money with its cents, and whole dollars without them", () => {
+		const cents = usageOf_({
+			paid: { spent: "1.60", limit: "8", left: "6.30" },
+			free: null,
+		});
+		const dimes = usageOf_({ paid: { spent: "0.1", limit: null, left: "0.10" }, free: null });
+		const whole = usageOf_({ paid: { spent: "2", limit: "8", left: "6" }, free: null });
+
+		expect(usageLineOf(cents)).toBe("$6.30 of $8 left");
+		expect(usageWordsOf(cents)[0]).toBe("Spent $1.60 of $8");
+		expect(usageLineOf(dimes)).toBe("$0.10 left");
+		expect(usageLineOf(whole)).toBe("$6 of $8 left");
 	});
 });

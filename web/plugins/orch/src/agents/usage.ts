@@ -1,15 +1,5 @@
+import { counted, money } from "../format";
 import type { AgentUsage } from "../model";
-
-/** `n` as money, as a person reads it: `$8`, `$6.36` (udl sends a `Decimal` as a string, which
- * `usageOf` already read as a number). */
-function money(n: number): string {
-	return `$${n.toLocaleString("en-AU", { maximumFractionDigits: 2 })}`;
-}
-
-/** `n` with thousands separators, as a person reads a count. */
-function counted(n: number): string {
-	return n.toLocaleString("en-AU");
-}
 
 /** A moment as `YYYY-MM-DD HH:MM` in the reader's own time zone: an allowance resets at 00:00
  * UTC, which is a different morning here. */
@@ -50,12 +40,13 @@ export function usageLineOf(usage: AgentUsage): string {
 	return "";
 }
 
-/** The colour of what is left: plain when fine, a warning when low, an error when out. */
+/** The colour of what is left: plain when fine, a warning when low, an error when out (udl
+ * reports a harness's own limit as `out`, whatever its key or allowance still has). */
 export function usageToneOf(usage: AgentUsage): string {
 	if (usage.state === "out") {
 		return "text-error";
 	}
-	if (usage.state === "low" || usage.limited_until !== null) {
+	if (usage.state === "low") {
 		return "text-warning";
 	}
 	return "text-base-content/60";

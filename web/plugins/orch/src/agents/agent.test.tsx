@@ -224,6 +224,40 @@ describe("an agent's page (29.6)", () => {
 		expect(screen.queryByText(/^Spent /)).toBeNull();
 	});
 
+	it("draws what a key spent when it has no cap to say a line about", async () => {
+		// (A key with no limit has no "left" to say, but what it spent, today, and its turns are
+		// still worth drawing: the card is not the line.)
+		const fake = fakeCtx((name) => {
+			if (name === "orch_usage") {
+				return {
+					items: [
+						{
+							agent: "deepseek-a",
+							runner: "opencode",
+							model: "openrouter-ds-a/deepseek-v4.1-flash",
+							paid: { spent: "1.64", limit: null, left: null, spent_today: "0.21" },
+							free: null,
+							requests_today: 12,
+							tokens_in: 24000,
+							tokens_out: 3100,
+							state: "ok",
+						},
+					],
+				} as never;
+			}
+			return ANSWERS[name] as never;
+		});
+		render(
+			<AgentPage ctx={fake.ctx} params={{ name: "deepseek-a" }} path="agents/$name" search={{}} />,
+		);
+		await read();
+
+		const usage = within(screen.getByLabelText("Its usage"));
+		expect(usage.getByText("Spent $1.64")).toBeTruthy();
+		expect(usage.getByText("$0.21 today")).toBeTruthy();
+		expect(usage.getByText("12 requests, 24,000 in, 3,100 out")).toBeTruthy();
+	});
+
 	it("draws the page when usage cannot be read", async () => {
 		const fake = fakeCtx((name) => {
 			if (name === "orch_usage") {

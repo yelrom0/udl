@@ -1,6 +1,7 @@
 import type { RouteProps } from "@udl/ui-sdk";
 import type { Component } from "@udl/ui-sdk/react";
 import { useState } from "react";
+import { counted } from "../format";
 import { useAgent, useSession } from "../hooks";
 import { asObject, asText, messageOf } from "../json";
 import { Page, Said } from "../page";
@@ -19,11 +20,6 @@ const DOTS: Readonly<Record<string, string>> = {
 	paused: "bg-neutral",
 	idle: "bg-base-300",
 };
-
-/** `n` with thousands separators, as a person reads a count. */
-function counted(n: number): string {
-	return n.toLocaleString("en-AU");
-}
 
 /**
  * An agent (29.6): its status and what it runs on, its queue in udl's order (each task's size,
@@ -248,19 +244,22 @@ export const AgentPage: Component<RouteProps> = ({ ctx, params, search }) => {
 							</section>
 						</div>
 						<div className="flex flex-col gap-4">
-							{usage !== null && usageLineOf(usage) !== "" && (
-								<section aria-label="Its usage" className="flex flex-col gap-1">
-									<h2 className="text-lg font-semibold">Usage left</h2>
-									<p className={`text-sm font-medium ${usageToneOf(usage)}`}>
-										{usageLineOf(usage)}
-									</p>
-									{usageWordsOf(usage).map((words) => (
-										<p className="text-xs opacity-70" key={words}>
-											{words}
-										</p>
-									))}
-								</section>
-							)}
+							{usage !== null &&
+								(usageLineOf(usage) !== "" || usage.paid !== null || usage.free !== null) && (
+									<section aria-label="Its usage" className="flex flex-col gap-1">
+										<h2 className="text-lg font-semibold">Usage left</h2>
+										{usageLineOf(usage) === "" ? null : (
+											<p className={`text-sm font-medium ${usageToneOf(usage)}`}>
+												{usageLineOf(usage)}
+											</p>
+										)}
+										{usageWordsOf(usage).map((words) => (
+											<p className="text-xs opacity-70" key={words}>
+												{words}
+											</p>
+										))}
+									</section>
+								)}
 							<section aria-label="Its brief" className="flex flex-col gap-2">
 								<h2 className="text-lg font-semibold">Brief</h2>
 								<p className="whitespace-pre-wrap text-sm">
