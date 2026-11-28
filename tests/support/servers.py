@@ -4,21 +4,26 @@
 --------------
 
 Database servers for the database plugins' tests (PostgreSQL, MongoDB): the server an environment
-variable names, else a throwaway Docker container that lasts the session that started it (the whole
-run, or one pytest-xdist worker's share of it). With neither, the tests that need the server are
+variable names, else a throwaway Docker container that lasts the run. A run has one container of
+each, however many pytest-xdist workers it has: the first worker that needs a server starts it, and
+the others read its URL from the run's directory (Q-25, 28 Nov 2026: a pair per worker was 15
+containers and 2.2 GiB with three suites at once). With neither, the tests that need the server are
 skipped.
 """
 
 # System Imports
+import fcntl
 import os
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Final
 
 # Package Imports
@@ -29,8 +34,9 @@ _START_TIMEOUT: Final[float] = 600
 _READY_TIMEOUT: Final[float] = 60
 # Containers the tests start carry this label (`docker ps --filter label=udl-tests`).
 _LABEL: Final[str] = "udl-tests"
-# Which run started a container: a run that is killed never reaches `serving`'s finally, so the
-# container outlives it and has to be found afterwards (`docker ps` reports the label).
+# Which run started a container (its owner's pid): a run that is killed never reaches
+# `Run.end()`, so the container outlives it and has to be found afterwards (`docker ps` reports
+# the label).
 _PID_LABEL: Final[str] = "udl-tests.pid"
 # Which machine started it: a pid only means anything on the machine that wrote it (a daemon may
 # be shared), so a container from another machine is left to the age rule.
@@ -38,6 +44,11 @@ _HOST_LABEL: Final[str] = "udl-tests.host"
 # A container this old is a leftover, whatever its pid says (a pid may be reused, and a container
 # of a run that is still going is never this old).
 _OLD: Final[timedelta] = timedelta(days=1)
+# The run a process's tests belong to, as `<owner's pid>:<its directory>`, which pytest-xdist's
+# workers inherit from their controller's environment.
+RUN_VAR: Final[str] = "UDL_TESTS_RUN"
+# In the run's directory: every container the run started, one a line (whether it ever answered).
+_CONTAINERS: Final[str] = "containers"
 # What `docker ps` prints a line of: the container, when it started, and the two labels.
 _PS_FORMAT: Final[str] = (
     '{{.ID}}\t{{.CreatedAt}}\t{{.Label "udl-tests.pid"}}\t{{.Label "udl-tests.host"}}'
@@ -56,6 +67,7 @@ class Server:
     url: Callable[[str], str]  # the server's URL, given the "host:port" it is published on
     env: dict[str, str] = field(default_factory=dict[str, str])
     options: tuple[str, ...] = ()  # more for `docker run`
+    command: tuple[str, ...] = ()  # more for the server itself (after the image)
 
 
 POSTGRES: Final = Server(
@@ -71,31 +83,98 @@ MONGODB: Final = Server(
     # Each collection and index is a file MongoDB keeps open, and every test makes a database of
     # them: Docker's usual limit (1024) runs out partway (MongoDB asks for 64000).
     options=("--ulimit", "nofile=64000:64000"),
+    # Its cache is half the machine's memory by default, and one server holds every worker's
+    # databases: a test's data needs a fraction of it (it grew to 1.6 GiB in a suite, 28 Nov).
+    command=("--wiredTigerCacheSizeGB", "0.25"),
 )
 
 
-@contextmanager
-def serving(server: Server, env_var: str, ready: Callable[[str], bool]) -> Generator[str]:
-    """The URL of a `server` to test against while the block runs: the one `env_var` names,
-    else a container's (stopped afterwards) once `ready(url)` says it answers."""
+@dataclass(frozen=True)
+class Run:
+    """A run of the tests, whose processes share its servers.
+
+    Its owner is the process the run ends with: pytest-xdist's controller, or pytest itself without
+    workers. The owner stops the run's containers as it ends, so each is labelled with the owner's
+    pid rather than the worker's that started it: a worker xdist restarts mid-run is not a run that
+    is gone. The run's directory is where its workers find what the first of them started."""
+
+    owner: int
+    directory: Path
+
+    @classmethod
+    def begin(cls) -> Run:
+        """The run this process owns, passed down (in the environment) to the workers it starts.
+
+        Its directory is made fresh, for this user alone (`mkdtemp`, 0700): a name nobody else can
+        have made first, so no URL in it is anyone's but the run's."""
+        run = cls(os.getpid(), Path(tempfile.mkdtemp(prefix="udl-tests-")))
+        os.environ[RUN_VAR] = f"{run.owner}:{run.directory}"
+        return run
+
+    @classmethod
+    def joined(cls) -> Run:
+        """The run a worker belongs to: its controller's, else (nothing said one) its own."""
+        owner, _, directory = os.environ.get(RUN_VAR, "").partition(":")
+        if owner.isdigit() and directory:
+            return cls(int(owner), Path(directory))
+        return cls.begin()
+
+    def end(self) -> None:
+        """Stop every container the run started (one `docker stop` for them all), and clear its
+        directory. A daemon that does not answer is left alone: the next run's reap stops what is
+        left."""
+        try:
+            started = (self.directory / _CONTAINERS).read_text().split()
+        except FileNotFoundError:
+            started = []
+        if started:
+            with suppress(OSError, subprocess.SubprocessError):
+                _docker("stop", "--time", "1", *started)
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+
+# Where a process keeps the run it is in (`config.stash[RUN]`), from tests/conftest.py's
+# `pytest_configure` on.
+RUN: Final = pytest.StashKey[Run]()
+
+
+def serve(server: Server, env_var: str, ready: Callable[[str], bool], run: Run) -> str:
+    """The URL of a `server` to test against: the one `env_var` names, else the run's container
+    of it, started by the first of its workers to ask once `ready(url)` says it answers.
+
+    The others wait on the run's lock while it starts, then read its URL: one is kept only once
+    the server answers, so a start that failed is tried again rather than handed on."""
     if url := os.environ.get(env_var):
-        yield url
-        return
-    container = _start(server, env_var)
-    try:
+        return url
+    run.directory.mkdir(mode=0o700, exist_ok=True)
+    name = server.image.partition(":")[0]
+    with _held(run.directory / f"{name}.lock"):
+        if (known := run.directory / f"{name}.url").exists():
+            return known.read_text()
+        container = _start(server, env_var, run.owner)
+        with (run.directory / _CONTAINERS).open("a") as started:
+            started.write(f"{container}\n")
         url = server.url(_published(container, server.port))
         deadline = time.monotonic() + _READY_TIMEOUT
         while not ready(url):
             if time.monotonic() > deadline:
                 pytest.fail(f"{server.image} did not start answering at {url}")
             time.sleep(0.2)
-        yield url
-    finally:
-        _docker("stop", "--time", "1", container)
+        known.write_text(url)
+        return url
 
 
-def _start(server: Server, env_var: str) -> str:
-    """Start a container of `server` (removed when it stops); skip the test without Docker."""
+@contextmanager
+def _held(lock: Path) -> Generator[None]:
+    """The block runs holding `lock`, which the run's other processes wait on."""
+    with lock.open("w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        yield
+
+
+def _start(server: Server, env_var: str, owner: int) -> str:
+    """Start a container of `server` (removed when it stops), labelled as the run `owner` owns;
+    skip the test without Docker."""
     if shutil.which("docker") is None:
         pytest.skip(f"needs Docker, or a server named by {env_var}")
     reap_containers()
@@ -107,7 +186,7 @@ def _start(server: Server, env_var: str) -> str:
         "--label",
         _LABEL,
         "--label",
-        f"{_PID_LABEL}={os.getpid()}",
+        f"{_PID_LABEL}={owner}",
         "--label",
         f"{_HOST_LABEL}={socket.gethostname()}",
         "--publish",
@@ -115,6 +194,7 @@ def _start(server: Server, env_var: str) -> str:
         *env,
         *server.options,
         server.image,
+        *server.command,
         timeout=_START_TIMEOUT,
     )
     if started.returncode != 0:
@@ -126,7 +206,7 @@ def reap_containers() -> None:
     """Stop the containers of runs that are gone (called before each container is started).
 
     A run that is killed — a `timeout` around pytest, a cancelled agent-push — never reaches the
-    `finally` that stops its container, so the container stays (and each one holds memory). Which
+    end that stops its containers, so the container stays (and each one holds memory). Which
     run started a container is its `udl-tests.pid` label, read on the machine its `udl-tests.host`
     label names: a pid that is not running there is a container that outlived its run. Anything
     else — no pid label (a container from before the labels), another machine's, a pid that is
