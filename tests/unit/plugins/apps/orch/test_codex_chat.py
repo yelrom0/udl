@@ -196,6 +196,16 @@ async def test_an_interrupted_turn_is_read_as_stopped() -> None:
     assert ended.reason is TurnReason.STOPPED
 
 
+async def test_a_pathless_file_approval_is_never_remembered() -> None:
+    """(30.1's finding: an `Edit` with no file would otherwise be allowed for the chat, which is
+    any file at all.)"""
+    from udl.plugins.apps.orch.chat import rememberable
+
+    assert not rememberable("Edit", {"reason": "it needs to write a file"})
+    assert not rememberable("Edit", {"file_path": ""})
+    assert rememberable("Edit", {"file_path": "a.txt"})
+
+
 async def test_a_ref_that_is_gone_says_so_rather_than_hanging() -> None:
     driver_ = driver()
     gone = SessionRef(runner="codex", id="nothing", cwd=str(ROOT), host="local")

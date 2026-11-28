@@ -986,7 +986,9 @@ def rememberable(tool: str, given: JsonObject) -> bool:
     same exact input, never a prefix — and never a shell command that chains or nests others, or
     runs a shell (27.11)."""
     if tool not in _SHELL_TOOLS:
-        return True
+        # (An `Edit` with no file is not a request to remember: "allow this chat" would then
+        # allow every later pathless change, which is any file at all (30.1's finding).)
+        return tool != "Edit" or bool(str(given.get("file_path", "")).strip())
     command = given.get("command")
     if not isinstance(command, str) or not command.strip():
         return False

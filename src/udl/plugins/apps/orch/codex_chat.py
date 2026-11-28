@@ -414,9 +414,11 @@ def _asked(kind: str, given: JsonObject, paths: dict[str, str]) -> tuple[str, Js
         item = str(given.get("itemId", ""))
         kept = paths.get(item, "")
         said = ", ".join([*named, kept]) if kept else ", ".join(named)
-        if not said:
-            said = str(given.get("reason") or "")
-        return "Edit", {"file_path": said}
+        if said:
+            return "Edit", {"file_path": said}
+        # (No path is known: the reason is said, but it is not the file, and a request with no
+        # file is never remembered — `rememberable` refuses an `Edit` without one.)
+        return "Edit", {"reason": str(given.get("reason") or "")}
     command = given.get("command")
     if isinstance(command, str):
         return "Bash", {"command": command}
