@@ -412,7 +412,8 @@ def _asked(kind: str, given: JsonObject, paths: dict[str, str]) -> tuple[str, Js
         )
         # (A v2 file approval has no paths of its own: the item it names does.)
         item = str(given.get("itemId", ""))
-        kept = paths.get(item, "")
+        # (Once per request: a second, pathless one for the same item is not the first's paths.)
+        kept = paths.pop(item, "")
         said = ", ".join([*named, kept]) if kept else ", ".join(named)
         if said:
             return "Edit", {"file_path": said}
@@ -495,7 +496,10 @@ def _reason(turn: JsonObject) -> TurnReason:
     if status == "failed":
         return TurnReason.ERROR
     if status == "interrupted":
-        return TurnReason.STOPPED
+        # (An interrupted turn is a turn that ended, not a harness that is gone: the server is
+        # still running and the chat takes another turn. `_ended` reads STOPPED as "its session
+        # ended" and fails the chat, so this is DONE — the answer is what was said so far.)
+        return TurnReason.DONE
     return TurnReason.DONE
 
 

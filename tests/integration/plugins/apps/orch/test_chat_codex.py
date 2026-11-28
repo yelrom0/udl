@@ -26,9 +26,11 @@ from udl.config import APISettings, Settings
 from udl.core.service import UDLService
 from udl.errors import NotAllowed
 from udl.interfaces.security import Principal, PrincipalKind, current_principal
+from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.agents import SessionState
 from udl.plugins.apps.orch.chat import ChatInfo, ChatList
 from udl.plugins.apps.orch.plugin import Orch
+from udl.plugins.apps.orch.records import ChatRecords
 from udl.plugins.registry import APPS, RUNNERS, PluginRegistry
 from udl.plugins.runners.codex import Codex
 
@@ -121,6 +123,60 @@ async def test_a_codex_chat_answers_a_turn(service: UDLService) -> None:
     assert "hello from codex" in (found.last_text or "")
     await service.call("orch_chat_stop", {"chat": chat.id})
     await asyncio.sleep(0.1)
+
+
+async def test_a_codex_chat_whose_server_is_gone_is_over_not_run_without_approvals(
+    tmp_path: Path, cli: list[str]
+) -> None:
+    """(O-C15: the `codex exec` runner has no approvals, so a Codex chat whose server is gone is
+    ended rather than handed to it.)"""
+    config = settings(
+        tmp_path,
+        api=APISettings(api_key=SecretStr("test-key")),
+        integrations={"codex": {"cli": cli}},
+    )
+    async with UDLService(config, registry=orch_registry()) as running:
+        chat = await started(running, text="hello")
+        await settled(running, chat)
+
+        app = await running.apps.get("orch")
+        assert isinstance(app, Orch)
+        drivers = vars(app.chats)["_codex"]
+        driver = drivers.pop(chat.id)
+        saved = await ChatRecords(AppRecords(running.db)).by_id(chat.id)
+        assert saved is not None
+        assert saved.ref is not None
+        await driver.stop(saved.ref)
+
+        again = await running.call("orch_chat_send", {"chat": chat.id, "text": "again"})
+        assert isinstance(again, ChatInfo)
+        found = await settled(running, again, turns=2)
+        assert found.state is SessionState.FAILED
+        assert "gone" in (found.last_error or "")
+
+
+async def test_usage_and_a_failed_tool_reach_the_chat(tmp_path: Path, cli: list[str]) -> None:
+    """(The chat's counts come from `tokenUsage.last`, and a tool's `status` says `ok=False`.)"""
+    config = settings(
+        tmp_path,
+        api=APISettings(api_key=SecretStr("test-key")),
+        integrations={"codex": {"cli": [sys.executable, str(FAKE), "tool"]}},
+    )
+    async with UDLService(config, registry=orch_registry()) as running:
+        chat = await started(running, text="run it")
+
+        found = await settled(running, chat)
+
+        assert found.tokens_in == 4
+        assert found.tokens_out == 2
+        kinds = [event.kind for event in found.events]
+        assert "tool_started" in kinds
+        assert "tool_finished" in kinds
+        finished = [one for one in found.events if one.kind == "tool_finished"]
+        assert finished
+        assert finished[-1].ok is False
+        await running.call("orch_chat_stop", {"chat": chat.id})
+        await asyncio.sleep(0.1)
 
 
 async def test_a_codex_without_app_server_is_refused(tmp_path: Path, cli: list[str]) -> None:

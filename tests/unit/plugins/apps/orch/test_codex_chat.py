@@ -183,7 +183,9 @@ async def test_a_failed_turn_says_what_the_error_said() -> None:
     assert ended.text == "it broke"
 
 
-async def test_an_interrupted_turn_is_read_as_stopped() -> None:
+async def test_an_interrupted_turn_is_a_turn_that_ended_not_a_harness_that_is_gone() -> None:
+    """(An interrupted turn leaves the server running, so it must not read as STOPPED: `_ended`
+    fails a chat whose turn ended that way.)"""
     driver_ = driver(mode="interrupted")
     ref = await driver_.start(SessionSpec(cwd=str(ROOT)))
     try:
@@ -193,17 +195,29 @@ async def test_an_interrupted_turn_is_read_as_stopped() -> None:
 
     ended = events[-1]
     assert isinstance(ended, TurnEnded)
-    assert ended.reason is TurnReason.STOPPED
+    assert ended.reason is TurnReason.DONE
 
 
-async def test_a_pathless_file_approval_is_never_remembered() -> None:
-    """(30.1's finding: an `Edit` with no file would otherwise be allowed for the chat, which is
-    any file at all.)"""
+async def test_two_pathless_file_approvals_are_both_asked() -> None:
+    """(30.1: an `Edit` with no path carries its reason, and a person's Allow for this chat on one
+    must not answer the next — which is any file at all.)"""
     from udl.plugins.apps.orch.chat import rememberable
 
-    assert not rememberable("Edit", {"reason": "it needs to write a file"})
-    assert not rememberable("Edit", {"file_path": ""})
-    assert rememberable("Edit", {"file_path": "a.txt"})
+    asked: list[tuple[str, JsonObject, str]] = []
+
+    async def ask(tool: str, given: JsonObject, call: str) -> CodexQuestion:
+        asked.append((tool, given, call))
+        return CodexQuestion(allowed=True, for_chat=True)
+
+    await said(driver(ask, mode="file-twice"), "go")
+
+    assert asked
+    assert asked[0][0] == "Edit"
+    assert asked[0][1].get("file_path") == "a.txt"
+    # (The second has no item kept: its reason is said, not a file, and is not rememberable.)
+    assert "file_path" not in asked[1][1]
+    assert asked[1][1].get("reason")
+    assert not rememberable(asked[1][0], asked[1][1])
 
 
 async def test_a_ref_that_is_gone_says_so_rather_than_hanging() -> None:

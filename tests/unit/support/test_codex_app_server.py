@@ -20,6 +20,10 @@ from typing import Any
 
 # Package Imports
 import jsonschema
+from pydantic import TypeAdapter
+
+# Local Imports
+from udl.db.models import JsonObject
 
 # (The repo root: this file is tests/unit/support/test_codex_app_server.py.)
 ROOT = Path(__file__).resolve().parents[3]
@@ -66,6 +70,12 @@ TURN: dict[str, Any] = {
 ANSWER: dict[str, Any] = {"jsonrpc": "2.0", "id": "approval-1", "result": {"decision": "accept"}}
 
 MODES = ("turn", "command", "file", "legacy-exec", "legacy-patch")
+
+
+_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
+"""One answer's `result`, as the JSON object it is."""
+
+SCHEMA = "tests/fixtures/codex-app-server"
 
 
 def schema(document: dict[str, Any], name: str) -> dict[str, Any]:
@@ -133,6 +143,63 @@ def test_the_fake_asks_each_approval_in_its_own_shape() -> None:
     assert isinstance(asked["command"]["params"]["command"], str)
     assert isinstance(asked["legacy-exec"]["params"]["command"], list)
     assert asked["legacy-patch"]["params"]["fileChanges"]
+
+
+OUT: list[dict[str, Any]] = [
+    {
+        "jsonrpc": "2.0",
+        "id": "1",
+        "method": "initialize",
+        "params": {"clientInfo": {"name": "udl", "version": "1"}},
+    },
+    {
+        "jsonrpc": "2.0",
+        "id": "2",
+        "method": "thread/start",
+        "params": {"cwd": str(ROOT), "model": None, "approvalPolicy": "on-request", "config": {}},
+    },
+    {
+        "jsonrpc": "2.0",
+        "id": "3",
+        "method": "turn/start",
+        "params": {"threadId": "thread-1", "input": [{"type": "text", "text": "go"}]},
+    },
+    {"jsonrpc": "2.0", "id": 0, "result": {"decision": "accept"}},
+    {"jsonrpc": "2.0", "id": 1, "result": {"decision": "acceptForSession"}},
+    {"jsonrpc": "2.0", "id": 2, "result": {"decision": "decline"}},
+]
+"""What udl writes: its three requests, and its three answers to an approval (v2's words)."""
+
+OLD_OUT: list[dict[str, Any]] = [
+    {"jsonrpc": "2.0", "id": 0, "result": {"decision": "approved"}},
+    {"jsonrpc": "2.0", "id": 1, "result": {"decision": "approved_for_session"}},
+    {"jsonrpc": "2.0", "id": 2, "result": {"decision": {"denied": {"rejection": "no"}}}},
+]
+"""The same, in the older vocabulary (`ReviewDecision`)."""
+
+
+def test_udls_own_messages_are_the_protocol() -> None:
+    """(What the driver writes: each request is the `ClientRequest` variant its method names, and
+    each answer is the response that variant's title names.)"""
+    client = V2["definitions"]["ClientRequest"]["oneOf"]
+    for message in OUT:
+        method = message.get("method")
+        if method is None:
+            continue
+        entry = next(one for one in client if one["properties"]["method"]["enum"] == [method])
+        assert entry["properties"]["method"]["enum"] == [method]
+        check(V2, "ClientRequest", message)
+    # (An answer is the response's own `result`, not the whole message: the schemas describe the
+    # params/result, and the envelope around them is udl's.)
+    for message, name in [(one, "ExecCommandApprovalResponse") for one in OLD_OUT] + [
+        (one, "CommandExecutionRequestApprovalResponse") for one in OUT if "result" in one
+    ]:
+        result = message.get("result")
+        if not isinstance(result, dict):
+            continue
+        # (The answer's own `result`, as the response schema has it.)
+        clean = _OBJECT.validate_python(result)
+        check(V1, name, clean)
 
 
 def test_the_schema_has_the_requests_the_driver_writes() -> None:

@@ -13,8 +13,10 @@ the real thing: a process, lines in, lines out. What it does is what `argv[1]` s
 - `command` — a turn that asks to run a command (v2's `item/commandExecution/requestApproval`,
   whose `command` is a string), and says what the answer was;
 - `file` — a turn that asks to change a file (v2's `item/fileChange/requestApproval`);
+- `file-twice` — the same, twice, with no item kept before the second (a pathless approval);
 - `legacy-exec` and `legacy-patch` — the older `execCommandApproval` and `applyPatchApproval`,
   answered in `ReviewDecision`'s words;
+- `tool` — a turn whose one command fails (`ok=False` in the transcript);
 - `retry` — an error Codex will retry, then a clean turn;
 - `failed` and `interrupted` — a turn that failed (with its `TurnError`) and one interrupted;
 - `no-server` — `app-server --help` fails, as a Codex without it does.
@@ -141,6 +143,7 @@ def main(argv: list[str]) -> int:
     if mode == "no-server":
         sys.stderr.write("this codex has no app-server\n")
         return 1
+    twice = False
     for line in sys.stdin:
         if not line.strip():
             continue
@@ -152,7 +155,7 @@ def main(argv: list[str]) -> int:
             answer(message, {"thread": {"id": THREAD, "cliVersion": "0.171.0"}})
         elif method == "turn/start":
             answer(message, {"turn": {"id": TURN, "status": "inProgress"}})
-            if mode == "file":
+            if mode in ("file", "file-twice"):
                 notification(
                     "item/started",
                     {
@@ -169,6 +172,15 @@ def main(argv: list[str]) -> int:
                         },
                     },
                 )
+            if mode == "file-twice":
+                send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 0,
+                        "method": APPROVALS["file"],
+                        "params": _approval("file"),
+                    }
+                )
             if mode in APPROVALS:
                 send(
                     {
@@ -178,6 +190,37 @@ def main(argv: list[str]) -> int:
                         "params": _approval(mode),
                     }
                 )
+            elif mode == "tool":
+                notification(
+                    "item/started",
+                    {
+                        "threadId": THREAD,
+                        "turnId": TURN,
+                        "startedAtMs": 1,
+                        "item": {
+                            "id": "item-command",
+                            "type": "commandExecution",
+                            "command": "ls",
+                            "status": "inProgress",
+                        },
+                    },
+                )
+                notification(
+                    "item/completed",
+                    {
+                        "threadId": THREAD,
+                        "turnId": TURN,
+                        "startedAtMs": 1,
+                        "item": {
+                            "id": "item-command",
+                            "type": "commandExecution",
+                            "command": "ls",
+                            "status": "failed",
+                            "exitCode": 2,
+                        },
+                    },
+                )
+                say("it did not work")
             elif mode == "retry":
                 notification(
                     "error",
@@ -212,7 +255,17 @@ def main(argv: list[str]) -> int:
                 )
             else:
                 say("hello from codex")
-        elif message.get("id") == 0:
+        elif message.get("id") == 0 and mode == "file-twice" and not twice:
+            twice = True
+            send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": APPROVALS["file"],
+                    "params": _approval("file"),
+                }
+            )
+        elif message.get("id") in (0, 1):
             answered: Json | None = message.get("result")
             said = answered or {}
             say(f"it was {said.get('decision')}")
