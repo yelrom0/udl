@@ -74,6 +74,9 @@ async function seed(page: Page, run: string): Promise<Seeded> {
 		runner: "claude-code",
 		role: "implementer",
 		projects: ["udl"],
+		// (A free model, so its usage is an allowance udl counts rather than a key's money: the
+		// one an e2e server with no AI provider can answer for.)
+		model: "openrouter/ernie/free",
 	});
 	await call(page, "set_task", {
 		project: "udl",
@@ -238,4 +241,30 @@ test("a manager takes two reports by a drag, and both are drawn under it (29.6)"
 	await page.goto(`/ui/p/orch/agents/${agent}`);
 	await expect(named(page, "Session")).toBeVisible();
 	await expect(page.locator(".udl-plugin-slot").first()).toContainText(`reports to ${manager}`);
+});
+
+test("says what each agent has left, from udl's own usage (29.6-usage)", async ({
+	page,
+}, testInfo) => {
+	const { agent, spare } = await seed(page, testInfo.project.name);
+
+	await page.goto("/ui/p/orch/agents");
+	const row = named(page, spare);
+	await expect(row).toBeVisible();
+
+	// (27.14's line, as `orch_usage` answers it: a free model's requests left today, and when
+	// they come back. It is read, not guessed: the page draws what udl says.)
+	const said = (await call(page, "usage", { agent: spare })) as {
+		items: { free: { allowance: number; left: number } | null }[];
+	};
+	const free = said.items[0]?.free ?? null;
+	expect(free).not.toBeNull();
+	await expect(
+		row.getByText(`${String(free?.left)} of ${String(free?.allowance)} requests left`),
+	).toBeVisible();
+
+	// (An agent with nothing to measure — its runner's default model, no provider — says nothing
+	// rather than a line about it. Its own row, not the tree under it: another spec drags agents
+	// onto a manager, and a row's reports are drawn inside it.)
+	await expect(named(page, agent).getByText(/requests left/)).toHaveCount(0);
 });

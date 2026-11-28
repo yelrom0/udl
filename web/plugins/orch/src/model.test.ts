@@ -25,6 +25,8 @@ import {
 	sessionOf,
 	sessionOfTask,
 	taskInfoOf,
+	usageOf,
+	usagesOf,
 } from "./model";
 
 describe("reading an answer", () => {
@@ -871,5 +873,94 @@ describe("reading a project's progress (29.11)", () => {
 		expect(nothing.recent).toEqual([]);
 		expect(nothing.forecast.likely).toBe("");
 		expect(nothing.forecast.unsized).toBe(0);
+	});
+});
+
+describe("what an agent has left (29.6-usage, 27.14)", () => {
+	it("reads a paid key's money left, and never the key's label", () => {
+		const usage = usageOf({
+			agent: "deepseek-a",
+			runner: "opencode",
+			model: "openrouter-ds-a/deepseek-v4.1-flash",
+			paid: {
+				label: "sk-or-v1-…f3a9",
+				spent: "1.64",
+				limit: "8",
+				left: "6.36",
+				spent_today: "0.21",
+				free_tier: false,
+			},
+			free: null,
+			requests_today: 12,
+			tokens_in: 24000,
+			tokens_out: 3100,
+			cost: "0.21",
+			limited_until: null,
+			state: "ok",
+		});
+
+		expect(usage.agent).toBe("deepseek-a");
+		expect(usage.paid?.left).toBe(6.36);
+		expect(usage.paid?.limit).toBe(8);
+		expect(usage.paid?.spent).toBe(1.64);
+		expect(usage.paid?.spent_today).toBe(0.21);
+		expect(usage.paid?.free_tier).toBe(false);
+		// (OpenRouter's masked preview is not the connection's name: 27.15 replaces it.)
+		expect(usage.paid).not.toHaveProperty("label");
+		expect(usage.free).toBeNull();
+		expect(usage.requests_today).toBe(12);
+		expect(usage.cost).toBe(0.21);
+		expect(usage.state).toBe("ok");
+	});
+
+	it("reads a free model's allowance, its reset, and a harness's limit", () => {
+		const usage = usageOf({
+			agent: "ernie-c",
+			runner: "opencode",
+			model: "openrouter/ernie/free",
+			paid: null,
+			free: {
+				requests_today: 412,
+				allowance: 1000,
+				left: 588,
+				resets_at: "2026-11-29T00:00:00Z",
+			},
+			requests_today: 412,
+			limited_until: "2026-11-28T12:00:00Z",
+			state: "low",
+		});
+
+		expect(usage.free?.left).toBe(588);
+		expect(usage.free?.allowance).toBe(1000);
+		expect(usage.free?.resets_at).toBe("2026-11-29T00:00:00Z");
+		expect(usage.limited_until).toBe("2026-11-28T12:00:00Z");
+		expect(usage.state).toBe("low");
+		expect(usage.paid).toBeNull();
+	});
+
+	it("reads the list, and nothing at all from nothing", () => {
+		const list = usagesOf({ items: [{ agent: "one" }, { agent: "two" }] });
+
+		expect(list.map((one) => one.agent)).toEqual(["one", "two"]);
+		const nothing = usageOf(undefined);
+		expect(nothing.agent).toBe("");
+		expect(nothing.paid).toBeNull();
+		expect(nothing.free).toBeNull();
+		expect(nothing.state).toBe("");
+		expect(usagesOf(undefined)).toEqual([]);
+	});
+
+	it("reads an agent's one-line usage where the agent's own answer carries it", () => {
+		const info = agentInfoOf({
+			agent: { name: "deepseek-a", title: "A", role: "implementer" },
+			status: "idle",
+			session: null,
+			queue: [],
+			reports: [],
+			usage: "$6.36 of $8 left",
+		});
+
+		expect(info.usage).toBe("$6.36 of $8 left");
+		expect(agentInfoOf(undefined).usage).toBe("");
 	});
 });

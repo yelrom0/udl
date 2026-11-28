@@ -8,6 +8,7 @@ import { AgentEditor } from "./editor";
 import { Queue } from "./queue";
 import { Transcript } from "./transcript";
 import { whereOf } from "./tree";
+import { usageLineOf, usageToneOf, usageWordsOf } from "./usage";
 
 /** What a status looks like: its word and the dot's colour (DESIGN.md's own table). */
 const DOTS: Readonly<Record<string, string>> = {
@@ -32,7 +33,10 @@ function counted(n: number): string {
  */
 export const AgentPage: Component<RouteProps> = ({ ctx, params, search }) => {
 	const name = params.name ?? "";
-	const { info, agents, tasks, merge, progress, loaded, error, refresh } = useAgent(ctx, name);
+	const { info, usage, agents, tasks, merge, progress, loaded, error, refresh } = useAgent(
+		ctx,
+		name,
+	);
 	const agent = info?.agent ?? null;
 	// (A page opened from a task names the session it came from: a task's session is the one
 	// that ran it, which may not be the agent's current one.)
@@ -244,6 +248,19 @@ export const AgentPage: Component<RouteProps> = ({ ctx, params, search }) => {
 							</section>
 						</div>
 						<div className="flex flex-col gap-4">
+							{usage !== null && usageLineOf(usage) !== "" && (
+								<section aria-label="Its usage" className="flex flex-col gap-1">
+									<h2 className="text-lg font-semibold">Usage left</h2>
+									<p className={`text-sm font-medium ${usageToneOf(usage)}`}>
+										{usageLineOf(usage)}
+									</p>
+									{usageWordsOf(usage).map((words) => (
+										<p className="text-xs opacity-70" key={words}>
+											{words}
+										</p>
+									))}
+								</section>
+							)}
 							<section aria-label="Its brief" className="flex flex-col gap-2">
 								<h2 className="text-lg font-semibold">Brief</h2>
 								<p className="whitespace-pre-wrap text-sm">

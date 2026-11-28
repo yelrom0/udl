@@ -90,6 +90,23 @@ const ANSWERS: Record<string, unknown> = {
 		held: [],
 		done: [],
 	},
+	orch_usage: {
+		items: [
+			{
+				agent: "deepseek-a",
+				runner: "opencode",
+				model: "openrouter-ds-a/deepseek-v4.1-flash",
+				paid: { spent: "1.64", limit: "8", left: "6.36", spent_today: "0.21", free_tier: false },
+				free: null,
+				requests_today: 12,
+				tokens_in: 24000,
+				tokens_out: 3100,
+				cost: "0.21",
+				limited_until: null,
+				state: "ok",
+			},
+		],
+	},
 	orch_progress: {
 		features: [],
 		models: [{ model: "deepseek-v4.1", hours_per_point: { hours: 0.5, source: "model" } }],
@@ -153,6 +170,74 @@ describe("an agent's page (29.6)", () => {
 		expect(screen.getByText("opencode · deepseek-v4.1 · local")).toBeTruthy();
 		expect(screen.getByText("reports to boss")).toBeTruthy();
 		expect(screen.getByText("You build udl.")).toBeTruthy();
+	});
+
+	it("says what it has left: its key's money, what it spent, and its own turns", async () => {
+		const fake = fakeCtx((name) => ANSWERS[name] as never);
+		render(
+			<AgentPage ctx={fake.ctx} params={{ name: "deepseek-a" }} path="agents/$name" search={{}} />,
+		);
+		await read();
+
+		const usage = within(screen.getByLabelText("Its usage"));
+		expect(usage.getByText("$6.36 of $8 left")).toBeTruthy();
+		expect(usage.getByText("Spent $1.64 of $8")).toBeTruthy();
+		expect(usage.getByText("$0.21 today")).toBeTruthy();
+		expect(usage.getByText("12 requests, 24,000 in, 3,100 out, $0.21")).toBeTruthy();
+	});
+
+	it("says a free model's allowance and when it resets, in warning when low", async () => {
+		const fake = fakeCtx((name) => {
+			if (name === "orch_usage") {
+				return {
+					items: [
+						{
+							agent: "deepseek-a",
+							runner: "opencode",
+							model: "openrouter/ernie/free",
+							paid: null,
+							free: {
+								requests_today: 412,
+								allowance: 1000,
+								left: 588,
+								resets_at: "2026-11-29T00:00:00Z",
+							},
+							requests_today: 412,
+							state: "low",
+						},
+					],
+				} as never;
+			}
+			return ANSWERS[name] as never;
+		});
+		render(
+			<AgentPage ctx={fake.ctx} params={{ name: "deepseek-a" }} path="agents/$name" search={{}} />,
+		);
+		await read();
+
+		const line = within(screen.getByLabelText("Its usage")).getByText(
+			/^588 of 1,000 requests left, resets /,
+		);
+		expect(line.textContent).toContain("588 of 1,000 requests left, resets ");
+		expect(line.className).toContain("text-warning");
+		// (A free model has no key of its own: nothing is said about one.)
+		expect(screen.queryByText(/^Spent /)).toBeNull();
+	});
+
+	it("draws the page when usage cannot be read", async () => {
+		const fake = fakeCtx((name) => {
+			if (name === "orch_usage") {
+				throw new Error("the provider is down");
+			}
+			return ANSWERS[name] as never;
+		});
+		render(
+			<AgentPage ctx={fake.ctx} params={{ name: "deepseek-a" }} path="agents/$name" search={{}} />,
+		);
+		await read();
+
+		expect(screen.getByText("deepseek-a")).toBeTruthy();
+		expect(screen.queryByLabelText("Its usage")).toBeNull();
 	});
 
 	it("draws its queue in order, each task's size, and the current one's pull", async () => {

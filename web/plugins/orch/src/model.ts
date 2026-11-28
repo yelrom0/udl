@@ -463,6 +463,41 @@ export interface AgentInfo {
 	readonly session: SessionSummary | null;
 	readonly queue: readonly QueueEntry[];
 	readonly reports: readonly string[];
+	/** What it has left, in one line (27.14); empty for an agent with nothing to measure. */
+	readonly usage: string;
+}
+
+/** What a provider key has left, as its provider says (27.14's `KeyUsage`): never the key. */
+export interface KeyUsage {
+	readonly spent: number | null;
+	readonly limit: number | null;
+	readonly left: number | null;
+	readonly spent_today: number | null;
+	readonly free_tier: boolean | null;
+}
+
+/** A free model's allowance today (27.14's `FreeUsage`): the account's, shared by its agents. */
+export interface FreeUsage {
+	readonly requests_today: number;
+	readonly allowance: number;
+	readonly left: number;
+	readonly resets_at: string;
+}
+
+/** What one agent has left (27.14's `AgentUsage`): its key's money, or its free allowance. */
+export interface AgentUsage {
+	readonly agent: string;
+	readonly runner: string;
+	readonly model: string;
+	readonly paid: KeyUsage | null;
+	readonly free: FreeUsage | null;
+	readonly requests_today: number;
+	readonly tokens_in: number;
+	readonly tokens_out: number;
+	readonly cost: number | null;
+	readonly limited_until: string | null;
+	/** Where it is: `ok`, `low` (under a tenth left) or `out`. */
+	readonly state: string;
 }
 
 /** A model a harness can run on a host, as `orch_list_runners` sends it (25.11). */
@@ -912,7 +947,49 @@ export function agentInfoOf(value: JsonValue | undefined): AgentInfo {
 		session: sessionSummaryOf(info.session),
 		queue: asArray(info.queue).map(queueEntryOf),
 		reports: asArray(info.reports).map((name) => asText(name)),
+		usage: asText(info.usage),
 	};
+}
+
+/** One agent's usage, as `orch_usage` answers it (27.14). Its key's label is not read: it is
+ * OpenRouter's masked preview of the key, not the connection's name (27.15 replaces it). */
+export function usageOf(value: JsonValue | undefined): AgentUsage {
+	const row = asObject(value);
+	const paid = asObject(row.paid);
+	const free = asObject(row.free);
+	return {
+		agent: asText(row.agent),
+		runner: asText(row.runner),
+		model: asText(row.model),
+		paid: isObject(row.paid)
+			? {
+					spent: asDecimal(paid.spent),
+					limit: asDecimal(paid.limit),
+					left: asDecimal(paid.left),
+					spent_today: asDecimal(paid.spent_today),
+					free_tier: typeof paid.free_tier === "boolean" ? paid.free_tier : null,
+				}
+			: null,
+		free: isObject(row.free)
+			? {
+					requests_today: asNumber(free.requests_today),
+					allowance: asNumber(free.allowance),
+					left: asNumber(free.left),
+					resets_at: asText(free.resets_at),
+				}
+			: null,
+		requests_today: asNumber(row.requests_today),
+		tokens_in: asNumber(row.tokens_in),
+		tokens_out: asNumber(row.tokens_out),
+		cost: asDecimal(row.cost),
+		limited_until: typeof row.limited_until === "string" ? row.limited_until : null,
+		state: asText(row.state),
+	};
+}
+
+/** Every agent's usage, as `orch_usage` answers them (27.14). */
+export function usagesOf(value: JsonValue | undefined): AgentUsage[] {
+	return asArray(asObject(value).items).map(usageOf);
 }
 
 /** Every agent, as `orch_list_agents` answers them, by name. */

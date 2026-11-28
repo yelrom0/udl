@@ -90,6 +90,38 @@ const ANSWERS: Record<string, unknown> = {
 		models: [{ model: "deepseek-v4.1", hours_per_point: { hours: 0.5, source: "model" } }],
 	},
 	orch_merge_list: { project: "udl", ready: [], coming: [], held: [], done: [] },
+	orch_usage: {
+		items: [
+			{
+				agent: "boss",
+				runner: "opencode",
+				model: "deepseek-v4.1",
+				paid: { spent: "1.64", limit: "8", left: "6.36", spent_today: "0.21", free_tier: false },
+				free: null,
+				requests_today: 12,
+				tokens_in: 900,
+				tokens_out: 120,
+				cost: "0.21",
+				limited_until: null,
+				state: "ok",
+			},
+			{
+				agent: "deepseek-a",
+				runner: "opencode",
+				model: "openrouter/ernie/free",
+				paid: null,
+				free: {
+					requests_today: 412,
+					allowance: 1000,
+					left: 588,
+					resets_at: "2026-11-29T00:00:00Z",
+				},
+				requests_today: 412,
+				limited_until: null,
+				state: "ok",
+			},
+		],
+	},
 };
 
 describe("the agents' store (29.6)", () => {
@@ -102,6 +134,37 @@ describe("the agents' store (29.6)", () => {
 		expect(state.items.map((one) => one.agent.name)).toEqual(["boss", "deepseek-a"]);
 		expect(state.items[1]?.agent.manager).toBe("boss");
 		expect(state.loaded).toBe(true);
+		expect(state.error).toBeNull();
+	});
+
+	it("reads what each agent has left, for the line under its name", async () => {
+		const fake = fakeCtx((name) => ANSWERS[name] as never);
+		const loaded = agentsStore(fake.ctx);
+		await settle();
+
+		const usage = loaded.store.getState().usage;
+		expect(usage.map((one) => one.agent)).toEqual(["boss", "deepseek-a"]);
+		expect(usage[0]?.paid?.left).toBe(6.36);
+		expect(usage[1]?.free?.left).toBe(588);
+		// (One read of the whole list, never one per agent.)
+		expect(fake.calls.filter((one) => one.name === "orch_usage").map((one) => one.request)).toEqual(
+			[{}],
+		);
+	});
+
+	it("draws the tree when usage cannot be read: a key's money is beside the agents", async () => {
+		const fake = fakeCtx((name) => {
+			if (name === "orch_usage") {
+				throw new Error("the provider is down");
+			}
+			return ANSWERS[name] as never;
+		});
+		const loaded = agentsStore(fake.ctx);
+		await settle();
+
+		const state = loaded.store.getState();
+		expect(state.items.map((one) => one.agent.name)).toEqual(["boss", "deepseek-a"]);
+		expect(state.usage).toEqual([]);
 		expect(state.error).toBeNull();
 	});
 
@@ -175,6 +238,43 @@ describe("an agent's store (29.6)", () => {
 		).toEqual([{ project: "udl" }]);
 	});
 
+	it("reads what it has left, for its own usage card", async () => {
+		// (udl answers one agent's row when it is asked for one.)
+		const fake = fakeCtx((name, request) => {
+			if (name === "orch_usage") {
+				const items = (ANSWERS.orch_usage as { items: { agent: string }[] }).items;
+				return { items: items.filter((one) => one.agent === request.agent) } as never;
+			}
+			return ANSWERS[name] as never;
+		});
+		const loaded = agentStore(fake.ctx, "deepseek-a");
+		await settle();
+
+		const usage = loaded.store.getState().usage;
+		expect(usage?.agent).toBe("deepseek-a");
+		expect(usage?.free?.allowance).toBe(1000);
+		// (Its own row, by name: the list's other agents are not its business.)
+		expect(fake.calls.filter((one) => one.name === "orch_usage").map((one) => one.request)).toEqual(
+			[{ agent: "deepseek-a" }],
+		);
+	});
+
+	it("draws the page when usage cannot be read: its queue and transcript stand", async () => {
+		const fake = fakeCtx((name) => {
+			if (name === "orch_usage") {
+				throw new Error("the provider is down");
+			}
+			return ANSWERS[name] as never;
+		});
+		const loaded = agentStore(fake.ctx, "deepseek-a");
+		await settle();
+
+		const state = loaded.store.getState();
+		expect(state.info?.agent.name).toBe("deepseek-a");
+		expect(state.usage).toBeNull();
+		expect(state.error).toBeNull();
+	});
+
 	it("reads nothing beside an empty queue: there is nothing to size or merge", async () => {
 		const fake = fakeCtx((name) => {
 			if (name === "orch_get_agent") {
@@ -185,7 +285,11 @@ describe("an agent's store (29.6)", () => {
 		agentStore(fake.ctx, "idle");
 		await settle();
 
-		expect(fake.calls.map((one) => one.name)).toEqual(["orch_get_agent", "orch_list_agents"]);
+		expect(fake.calls.map((one) => one.name)).toEqual([
+			"orch_get_agent",
+			"orch_list_agents",
+			"orch_usage",
+		]);
 	});
 
 	it("stands when a read beside the agent refuses", async () => {
