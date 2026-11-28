@@ -29,11 +29,12 @@ export type Refreshable<T> = T & { refresh(): Promise<void> };
 const NO_QUESTIONS: QuestionsState = { project: "", questions: null, error: null };
 
 /** The agents' page before it is read. */
-const NO_AGENTS: AgentsState = { items: [], loaded: false, error: null };
+const NO_AGENTS: AgentsState = { items: [], usage: [], loaded: false, error: null };
 
 /** An agent's page before it is read. */
 const NO_AGENT: AgentState = {
 	info: null,
+	usage: null,
 	agents: [],
 	tasks: [],
 	merge: mergeListOf(undefined),

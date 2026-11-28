@@ -1,3 +1,4 @@
+import { counted } from "../format";
 import { Markdown } from "../markdown";
 import type { Spoken } from "../model";
 
@@ -41,11 +42,6 @@ function when(at: string): string {
 	return Number.isNaN(read.getTime())
 		? at
 		: read.toLocaleString("en-AU", { dateStyle: "short", timeStyle: "short" });
-}
-
-/** `n` with thousands separators, as a person reads a count. */
-function counted(n: number): string {
-	return n.toLocaleString("en-AU");
 }
 
 /**

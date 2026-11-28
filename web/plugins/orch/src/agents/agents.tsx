@@ -2,10 +2,11 @@ import type { RouteProps, UIContext } from "@udl/ui-sdk";
 import type { Component } from "@udl/ui-sdk/react";
 import { useState } from "react";
 import { useAgents } from "../hooks";
-import type { AgentDetail, AgentInfo } from "../model";
+import type { AgentDetail, AgentInfo, AgentUsage } from "../model";
 import { Page, Said } from "../page";
 import { AgentEditor } from "./editor";
 import { carryAgent, carryingAgent, dropped, reportsOf, rootsOf, whereOf } from "./tree";
+import { usageLineOf, usageToneOf } from "./usage";
 
 /** What a status looks like: its word and the dot's colour (DESIGN.md's own table). */
 const DOTS: Readonly<Record<string, string>> = {
@@ -22,6 +23,8 @@ const DOTS: Readonly<Record<string, string>> = {
 interface NodeProps {
 	readonly info: AgentInfo;
 	readonly agents: readonly AgentInfo[];
+	/** What each agent has left (27.14), by agent: the line under its name. */
+	readonly usage: readonly AgentUsage[];
 	readonly depth: number;
 	readonly onEdit: (agent: AgentDetail) => void;
 	readonly refresh: () => Promise<void>;
@@ -29,9 +32,11 @@ interface NodeProps {
 }
 
 /** One agent, as the tree draws it: its status, its queue, and the agents that report to it. */
-function Node({ info, agents, depth, onEdit, refresh, ctx }: NodeProps) {
+function Node({ info, agents, usage, depth, onEdit, refresh, ctx }: NodeProps) {
 	const [over, setOver] = useState(false);
 	const reports = reportsOf(agents, info.agent.name);
+	const left = usage.find((one) => one.agent === info.agent.name) ?? null;
+	const line = left === null ? "" : usageLineOf(left);
 	return (
 		<li
 			aria-label={info.agent.name}
@@ -92,6 +97,9 @@ function Node({ info, agents, depth, onEdit, refresh, ctx }: NodeProps) {
 				<span className="text-xs opacity-60">
 					{info.queue.length === 0 ? "nothing queued" : `${info.queue.length} queued`}
 				</span>
+				{line !== "" && left !== null && (
+					<span className={`text-xs ${usageToneOf(left)}`}>{line}</span>
+				)}
 				<button
 					className="btn btn-xs btn-ghost"
 					onClick={() => {
@@ -115,6 +123,7 @@ function Node({ info, agents, depth, onEdit, refresh, ctx }: NodeProps) {
 								key={name}
 								onEdit={onEdit}
 								refresh={refresh}
+								usage={usage}
 							/>
 						);
 					})}
@@ -131,7 +140,7 @@ function Node({ info, agents, depth, onEdit, refresh, ctx }: NodeProps) {
  * refused with the reason.
  */
 export const AgentsPage: Component<RouteProps> = ({ ctx }) => {
-	const { items, loaded, error, refresh } = useAgents(ctx);
+	const { items, usage, loaded, error, refresh } = useAgents(ctx);
 	const [editing, setEditing] = useState<AgentDetail | null>(null);
 	const [making, setMaking] = useState(false);
 	const reading = !loaded && error === null;
@@ -206,6 +215,7 @@ export const AgentsPage: Component<RouteProps> = ({ ctx }) => {
 										key={name}
 										onEdit={edit}
 										refresh={refresh}
+										usage={usage}
 									/>
 								);
 							})}

@@ -74,6 +74,33 @@ const ANSWERS: Record<string, unknown> = {
 			},
 		],
 	},
+	orch_usage: {
+		items: [
+			{
+				agent: "boss",
+				runner: "opencode",
+				model: "openrouter-ds-a/deepseek-v4.1-flash",
+				paid: { spent: "1.64", limit: "8", left: "6.36", spent_today: "0.21" },
+				free: null,
+				requests_today: 12,
+				state: "ok",
+			},
+			{
+				agent: "deepseek-a",
+				runner: "opencode",
+				model: "openrouter/ernie/free",
+				paid: null,
+				free: {
+					requests_today: 412,
+					allowance: 1000,
+					left: 588,
+					resets_at: "2026-11-29T00:00:00Z",
+				},
+				requests_today: 412,
+				state: "low",
+			},
+		],
+	},
 	orch_set_agent: { name: "deepseek-a" },
 };
 
@@ -104,6 +131,37 @@ describe("the agents' page (29.6)", () => {
 		expect(within(screen.getByLabelText("deepseek-a")).getByText("2 queued")).toBeTruthy();
 		expect(within(screen.getByLabelText("ernie-c")).getByLabelText("offline")).toBeTruthy();
 		expect(within(screen.getByLabelText("ernie-c")).getByText("nothing queued")).toBeTruthy();
+	});
+
+	it("says what each agent has left, coloured where it is running low", async () => {
+		const fake = fakeCtx((name) => ANSWERS[name] as never);
+		render(<AgentsPage ctx={fake.ctx} params={{}} path="agents" search={{}} />);
+		await read();
+
+		const boss = screen.getByText("$6.36 of $8 left");
+		expect(boss.textContent).toBe("$6.36 of $8 left");
+		expect(boss.className).toContain("text-base-content/60");
+		const one = screen.getByText(/^588 of 1,000 requests left, resets /);
+		expect(one.textContent).toContain("588 of 1,000 requests left, resets ");
+		expect(one.className).toContain("text-warning");
+		// (An agent udl has nothing to measure for says nothing, rather than a line about it.)
+		expect(screen.queryByText(/requests left/)).toBeTruthy();
+		expect(screen.queryAllByText(/left/)).toHaveLength(2);
+	});
+
+	it("draws the tree when usage cannot be read", async () => {
+		const fake = fakeCtx((name) => {
+			if (name === "orch_usage") {
+				throw new Error("the provider is down");
+			}
+			return ANSWERS[name] as never;
+		});
+		render(<AgentsPage ctx={fake.ctx} params={{}} path="agents" search={{}} />);
+		await read();
+
+		// (The tree stands: the boss is drawn, and only its line is unsaid.)
+		expect(screen.getByLabelText("boss")).toBeTruthy();
+		expect(screen.queryByText(/left$/)).toBeNull();
 	});
 
 	it("goes to an agent's page", async () => {

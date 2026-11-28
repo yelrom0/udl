@@ -3,6 +3,7 @@ import { createStore } from "zustand/vanilla";
 import { messageOf } from "../json";
 import {
 	type AgentInfo,
+	type AgentUsage,
 	agentInfoOf,
 	agentsOf,
 	type MergeList,
@@ -11,6 +12,7 @@ import {
 	progressOf,
 	type Task,
 	tasksOf,
+	usagesOf,
 } from "../model";
 import type { Loaded } from "./inbox";
 import { coalesced, on, orNone } from "./once";
@@ -18,6 +20,9 @@ import { coalesced, on, orNone } from "./once";
 /** What the agents' page holds: every agent, and whether the read came back. */
 export interface AgentsState {
 	readonly items: readonly AgentInfo[];
+	/** What each agent has left (27.14), by agent: the line under its name. Empty when the
+	 * provider could not be asked — a key's money is beside the tree, not part of it. */
+	readonly usage: readonly AgentUsage[];
 	/** Whether a read came back: until one has, the page is reading, not empty. */
 	readonly loaded: boolean;
 	readonly error: string | null;
@@ -35,18 +40,36 @@ const WATCHED: readonly string[] = [
 	"orch.session.failed",
 	"orch.agent.idle",
 	"orch.agent.limited",
+	// (A key or allowance that crosses into low or out is the line's news: it is what colours it.)
+	"orch.usage.low",
+	"orch.usage.out",
 ];
 
 /** The agents' page (29.6): the tree, read when the store is made and again when any of the
  * above moves. */
 export function agentsStore(ctx: UIContext): Loaded<AgentsState> {
-	const store = createStore<AgentsState>(() => ({ items: [], loaded: false, error: null }));
+	const store = createStore<AgentsState>(() => ({
+		items: [],
+		usage: [],
+		loaded: false,
+		error: null,
+	}));
 	let stopped = false;
 	const reads = coalesced(
 		async () => {
-			const items = await ctx.call("orch_list_agents", {});
+			const [items, usage] = await Promise.all([
+				ctx.call("orch_list_agents", {}),
+				// (Beside the tree: `orch_usage` reads each agent's transcript, and a provider that
+				// cannot be asked leaves the line unsaid rather than the page empty.)
+				orNone(ctx.call("orch_usage", {})),
+			]);
 			if (!stopped) {
-				store.setState({ items: agentsOf(items), loaded: true, error: null });
+				store.setState({
+					items: agentsOf(items),
+					usage: usage === undefined ? [] : usagesOf(usage),
+					loaded: true,
+					error: null,
+				});
 			}
 		},
 		(error) => {
@@ -76,6 +99,9 @@ export function agentsStore(ctx: UIContext): Loaded<AgentsState> {
  * the merge lists its pulls are read from, and its own project's rates. */
 export interface AgentState {
 	readonly info: AgentInfo | null;
+	/** What it has left (27.14): its key's money, or its free allowance. Null when udl could
+	 * not say (the provider is down), which leaves its other cards standing. */
+	readonly usage: AgentUsage | null;
 	/** Every agent, so its place in the hierarchy is the whole chain and not just its manager. */
 	readonly agents: readonly AgentInfo[];
 	readonly tasks: readonly Task[];
@@ -99,6 +125,8 @@ const ONE_WATCHED: readonly string[] = [
 	"orch.task.ready",
 	"orch.task.merged",
 	"orch.link.changed",
+	"orch.usage.low",
+	"orch.usage.out",
 ];
 
 /**
@@ -110,6 +138,7 @@ const ONE_WATCHED: readonly string[] = [
 export function agentStore(ctx: UIContext, name: string): Loaded<AgentState> {
 	const store = createStore<AgentState>(() => ({
 		info: null,
+		usage: null,
 		agents: [],
 		tasks: [],
 		merge: mergeListOf(undefined),
@@ -127,8 +156,13 @@ export function agentStore(ctx: UIContext, name: string): Loaded<AgentState> {
 			];
 			// (Each of these is beside the agent, not the agent: one udl cannot answer — no
 			// GitHub account is connected, say — leaves its own card unsaid, and the page stands.)
-			const [list, ...beside] = await Promise.all([
+			// (`orch_get_agent` answers `usage` too, as one line; the card needs the numbers behind
+			// it — what a key spent of its cap and today, and its own turns — so it asks
+			// `orch_usage` once beside the page. One extra read per refresh, coalesced with the
+			// rest, and the page stays standing when the provider cannot be asked.)
+			const [list, usage, ...beside] = await Promise.all([
 				orNone(ctx.call("orch_list_agents", {})),
+				orNone(ctx.call("orch_usage", { agent: name })),
 				...projects.map(async (project) => {
 					const [found, pulls, rates] = await Promise.all([
 						orNone(ctx.call("orch_list_tasks", { project })),
@@ -154,6 +188,7 @@ export function agentStore(ctx: UIContext, name: string): Loaded<AgentState> {
 			if (!stopped) {
 				store.setState({
 					info,
+					usage: usage === undefined ? null : (usagesOf(usage)[0] ?? null),
 					agents: list === undefined ? [] : agentsOf(list),
 					tasks,
 					merge,
