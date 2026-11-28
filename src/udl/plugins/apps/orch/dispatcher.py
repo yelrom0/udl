@@ -347,7 +347,7 @@ class Dispatcher:
         await self._pruned()
         # (No agent is enabled yet, or one is made or enabled while this runs: the watcher reads
         # them, so a person's change needs no restart. Nothing at all without an api key, above.)
-        watcher = self._spawn(self._watching())
+        self._spawn(self._watching())
         self._spawn(self._woken_by_events())
         self._spawn(self._pruning())
         self._spawn(self._checking())
@@ -355,17 +355,13 @@ class Dispatcher:
         try:
             await self._stop.wait()  # (a loop never ends on its own: it logs and carries on)
         finally:
-            # (The watcher first: it is the one that starts tasks, so nothing new is started
-            # between the cancel and the await.)
-            watcher.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await watcher
+            # (Every task is cancelled before anything is awaited, so the watcher — the one task
+            # that starts others — cannot start another in between. `return_exceptions` because a
+            # task that ended on its own error must not keep the rest from ending here.)
             everything = set(self._all)
             for task in everything:
                 task.cancel()
-            for task in everything:
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+            await asyncio.gather(*everything, return_exceptions=True)
             self._all.clear()
             self._loops.clear()
             self._checks.clear()
@@ -386,13 +382,23 @@ class Dispatcher:
         has a loop gets nothing, so a tick never doubles one; a deleted agent's loop ends by
         itself (`fresh is None`) and is forgotten here, so its name may be used again."""
         while True:
-            with contextlib.suppress(PluginError, UDLError):
+            # (Cleared before the read: an event that lands while it is in flight wakes the wait
+            # below at once instead of being cleared with it.)
+            self._changed.clear()
+            try:
                 await self._staffed()
+            except Exception:  # (one read's trouble is not the watcher's end)
+                log.warning("reading the agents to dispatch to", exc_info=True)
             await self._ticked_or_changed()
 
     async def _staffed(self) -> None:
         """Start what the enabled agents have not got yet: a loop, its wake and its host check."""
         agents = [one for one in await stored.AgentRecords(self._records).agents() if one.enabled]
+        enabled = {agent.name for agent in agents}
+        for name in [one for one in self._checks if one not in enabled]:
+            # (A deleted or disabled agent's check ends with it: an agent made again under the
+            # same name — perhaps on another host — gets a check of its own.)
+            self._checks.pop(name).cancel()
         for agent in agents:
             self._wakes.setdefault(agent.name, asyncio.Event())
             if agent.name not in self._loops:
@@ -411,7 +417,6 @@ class Dispatcher:
 
     async def _ticked_or_changed(self) -> None:
         """Wait for the tick, or for an agent's write to say one changed: whichever is first."""
-        self._changed.clear()
         ticking = asyncio.ensure_future(self._clock.sleep(self._tick))
         changed = asyncio.ensure_future(self._changed.wait())
         waiting = (ticking, changed)
