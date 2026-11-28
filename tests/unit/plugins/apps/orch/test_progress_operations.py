@@ -60,7 +60,20 @@ START = NOW - timedelta(days=10)
 """Ten days back: where the one merge outside the pace's seven days is."""
 
 DAYS_AGO = (10, 3, 2, 1, 0)
-"""How long before now each merged task's pull was merged: one older than the week."""
+"""How many days before today each merged task's pull was merged: one older than the week."""
+
+TODAY = NOW.replace(hour=0, minute=0, second=0, microsecond=0)
+"""The start of today (UTC): the day the series' last point is."""
+
+OF_THE_DAY = (NOW - TODAY) / 2
+"""Where in its day each merge is: halfway through today so far, so today's merge is never after
+now and each merge is on the day it says. (An hour before now was yesterday for the first hour
+after midnight UTC, so a window from yesterday held one merge, not two.)"""
+
+
+def merged_at(days_ago: int) -> datetime:
+    """When the task merged `days_ago` days before today was merged."""
+    return TODAY - timedelta(days=days_ago) + OF_THE_DAY
 
 
 @pytest.fixture
@@ -95,14 +108,14 @@ async def service(tmp_path: Path) -> AsyncIterator[UDLService]:
                         task=task.id,
                         from_state=OPEN,
                         to_state=IN_PROGRESS,
-                        at=NOW - timedelta(days=days_ago, hours=3),
+                        at=merged_at(days_ago) - timedelta(hours=2),
                         by="deepseek-a",
                     ),
                     StateChange(
                         task=task.id,
                         from_state=IN_PROGRESS,
                         to_state=MERGED,
-                        at=NOW - timedelta(days=days_ago, hours=1),
+                        at=merged_at(days_ago),
                         by="deepseek-a",
                     ),
                 ]
