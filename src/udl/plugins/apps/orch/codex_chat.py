@@ -380,7 +380,11 @@ class CodexChat:
         """Whether this Codex can relay its approvals (`app-server` is there)."""
         try:
             done = await self._shell.run([*self._cli, "app-server", "--help"])
-        except PluginFailed, ToolUnavailable, TimeoutError:
+        except (
+            PluginFailed,
+            ToolUnavailable,
+            TimeoutError,
+        ):
             return False
         return done.returncode == 0
 
