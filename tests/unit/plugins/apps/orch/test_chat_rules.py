@@ -78,6 +78,13 @@ def test_a_tool_that_is_not_a_shell_is_remembered() -> None:
     assert rememberable("Edit", {"file_path": "a.py"})
 
 
+def test_an_edit_with_no_file_is_not_remembered() -> None:
+    """(30.1: allowing a pathless change for the chat would allow every later one.)"""
+    assert not rememberable("Edit", {})
+    assert not rememberable("Edit", {"file_path": ""})
+    assert not rememberable("Edit", {"reason": "it needs to write a file"})
+
+
 def test_a_shell_command_is_read_from_its_command() -> None:
     """(Its other fields say nothing about what it runs.)"""
     given: JsonObject = {"description": "list the folder", "timeout": 1000}

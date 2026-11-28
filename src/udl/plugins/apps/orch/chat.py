@@ -42,15 +42,17 @@ from pydantic import (
 from udl.clock import Clock
 from udl.db.models import JsonObject
 from udl.db.records import Name
-from udl.errors import DoesNotExist, PluginError, UDLError
+from udl.errors import DoesNotExist, NotAllowed, PluginError, UDLError
 from udl.interfaces.security import CHAT_PREFIX
 from udl.plugins.apps.base import AppEvents, AppRecords
 from udl.plugins.apps.orch import records as stored
 from udl.plugins.apps.orch.agents import AnAgentEvent, Said, SessionState, an_event
+from udl.plugins.apps.orch.codex_chat import Ask, CodexChat, CodexQuestion
 from udl.plugins.apps.orch.models import ChatPermissionState, HostName, Text, Title
 from udl.plugins.runners.base import (
     McpEndpoint,
     RunnerFailed,
+    SessionRef,
     SessionSpec,
     TextDelta,
     TurnEnded,
@@ -333,6 +335,7 @@ class Chats:
         clock: Clock,
         permission_minutes: int = 10,
         memory: int | None = None,
+        idle: timedelta = timedelta(hours=24),
     ) -> None:
         self._service = service
         self._records = records
@@ -343,6 +346,12 @@ class Chats:
         self._memory = memory
         """What a chat's turn may use (27.12): a chat is a harness running a person's work, and a
         runaway in it is that turn's failure, not the host's."""
+        self._idle = idle
+        """How long a chat's Codex server may live untouched (`[apps.orch] chat_idle`): the same
+        setting the chat's token keeps working by, so the two cannot drift apart."""
+        self._codex: dict[UUID, CodexChat] = {}
+        """The `app-server` driver of each Codex chat (27.11's Codex half): its harness is a
+        process of the chat's own, not a runner's turn."""
         self._turns: dict[UUID, asyncio.Task[None]] = {}
         """The turn each chat is in, when one is (so a stop can end it, and a second turn is
         refused)."""
@@ -367,13 +376,28 @@ class Chats:
             )
         )
         token = await self._issue(chat)
+        if request.runner == "codex":
+            # (A Codex that cannot relay its approvals is refused before anything is started:
+            # a chat that cannot ask is a chat that acts unwatched, and a refusal is the
+            # caller's to see, not a chat that failed.)
+            try:
+                ref = await self._codex_start(chat, directory, token)
+            except NotAllowed:
+                raise
+            except Exception as error:  # noqa: BLE001 - (a harness that cannot start is reported)
+                chat = await self._records.save(
+                    chat.model_copy(update={"state": SessionState.FAILED, "last_error": str(error)})
+                )
+                return await self.info(chat)
+            return await self._started(chat, ref, request.text)
         try:
             ref = await runner.start(
                 SessionSpec(
                     cwd=directory,
                     model=request.model or None,
-                    # (27.11: a chat runs as the person would — their own settings decide — and
-                    # the one thing udl adds is its MCP server, whose permission prompt is udl's.)
+                    # (27.11: a chat runs as the person would — their own settings
+                    # decide — and the one thing udl adds is its MCP server, whose
+                    # permission prompt is udl's.)
                     own_settings=True,
                     permission_tool=PERMISSION_TOOL,
                     memory=self._memory,
@@ -395,6 +419,65 @@ class Chats:
         if request.text.strip():
             return await self.send(chat, request.text)
         return await self.info(chat)
+
+    async def _codex_driver(self, chat: stored.Chat) -> CodexChat:
+        """The `app-server` driver of `chat`: `codex app-server`, which relays its approvals
+        (27.11). A Codex that cannot is refused rather than run without approvals — a chat that
+        cannot ask is a chat that acts on the person's machine unwatched (O-C15)."""
+        runner = await self._harnesses.runner(chat.host, "codex")
+        driver = CodexChat(
+            cli=runner.options.cli,  # (a Codex's own options: its `cli` is the program)
+            shell=runner.shell,
+            ask=self._codex_ask(chat),
+            within=self._idle,
+        )
+        if not await driver.available():
+            raise NotAllowed(
+                "this Codex can't relay its approvals; update it",
+                hint="A chat's harness asks before it acts: `codex app-server` is what asks.",
+            )
+        return driver
+
+    async def _started(self, chat: stored.Chat, ref: SessionRef, text: str) -> ChatInfo:
+        """What a chat is once its harness has started: saved, said, and its first turn sent."""
+        chat = await self._records.save(
+            chat.model_copy(update={"ref": ref, "state": SessionState.IDLE})
+        )
+        await self._live(chat, "orch.chat.started", {"chat": str(chat.id), "runner": chat.runner})
+        if text.strip():
+            return await self.send(chat, text)
+        return await self.info(chat)
+
+    async def _codex_start(self, chat: stored.Chat, directory: str, token: SecretStr) -> SessionRef:
+        """Start `chat`'s Codex harness, and keep its driver for its turns."""
+        driver = await self._codex_driver(chat)
+        ref = await driver.start(
+            SessionSpec(
+                cwd=directory,
+                model=chat.model or None,
+                own_settings=True,
+                memory=self._memory,
+                unit="udl-session-chat",
+                mcp=McpEndpoint(url=self._mcp_url(), token=token),
+                secret_env={"UDL_CHAT_TOKEN": token},
+            )
+        )
+        self._codex[chat.id] = driver
+        return ref
+
+    def _codex_ask(self, chat: stored.Chat) -> Ask:
+        """What the driver asks when its harness does: the person's answer, and whether it was
+        given for the rest of the chat."""
+
+        async def asked(tool: str, given: JsonObject, call: str) -> CodexQuestion:
+            answer, for_chat = await self.ask_and_remember(
+                chat, AskPermissionRequest(tool_name=tool, input=given, tool_use_id=call)
+            )
+            return CodexQuestion(
+                allowed=answer.behavior == "allow", for_chat=for_chat, message=answer.message
+            )
+
+        return asked
 
     async def _folder(self, host: str) -> str:
         """Where a chat with no folder of its own works: the folder udl runs in, on this machine
@@ -479,11 +562,27 @@ class Chats:
         if chat.ref is None:  # (a chat with a turn is a chat whose harness started)
             return
         runner = await self._harnesses.runner(chat.host, chat.runner)
+        driver = self._codex.get(chat.id)
+        if chat.runner == "codex" and driver is None:
+            # (A Codex chat whose server is gone is not handed to the `codex exec` runner: that
+            # one has no approvals at all, which is what the refusal in start() prevents.)
+            await self._ended(
+                chat,
+                "",
+                ended=TurnEnded(
+                    reason=TurnReason.ERROR, text="Its harness is gone: start the chat again."
+                ),
+                failed=None,
+            )
+            return
         said: list[str] = []
         ended: TurnEnded | None = None
         failed: RunnerFailed | None = None
         try:
-            async for event in runner.send(chat.ref, text):
+            stream = (
+                driver.send(chat.ref, text) if driver is not None else runner.send(chat.ref, text)
+            )
+            async for event in stream:
                 spoken = an_event(event)
                 await self._said(chat, spoken)
                 if isinstance(spoken, TextDelta):
@@ -609,9 +708,14 @@ class Chats:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         if current.ref is not None:
-            runner = await self._harnesses.runner(current.host, current.runner)
-            with contextlib.suppress(PluginError, UDLError):
-                await runner.stop(current.ref)
+            driver = self._codex.pop(current.id, None)
+            if driver is not None:
+                with contextlib.suppress(PluginError, UDLError):
+                    await driver.stop(current.ref)
+            else:
+                runner = await self._harnesses.runner(current.host, current.runner)
+                with contextlib.suppress(PluginError, UDLError):
+                    await runner.stop(current.ref)
         await self._forget_files(current)
         await self._live(current, "orch.chat.ended", {"chat": str(current.id)})
         return await self.info(current)
@@ -641,14 +745,30 @@ class Chats:
 
     # -- permissions ---------------------------------------------------------------------------
 
+    async def ask_and_remember(
+        self, chat: stored.Chat, request: AskPermissionRequest
+    ) -> tuple[PermissionAnswer, bool]:
+        """`ask`, and whether the answer was for the rest of the chat (27.11's Codex half: its
+        protocol has a word for that, `acceptForSession`)."""
+        answer, asked = await self._ask(chat, request)
+        return answer, asked.allowed_for_chat if asked is not None else False
+
     async def ask(self, chat: stored.Chat, request: AskPermissionRequest) -> PermissionAnswer:
         """What `chat`'s harness asks before it acts: kept as what it asked, and answered when
         the person says (a denial is told, so the harness knows why)."""
+        answer, _ = await self._ask(chat, request)
+        return answer
+
+    async def _ask(
+        self, chat: stored.Chat, request: AskPermissionRequest
+    ) -> tuple[PermissionAnswer, stored.ChatPermission | None]:
+        """What the harness asked, kept and waited on: the answer, and the record it was filed
+        as (None when the chat is over, which is a denial)."""
         current = await self._saved(chat)
         if current is None:
             raise DoesNotExist(f"There is no chat {chat.id}", hint="It may have been deleted.")
         if current.state in (SessionState.ENDED, SessionState.FAILED):
-            return PermissionAnswer(behavior="deny", message="That chat has ended.")
+            return PermissionAnswer(behavior="deny", message="That chat has ended."), None
         asked = await self._records.save(
             stored.ChatPermission(chat=current.id, tool=request.tool_name, input=request.input)
         )
@@ -659,16 +779,19 @@ class Chats:
         )
         answered = await self._wait_for(asked)
         if answered is None:
-            return PermissionAnswer(
-                behavior="deny",
-                message=(
-                    f"Nobody answered within {self._permission_minutes} minutes, so udl did not "
-                    "allow it."
+            return (
+                PermissionAnswer(
+                    behavior="deny",
+                    message=(
+                        f"Nobody answered within {self._permission_minutes} minutes, so udl did "
+                        "not allow it."
+                    ),
                 ),
+                asked,
             )
         if answered.state is ChatPermissionState.ALLOWED:
-            return PermissionAnswer(behavior="allow", updatedInput=request.input)
-        return PermissionAnswer(behavior="deny", message=answered.message or "Denied.")
+            return PermissionAnswer(behavior="allow", updatedInput=request.input), answered
+        return PermissionAnswer(behavior="deny", message=answered.message or "Denied."), answered
 
     async def _wait_for(self, asked: stored.ChatPermission) -> stored.ChatPermission | None:
         """`asked` once it is answered, or None when nobody answers within the chat's time (a
@@ -863,7 +986,9 @@ def rememberable(tool: str, given: JsonObject) -> bool:
     same exact input, never a prefix — and never a shell command that chains or nests others, or
     runs a shell (27.11)."""
     if tool not in _SHELL_TOOLS:
-        return True
+        # (An `Edit` with no file is not a request to remember: "allow this chat" would then
+        # allow every later pathless change, which is any file at all (30.1's finding).)
+        return tool != "Edit" or bool(str(given.get("file_path", "")).strip())
     command = given.get("command")
     if not isinstance(command, str) or not command.strip():
         return False
