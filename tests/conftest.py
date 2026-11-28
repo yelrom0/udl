@@ -29,7 +29,7 @@ from sqlalchemy.engine import make_url
 # Local Imports
 from support.antibot import AntiBotSite
 from support.fixture_site import FixtureSite
-from support.servers import MONGODB, POSTGRES, serving
+from support.servers import MONGODB, POSTGRES, RUN, Run, serve
 from udl.hosts.shell import REPO_VARIABLES
 
 TESTS_DIR = Path(__file__).parent
@@ -61,7 +61,11 @@ NEEDS_A_SLOT = (
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Refuse a whole suite run outside a slot where the machine asks for one.
+    """Begin the run (or join it, in a pytest-xdist worker), and refuse a whole suite run outside a
+    slot where the machine asks for one.
+
+    The run is begun here, before xdist starts its workers, so they inherit it and share its
+    database servers (tests/support/servers.py).
 
     The build agents' service sets UDL_REQUIRE_SLOT on jeff-wiggle, and `wait-slot` sets
     WAIT_SLOT_HELD for what it runs. A run with coverage is a whole suite (`make check`, and so a
@@ -70,12 +74,19 @@ def pytest_configure(config: pytest.Config) -> None:
     It asks for a slot only when that is `1`; WAIT_SLOT_HELD names the slot held (`slot0`…), so any
     value of it counts.
     """
+    config.stash[RUN] = Run.joined() if hasattr(config, "workerinput") else Run.begin()
     if os.environ.get("UDL_REQUIRE_SLOT") != "1" or os.environ.get("WAIT_SLOT_HELD"):
         return
     if config.getoption("cov_source", default=None) and not config.getoption(
         "no_cov", default=False
     ):
         pytest.exit(NEEDS_A_SLOT, returncode=pytest.ExitCode.USAGE_ERROR)
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """End the run this process owns: stop the servers its workers shared."""
+    if (run := config.stash.get(RUN, None)) is not None and run.owner == os.getpid():
+        run.end()
 
 
 @pytest.fixture(autouse=True)
@@ -168,7 +179,8 @@ def antibot(_antibot_server: AntiBotSite) -> AntiBotSite:
 
 
 # ---------------------------------------------------------------------------------------------
-# Database servers (tests/support/servers.py): started the first time a test needs one
+# Database servers (tests/support/servers.py): started the first time a test of the run needs one,
+# and shared by its workers
 # ---------------------------------------------------------------------------------------------
 
 
@@ -194,10 +206,9 @@ def _mongodb_answers(url: str) -> bool:
 
 
 @pytest.fixture(scope="session")
-def postgres_server() -> Iterator[str]:
-    """A PostgreSQL server's URL (UDL_TEST_POSTGRES_URL's, else a Docker container's)."""
-    with serving(POSTGRES, "UDL_TEST_POSTGRES_URL", _postgres_answers) as url:
-        yield url
+def postgres_server(pytestconfig: pytest.Config) -> str:
+    """A PostgreSQL server's URL (UDL_TEST_POSTGRES_URL's, else the run's Docker container's)."""
+    return serve(POSTGRES, "UDL_TEST_POSTGRES_URL", _postgres_answers, pytestconfig.stash[RUN])
 
 
 @pytest.fixture
@@ -211,10 +222,9 @@ def postgres_url(postgres_server: str) -> Iterator[str]:
 
 
 @pytest.fixture(scope="session")
-def mongodb_server() -> Iterator[str]:
-    """A MongoDB server's URL (UDL_TEST_MONGODB_URL's, else a Docker container's)."""
-    with serving(MONGODB, "UDL_TEST_MONGODB_URL", _mongodb_answers) as url:
-        yield url
+def mongodb_server(pytestconfig: pytest.Config) -> str:
+    """A MongoDB server's URL (UDL_TEST_MONGODB_URL's, else the run's Docker container's)."""
+    return serve(MONGODB, "UDL_TEST_MONGODB_URL", _mongodb_answers, pytestconfig.stash[RUN])
 
 
 @pytest.fixture

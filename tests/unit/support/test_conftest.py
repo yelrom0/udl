@@ -10,7 +10,9 @@ pre-commit hook; on 23 Nov 28.6's end-to-end test ran `git init --bare` and `git
 that made it: an unclosed socket or pipe left in a reference cycle is found when garbage is
 collected, which on a busy worker was often inside a later, unrelated test (Q-22). And where
 UDL_REQUIRE_SLOT is set (the build agents' service, on jeff-wiggle), a whole suite runs only in one
-of rule 9's full-suite slots: one run by hand beside the others' made a fourth on 28 Nov.
+of rule 9's full-suite slots: one run by hand beside the others' made a fourth on 28 Nov. And the
+pytest-xdist workers of a run share its database servers (Q-25): the run is the controller's, and
+the controller clears it up as it ends.
 """
 
 # System Imports
@@ -33,6 +35,8 @@ LEAKS = "tests/unit/support/probes/leaks.py"
 """A module whose test leaves an open socket for a collection to find."""
 CLEAN = "tests/unit/support/probes/clean.py"
 """A module that leaks nothing, run after it."""
+SHARED_RUN = "tests/unit/support/probes/shared_run.py"
+"""A test each worker runs, saying which run it is in."""
 
 
 def child_pytest(
@@ -135,3 +139,22 @@ def test_a_run_in_a_slot_a_targeted_run_and_a_run_elsewhere_go_ahead(
     assert done.returncode == 0, done.stdout + done.stderr
     # (A run with coverage keeps its data where it was told, never in the repo's own `.coverage`.)
     assert (tmp_path / ".coverage").exists() == cov
+
+
+def test_the_workers_of_a_run_are_in_their_controller_s_run(tmp_path: Path) -> None:
+    """(Two workers each run the probe: both say the same run, owned by neither of them, so a
+    server one of them starts is labelled with the controller's pid and found by the other; and
+    the run's directory is gone once the controller has ended.)"""
+    said = tmp_path / "said"
+    done = child_pytest(
+        SHARED_RUN, "-n", "2", "--dist", "each", env={**os.environ, "PROBE_SAID": str(said)}
+    )
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    lines = [line.split() for line in said.read_text().splitlines()]
+    workers = {worker for worker, _, _ in lines}
+    [owner] = {owner for _, owner, _ in lines}
+    [directory] = {directory for _, _, directory in lines}
+    assert len(workers) == 2
+    assert owner not in workers
+    assert not Path(directory).exists()
