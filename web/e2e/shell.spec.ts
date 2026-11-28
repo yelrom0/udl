@@ -34,8 +34,9 @@ test("an event shows up live", async ({ page }) => {
 	});
 
 	expect(answer.ok()).toBe(true);
-	// (The list holds it once per look: the live one and the read one, with automations on.)
-	await expect(page.getByText("The page is watching").first()).toBeVisible();
+	// (Once: the stream sends it when it is stored and when it is dispatched, and the timeline
+	// keeps the event, not the notices about it — with automations on.)
+	await expect(page.getByText("The page is watching")).toHaveCount(1);
 });
 
 // What the harness is for today: a real `udl serve`, answering a browser.

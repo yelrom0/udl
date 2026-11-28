@@ -329,7 +329,7 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
   - [x] 18.3 FastAPI serves the UI at `/ui` (from the package, SPA fallback, CSP, cache headers), and a page saying how to build it when it isn't built
   - [x] 18.4 Web sessions: sign in with the API key → a session cookie; a CSRF header and an Origin check on writes
   - [x] 18.5 The shell: layout, TanStack Router (file routes, auth guard, a splat route for plugin pages), Zustand stores, light / dark / system theme
-  - [x] 18.6 Live data: shared SSE connections feeding Zustand stores, reconnecting with backoff
+  - [x] 18.6 Live data: shared SSE connections feeding Zustand stores, reconnecting with backoff (fix: PR #117)
   - [x] 18.7 `UIManifest` (Pydantic → JSON Schema → TypeScript), `ui` on every plugin kind, the `udl.ui` kind, local UI plugin dirs, `GET /ui/plugins.json`, UI availability in `list_plugins`
   - [x] 18.8 `@udl/ui-sdk`: `defineUIPlugin`, the mount contract, a React adapter, the plugin context, SDK version checks
   - [x] 18.9 The plugin host: `<PluginSlot>` (lazy import, Shadow DOM isolation, error boundary) and the contribution points
@@ -4498,6 +4498,7 @@ timeout: 5m
   reconnect.
 - Done when: a run started from the CLI shows up live in the shell.
 - **Built (deepseek-a, 2026-11-19, PR #20):** live data, in the shell.
+  - **One live event is one line (deepseek-a, 2026-11-28, PR #117):** with automations on in every e2e spec (#110), each event showed twice, and the cause was the stream's own design, not a second publisher: `/events/stream` sends an event when it is stored and again when it is dispatched. `stores/live.ts` keeps an `event` notice once by its id — its newest `data`, in the place and at the time it first took (so the time a row shows is the time it is ordered by) — while a `run`'s notices stay as they come; `web/e2e/shell.spec.ts`'s live-event test is `toHaveCount(1)` again. The PR also fixed 29.4's `board.test.tsx` filter-box flake that this CI run surfaced: the read's render is waited for in `act` instead of raced by a macrotask. Tests: 9 store cases (stored then dispatched is one line; an overlapping event keeps its place and time; two run notices stay two), the e2e in both themes, `make check` 7845 passed.
   - `src/live/connection.ts`: `LiveConnection` follows one stream per path (`watch(path, names,
     received)`), reconnects after 1 s doubling to 30 s with jitter (half to one and a half times the
     wait), starts again at 1 s once a stream opens, and calls the page's `reload` on every open after
