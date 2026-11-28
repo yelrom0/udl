@@ -1812,6 +1812,23 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
   account (connecting one checks the token against GitHub, and a new repo needs that account), the repo
   (same), and the OpenRouter key (`set_ai_provider` is 17.9's and is not built). The 1Password token and
   the host are provable as they stand; how the rest is faked is a question for Claude.
+- **Built (deepseek-a, 28 Nov 2026, PR #120):** the Done when, proved where it can be: `web/e2e/
+  setup-from-the-web.spec.ts`, both themes, types into the generated pages and never calls the API
+  to set anything (its API calls are read-backs only) — the 1Password token on udl's page (kept, and
+  in no page, address or answer), a host (`e2e-host`, ssh) and `list_hosts` has it, a GitHub account
+  connected against 29.8's `FakeGitHub` (its `api url` is a field the accounts form draws, so the
+  token is checked against the fake and nothing goes near github.com) and `/accounts` has it, and a
+  project with a repo on the orchestrator's page and `get_project` has the repo. It needed one thing
+  of udl: `SecretsStatus.onepassword` (whether a service account token is kept, never which), so
+  "check `get_secrets_status` says it's kept" is answerable at all; `tests/unit/core/test_service.py`
+  has its case. **It leaves udl as it found it:** an `afterEach` deletes the host, the project and
+  the account it made (each one's `deleted` checked, softly, so the cleanup never hides the failure
+  that came first) — without it, one failure in the light project left a second project and an
+  unreachable host that broke ten dark specs. The repo card's refusal is checked inside the poll
+  that waits for the write, so a refused write fails at once with the card's own words. The
+  OpenRouter key by `op://` reference is **not** here: `set_ai_provider` is not built,
+  so that leg is **17.9a**'s Done when (the user pulled 17.9's provider operations forward, Q-23, 28 Nov;
+  noted under both cards).
 - **Screens (29.1, Google Stitch):** **Connections: a generated page**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=126785af99b04553983316310fb2fd68) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=b4193d88b702431088fb00a576accdd4), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=7272b669d4e243529dc6dd6406ee8579) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=80b6bb3f19c449829bd03c30c808b326); `web/plugins/orch/design/connections-{light,dark}-{desktop,phone}.png`.
 
 **29.10 End to end** · needs 29.3–29.9, 29.11, 29.12

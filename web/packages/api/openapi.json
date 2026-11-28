@@ -12219,6 +12219,18 @@
         "additionalProperties": false,
         "description": "Where udl keeps its secrets, and what reads the ones it does not keep.",
         "properties": {
+          "onepassword": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whether a 1Password service account token is kept, which is what `op` is given (never the\ntoken itself). None when the answer cannot be had: the store says why it cannot be used (its\n`unavailable`, and it is not read), or it was read and refused (a locked keyring, say).",
+            "title": "Onepassword"
+          },
           "resolvers": {
             "description": "What reads the secrets udl does not keep, and what checking each found.",
             "items": {
