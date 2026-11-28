@@ -32,9 +32,21 @@ test("a UI plugin draws one result, and the rest of the page stays generated", a
 	await page.getByRole("tab", { name: "operations" }).click();
 	const list = page.locator("article", { hasText: "List the things" });
 	await list.getByRole("textbox", { name: /^Account/ }).fill(JSON.stringify(`fake:${name}`));
+	// (A list runs once as the page opens, with no account: with the other theme's account there
+	// too, that read is refused as ambiguous, and on a busy server it can still be running when
+	// Refresh is pressed. So wait for the read that names this account — not the first one — and
+	// then give the drawing the time another plugin's bundle takes to load the first time.)
+	const listed = page.waitForResponse(
+		(answer) =>
+			answer.url().includes("list_things") &&
+			answer.request().method() === "POST" &&
+			(answer.request().postData() ?? "").includes(`fake:${name}`),
+	);
 	await list.getByRole("button", { name: "Refresh" }).click();
+	const answer = await listed;
+	expect(answer.ok(), `list_things: ${answer.status()} ${await answer.text()}`).toBe(true);
 
-	await expect(list.locator("[data-testid='shadcn-list']")).toBeVisible();
+	await expect(list.locator("[data-testid='shadcn-list']")).toBeVisible({ timeout: 15_000 });
 	await expect(list.getByText("The first thing")).toBeVisible();
 	await expect(list.getByText("Drawn by shadcn/ui, not by udl.")).toBeVisible();
 	// (udl's own drawing of a list is its table: it is not there.)
