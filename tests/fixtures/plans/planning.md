@@ -79,7 +79,7 @@ Task IDs (e.g. `9.4`) are referenced in the detailed sections below. Tick a task
 
 ### Next to build: Phases 23–30, the agent orchestrator (highest priority)
 
-The user's (13 and 17 Nov 2026): these phases come **before** Phases 13–22. They pull Phase 18 forward (as 24.1) and tasks 17.1 and 17.3 (as 25.2), and every plugin gets a generated web UI. The spec, the decisions and every task's card are in [planning/02-agent-orchastrator.md](planning/02-agent-orchastrator.md); **this tracker is the one to mark**. Two implementation agents build them (`deepseek-a` and `deepseek-b` since 19 Nov 2026 AEDT, after four ERNIE ones; queues in [planning/agent-queues/](planning/agent-queues/)); Claude reviews; the user is told what is ready in [planning/human-comms.md](planning/human-comms.md).
+The user's (13 and 17 Nov 2026): these phases come **before** Phases 13–22. They pull Phase 18 forward (as 24.1) and tasks 17.1 and 17.3 (as 25.2), and every plugin gets a generated web UI. The spec, the decisions and every task's card are in [planning/02-agent-orchastrator.md](planning/02-agent-orchastrator.md); **this tracker is the one to mark**. Implementation agents build them (`deepseek-a` and `deepseek-b` since 19 Nov 2026 AEDT, after four ERNIE ones, and `ernie-c` and `ernie-d` again on the free tier from 19 Nov 11:00; queues in [planning/agent-queues/](planning/agent-queues/)); Claude reviews; the user is told what is ready in [planning/human-comms.md](planning/human-comms.md).
 
 Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing open, waiting for Claude's review and the merge (**set by the agent in its own queue file**, `planning/agent-queues/<agent>.md`, which is local and not in git; this tracker never shows `[r]`) · `- [~]` built by the implementation agent, PR merged into `main` (the agent writes what it did, the PR and anything it hit under the task's card in the plan file) · `- [!]` blocked on something only the user or Claude can do (the reason follows `BLOCKED:`) · `- [x]` **only Claude**, after reviewing the work against the plan. Tasks marked **(Claude)** or **(user)** are not for implementation agents.
 
@@ -96,10 +96,10 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 24.3 `GET /ui/generated.json`: every plugin's operations, settings, accounts and event types, with their schemas
   - [x] 24.4 `<SchemaForm>`: a form from any request model's JSON Schema
   - [x] 24.5 `<ResultView>`: a table, a detail list or a tree from any response
-  - [~] 24.6 The generated plugin page (`/ui/p/<plugin>`): Operations, Settings, Accounts, Events; nav for every plugin
-  - [~] 24.7 UI plugins guide the generated UI: `generated` in the manifest, and the `operationViews`, `resultViews` and `fieldWidgets` points
-  - [~] 24.8 Proof (e2e): a plugin with no UI plugin is fully usable on the web; a UI plugin reshapes its generated page
-  - [~] 24.9 planning.md amended: requirement 5d, "Without a UI plugin", Phases 19–20's plugin tasks
+  - [x] 24.6 The generated plugin page (`/ui/p/<plugin>`): Operations, Settings, Accounts, Events; nav for every plugin
+  - [x] 24.7 UI plugins guide the generated UI: `generated` in the manifest, and the `operationViews`, `resultViews` and `fieldWidgets` points
+  - [x] 24.8 Proof (e2e): a plugin with no UI plugin is fully usable on the web; a UI plugin reshapes its generated page
+  - [x] 24.9 planning.md amended: requirement 5d, "Without a UI plugin", Phases 19–20's plugin tasks
 - [ ] **Phase 25: Connections: 1Password, OpenRouter, GitHub, hosts and runners**
   - [x] 25.1 Secret references: `op://…` anywhere udl takes a secret, read at use through the `op` CLI (`onepassword` resolver)
   - [x] 25.2 17.1 (the `udl.ai` kind) and 17.3 (`openai-compatible`), pulled forward as written (ticked in Phase 17's tracker below)
@@ -111,52 +111,57 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 25.8 `claude-code` runner: the `claude` CLI on any host, on that host's own login (so subscription models)
   - [x] 25.9 `opencode` runner: OpenCode 2's server API on any host (OpenRouter and any other provider it has)
   - [x] 25.10 `command` runner (any other AI's CLI)
-  - [~] 25.11 Managing harnesses on every host: status (version, signed in, plan, limits), install and update, sign-in started from the hub
-  - [ ] 25.12 `codex` runner: OpenAI's Codex CLI on any host, on that host's ChatGPT sign-in (the twin of `claude-code`)
-  - [ ] 25.13 OpenAI by API key: the `openai` AI provider, OpenCode's `openai/…` models, Codex signed in with a key
+  - [x] 25.11 Managing harnesses on every host: status (version, signed in, plan, limits), install and update, sign-in started from the hub
+  - [~] 25.12 `codex` runner: OpenAI's Codex CLI on any host, on that host's ChatGPT sign-in (the twin of `claude-code`) (optional: Q-9)
+  - [~] 25.13 OpenAI by API key: the `openai` AI provider, OpenCode's `openai/…` models, Codex signed in with a key
 - [ ] **Phase 26: Work tracking: projects, features, tasks, links**
   - [x] 26.1 `udl.apps` plugin kind: `AppPlugin` + contract suite + `FakeApp`; app services in the runtime
   - [x] 26.2 `Project` and `Repo` records
   - [x] 26.3 `Feature` and `Task` records, task states and their transitions
-  - [~] 26.4 `Link` records: everything linked, both ways; GitHub links kept current by the watcher
-  - [~] 26.5 `Note` records: what was done, decisions, findings, on a task or feature
+  - [x] 26.4 `Link` records: everything linked, both ways; GitHub links kept current by the watcher
+  - [x] 26.5 `Note` records: what was done, decisions, findings, on a task or feature
   - [~] 26.6 Operations (projects, repos, features, tasks, links, notes) via CLI, API and MCP
-  - [ ] 26.7 Markdown import: a planning file's tracker, cards and spec sections become features and tasks
-  - [ ] 26.8 Task sizes: S, M, L, XL (1, 3, 5, 8 points), set by whoever plans the task; points per feature and project
+  - [~] 26.7 Markdown import: a planning file's tracker, cards and spec sections become features and tasks
+  - [x] 26.8 Task sizes: S, M, L, XL (1, 3, 5, 8 points), set by whoever plans the task; points per feature and project
 - [ ] **Phase 27: Agents, assignment and the dispatcher**
   - [x] 27.1 `Agent` records: runner, model, host, role, manager (the hierarchy), permissions
-  - [~] 27.2 Agent tokens: an agent calls udl as itself, and only the operations its role allows
+  - [x] 27.2 Agent tokens: an agent calls udl as itself, and only the operations its role allows
   - [x] 27.3 Queues: assign, reorder, unassign
-  - [~] 27.3a A queue change is one write: `upsert_records` on the database kind, all or nothing, and a per-assignee lock in `orch.queue`
-  - [~] 27.4 Suggested next tasks, ranked, each with its reasons
-  - [~] 27.5 Worktrees and the gate lane: `orch_push` runs the repo's gates, pushes, opens or updates the PR
-  - [~] 27.6 PR readiness: CI, the review bot's verdict, mergeability, stacks, holds
-  - [ ] 27.7 The dispatcher: start, prompt, nudge, resume and stop agent sessions; limits and crashes
-  - [ ] 27.8 Managers: a manager agent's duties over its reports, each one switchable
-  - [ ] 27.9 Operations (agents, queues, sessions, suggestions) via CLI, API and MCP
-  - [ ] 27.10 Working time, hours per point learned per model, forecasts: `orch_progress`
-  - [ ] 27.11 Chat sessions: Claude Code or Codex as the user, its permission prompts relayed to the web UI, a token per chat
+  - [x] 27.3a A queue change is one write: `upsert_records` on the database kind, all or nothing, and a per-assignee lock in `orch.queue`
+  - [x] 27.4 Suggested next tasks, ranked, each with its reasons
+  - [x] 27.5 Worktrees and the gate lane: `orch_push` runs the repo's gates, pushes, opens or updates the PR
+  - [x] 27.6 PR readiness: CI, the review bot's verdict, mergeability, stacks, holds
+  - [x] 27.7 The dispatcher: start, prompt, nudge, resume and stop agent sessions; limits and crashes
+  - [x] 27.8 Managers: a manager agent's duties over its reports, each one switchable
+  - [x] 27.9 Operations (agents, queues, sessions, suggestions) via CLI, API and MCP
+  - [x] 27.10 Working time, hours per point learned per model, forecasts: `orch_progress`
+  - [~] 27.11 Chat sessions: Claude Code or Codex as the user, its permission prompts relayed to the web UI, a token per chat
+  - [~] 27.12 Resource limits: gates and sessions under a memory cap; `gates_per_host` (default 1)
+  - [~] 27.13 Host health (memory, swap, disk and btrfs, I/O pressure, harness services) and what udl does about it (`on_breach`, default act and tell)
+  - [~] 27.14 Usage left per agent: a paid key's money left, a free tier's requests left (counted), on the CLI, API, MCP and web
+  - [~] 27.15 Usage left, the rest: the `orch.usage.low`/`orch.usage.out` events, the To action a low paid key raises, `[apps.orch] allowances` (a per-account allowance override), the test that the key never reaches a log or an event, `AgentLine.usage`, the "in all" totals and `source = "counted"` (follow-up to 27.14, which built the operation and the counting)
 - [ ] **Phase 28: Human comms: Q&A, Ready to merge, To action**
-  - [ ] 28.1 `Question` records and their thread; an answer reaches the agent and is written into the tasks it concerns
-  - [~] 28.2 `HumanAction` records ("To action") with a result
-  - [~] 28.3 Ready to merge: ready now (in merge order), coming soon, held, done; merging and what follows a merge
-  - [ ] 28.4 `orch_inbox`: the three sections in one call; `udl orch inbox`
-  - [ ] 28.5 Events for all of it, and a `notify` example
-  - [ ] 28.6 End to end on fakes: task → agent → question → answer → PR → ready → merged
-  - [ ] 28.7 Auto merge: a project's merger (a reviewer or manager agent) merges its ready PRs after its own review
+  - [x] 28.1 `Question` records and their thread; an answer reaches the agent and is written into the tasks it concerns
+  - [x] 28.2 `HumanAction` records ("To action") with a result
+  - [x] 28.3 Ready to merge: ready now (in merge order), coming soon, held, done; merging and what follows a merge
+  - [x] 28.4 `orch_inbox`: the three sections in one call; `udl orch inbox`
+  - [~] 28.5 Events for all of it, and a `notify` example
+  - [~] 28.6 End to end on fakes: task → agent → question → answer → PR → ready → merged
+  - [x] 28.7 Auto merge: a project's merger (a reviewer or manager agent) merges its ready PRs after its own review
+  - [~] 28.8 The checkout follows `main`: after a merge, each host's checkout of the repo fast-forwards to it
 - [ ] **Phase 29: Screens (Google Stitch) and the `orch` UI plugin**
   - [x] 29.1 **(Claude)** A new Stitch project: design system from the shell's daisyUI themes; every screen below, desktop and phone, light and dark ([web/plugins/orch/design/](web/plugins/orch/design/README.md)); the user's changes (Q-8) made
-  - [ ] 29.2 The `orch` UI plugin's skeleton: manifest, routes, stores, live data
-  - [ ] 29.3 Inbox (home)
-  - [ ] 29.4 Board: features and tasks, agents' queues, the suggested list, drag to assign
-  - [ ] 29.5 Feature and task pages (specs, notes, links)
-  - [ ] 29.6 Agents: the hierarchy, assigning models to models, an agent's page with its live session
-  - [ ] 29.7 Q&A
-  - [ ] 29.8 Ready to merge and To action
-  - [ ] 29.9 Connections and import (generated pages, guided by the manifest)
-  - [ ] 29.10 End to end (Playwright) on fakes, both themes
-  - [ ] 29.11 Progress: the burn-up, the forecast, hours per point
-  - [ ] 29.12 The chat sidebar: a `panels` point in the shell, and the chat
+  - [x] 29.2 The `orch` UI plugin's skeleton: manifest, routes, stores, live data
+  - [~] 29.3 Inbox (home)
+  - [~] 29.4 Board: features and tasks, agents' queues, the suggested list, drag to assign
+  - [~] 29.5 Feature and task pages (specs, notes, links)
+  - [~] 29.6 Agents: the hierarchy, assigning models to models, an agent's page with its live session
+  - [~] 29.7 Q&A
+  - [~] 29.8 Ready to merge and To action
+  - [~] 29.9 Connections and import (generated pages, guided by the manifest)
+  - [~] 29.10 End to end (Playwright) on fakes, both themes
+  - [~] 29.11 Progress: the burn-up, the forecast, hours per point
+  - [~] 29.12 The chat sidebar: a `panels` point in the shell, and the chat
 - [ ] **Phase 30: Moving in, docs and the live check**
   - [ ] 30.1 Security review of Phases 24–29
   - [ ] 30.2 Docs: README, `docs/orchestrator.md`, `docs/plugins.md` (apps, runners, generated UIs)
@@ -175,7 +180,7 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
   - [ ] 31.5 `udl hub init`: a standalone udl becomes a hub, its database workspace `default`
   - [ ] 31.6 Choosing a call's workspace: `X-UDL-Workspace`, `/w/<ws>/mcp`, `-W`
   - [ ] 31.7 Workspace operations: create, suspend, delete, export, import
-  - [ ] 31.8 The isolation proof, generated over the registry, on every database plugin
+  - [ ] 31.8 The isolation proof, generated over the registry, on every database plugin; the runtime, scheduler and dispatcher tests on PostgreSQL too
 - [ ] **Phase 32: People: users, sign-in, roles and tokens**
   - [ ] 32.1 `User`, `Membership` and `Invite` records
   - [ ] 32.2 Passwords (argon2id) and TOTP, recovery codes, lockout
@@ -324,11 +329,11 @@ The user's (18 Nov 2026): udl becomes the shared data layer people and AI agents
   - [x] 18.3 FastAPI serves the UI at `/ui` (from the package, SPA fallback, CSP, cache headers), and a page saying how to build it when it isn't built
   - [x] 18.4 Web sessions: sign in with the API key → a session cookie; a CSRF header and an Origin check on writes
   - [x] 18.5 The shell: layout, TanStack Router (file routes, auth guard, a splat route for plugin pages), Zustand stores, light / dark / system theme
-  - [x] 18.6 Live data: shared SSE connections feeding Zustand stores, reconnecting with backoff
+  - [x] 18.6 Live data: shared SSE connections feeding Zustand stores, reconnecting with backoff (fix: PR #117)
   - [x] 18.7 `UIManifest` (Pydantic → JSON Schema → TypeScript), `ui` on every plugin kind, the `udl.ui` kind, local UI plugin dirs, `GET /ui/plugins.json`, UI availability in `list_plugins`
   - [x] 18.8 `@udl/ui-sdk`: `defineUIPlugin`, the mount contract, a React adapter, the plugin context, SDK version checks
-  - [~] 18.9 The plugin host: `<PluginSlot>` (lazy import, Shadow DOM isolation, error boundary) and the contribution points
-  - [~] 18.10 Proof: an example UI plugin built with shadcn/ui runs isolated inside the daisyUI shell (e2e); a template for new UI plugins
+  - [x] 18.9 The plugin host: `<PluginSlot>` (lazy import, Shadow DOM isolation, error boundary) and the contribution points
+  - [x] 18.10 Proof: an example UI plugin built with shadcn/ui runs isolated inside the daisyUI shell (e2e); a template for new UI plugins
 
 - [ ] **Phase 19: Web UI for the downloader and the fetcher**
   - [ ] 19.1 Dashboard (recent downloads, runs and events, next schedules, accounts needing attention, approvals, checks waiting for you; a widget slot)
@@ -383,6 +388,9 @@ get a failing regression test before the fix, and **fakes over mocks**. What's n
   of waiting.
 - **The frontend is tested first too:** a component, store or SDK function starts as a failing Vitest test;
   a user-visible flow starts as a failing Playwright test.
+- **A new card gives its size in its header** (`**26.8 Task sizes** · needs 26.3, 26.6 · size M`), as the
+  cards of Q-8's answers do: `size S | M | L | XL` is 1, 3, 5 or 8 points, and `udl orch import` reads it
+  (26.8). A card without one is a task udl counts as unsized, and its feature says how many.
 - When a phase is done, it gets a "Decisions made while building Phase N" section here, as Phases 0–7 did.
 
 ### Test layers
@@ -4490,6 +4498,7 @@ timeout: 5m
   reconnect.
 - Done when: a run started from the CLI shows up live in the shell.
 - **Built (deepseek-a, 2026-11-19, PR #20):** live data, in the shell.
+  - **One live event is one line (deepseek-a, 2026-11-28, PR #117):** with automations on in every e2e spec (#110), each event showed twice, and the cause was the stream's own design, not a second publisher: `/events/stream` sends an event when it is stored and again when it is dispatched. `stores/live.ts` keeps an `event` notice once by its id — its newest `data`, in the place and at the time it first took (so the time a row shows is the time it is ordered by) — while a `run`'s notices stay as they come; `web/e2e/shell.spec.ts`'s live-event test is `toHaveCount(1)` again. The PR also fixed 29.4's `board.test.tsx` filter-box flake that this CI run surfaced: the read's render is waited for in `act` instead of raced by a macrotask. Tests: 9 store cases (stored then dispatched is one line; an overlapping event keeps its place and time; two run notices stay two), the e2e in both themes, `make check` 7845 passed.
   - `src/live/connection.ts`: `LiveConnection` follows one stream per path (`watch(path, names,
     received)`), reconnects after 1 s doubling to 30 s with jitter (half to one and a half times the
     wait), starts again at 1 s once a stream opens, and calls the page's `reload` on every open after

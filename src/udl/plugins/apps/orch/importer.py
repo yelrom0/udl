@@ -219,8 +219,10 @@ def parse_plan(text: str, *, source: str, stem: str | None = None) -> ParsedPlan
     taken: set[int] = set()
     if tracker is not None:
         _read_tracker(lines, tracker, single, feature, task, unplaced, source, taken)
+    # (The cards first: a phase's spec is its own prose, so the lines a card took — its line and
+    # its bullets — are left out of it, as the tracker's taken lines already are.)
+    _read_cards(lines, feature, task, _unplaceable(lines, unplaced, source), taken)
     _read_sections(lines, single, plan_key, feature, taken)
-    _read_cards(lines, feature, task, _unplaceable(lines, unplaced, source))
     return _as_plan(features, unplaced)
 
 
@@ -444,7 +446,10 @@ def _kept_heading(
             else:
                 feature(plan_key, _plan_title(plan_key)).spec.append(said)
         return
-    text = "\n".join(line for _, line in body).strip()
+    # (A phase's spec is its own prose: the lines a card took — its line and its bullets — are
+    # left out, as the tracker's taken lines already are. Blank lines stay, so two paragraphs
+    # around a card do not become one.)
+    text = "\n".join(line for index, line in body if index not in taken).strip()
     found = _PHASE_HEADING.match(heading)
     if found:
         if text:
@@ -463,6 +468,7 @@ def _read_cards(
     feature: _Named,
     task: _Tasked,
     report: Callable[[int, str], None],
+    taken: set[int],
 ) -> None:
     """A card's line, and the bullets under it, as a task: its title, its needs, its size and its
     spec (a size it cannot read is a line it could not place, 26.8)."""
@@ -484,22 +490,31 @@ def _read_cards(
         if why is not None:
             report(index, why)
         made.size = size
-        made.spec.extend(_bullets(lines, index + 1))
+        made.spec.extend(_bullets(lines, index + 1, taken))
+        taken.add(index)
 
 
-def _bullets(lines: list[str], start: int) -> list[str]:
-    """The bullets a card has, from `start` to the next heading, card or section's end."""
+def _bullets(lines: list[str], start: int, taken: set[int]) -> list[str]:
+    """The bullets a card has, from `start` to the next heading, card or unindented prose: a
+    list item starts a bullet, an indented line continues it, and an unindented line, a
+    heading or a card ends the card (a blank line is skipped), so the phase's own prose after it
+    stays the phase's. Every line it
+    takes is marked in `taken`, so the phase's spec leaves it out too."""
     said: list[str] = []
-    for raw in lines[start:]:
+    for offset, raw in enumerate(lines[start:], start):
         if _HEADING.match(raw) or _CARD.match(raw):
             break
         found = _SUBLIST.match(raw)
         if found:
             said.append(found["text"].strip())
+            taken.add(offset)
         elif not raw.strip():
             continue
-        elif said:
+        elif raw[:1].isspace() and said:
             said[-1] = f"{said[-1]}\n{raw.strip()}"
+            taken.add(offset)
+        else:
+            break
     return said
 
 
