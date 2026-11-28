@@ -163,7 +163,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [~] 29.11 Progress: the burn-up, the forecast, hours per point
   - [~] 29.12 The chat sidebar: a `panels` point in the shell, and the chat
 - [ ] **Phase 30: Moving in, docs and the live check**
-  - [ ] 30.1 Security review of Phases 24–29
+  - [~] 30.1 Security review of Phases 24–29
   - [ ] 30.2 Docs: README, `docs/orchestrator.md`, `docs/plugins.md` (apps, runners, generated UIs)
   - [ ] 30.3 **(Claude)** udl's own plans imported (planning.md's open phases, 03-proxmox.md); the markdown retired
   - [ ] 30.4 **(Claude + user)** Live check: a real task done by a real agent, on jeff-wiggle and on thevault
