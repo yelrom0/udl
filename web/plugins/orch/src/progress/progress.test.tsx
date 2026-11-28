@@ -1,8 +1,22 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { RouteProps } from "@udl/ui-sdk";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeCtx, settle } from "../testing/fake";
 import { ProgressPage } from "./progress";
+
+/** When the page is drawn: the day the fixture's history ends (its series runs to 27 Nov), so
+ * the "Since" choices it offers (14 and 90 days back) are the days the tests name. A real clock
+ * made `2026-11-13` the fortnight's day only on 27 Nov UTC, and every run after it failed. */
+const NOW = new Date("2026-11-27T12:00:00Z");
+
+beforeEach(() => {
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(NOW);
+});
+
+afterEach(() => {
+	vi.useRealTimers();
+});
 
 /** What the page's two calls answer: a project with a history, its features and its models. */
 const ANSWERS: Record<string, unknown> = {
