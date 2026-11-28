@@ -47,7 +47,6 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 # Local Imports
-from udl.clock import Clock
 from udl.db.models import JsonObject
 from udl.errors import PluginFailed, ToolUnavailable
 from udl.hosts.shell import HostShell, Interaction
@@ -100,8 +99,9 @@ class _Envelope(BaseModel):
 
     jsonrpc: str = "2.0"
     """The protocol's version (always 2.0)."""
-    id: str | None = None
-    """What it is answering, when it is a request or an answer."""
+    id: str | int | None = None
+    """What it is answering, when it is a request or an answer (the app-server numbers its own
+    requests, so this is an int as often as a string)."""
     method: str | None = None
     """What it is, when it is a request or a notification."""
     params: JsonObject | None = None
@@ -137,7 +137,10 @@ class _Session:
     interaction: Interaction
     thread: str = ""
     said: asyncio.Queue[AgentEvent | None] = field(default_factory=lambda: asyncio.Queue())
-    waiting: dict[str, asyncio.Future[_Envelope]] = field(default_factory=lambda: {})
+    waiting: dict[str | int, asyncio.Future[_Envelope]] = field(default_factory=lambda: {})
+    paths: dict[str, str] = field(default_factory=lambda: {})
+    """What each `fileChange` item is changing, by its `itemId`: a v2 file approval names the item
+    and not the paths, which the `item/started` before it carried."""
     reader: asyncio.Task[None] | None = None
     buffer: str = ""
 
@@ -150,7 +153,6 @@ class CodexChat:
         *,
         cli: Sequence[str],
         shell: HostShell,
-        clock: Clock,
         ask: Ask,
         within: timedelta,
     ) -> None:
@@ -314,15 +316,15 @@ class CodexChat:
         if message.method in _APPROVALS:
             await self._approve(session, message)
             return
-        for event in self._event(message):
+        for event in self._event(session, message):
             await session.said.put(event)
 
     async def _approve(self, session: _Session, message: _Envelope) -> None:
         """The harness asks before it acts: udl asks the person, and answers in the words the
         request's own protocol reads (v2's `accept`…, the older `approved`…)."""
         kind = _APPROVALS.get(message.method or "", "command")
-        tool, wanted = _asked(kind, message.params or {})
-        answer = await self._ask(tool, wanted, message.id or "")
+        tool, wanted = _asked(kind, message.params or {}, session.paths)
+        answer = await self._ask(tool, wanted, str(message.id if message.id is not None else ""))
         if not answer.allowed:
             decision = _OLD_DECLINE if kind == "legacy" else _DECLINE
         elif answer.for_chat:
@@ -333,7 +335,7 @@ class CodexChat:
             json.dumps({"jsonrpc": "2.0", "id": message.id, "result": {"decision": decision}})
         )
 
-    def _event(self, message: _Envelope) -> list[AgentEvent]:
+    def _event(self, session: _Session, message: _Envelope) -> list[AgentEvent]:
         """What one notification is, as the events a chat's transcript keeps (27.1's shapes)."""
         given = message.params or {}
         method = message.method or ""
@@ -344,21 +346,27 @@ class CodexChat:
             return [_usage(given)]
         if method == "item/started":
             item = given.get("item")
-            return [_started(item)] if isinstance(item, dict) else []
+            if isinstance(item, dict):
+                _keep(session, item)
+                return [_started(item)]
+            return []
         if method == "item/completed":
             item = given.get("item")
             return [_finished(item)] if isinstance(item, dict) else []
         if method == "turn/completed":
             turn = given.get("turn")
             said = turn if isinstance(turn, dict) else {}
-            return [TurnEnded(reason=_reason(said), text=_why(said))]
+            return [TurnEnded(reason=_reason(said), text=_why(_error(said)))]
         if method == "error":
             # (A recoverable error is Codex's to carry on from, so it is said and the turn goes
             # on; one it will not retry ends the turn.)
             error = given.get("error")
             why = _why(error if isinstance(error, dict) else {})
             if given.get("willRetry") is True:
-                return [RunnerFailed(message=why)] if why else []
+                # (Codex is carrying on: nothing is said, or the chat would read a failure it
+                # recovered from — and `_ended` gives a failure priority over the turn's end.)
+                log.info("codex will retry: %s", why)
+                return []
             return [RunnerFailed(message=why), TurnEnded(reason=TurnReason.ERROR, text=why)]
         return []
 
@@ -386,7 +394,7 @@ def _mcp(spec: SessionSpec) -> JsonObject:
     }
 
 
-def _asked(kind: str, given: JsonObject) -> tuple[str, JsonObject]:
+def _asked(kind: str, given: JsonObject, paths: dict[str, str]) -> tuple[str, JsonObject]:
     """The tool a request is about, and what it wants to use it on, in udl's words (`Bash`,
     `Edit`, …) — the same names a Claude Code chat's prompts carry.
 
@@ -395,20 +403,41 @@ def _asked(kind: str, given: JsonObject) -> tuple[str, JsonObject]:
     `fileChanges` (the patch approval), and `grantRoot` is `[UNSTABLE]` and usually null."""
     if kind == "file" or (kind == "legacy" and given.get("fileChanges") is not None):
         changes = given.get("changes") or given.get("fileChanges")
-        paths = (
+        named = (
             [str(one.get("path", "")) for one in changes if isinstance(one, dict)]
             if isinstance(changes, list)
             else list(changes)
             if isinstance(changes, dict)
             else []
         )
-        return "Edit", {"file_path": ", ".join(paths)}
+        # (A v2 file approval has no paths of its own: the item it names does.)
+        item = str(given.get("itemId", ""))
+        kept = paths.get(item, "")
+        said = ", ".join([*named, kept]) if kept else ", ".join(named)
+        if not said:
+            said = str(given.get("reason") or "")
+        return "Edit", {"file_path": said}
     command = given.get("command")
     if isinstance(command, str):
         return "Bash", {"command": command}
     if isinstance(command, list):
         return "Bash", {"command": " ".join(str(part) for part in command)}
     return "Bash", {}
+
+
+def _keep(session: _Session, item: JsonObject) -> None:
+    """What a `fileChange` item is changing, kept by its id: a v2 file approval names the item,
+    and its paths are here."""
+    if item.get("type") != "fileChange":
+        return
+    changes = item.get("changes")
+    paths = (
+        [str(one.get("path", "")) for one in changes if isinstance(one, dict)]
+        if isinstance(changes, list)
+        else []
+    )
+    if paths:
+        session.paths[str(item.get("id", ""))] = ", ".join(paths)
 
 
 def _started(item: JsonObject) -> AgentEvent:
@@ -466,6 +495,12 @@ def _reason(turn: JsonObject) -> TurnReason:
     if status == "interrupted":
         return TurnReason.STOPPED
     return TurnReason.DONE
+
+
+def _error(turn: JsonObject) -> JsonObject:
+    """A turn's `error` (`TurnError | null`), as the object it is."""
+    error = turn.get("error")
+    return error if isinstance(error, dict) else {}
 
 
 def _why(error: JsonObject) -> str:

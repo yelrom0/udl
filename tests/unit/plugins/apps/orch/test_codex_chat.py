@@ -17,12 +17,12 @@ from pathlib import Path
 
 # Package Imports
 # Local Imports
-from support.clock import FakeClock
 from udl.db.models import JsonObject
 from udl.hosts.shell import Host, LocalShell
 from udl.plugins.apps.orch.codex_chat import Ask, CodexChat, CodexQuestion
 from udl.plugins.runners.base import (
     AgentEvent,
+    RunnerFailed,
     SessionRef,
     SessionSpec,
     TextDelta,
@@ -50,7 +50,6 @@ def driver(ask: Ask | None = None, *, mode: str = "turn") -> CodexChat:
     return CodexChat(
         cli=[sys.executable, str(FAKE), mode],
         shell=LocalShell(Host.local(str(tmp()))),
-        clock=FakeClock(),
         ask=ask or (lambda tool, given, call: _allowed()),
         within=timedelta(minutes=5),
     )
@@ -116,12 +115,85 @@ async def test_a_codex_without_app_server_cannot_be_a_chat() -> None:
     plain = CodexChat(
         cli=[sys.executable, str(FAKE), "no-server"],
         shell=LocalShell(Host.local(str(tmp()))),
-        clock=FakeClock(),
         ask=lambda tool, given, call: _allowed(),
         within=timedelta(minutes=5),
     )
 
     assert await plain.available() is False
+
+
+async def test_a_v2_file_approval_shows_the_path_its_item_named() -> None:
+    """(The item's `changes` come before the request, and the approval names only the item.)"""
+    asked: list[tuple[str, JsonObject, str]] = []
+
+    async def ask(tool: str, given: JsonObject, call: str) -> CodexQuestion:
+        asked.append((tool, given, call))
+        return CodexQuestion(allowed=True)
+
+    events = await said(driver(ask, mode="file"))
+
+    assert asked[0][0] == "Edit"
+    assert asked[0][1].get("file_path") == "a.txt"
+    assert any(isinstance(one, TextDelta) and "accept" in one.text for one in events)
+
+
+async def test_the_older_approvals_are_answered_in_their_own_words() -> None:
+    for mode, word in (("legacy-exec", "approved"), ("legacy-patch", "approved")):
+
+        async def ask(tool: str, given: JsonObject, call: str) -> CodexQuestion:
+            return CodexQuestion(allowed=True)
+
+        events = await said(driver(ask, mode=mode))
+        assert any(isinstance(one, TextDelta) and word in one.text for one in events), mode
+
+    async def deny(tool: str, given: JsonObject, call: str) -> CodexQuestion:
+        return CodexQuestion(allowed=False, message="no")
+
+    events = await said(driver(deny, mode="legacy-exec"))
+    assert any(isinstance(one, TextDelta) and "denied" in one.text for one in events)
+
+
+async def test_a_retryable_error_does_not_fail_the_chat() -> None:
+    """(Codex carries on after `willRetry`, and the turn ends cleanly: a `RunnerFailed` here
+    would leave the chat FAILED, since `_ended` gives a failure priority.)"""
+    driver_ = driver(mode="retry")
+    ref = await driver_.start(SessionSpec(cwd=str(ROOT)))
+    try:
+        events = [event async for event in driver_.send(ref, "go")]
+    finally:
+        await driver_.stop(ref)
+
+    assert not any(isinstance(one, RunnerFailed) for one in events)
+    ended = events[-1]
+    assert isinstance(ended, TurnEnded)
+    assert ended.reason is TurnReason.DONE
+
+
+async def test_a_failed_turn_says_what_the_error_said() -> None:
+    driver_ = driver(mode="failed")
+    ref = await driver_.start(SessionSpec(cwd=str(ROOT)))
+    try:
+        events = [event async for event in driver_.send(ref, "go")]
+    finally:
+        await driver_.stop(ref)
+
+    ended = events[-1]
+    assert isinstance(ended, TurnEnded)
+    assert ended.reason is TurnReason.ERROR
+    assert ended.text == "it broke"
+
+
+async def test_an_interrupted_turn_is_read_as_stopped() -> None:
+    driver_ = driver(mode="interrupted")
+    ref = await driver_.start(SessionSpec(cwd=str(ROOT)))
+    try:
+        events = [event async for event in driver_.send(ref, "go")]
+    finally:
+        await driver_.stop(ref)
+
+    ended = events[-1]
+    assert isinstance(ended, TurnEnded)
+    assert ended.reason is TurnReason.STOPPED
 
 
 async def test_a_ref_that_is_gone_says_so_rather_than_hanging() -> None:

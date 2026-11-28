@@ -116,6 +116,8 @@ def test_every_message_the_fake_says_is_the_protocol() -> None:
                 check(V2, "ThreadTokenUsageUpdatedNotification", params or {})
             elif method == "turn/completed":
                 check(V2, "TurnCompletedNotification", params or {})
+            elif method == "item/started":
+                check(V2, "ItemStartedNotification", params or {})
             elif method in LEGACY:
                 check(V1, "ServerRequest", message)
             else:

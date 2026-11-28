@@ -420,7 +420,7 @@ class Chats:
             return await self.send(chat, request.text)
         return await self.info(chat)
 
-    async def _codex_driver(self, chat: stored.Chat, token: SecretStr) -> CodexChat:
+    async def _codex_driver(self, chat: stored.Chat) -> CodexChat:
         """The `app-server` driver of `chat`: `codex app-server`, which relays its approvals
         (27.11). A Codex that cannot is refused rather than run without approvals — a chat that
         cannot ask is a chat that acts on the person's machine unwatched (O-C15)."""
@@ -428,7 +428,6 @@ class Chats:
         driver = CodexChat(
             cli=runner.options.cli,  # (a Codex's own options: its `cli` is the program)
             shell=runner.shell,
-            clock=self._clock,
             ask=self._codex_ask(chat),
             within=self._idle,
         )
@@ -451,7 +450,7 @@ class Chats:
 
     async def _codex_start(self, chat: stored.Chat, directory: str, token: SecretStr) -> SessionRef:
         """Start `chat`'s Codex harness, and keep its driver for its turns."""
-        driver = await self._codex_driver(chat, token)
+        driver = await self._codex_driver(chat)
         ref = await driver.start(
             SessionSpec(
                 cwd=directory,
