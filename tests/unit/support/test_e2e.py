@@ -573,10 +573,17 @@ def test_a_first_start_that_never_answers_says_so_and_ends_with_1() -> None:
         "import pathlib\n"
         "import support.e2e as e2e\n"
         "e2e.SHELL_DIST = pathlib.Path('/nonexistent')\n"
-        "def never(*args: object, **kwargs: object) -> None:\n"
+        "started = []\n"
+        "def never(url: str, process: object, **kwargs: object) -> None:\n"
+        "    started.append(process)\n"
         "    raise TimeoutError('udl serve did not answer')\n"
         "e2e.wait_until = never\n"
-        f"raise SystemExit(e2e.main(port={port}))\n"
+        f"code = e2e.main(port={port})\n"
+        # (What it started is ended with it: printed, because a process cannot be handed out of
+        # the one that started it, and `None` is a process still running.)
+        "for one in started:\n"
+        "    print('udl poll', one.poll())\n"
+        "raise SystemExit(code)\n"
     )
     started = subprocess.Popen(  # noqa: S603 - the module under test
         [sys.executable, "-c", script],
@@ -593,15 +600,11 @@ def test_a_first_start_that_never_answers_says_so_and_ends_with_1() -> None:
         # (Said, not raised: the harness's own line, and no traceback.)
         assert "e2e: udl serve did not answer" in said, said
         assert "Traceback" not in said, said
-        # (And the udl it started is stopped with it, not left answering on the port.)
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            with socket.socket() as probe:
-                if probe.connect_ex(("127.0.0.1", port)) != 0:
-                    break
-            time.sleep(0.1)
-        else:
-            raise AssertionError("the udl the harness started is still answering")
+        # (And the udl it started is ended with it: `never` records the process, and its exit is
+        # printed before the harness ends.)
+        polls = [line for line in said.splitlines() if line.startswith("udl poll ")]
+        assert len(polls) == 1, said
+        assert polls[0] != "udl poll None", said
     finally:
         if started.stdout is not None:
             started.stdout.close()
