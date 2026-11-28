@@ -258,6 +258,39 @@ describe("an agent's page (29.6)", () => {
 		expect(usage.getByText("12 requests, 24,000 in, 3,100 out")).toBeTruthy();
 	});
 
+	it("draws what an agent's own turns came to, with no key and no allowance", async () => {
+		// (A runner's own model on nobody's key: no line and no cap, but its turns today are what
+		// a person asked the card for.)
+		const fake = fakeCtx((name) => {
+			if (name === "orch_usage") {
+				return {
+					items: [
+						{
+							agent: "deepseek-a",
+							runner: "claude-code",
+							model: "deepseek-v4.1",
+							paid: null,
+							free: null,
+							requests_today: 3,
+							tokens_in: 900,
+							tokens_out: 120,
+							state: "ok",
+						},
+					],
+				} as never;
+			}
+			return ANSWERS[name] as never;
+		});
+		render(
+			<AgentPage ctx={fake.ctx} params={{ name: "deepseek-a" }} path="agents/$name" search={{}} />,
+		);
+		await read();
+
+		expect(
+			within(screen.getByLabelText("Its usage")).getByText("3 requests, 900 in, 120 out"),
+		).toBeTruthy();
+	});
+
 	it("draws the page when usage cannot be read", async () => {
 		const fake = fakeCtx((name) => {
 			if (name === "orch_usage") {

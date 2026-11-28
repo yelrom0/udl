@@ -245,7 +245,10 @@ export const AgentPage: Component<RouteProps> = ({ ctx, params, search }) => {
 						</div>
 						<div className="flex flex-col gap-4">
 							{usage !== null &&
-								(usageLineOf(usage) !== "" || usage.paid !== null || usage.free !== null) && (
+								(usageLineOf(usage) !== "" ||
+									usage.paid !== null ||
+									usage.free !== null ||
+									usage.requests_today > 0) && (
 									<section aria-label="Its usage" className="flex flex-col gap-1">
 										<h2 className="text-lg font-semibold">Usage left</h2>
 										{usageLineOf(usage) === "" ? null : (
