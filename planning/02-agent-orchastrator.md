@@ -1821,8 +1821,9 @@ Pages that only show and edit records (connections, projects, repos, hosts, the 
   project with a repo on the orchestrator's page and `get_project` has the repo. It needed one thing
   of udl: `SecretsStatus.onepassword` (whether a service account token is kept, never which), so
   "check `get_secrets_status` says it's kept" is answerable at all; `tests/unit/core/test_service.py`
-  has its case. The OpenRouter key by `op://` reference is **not** here: `set_ai_provider` is 17.9's
-  and is not built, so that leg is 17.9's Done when (noted under both cards, Claude 28 Nov).
+  has its case. The OpenRouter key by `op://` reference is **not** here: `set_ai_provider` is not built,
+  so that leg is **17.9a**'s Done when (the user pulled 17.9's provider operations forward, Q-23, 28 Nov;
+  noted under both cards).
 - **Screens (29.1, Google Stitch):** **Connections: a generated page**: desktop [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=126785af99b04553983316310fb2fd68) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=b4193d88b702431088fb00a576accdd4), phone [light](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=7272b669d4e243529dc6dd6406ee8579) / [dark](https://stitch.withgoogle.com/projects/15107434053989671605?node-id=80b6bb3f19c449829bd03c30c808b326); `web/plugins/orch/design/connections-{light,dark}-{desktop,phone}.png`.
 
 **29.10 End to end** · needs 29.3–29.9, 29.11, 29.12

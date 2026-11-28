@@ -141,4 +141,20 @@ test("a person sets udl up from the web alone, and each thing is there", async (
 	// (And the card itself never said it failed: a write udl refused is its own error, said on the
 	// card — checked after the answer has landed, not before.)
 	await expect(repo.getByRole("alert")).toHaveCount(0);
+
+	// -- and udl is left as it was found ------------------------------------------------
+	// (Both themes answer from one server, and the specs after this one seed their own project and
+	// read the hosts udl has: a second project makes the board ask which one it is for, and a host
+	// that is nobody's adds a card to the Machines view. So the setup is undone once it is proved.)
+	const origin = new URL(page.url()).origin;
+	const headers = { "X-UDL-CSRF": "1", Origin: origin };
+	const forgot = await page.request.delete("/hosts/e2e-host", { headers });
+	expect(forgot.ok(), `delete host answered ${forgot.status()}`).toBe(true);
+	const dropped = await page.request.post("/plugins/orch/delete_project", {
+		headers,
+		data: { name: "web" },
+	});
+	expect(dropped.ok(), await dropped.text()).toBe(true);
+	const unlinked = await page.request.delete(`/accounts/github:${account}`, { headers });
+	expect(unlinked.ok(), `disconnect answered ${unlinked.status()}`).toBe(true);
 });
