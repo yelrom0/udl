@@ -10047,6 +10047,13 @@ export interface components {
          */
         SecretsStatus: {
             /**
+             * Onepassword
+             * @description Whether a 1Password service account token is kept, which is what `op` is given (never the
+             *     token itself). None when the answer cannot be had: the store says why it cannot be used (its
+             *     `unavailable`, and it is not read), or it was read and refused (a locked keyring, say).
+             */
+            onepassword?: boolean | null;
+            /**
              * Resolvers
              * @description What reads the secrets udl does not keep, and what checking each found.
              */

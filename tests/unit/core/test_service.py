@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 # Package Imports
+import keyring
 import pytest
 from pydantic import BaseModel, SecretStr, ValidationError
 
@@ -34,6 +35,7 @@ from support.engine import (
     settings,
 )
 from support.integrations import FakeIntegration
+from support.secrets import LockedKeyring
 from support.sites import FakeSitePlugin, fake_site
 from udl.chains.models import TagChain
 from udl.config import APISettings, SecretsSettings, Settings
@@ -87,7 +89,10 @@ from udl.plugins.registry import (
     PluginRegistry,
 )
 from udl.plugins.requirements import Requirement, RequirementKind
+from udl.plugins.secrets.base import SecretRef, SecretStore
 from udl.plugins.secrets.keyring import KeyringSecretStore
+from udl.plugins.secrets.memory import MemorySecretStore
+from udl.plugins.secrets.models import GetSecretsStatusRequest, SetToken
 from udl.plugins.sites.base import SitePlugin
 from udl.plugins.sites.youtube import YouTubePlugin
 
@@ -112,12 +117,14 @@ async def make(tmp_path: Path) -> AsyncIterator[Make]:
         db: DBManager | None = None,
         lock: InstanceLock | None = None,
         site_plugins: Sequence[SitePlugin] | None = None,
+        secrets: SecretStore | None = None,
     ) -> UDLService:
         config = config or settings(tmp_path)
         service = UDLService(
             config,
             registry=plugins or registry(),
             databases=db,
+            secrets=secrets,
             cookies=cookies or StaticCookies(),
             site_plugins=site_plugins,
             retry=RetryPolicy(retries=0),
@@ -943,6 +950,21 @@ def test_a_sync_needs_other_connections_to_sync_into(fields: dict[str, Any]) -> 
         SyncDatabasesRequest.model_validate(fields)
 
 
+class UnusableSecretStore(MemorySecretStore):
+    """A memory store that says why it cannot be used, and counts every read of it."""
+
+    def __init__(self, settings: SecretsSettings) -> None:
+        super().__init__(settings)
+        self.reads = 0
+
+    def unavailable(self) -> str | None:
+        return "there is no keyring running here"
+
+    async def get(self, ref: SecretRef) -> SecretStr | None:
+        self.reads += 1
+        return await super().get(ref)
+
+
 class Unreachable(MemoryDatabase):
     """A memory database that cannot be connected to."""
 
@@ -1317,6 +1339,56 @@ def test_a_cookies_from_browser_setting_udl_cannot_read_is_a_config_error(
 
     with pytest.raises(ConfigError, match="cookies_from_browser"):
         UDLService(config, registry=registry())
+
+
+async def test_the_secrets_status_says_whether_a_onepassword_token_is_kept(make: Make) -> None:
+    """A person who has signed in to 1Password is told so: the status carries whether a service
+    account token is kept, and never the token itself."""
+    service = await make()
+
+    before = await service.get_secrets_status(GetSecretsStatusRequest())
+    assert before.onepassword is False
+
+    after = await service.set_onepassword_token(SetToken(token=SecretStr("ops_a_token")))
+    assert after.onepassword is True
+    assert "ops_a_token" not in after.model_dump_json()
+
+
+async def test_the_secrets_status_still_answers_when_the_store_cannot_be_read(
+    tmp_path: Path, make: Make
+) -> None:
+    """A store that is locked, or has no backend at all, is what a person most needs told: the
+    status says why, and that it cannot say whether a 1Password token is kept — not an error."""
+    plugins = registry()
+    plugins.register(SECRETS, KeyringSecretStore)  # (and a keyring that refuses, below)
+    service = await make(
+        settings(tmp_path, secrets=SecretsSettings(store="keyring")), plugins=plugins
+    )
+    before = keyring.get_keyring()
+    try:
+        # (The store opened, and its backend then refused: the read fails, and that is "cannot
+        # say", not a failure to show the status.)
+        keyring.set_keyring(LockedKeyring())
+        found = await service.get_secrets_status(GetSecretsStatusRequest())
+    finally:
+        keyring.set_keyring(before)
+
+    assert found.store == "keyring"
+    assert found.onepassword is None
+
+
+async def test_the_secrets_status_does_not_read_a_store_that_cannot_be_used(make: Make) -> None:
+    """A store that says why it cannot keep secrets is not read at all (reading it is what would
+    fail, or what would ask a person to unlock something they cannot): the status says why, and
+    that it cannot say whether a token is kept."""
+    store = UnusableSecretStore(SecretsSettings())
+    service = await make(secrets=store)
+
+    found = await service.get_secrets_status(GetSecretsStatusRequest())
+
+    assert found.unavailable == store.unavailable()
+    assert found.onepassword is None
+    assert store.reads == 0
 
 
 async def test_the_config_says_when_its_secret_store_cannot_be_used(

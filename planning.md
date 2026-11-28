@@ -120,7 +120,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 26.3 `Feature` and `Task` records, task states and their transitions
   - [x] 26.4 `Link` records: everything linked, both ways; GitHub links kept current by the watcher
   - [x] 26.5 `Note` records: what was done, decisions, findings, on a task or feature
-  - [~] 26.6 Operations (projects, repos, features, tasks, links, notes) via CLI, API and MCP
+  - [x] 26.6 Operations (projects, repos, features, tasks, links, notes) via CLI, API and MCP
   - [~] 26.7 Markdown import: a planning file's tracker, cards and spec sections become features and tasks
   - [x] 26.8 Task sizes: S, M, L, XL (1, 3, 5, 8 points), set by whoever plans the task; points per feature and project
 - [ ] **Phase 27: Agents, assignment and the dispatcher**
@@ -136,32 +136,32 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [x] 27.9 Operations (agents, queues, sessions, suggestions) via CLI, API and MCP
   - [x] 27.10 Working time, hours per point learned per model, forecasts: `orch_progress`
   - [~] 27.11 Chat sessions: Claude Code or Codex as the user, its permission prompts relayed to the web UI, a token per chat
-  - [~] 27.12 Resource limits: gates and sessions under a memory cap; `gates_per_host` (default 1)
-  - [~] 27.13 Host health (memory, swap, disk and btrfs, I/O pressure, harness services) and what udl does about it (`on_breach`, default act and tell)
-  - [~] 27.14 Usage left per agent: a paid key's money left, a free tier's requests left (counted), on the CLI, API, MCP and web
-  - [~] 27.15 Usage left, the rest: the `orch.usage.low`/`orch.usage.out` events, the To action a low paid key raises, `[apps.orch] allowances` (a per-account allowance override), the test that the key never reaches a log or an event, `AgentLine.usage`, the "in all" totals and `source = "counted"` (follow-up to 27.14, which built the operation and the counting)
+  - [x] 27.12 Resource limits: gates and sessions under a memory cap; `gates_per_host` (default 1)
+  - [x] 27.13 Host health (memory, swap, disk and btrfs, I/O pressure, harness services) and what udl does about it (`on_breach`, default act and tell)
+  - [x] 27.14 Usage left per agent: a paid key's money left, a free tier's requests left (counted), on the CLI, API, MCP and web
+  - [x] 27.15 Usage left, the rest: the `orch.usage.low`/`orch.usage.out` events, the To action a low paid key raises, `[apps.orch] allowances` (a per-account allowance override), the test that the key never reaches a log or an event, `AgentLine.usage`, the "in all" totals and `source = "counted"` (follow-up to 27.14, which built the operation and the counting)
 - [ ] **Phase 28: Human comms: Q&A, Ready to merge, To action**
   - [x] 28.1 `Question` records and their thread; an answer reaches the agent and is written into the tasks it concerns
   - [x] 28.2 `HumanAction` records ("To action") with a result
   - [x] 28.3 Ready to merge: ready now (in merge order), coming soon, held, done; merging and what follows a merge
   - [x] 28.4 `orch_inbox`: the three sections in one call; `udl orch inbox`
-  - [~] 28.5 Events for all of it, and a `notify` example
-  - [~] 28.6 End to end on fakes: task → agent → question → answer → PR → ready → merged
+  - [x] 28.5 Events for all of it, and a `notify` example
+  - [x] 28.6 End to end on fakes: task → agent → question → answer → PR → ready → merged
   - [x] 28.7 Auto merge: a project's merger (a reviewer or manager agent) merges its ready PRs after its own review
-  - [~] 28.8 The checkout follows `main`: after a merge, each host's checkout of the repo fast-forwards to it
+  - [x] 28.8 The checkout follows `main`: after a merge, each host's checkout of the repo fast-forwards to it
 - [ ] **Phase 29: Screens (Google Stitch) and the `orch` UI plugin**
   - [x] 29.1 **(Claude)** A new Stitch project: design system from the shell's daisyUI themes; every screen below, desktop and phone, light and dark ([web/plugins/orch/design/](web/plugins/orch/design/README.md)); the user's changes (Q-8) made
   - [x] 29.2 The `orch` UI plugin's skeleton: manifest, routes, stores, live data
-  - [~] 29.3 Inbox (home)
-  - [~] 29.4 Board: features and tasks, agents' queues, the suggested list, drag to assign
-  - [~] 29.5 Feature and task pages (specs, notes, links)
+  - [x] 29.3 Inbox (home)
+  - [x] 29.4 Board: features and tasks, agents' queues, the suggested list, drag to assign
+  - [x] 29.5 Feature and task pages (specs, notes, links)
   - [~] 29.6 Agents: the hierarchy, assigning models to models, an agent's page with its live session
-  - [~] 29.7 Q&A
-  - [~] 29.8 Ready to merge and To action
+  - [x] 29.7 Q&A
+  - [x] 29.8 Ready to merge and To action
   - [~] 29.9 Connections and import (generated pages, guided by the manifest)
-  - [~] 29.10 End to end (Playwright) on fakes, both themes
-  - [~] 29.11 Progress: the burn-up, the forecast, hours per point
-  - [~] 29.12 The chat sidebar: a `panels` point in the shell, and the chat
+  - [x] 29.10 End to end (Playwright) on fakes, both themes
+  - [x] 29.11 Progress: the burn-up, the forecast, hours per point
+  - [x] 29.12 The chat sidebar: a `panels` point in the shell, and the chat
 - [ ] **Phase 30: Moving in, docs and the live check**
   - [~] 30.1 Security review of Phases 24–29
   - [ ] 30.2 Docs: README, `docs/orchestrator.md`, `docs/plugins.md` (apps, runners, generated UIs)
@@ -4046,6 +4046,10 @@ the wizard. Examples for `docs/automations.md`:
   - `POST /ai/try/stream` is the playground's SSE: `ChatChunk`s, then the result.
 - Tests first: an interface test for each operation and its `MATRIX` row.
 - Done when: the parity test lists them all.
+- 29.9's Done when has a leg that needs this card's `set_ai_provider`: an OpenRouter key set by `op://`
+  reference, from the web alone. It moves to **17.9a** (the user pulled these provider operations forward,
+  Q-23, 28 Nov 2026). 29.9's other legs (a 1Password token, a GitHub account, a host, a project with a
+  repo) are proved in `web/e2e/setup-from-the-web.spec.ts` (29.9-done-when, deepseek-a).
 
 **17.10 The `vision` solver** · needs 17.2, 13.5
 - Build: `udl/plugins/solvers/vision.py`: image challenges (reCAPTCHA's and hCaptcha's grids: "select
