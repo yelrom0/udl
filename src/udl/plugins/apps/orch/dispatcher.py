@@ -315,7 +315,10 @@ class Dispatcher:
         self._loops: dict[str, asyncio.Task[None]] = {}
         """The loop of each agent being dispatched to, by name: an agent that has none gets one
         on the next read (a person's make, enable or un-pause needs no restart)."""
-        self._checks: dict[str, asyncio.Task[None]] = {}
+        # (A check is one host's answer for one agent: an agent edited to another host needs a
+        # new one, so the key is both.)
+        self._checks: dict[tuple[str, str], asyncio.Task[None]] = {}
+        self._listening = asyncio.Event()
         """The host check of each agent, by name: started with its loop, and kept for the run."""
         self._all: set[asyncio.Task[None]] = set()
         """Every task this dispatcher started: `stop` ends the ones started later too."""
@@ -394,19 +397,21 @@ class Dispatcher:
     async def _staffed(self) -> None:
         """Start what the enabled agents have not got yet: a loop, its wake and its host check."""
         agents = [one for one in await stored.AgentRecords(self._records).agents() if one.enabled]
-        enabled = {agent.name for agent in agents}
-        for name in [one for one in self._checks if one not in enabled]:
-            # (A deleted or disabled agent's check ends with it: an agent made again under the
-            # same name — perhaps on another host — gets a check of its own.)
-            self._checks.pop(name).cancel()
+        enabled = {(agent.name, agent.host) for agent in agents}
+        for key in [one for one in self._checks if one not in enabled]:
+            # (A deleted or disabled agent's check ends with it, and so does one of a host it is
+            # no longer on: an agent made again under the same name — or moved to another host —
+            # gets a check of its own.)
+            self._checks.pop(key).cancel()
         for agent in agents:
             self._wakes.setdefault(agent.name, asyncio.Event())
             if agent.name not in self._loops:
                 task = self._spawn(self._loop(agent))
                 self._loops[agent.name] = task
                 task.add_done_callback(lambda _, name=agent.name: self._forget(name))
-            if agent.name not in self._checks:
-                self._checks[agent.name] = self._spawn(self._reaching(agent))
+            key = (agent.name, agent.host)
+            if key not in self._checks:
+                self._checks[key] = self._spawn(self._reaching(agent))
 
     def _forget(self, name: str) -> None:
         """Forget `name`'s loop, if it has ended (it was deleted, or udl is stopping): a new
@@ -435,6 +440,9 @@ class Dispatcher:
         """Wake the watcher on each `orch.agent.changed` (29.6): an agent made, edited, paused,
         resumed or deleted takes effect at once, not at the next tick."""
         async with self._events.subscribe("orch.agent.changed") as changed:
+            # (Listening: what a test waits for before making an agent, so that only the event —
+            # not the watcher's next read — can be what dispatches to it.)
+            self._listening.set()
             async for _ in changed:
                 self._changed.set()
 

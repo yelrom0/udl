@@ -3633,11 +3633,14 @@ async def test_an_agent_made_through_the_page_is_dispatched_to_at_once(service: 
     await agents.save_agent(first.model_copy(update={"enabled": False}))
 
     clock = FakeClock()
-    found, _ = await dispatcher(service, clock=clock)
+    counted = _Counted(service.db)
+    found, _ = await dispatcher(service, clock=clock, records=counted)
     running = asyncio.ensure_future(found.run())
     try:
-        await until(lambda: _answered(found.running == ()))
-        assert found.running == ()
+        # (The agent is made after the watcher's first read and after the subscription is up, so
+        # only the event can give it a loop: made before either, the read would find it — or the
+        # event would be published before anything listens — and the test would prove nothing.)
+        await until(lambda: _answered(counted.reads >= 1 and found._listening.is_set()))  # pyright: ignore[reportPrivateUsage]
         await service.call(
             "orch_set_agent",
             {
@@ -3705,6 +3708,55 @@ async def test_a_remade_agent_is_checked_again(service: UDLService) -> None:
     again = await agents.agent("late")
     assert again is not None
     assert again.offline, "the agent made again was never checked"
+
+
+async def test_an_agent_edited_to_another_host_is_checked_again(service: UDLService) -> None:
+    """(An agent moved to another host while udl runs is checked there: a check is the answer for
+    one host, not for the agent's name — kept by name alone, the new host was never asked.)"""
+    agents = AgentRecords(AppRecords(service.db))
+    first = await agents.agent(AGENT)
+    assert first is not None
+    await agents.save_agent(first.model_copy(update={"enabled": False}))
+
+    clock = FakeClock()
+    found, _ = await dispatcher(service, clock=clock)
+    running = asyncio.ensure_future(found.run())
+    try:
+        await agents.save_agent(
+            Agent(name="late", title="Late", runner="fake", host="nowhere", brief="Build it.")
+        )
+        for _ in range(4):
+            await clock.advance(timedelta(seconds=31))
+        gone = await agents.agent("late")
+        assert gone is not None
+        assert gone.offline, "a host that does not answer makes its agent offline"
+        # (Moved to a host of its own: the check of the old one is not the new one's answer.)
+        await agents.save_agent(gone.model_copy(update={"host": "elsewhere"}))
+        for _ in range(4):
+            await clock.advance(timedelta(seconds=31))
+            if ("late", "elsewhere") in found._checks:  # pyright: ignore[reportPrivateUsage]
+                break
+        await clock.advance(timedelta(seconds=31))
+        checks = set(found._checks)  # pyright: ignore[reportPrivateUsage]
+    finally:
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    assert ("late", "elsewhere") in checks, "the new host was never checked"
+    assert ("late", "nowhere") not in checks, "the old host's check was kept"
+
+
+class _Counted(AppRecords):
+    """A store that counts its reads of the agents, so a test can wait for the watcher's own."""
+
+    reads = 0
+
+    async def list[R: Record](self, kind: type[R], query: RecordQuery | None = None) -> list[R]:
+        if kind is Agent:
+            _Counted.reads += 1
+            self.reads += 1
+        return await super().list(kind, query)
 
 
 async def test_a_read_that_fails_does_not_end_the_watcher(service: UDLService) -> None:

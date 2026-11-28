@@ -413,13 +413,10 @@ async function tidy(page: Page, left: Left, origin: string): Promise<void> {
 	// turn for is nudged until it stalls and asks; answering it closes it, as a person would.)
 	// (Up to three passes: a turn already running when the agent was paused can still end and ask
 	// after the first.)
+	const theirs = (one: AskedQuestion): boolean =>
+		one.state === "open" && [left.worker, left.watcher].includes(one.asked_by);
 	for (let pass = 0; pass < 3; pass += 1) {
-		const asked = (await call(page, "list_questions", { project: "udl" })) as {
-			questions?: { key: string; state: string; asked_by: string }[];
-		};
-		const open = (asked.questions ?? []).filter(
-			(one) => one.state === "open" && [left.worker, left.watcher].includes(one.asked_by),
-		);
+		const open = (await asked(page)).filter(theirs);
 		if (open.length === 0) {
 			break;
 		}
@@ -429,19 +426,28 @@ async function tidy(page: Page, left: Left, origin: string): Promise<void> {
 		await page.waitForTimeout(500);
 	}
 	// (It must be closed now: an open one would be pinned on the next spec's inbox.)
-	const left_open = (await call(page, "list_questions", { project: "udl" })) as {
-		questions?: { key: string; state: string; asked_by: string }[];
-	};
-	expect(
-		(left_open.questions ?? [])
-			.filter((one) => one.state === "open" && [left.worker, left.watcher].includes(one.asked_by))
-			.map((one) => `${one.key} ${one.asked_by}`),
-	).toEqual([]);
+	expect((await asked(page)).filter(theirs).map((one) => `${one.key} ${one.asked_by}`)).toEqual([]);
 	const gone = await page.request.delete(`/accounts/${encodeURIComponent(left.account)}`, {
 		headers,
 	});
 	// (404: a test that never connected it; 401: one that never signed in, so there is nothing.)
 	expect([200, 204, 401, 404]).toContain(gone.status());
+}
+
+/** A question as `list_questions` answers with it: enough of it to tell whether it is still
+ * open, and whose it is. */
+interface AskedQuestion {
+	readonly key: string;
+	readonly state: string;
+	readonly asked_by: string;
+}
+
+/** The project's questions, as udl has them. */
+async function asked(page: Page): Promise<AskedQuestion[]> {
+	const found = (await call(page, "list_questions", { project: "udl" })) as {
+		questions?: AskedQuestion[];
+	};
+	return found.questions ?? [];
 }
 
 /** Where a task is now, as udl has it. */
