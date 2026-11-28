@@ -45,6 +45,7 @@ from starlette.requests import Request
 from udl.core.models import DownloadRequest, JobEvent
 from udl.core.operations import Caller, Operation, OperationRegistry, current_caller
 from udl.core.service import UDLService
+from udl.db.models import JsonObject
 from udl.errors import UDLError
 
 DEFAULT_WAIT: Final = 120.0
@@ -110,7 +111,14 @@ def create_server(
             tool = _tool(op, DownloadRequest, _download, service)
         else:
             tool = _tool(op, op.request, functools.partial(_call, op), service)
-        server.add_tool(
+        # (The SDK publishes a response's *validation* schema, which leaves computed fields out —
+        # a task's `points` is in what udl sends, and a client that checks an answer against the
+        # tool's own schema refused `get_task` for it. What a tool answers with is what udl
+        # sends, so its output schema is that: the serialisation one (29.10). The SDK keeps a
+        # tool's metadata behind `_tool_manager`, and `add_tool` is what hands the tool back: an
+        # SDK upgrade has to keep both, or the schema is the SDK's own again.)
+        manager = server._tool_manager  # pyright: ignore[reportPrivateUsage]
+        added = manager.add_tool(
             tool,
             name=op.name,
             title=op.title,
@@ -118,7 +126,26 @@ def create_server(
             annotations=_annotations(op),
             structured_output=True,
         )
+        added.fn_metadata.output_schema = _answer_schema(op.response)
     return server
+
+
+_DEFINITIONS: Final = TypeAdapter(dict[str, JsonObject])
+"""A schema document's `$defs`: each definition an object of its own."""
+
+
+def _answer_schema(response: type[BaseModel]) -> JsonObject:
+    """What an operation's answer looks like as JSON: its serialisation schema, with its root
+    inlined (an MCP client is not required to resolve a `$ref` at the top of the document)."""
+    schema: JsonObject = TypeAdapter(response).json_schema(mode="serialization")
+    root = schema.get("$ref")
+    defs = schema.get("$defs")
+    if isinstance(root, str) and root.startswith("#/$defs/") and isinstance(defs, dict):
+        named = _DEFINITIONS.validate_python(defs)[root.removeprefix("#/$defs/")]
+        inlined: JsonObject = dict(named)
+        inlined["$defs"] = defs
+        return inlined
+    return schema
 
 
 def _annotations(op: Operation) -> ToolAnnotations:

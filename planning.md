@@ -159,7 +159,7 @@ Marks: `- [ ]` open · `- [r]` the agent's PR is green and the bot has nothing o
   - [~] 29.7 Q&A
   - [~] 29.8 Ready to merge and To action
   - [~] 29.9 Connections and import (generated pages, guided by the manifest)
-  - [ ] 29.10 End to end (Playwright) on fakes, both themes
+  - [~] 29.10 End to end (Playwright) on fakes, both themes
   - [~] 29.11 Progress: the burn-up, the forecast, hours per point
   - [~] 29.12 The chat sidebar: a `panels` point in the shell, and the chat
 - [ ] **Phase 30: Moving in, docs and the live check**

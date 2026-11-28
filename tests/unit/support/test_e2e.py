@@ -32,13 +32,16 @@ from support.e2e import (
     free_port,
     github,
     half_built,
+    head_of,
     main,
     port_from,
+    repo,
     serving,
     stop,
     wait_until,
     write_config,
 )
+from support.git import git
 from udl.config import APISettings
 
 E2E_PLUGINS = Path(__file__).resolve().parents[2] / "support" / "e2e_plugins"
@@ -91,10 +94,13 @@ def test_the_config_is_what_the_server_reads(tmp_path: Path) -> None:
     assert f'plugin_dirs = ["{E2E_PLUGINS}", "{ORCH_E2E_PLUGINS}"]' in text
     # (29.12's chat: the scripted runner, whose turns are a file in this test's folder.)
     assert f'[integrations.scripted]\ndir = "{tmp_path}"' in text
-    # (Secrets are the memory store, so no keyring is opened; the web UI is served — a browser is
+    # (Secrets are a file in the harness's temp home — no keyring is opened, and 29.10's story,
+    # which starts udl again, keeps its account connected; the web UI is served — a browser is
     # what most e2e tests are — and its plugins are the fixtures the repo has, not the user's
     # ~/.config/udl/ui-plugins: a working one, and one that throws, for 18.9's plugin host.)
-    assert '[secrets]\nstore = "memory"' in text
+    assert "[secrets]" in text
+    assert 'store = "file"' in text
+    assert f'file = "{tmp_path / "secrets.json"}"' in text
     assert "[web]\nenabled = true" in text
     # (A key, so a browser test signs in as a user does; 18.4's session is what the UI uses.)
     assert 'api_key = "e2e-key"' in text
@@ -210,6 +216,158 @@ def test_the_control_api_holds_the_fake_github_and_says_what_it_was_asked() -> N
             assert asked.status == 200
             assert json.loads(asked.read())["calls"] == []
         assert gh_port > 0
+
+
+def test_the_control_api_puts_a_comment_on_a_pull_as_the_bot(tmp_path: Path) -> None:
+    """(29.10: the review bot's words are a comment on the pull, as GitHub has them.)"""
+    control = Control()
+
+    with serving(control) as port, github() as (fake, _):
+        control.fake_github = fake
+        fake.open_pull(repo="acme/widgets", number=9, head="feat/story", sha="c0ffee")
+        post(
+            port,
+            "/github/comment",
+            {
+                "repo": "acme/widgets",
+                "number": 9,
+                "text": "**Verdict: changes needed**",
+                "login": "claude",
+            },
+        )
+
+    said = fake.comments["acme/widgets#9"]
+    assert [(one.user.login, one.body) for one in said] == [
+        ("claude", "**Verdict: changes needed**")
+    ]
+
+
+def test_the_control_api_says_a_repository_s_pulls_and_their_heads() -> None:
+    """(29.10: the pull a story's agent opened, and the head it has now.)"""
+    control = Control()
+
+    with serving(control) as port, github() as (fake, _):
+        control.fake_github = fake
+        fake.open_pull(repo="acme/widgets", number=9, head="feat/story", sha="c0ffee")
+        fake.push("d00d1e", repo="acme/widgets", number=9)
+
+        answer = urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/github-pulls?repo=acme/widgets", timeout=5
+        )
+        with answer:
+            found = json.loads(answer.read())["pulls"]
+
+    assert {"number": 9, "head": "d00d1e", "branch": "feat/story", "state": "open"} in found
+
+
+def test_a_push_can_name_its_own_repository_and_pull() -> None:
+    """(29.8's push is a person's: 29.10's story pushes its own pull, not the default one.)"""
+    control = Control()
+
+    with serving(control) as port, github() as (fake, _):
+        control.fake_github = fake
+        fake.open_pull(repo="acme/widgets", number=9, head="feat/story", sha="c0ffee")
+        post(port, "/github", {"sha": "d00d1e", "repo": "acme/widgets", "number": 9})
+
+    assert fake.pull_of("acme/widgets", 9).head.sha == "d00d1e"
+    assert fake.pull_of("acme/widgets", 7).head.sha != "d00d1e"
+
+
+def test_a_comment_with_no_pull_is_refused_not_a_key_error() -> None:
+    """(A control body is a model: what is missing is a 400, as the other controls say.)"""
+    control = Control()
+
+    with serving(control) as port, github() as (fake, _):
+        control.fake_github = fake
+        refuses(port, "/github/comment", {"text": "no pull said"}, 400)
+        refuses(port, "/github/comment", {"repo": "acme/widgets", "text": "no number"}, 400)
+
+
+def test_a_body_that_does_not_fit_is_one_answer_and_not_two() -> None:
+    """(A control's body is a model: a body that fails validation gets its 400 and nothing else —
+    a second status line queued behind it would be read as the answer to the next call.)"""
+    control = Control()
+
+    with serving(control) as port, socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+        body = json.dumps({"repo": "acme/widgets"}).encode()
+        sock.sendall(
+            b"POST /github HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
+            + f"Content-Length: {len(body)}\r\n\r\n".encode()
+            + body
+        )
+        said = b""
+        while chunk := sock.recv(4096):
+            said += chunk
+
+    # (One answer, and its status is the refusal: the harness says 400 and ends the connection.)
+    assert said.count(b"HTTP/1.") == 1, said
+    assert b" 400 " in said.split(b"\r\n", 1)[0], said
+
+
+def test_the_control_api_says_a_branch_s_head_in_the_story_s_origin(tmp_path: Path) -> None:
+    """(29.10: the commit a story's branch has in its origin, and "" for one it does not have.)"""
+    control = Control()
+
+    with serving(control) as port, repo(tmp_path) as (checkout, origin):
+        control.repo = (checkout, origin)
+        there = git("rev-parse", "HEAD", cwd=checkout).strip()
+        said = urllib.request.urlopen(f"http://127.0.0.1:{port}/repo/head?branch=main", timeout=5)
+        with said:
+            assert json.loads(said.read())["sha"] == there
+        missing = urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/repo/head?branch=feat/never", timeout=5
+        )
+        with missing:
+            assert json.loads(missing.read())["sha"] == ""
+
+
+def test_a_branch_is_read_from_the_origin_not_the_checkout(tmp_path: Path) -> None:
+    """(The story reads the origin's branches: a branch made in the checkout is not there yet.)"""
+    control = Control()
+
+    with repo(tmp_path) as (checkout, origin):
+        control.repo = (checkout, origin)
+        assert head_of(control, "main") != ""
+        assert head_of(control, "feat/never") == ""
+        assert head_of(Control(), "main") == ""
+
+
+def test_the_story_s_repository_is_a_checkout_of_its_own_origin(tmp_path: Path) -> None:
+    """(29.10: an agent's worktree, gate and push are real git in a temp folder.)"""
+    with repo(tmp_path) as (checkout, origin):
+        assert (checkout / ".git").is_dir()
+        assert (origin / "HEAD").is_file()
+        assert git("rev-parse", "--abbrev-ref", "HEAD", cwd=checkout).strip() == "main"
+        assert (checkout / "Makefile").read_text() == "check:\n\t@true\n"
+
+        answer = None
+        with serving(control := Control()) as port:
+            control.repo = (checkout, origin)
+            asked = urllib.request.urlopen(f"http://127.0.0.1:{port}/repo", timeout=5)
+            with asked:
+                answer = json.loads(asked.read())
+        assert answer == {"checkout": str(checkout), "origin": str(origin)}
+
+
+def test_the_control_api_starts_udl_again() -> None:
+    """(29.10: the dispatcher reads its agents when udl starts, so a story starts it again.)"""
+    control = Control()
+    started: list[str] = []
+    control.restart = lambda: started.append("again")
+
+    with serving(control) as port:
+        post(port, "/restart", {})
+
+    assert started == ["again"]
+
+
+def test_a_control_with_no_udl_refuses_a_restart() -> None:
+    control = Control()
+
+    with serving(control) as port:
+        refuses(port, "/restart", {}, 400)
+
+    assert control.restart is None
 
 
 def test_the_control_api_says_no_to_what_it_does_not_take() -> None:
@@ -405,6 +563,89 @@ def test_main_stops_on_sigterm() -> None:
         if started.poll() is None:  # pragma: no cover - the server must have stopped
             started.kill()
             started.wait(timeout=10)
+
+
+def test_a_first_start_that_never_answers_says_so_and_ends_with_1() -> None:
+    """(A udl that never answers on the first start is the harness's own failure: it says so and
+    ends with 1 — not a traceback out of `main` — and the process it started is stopped.)"""
+    port = free_port()
+    script = (
+        "import pathlib\n"
+        "import support.e2e as e2e\n"
+        "e2e.SHELL_DIST = pathlib.Path('/nonexistent')\n"
+        "started = []\n"
+        "def never(url: str, process: object, **kwargs: object) -> None:\n"
+        "    started.append(process)\n"
+        "    raise TimeoutError('udl serve did not answer')\n"
+        "e2e.wait_until = never\n"
+        f"code = e2e.main(port={port})\n"
+        # (What it started is ended with it: printed, because a process cannot be handed out of
+        # the one that started it, and `None` is a process still running.)
+        "for one in started:\n"
+        "    print('udl poll', one.poll())\n"
+        "raise SystemExit(code)\n"
+    )
+    started = subprocess.Popen(  # noqa: S603 - the module under test
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        env=environment_for_the_test(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        assert started.stdout is not None
+        said = started.stdout.read()
+        assert started.wait(timeout=60) == 1, said
+        # (Said, not raised: the harness's own line, and no traceback.)
+        assert "e2e: udl serve did not answer" in said, said
+        assert "Traceback" not in said, said
+        # (And the udl it started is ended with it: `never` records the process, and its exit is
+        # printed before the harness ends.)
+        polls = [line for line in said.splitlines() if line.startswith("udl poll ")]
+        assert len(polls) == 1, said
+        assert polls[0] != "udl poll None", said
+    finally:
+        if started.stdout is not None:
+            started.stdout.close()
+        if started.poll() is None:  # pragma: no cover - the harness must have ended
+            started.kill()
+            started.wait(timeout=10)
+
+
+def test_the_log_a_test_asks_for_has_udl_s_own_lines(tmp_path: Path) -> None:
+    """(29.10: a test that has to see why udl did what it did names a file, and udl's own lines
+    — `--verbose` — are written to it, not to the harness's own output.)"""
+    port = free_port()
+    logged = tmp_path / "udl.log"
+    script = (
+        "import pathlib\n"
+        "import support.e2e as e2e\n"
+        "e2e.SHELL_DIST = pathlib.Path('/nonexistent')\n"
+        f"raise SystemExit(e2e.main(port={port}))\n"
+    )
+    env = environment_for_the_test()
+    env["UDL_E2E_LOG"] = str(logged)
+    started = subprocess.Popen(  # noqa: S603 - the module under test
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        assert started.stdout is not None
+        assert started.stdout.readline().startswith("e2e: udl serve on"), "the server came up"
+        started.send_signal(signal.SIGTERM)
+        assert started.wait(timeout=30) == 0
+        started.stdout.close()
+    finally:
+        if started.poll() is None:  # pragma: no cover - the server must have stopped
+            started.kill()
+            started.wait(timeout=10)
+
+    assert "udl" in logged.read_text()
 
 
 @contextmanager
