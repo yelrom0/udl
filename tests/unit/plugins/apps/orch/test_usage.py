@@ -27,7 +27,7 @@ from udl.db.manager import DBManager
 from udl.plugins.ai.base import KeyStatus, ProviderHealth
 from udl.plugins.apps.base import AppRecords
 from udl.plugins.apps.orch.agents import Agent
-from udl.plugins.apps.orch.plugin import pick_connection
+from udl.plugins.apps.orch.plugin import allowance_of, pick_connection
 from udl.plugins.apps.orch.records import AgentSession, SessionEvent, SessionRecords
 from udl.plugins.apps.orch.usage import (
     ALLOWANCE_DEFAULT,
@@ -112,8 +112,14 @@ def health(**key: object) -> ProviderHealth:
             left=_money(key.get("left")),
             spent_today=_money(key.get("spent_today")),
             is_free_tier=_flag(key.get("is_free_tier")),
+            free_model_daily_requests=_int(key.get("free_model_daily")),
         ),
     )
+
+
+def _int(value: object) -> int | None:
+    """`value` as a count, or None when it is not one."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _flag(value: object) -> bool | None:
@@ -134,6 +140,8 @@ def measured(
     health: ProviderHealth | None = None,
     clock: Clock | None = None,
     account_today: int | None = None,
+    connection: str = "",
+    allowance: int | None = None,
 ) -> AgentUsage:
     """`usage_of` over a fake session whose transcript is `events`."""
     records = _records()
@@ -145,6 +153,8 @@ def measured(
             sessions=_sessions(records, **{who.name: list(events)}),
             clock=clock or FakeClock(start=NOW),
             account_today=account_today,
+            connection=connection,
+            allowance=allowance,
         )
     )
 
@@ -160,10 +170,11 @@ def test_a_paid_key_s_money_left_is_read_from_the_provider() -> None:
         who=agent(model="deepseek/chat"),
         health=health(label="deepseek-b", spent="4.64", limit="8", left="3.36", spent_today="0.42"),
         clock=clock(),
+        connection="openrouter",
     )
 
     assert isinstance(found.paid, KeyUsage)
-    assert found.paid.label == "deepseek-b"
+    assert found.paid.connection == "openrouter"
     assert found.paid.left == Decimal("3.36")
     assert found.paid.limit == Decimal("8")
     assert found.paid.spent == Decimal("4.64")
@@ -379,6 +390,111 @@ def test_free_agents_on_two_accounts_each_count_their_own() -> None:
     assert two.free.left == ALLOWANCE_DEFAULT - 1
 
 
+def test_the_provider_s_own_count_is_the_account_s_left_not_the_agent_s_requests() -> None:
+    """(27.15: `free_model_daily_requests` is the provider's count of the account's free
+    requests today; the transcript count is the fallback, and `source` says which.)"""
+    found = measured(
+        usage_event(),
+        usage_event(),
+        who=agent(model="deepseek/free"),
+        health=health(label="k", spent="1", limit="10", free_model_daily=7),
+        clock=clock(),
+    )
+
+    assert found.free is not None
+    assert found.requests_today == 2
+    assert found.free.left == ALLOWANCE_DEFAULT - 7
+    assert found.source == "provider"
+
+
+def test_the_provider_s_count_is_the_free_agent_s_own_and_a_paid_agent_keeps_its_count() -> None:
+    """(27.15: the provider's free-model count is the account's free total, so it is a free
+    agent's own figure; a paid agent's turns are its own money, not the free count.)"""
+    records = _records()
+    sessions = _sessions(
+        records,
+        **{"deepseek-b": [usage_event()], "ernie-c": [usage_event(), usage_event()]},
+    )
+    rows = asyncio.run(
+        usage_of_all(
+            records,
+            [
+                agent("deepseek-b", model="openrouter/deepseek/chat"),
+                agent("ernie-c", model="x/free"),
+            ],
+            sessions=sessions,
+            clock=clock(),
+            health_for={
+                "openrouter": health(label="k", spent="1", limit="10", left="9"),
+                "x": health(label="k", spent="1", limit="10", free_model_daily=7),
+            },
+        )
+    )
+    by = {one.agent: one for one in rows}
+
+    assert by["deepseek-b"].requests_today == 1
+    assert by["deepseek-b"].source == "provider"
+    assert by["ernie-c"].requests_today == 2  # (its own count, not the account's)
+    assert by["ernie-c"].source == "provider"  # (the left came from the provider's count)
+    assert by["ernie-c"].free is not None
+    assert by["ernie-c"].free.left == ALLOWANCE_DEFAULT - 7
+
+
+def test_the_all_time_totals_are_over_every_session() -> None:
+    found = measured(
+        usage_event(at=NOW - timedelta(days=1)),
+        usage_event(),
+        who=agent(model="deepseek/free"),
+        health=None,
+        clock=clock(),
+    )
+
+    assert found.all_time.turns == 2
+    assert found.all_time.tokens_in == 20
+    assert found.all_time.cost == Decimal("0.002")
+    assert found.requests_today == 1
+
+
+def test_the_transcript_count_is_the_fallback_and_says_counted() -> None:
+    found = measured(
+        usage_event(),
+        who=agent(model="deepseek/free"),
+        health=health(label="k", spent="1", limit="10"),
+        clock=clock(),
+    )
+
+    assert found.source == "counted"
+    assert found.requests_today == 1
+
+
+def test_a_paid_key_is_read_from_the_provider_and_an_unmeasured_agent_is_none() -> None:
+    paid = measured(
+        who=agent(model="deepseek/chat"),
+        health=health(label="k", spent="1", limit="10", left="9"),
+        clock=clock(),
+    )
+    nothing = measured(who=agent(model="local/llama"), health=None, clock=clock())
+
+    assert paid.source == "provider"
+    assert nothing.source == "none"
+
+
+def test_the_masked_label_of_the_key_is_never_in_the_result() -> None:
+    """(27.15: OpenRouter's `label` is a masked preview of the key itself, not a name: it is
+    not carried into a result, a log or an event.)"""
+    preview = "sk-or-v1-xxx…yyy"
+    found = measured(
+        who=agent(model="deepseek/chat"),
+        health=health(label=preview, spent="1", limit="10", left="9"),
+        clock=clock(),
+        connection="openrouter-ds-a",
+    )
+
+    assert preview not in found.model_dump_json()
+    assert found.paid is not None
+    assert found.paid.connection == "openrouter-ds-a"
+
+
 def test_a_free_agent_s_line_says_the_allowance_and_the_reset() -> None:
     found = measured(
         usage_event(),
@@ -427,6 +543,35 @@ def test_the_connection_is_picked_by_name_then_plugin_then_first() -> None:
     assert pick_connection([first, second, other], "openrouter") is first
     assert pick_connection([first, second, other], "deepseek") is first
     assert pick_connection([conn("openai", "openai", enabled=False), second], "openai") is second
+
+
+def test_an_allowance_override_is_keyed_by_provider_and_model_glob() -> None:
+    """(27.15: `[apps.orch] allowances` gives a free agent its own daily count, keyed
+    `provider:model-glob`; a model that matches no entry keeps the provider's rule.)"""
+    from udl.plugins.apps.orch.settings import OrchSettings
+
+    settings = OrchSettings.model_validate(
+        {"allowances": {"openrouter:deepseek/*": 200, "openrouter:ernie-*": 300}}
+    )
+
+    assert allowance_of(settings, "openrouter/deepseek/free") == 200
+    assert allowance_of(settings, "openrouter/ernie-c") == 300
+    assert allowance_of(settings, "openrouter/other/free") is None
+    assert allowance_of(settings, "x/deepseek/free") is None
+
+
+def test_an_allowance_override_wins_over_the_provider_s_rule() -> None:
+    found = measured(
+        usage_event(),
+        who=agent(model="deepseek/free"),
+        health=health(label="k", spent="1", limit="10", is_free_tier=False),
+        clock=clock(),
+        allowance=200,
+    )
+
+    assert found.free is not None
+    assert found.free.allowance == 200
+    assert found.free.left == 199
 
 
 def test_a_model_s_provider_is_its_prefix() -> None:

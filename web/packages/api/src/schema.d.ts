@@ -3702,6 +3702,13 @@ export interface components {
              * @description How it is shown.
              */
             title: string;
+            /**
+             * Usage
+             * @description What it has left, in a line (27.15: `$3.36 of $8 left`, or `412 of 1,000 requests left,
+             *     resets …`); empty when it has nothing to measure.
+             * @default
+             */
+            usage: string;
         };
         /**
          * AgentRole
@@ -3790,6 +3797,8 @@ export interface components {
         AgentUsage: {
             /** @description The agent it is of. */
             agent: components["schemas"]["Name"];
+            /** @description Its turns, tokens and cost over all its sessions (27.15). */
+            all_time?: components["schemas"]["AllTime"];
             /**
              * Cost
              * @description What its turns cost today, when its harness says.
@@ -3818,6 +3827,14 @@ export interface components {
             requests_today: number;
             /** @description The runner it runs. */
             runner: components["schemas"]["Name"];
+            /**
+             * Source
+             * @description Where its figures came from: `counted` from its transcript, `provider` from the
+             *     provider's own count, `none` when there was nothing to measure (27.15).
+             * @default none
+             * @enum {string}
+             */
+            source: "counted" | "provider" | "none";
             /**
              * State
              * @description Where its usage is: ok, low, or out.
@@ -3870,6 +3887,36 @@ export interface components {
              * @description The filters (two or more).
              */
             all: components["schemas"]["Filter-Output"][];
+        };
+        /**
+         * AllTime
+         * @description An agent's turns, tokens and cost over all its sessions (27.15): the "in all" totals.
+         */
+        AllTime: {
+            /**
+             * Cost
+             * @description What its turns cost, when its harness says.
+             * @default 0
+             */
+            cost: string;
+            /**
+             * Tokens In
+             * @description The tokens it was given.
+             * @default 0
+             */
+            tokens_in: number;
+            /**
+             * Tokens Out
+             * @description The tokens it wrote.
+             * @default 0
+             */
+            tokens_out: number;
+            /**
+             * Turns
+             * @description The turns it has taken.
+             * @default 0
+             */
+            turns: number;
         };
         /**
          * AnswerRequest
@@ -6988,17 +7035,24 @@ export interface components {
          */
         KeyUsage: {
             /**
+             * Connection
+             * @description The udl connection the key was read through (27.15): the key is named by it, never by
+             *     the provider's label, which is a masked preview of the key itself.
+             * @default
+             */
+            connection: string;
+            /**
+             * Free Model Daily Requests
+             * @description How many free-model requests the account has sent today, when the provider counts them
+             *     (OpenRouter's `free_model_daily_requests`); None when it does not say (27.15).
+             */
+            free_model_daily_requests?: number | null;
+            /**
              * Free Tier
              * @description Whether the account is on the free tier (OpenRouter's `is_free_tier`); None when the
              *     provider does not say.
              */
             free_tier?: boolean | null;
-            /**
-             * Label
-             * @description The provider's own label for the key (never the key itself).
-             * @default
-             */
-            label: string;
             /**
              * Left
              * @description What is left, in USD (the provider's `limit_remaining`, or `limit - spent`).
@@ -11952,6 +12006,14 @@ export interface components {
              * @description One row per agent, by name.
              */
             items?: components["schemas"]["AgentUsage"][];
+            /**
+             * Totals
+             * @description What each account has spent today, in all its agents (27.15), keyed by the udl
+             *     connection the key was read through; empty when no connection could be read.
+             */
+            totals?: {
+                [key: string]: string;
+            };
         };
         /**
          * UsageRequest

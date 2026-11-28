@@ -959,6 +959,12 @@
             "minLength": 1,
             "title": "Title",
             "type": "string"
+          },
+          "usage": {
+            "default": "",
+            "description": "What it has left, in a line (27.15: `$3.36 of $8 left`, or `412 of 1,000 requests left,\nresets \u2026`); empty when it has nothing to measure.",
+            "title": "Usage",
+            "type": "string"
           }
         },
         "required": [
@@ -1098,6 +1104,10 @@
             "$ref": "#/components/schemas/Name",
             "description": "The agent it is of."
           },
+          "all_time": {
+            "$ref": "#/components/schemas/AllTime",
+            "description": "Its turns, tokens and cost over all its sessions (27.15)."
+          },
           "cost": {
             "anyOf": [
               {
@@ -1160,6 +1170,17 @@
           "runner": {
             "$ref": "#/components/schemas/Name",
             "description": "The runner it runs."
+          },
+          "source": {
+            "default": "none",
+            "description": "Where its figures came from: `counted` from its transcript, `provider` from the\nprovider's own count, `none` when there was nothing to measure (27.15).",
+            "enum": [
+              "counted",
+              "provider",
+              "none"
+            ],
+            "title": "Source",
+            "type": "string"
           },
           "state": {
             "default": "ok",
@@ -1246,6 +1267,38 @@
           "all"
         ],
         "title": "AllOf",
+        "type": "object"
+      },
+      "AllTime": {
+        "additionalProperties": false,
+        "description": "An agent's turns, tokens and cost over all its sessions (27.15): the \"in all\" totals.",
+        "properties": {
+          "cost": {
+            "default": "0",
+            "description": "What its turns cost, when its harness says.",
+            "title": "Cost",
+            "type": "string"
+          },
+          "tokens_in": {
+            "default": 0,
+            "description": "The tokens it was given.",
+            "title": "Tokens In",
+            "type": "integer"
+          },
+          "tokens_out": {
+            "default": 0,
+            "description": "The tokens it wrote.",
+            "title": "Tokens Out",
+            "type": "integer"
+          },
+          "turns": {
+            "default": 0,
+            "description": "The turns it has taken.",
+            "title": "Turns",
+            "type": "integer"
+          }
+        },
+        "title": "AllTime",
         "type": "object"
       },
       "AnswerRequest": {
@@ -6956,6 +7009,24 @@
         "additionalProperties": false,
         "description": "What a provider key has left, as its provider says (25.3's `ProviderHealth.key`).",
         "properties": {
+          "connection": {
+            "default": "",
+            "description": "The udl connection the key was read through (27.15): the key is named by it, never by\nthe provider's label, which is a masked preview of the key itself.",
+            "title": "Connection",
+            "type": "string"
+          },
+          "free_model_daily_requests": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many free-model requests the account has sent today, when the provider counts them\n(OpenRouter's `free_model_daily_requests`); None when it does not say (27.15).",
+            "title": "Free Model Daily Requests"
+          },
           "free_tier": {
             "anyOf": [
               {
@@ -6967,12 +7038,6 @@
             ],
             "description": "Whether the account is on the free tier (OpenRouter's `is_free_tier`); None when the\nprovider does not say.",
             "title": "Free Tier"
-          },
-          "label": {
-            "default": "",
-            "description": "The provider's own label for the key (never the key itself).",
-            "title": "Label",
-            "type": "string"
           },
           "left": {
             "anyOf": [
@@ -15774,6 +15839,14 @@
             },
             "title": "Items",
             "type": "array"
+          },
+          "totals": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "What each account has spent today, in all its agents (27.15), keyed by the udl\nconnection the key was read through; empty when no connection could be read.",
+            "title": "Totals",
+            "type": "object"
           }
         },
         "title": "UsageList",

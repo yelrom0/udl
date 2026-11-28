@@ -1631,6 +1631,9 @@ class AgentLine(_Model):
     line: str = ""
     """It, in a line: `deepseek-a — implementing 27.10`, or `claude — idle` (what the inbox
     strip shows; the app writes it, so the API and MCP answer it too)."""
+    usage: str = ""
+    """What it has left, in a line (27.15: `$3.36 of $8 left`, or `412 of 1,000 requests left,
+    resets …`); empty when it has nothing to measure."""
 
 
 def agent_line(name: str, role: AgentRole, state: AgentStatus, task: str | None) -> str:

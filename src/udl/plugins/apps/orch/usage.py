@@ -44,6 +44,7 @@ __all__ = [
     "KeyUsage",
     "UsageList",
     "UsageRequest",
+    "UsageSource",
     "UsageState",
     "next_reset",
     "provider_of",
@@ -67,14 +68,19 @@ LOW_RATIO: Final = 0.1
 UsageState = Literal["ok", "low", "out"]
 """Where an agent's usage is: fine, running low, or out."""
 
+UsageSource = Literal["counted", "provider", "none"]
+"""Where a figure came from: `counted` from the transcript's `Usage` events, `provider` from
+the provider's own count (27.15), or `none` when there was nothing to measure."""
+
 
 class KeyUsage(BaseModel):
     """What a provider key has left, as its provider says (25.3's `ProviderHealth.key`)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
-    label: str = ""
-    """The provider's own label for the key (never the key itself)."""
+    connection: str = ""
+    """The udl connection the key was read through (27.15): the key is named by it, never by
+    the provider's label, which is a masked preview of the key itself."""
     spent: Decimal | None = None
     """What it has spent, in USD, when the provider says."""
     limit: Decimal | None = None
@@ -86,6 +92,9 @@ class KeyUsage(BaseModel):
     free_tier: bool | None = None
     """Whether the account is on the free tier (OpenRouter's `is_free_tier`); None when the
     provider does not say."""
+    free_model_daily_requests: int | None = None
+    """How many free-model requests the account has sent today, when the provider counts them
+    (OpenRouter's `free_model_daily_requests`); None when it does not say (27.15)."""
 
 
 class FreeUsage(BaseModel):
@@ -102,6 +111,21 @@ class FreeUsage(BaseModel):
     """What is left of the allowance today (the account's, shared by every agent on it)."""
     resets_at: datetime
     """When the allowance resets (00:00 UTC)."""
+
+
+class AllTime(BaseModel):
+    """An agent's turns, tokens and cost over all its sessions (27.15): the "in all" totals."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
+
+    turns: int = 0
+    """The turns it has taken."""
+    tokens_in: int = 0
+    """The tokens it was given."""
+    tokens_out: int = 0
+    """The tokens it wrote."""
+    cost: Decimal = Decimal(0)
+    """What its turns cost, when its harness says."""
 
 
 class AgentUsage(BaseModel):
@@ -131,6 +155,11 @@ class AgentUsage(BaseModel):
     """When its harness's quota is back, when its session says (27.7)."""
     state: UsageState = "ok"
     """Where its usage is: ok, low, or out."""
+    all_time: AllTime = Field(default_factory=AllTime)
+    """Its turns, tokens and cost over all its sessions (27.15)."""
+    source: UsageSource = "none"
+    """Where its figures came from: `counted` from its transcript, `provider` from the
+    provider's own count, `none` when there was nothing to measure (27.15)."""
 
     @property
     def line(self) -> str:
@@ -168,24 +197,38 @@ def _state(
     return "ok" if left > 0 else "out"
 
 
-async def _counts(
-    sessions: SessionRecords, agent: Agent, since: datetime
-) -> tuple[int, int, int, Decimal]:
-    """`agent`'s day: (requests, tokens in, tokens out, cost) since `since` (00:00 UTC). Each
-    `Usage` event is one request; the tokens and cost are the harness's own figures."""
-    today = tokens_in = tokens_out = 0
-    cost = Decimal(0)
+class _Counts(BaseModel):
+    """An agent's day and its all-time figures, from its transcript."""
+
+    today: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cost: Decimal = Decimal(0)
+    all_turns: int = 0
+    all_tokens_in: int = 0
+    all_tokens_out: int = 0
+    all_cost: Decimal = Decimal(0)
+
+
+async def _counts(sessions: SessionRecords, agent: Agent, since: datetime) -> _Counts:
+    """`agent`'s day and all time: each `Usage` event is one request; the tokens and cost are
+    the harness's own figures, and the day's are those since `since` (00:00 UTC)."""
+    out = _Counts()
     for session in await sessions.sessions(agent.name):
         for event in await sessions.transcript(session.id):
             if not isinstance(event.event, Usage):
                 continue
+            out.all_turns += 1
+            out.all_tokens_in += event.event.input_tokens
+            out.all_tokens_out += event.event.output_tokens
+            out.all_cost += event.event.cost or Decimal(0)
             if event.created_at < since:
                 continue
-            today += 1
-            tokens_in += event.event.input_tokens
-            tokens_out += event.event.output_tokens
-            cost += event.event.cost or Decimal(0)
-    return today, tokens_in, tokens_out, cost
+            out.today += 1
+            out.tokens_in += event.event.input_tokens
+            out.tokens_out += event.event.output_tokens
+            out.cost += event.event.cost or Decimal(0)
+    return out
 
 
 async def usage_of(
@@ -196,6 +239,8 @@ async def usage_of(
     sessions: SessionRecords | None = None,
     clock: Clock,
     account_today: int | None = None,
+    connection: str = "",
+    allowance: int | None = None,
 ) -> AgentUsage:
     """`agent`'s usage (27.14): its paid key from `health` (25.3's `ProviderHealth.key`), or
     its free allowance counted from its sessions' `Usage` events today. Never raises: an agent
@@ -208,7 +253,7 @@ async def usage_of(
     since = clock.now().astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     counts = await _counts(sessions, agent, since)
     limited = await _limited_until(sessions, agent, clock)
-    return await _row(agent, health, clock, counts, account_today, limited)
+    return await _row(agent, health, clock, counts, account_today, limited, connection, allowance)
 
 
 async def usage_of_all(
@@ -217,6 +262,8 @@ async def usage_of_all(
     *,
     health: ProviderHealth | None = None,
     health_for: Mapping[str, ProviderHealth | None] | None = None,
+    connection_for: Mapping[str, str] | None = None,
+    allowance_for: Mapping[str, int | None] | None = None,
     sessions: SessionRecords | None = None,
     clock: Clock,
 ) -> list[AgentUsage]:
@@ -229,22 +276,32 @@ async def usage_of_all(
     it has an entry."""
     sessions = sessions or SessionRecords(records)
     since = clock.now().astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-    counts = [(one, *await _counts(sessions, one, since)) for one in agents]
+    counts = [(one, await _counts(sessions, one, since)) for one in agents]
     # (The allowance is one account's, and an account is its provider: free agents on different
     # providers (different `health_for` entries) each count their own account's requests.)
     per_account: dict[str, int] = {}
-    for one, today, *_ in counts:
+    for one, counted in counts:
         if _is_free(one.model):
             key = provider_of(one.model)
-            per_account[key] = per_account.get(key, 0) + today
+            per_account[key] = per_account.get(key, 0) + counted.today
     out: list[AgentUsage] = []
-    for one, today, tokens_in, tokens_out, cost in counts:
+    for one, counted in counts:
         own = health if health_for is None else health_for.get(provider_of(one.model), health)
         limited = await _limited_until(sessions, one, clock)
         account_today = per_account.get(provider_of(one.model)) if _is_free(one.model) else None
+        connection = (
+            "" if connection_for is None else connection_for.get(provider_of(one.model), "")
+        )
         out.append(
             await _row(
-                one, own, clock, (today, tokens_in, tokens_out, cost), account_today, limited
+                one,
+                own,
+                clock,
+                counted,
+                account_today,
+                limited,
+                connection,
+                None if allowance_for is None else allowance_for.get(one.name),
             )
         )
     return out
@@ -266,29 +323,58 @@ async def _row(
     agent: Agent,
     health: ProviderHealth | None,
     clock: Clock,
-    counts: tuple[int, int, int, Decimal],
+    counts: _Counts,
     account_today: int | None,
     limited: datetime | None,
+    connection: str = "",
+    allowance: int | None = None,
 ) -> AgentUsage:
     """One agent's row from its counts: the paid key, or the free allowance (the account's
-    `left`), plus its own turns and its session's limit."""
-    today, tokens_in, tokens_out, cost = counts
-    key = _key_usage(health)
-    free = _free_usage(today, key, clock, model=agent.model, account_today=account_today)
+    `left`), plus its own turns and its session's limit.
+
+    A free agent's `requests_today` is the provider's own count when it gives one (27.15), and
+    the transcript's count otherwise; `source` says which."""
+    key = _key_usage(health, connection)
+    provider_requests = key.free_model_daily_requests if key is not None else None
+    # (The provider's count is the account's free-model total: it is the free agent's own
+    # figure and what `left` is taken from at once, so one source, not two. A paid agent keeps
+    # its own counted requests.)
+    spent = provider_requests if provider_requests is not None else account_today
+    free = _free_usage(
+        counts.today,
+        key,
+        clock,
+        model=agent.model,
+        account_today=spent,
+        allowance=allowance,
+    )
+    requests = counts.today  # (each agent's own count; the provider's is the account's)
     if free is not None:
         key = None  # (a free agent's key is the account's, not its own: it is not reported as paid)
+    source: UsageSource = (
+        "provider"
+        if (free is not None and provider_requests is not None)
+        else ("counted" if free is not None else ("provider" if key is not None else "none"))
+    )
     return AgentUsage(
         agent=agent.name,
         runner=agent.runner,
         model=agent.model,
         paid=key,
         free=free,
-        requests_today=today,
-        tokens_in=tokens_in,
-        tokens_out=tokens_out,
-        cost=cost,
+        requests_today=requests,
+        tokens_in=counts.tokens_in,
+        tokens_out=counts.tokens_out,
+        cost=counts.cost,
+        all_time=AllTime(
+            turns=counts.all_turns,
+            tokens_in=counts.all_tokens_in,
+            tokens_out=counts.all_tokens_out,
+            cost=counts.all_cost,
+        ),
         limited_until=limited,
         state=_state_of(key, free, limited=limited is not None),
+        source=source,
     )
 
 
@@ -301,18 +387,21 @@ async def _limited_until(sessions: SessionRecords, agent: Agent, clock: Clock) -
     return session.limited_until if session.limited_until > clock.now() else None
 
 
-def _key_usage(health: ProviderHealth | None) -> KeyUsage | None:
-    """`health`'s key as a `KeyUsage`, or None when the provider gave none (a free provider)."""
+def _key_usage(health: ProviderHealth | None, connection: str = "") -> KeyUsage | None:
+    """`health`'s key as a `KeyUsage`, or None when the provider gave none (a free provider).
+    The provider's `label` is a masked preview of the key (27.15), so it is not carried: the
+    key is named by the udl `connection` it was read through."""
     if health is None or health.key is None:
         return None
     key = health.key
     return KeyUsage(
-        label=key.label,
+        connection=connection,
         spent=key.spent,
         limit=key.limit,
         left=key.left,
         spent_today=key.spent_today,
         free_tier=key.is_free_tier,
+        free_model_daily_requests=key.free_model_daily_requests,
     )
 
 
@@ -323,6 +412,7 @@ def _free_usage(
     *,
     model: str = "",
     account_today: int | None = None,
+    allowance: int | None = None,
 ) -> FreeUsage | None:
     """A free model's allowance: 50 a day, or 1,000 once the account has bought credits. A paid
     model — one whose id does not end `:free` or `/free`, and an empty model (the runner's
@@ -336,7 +426,11 @@ def _free_usage(
         return None
     # (The allowance is 1,000 once the account has bought credits — a key that is not on the
     # free tier — 50 otherwise. A key that does not say is a free one.)
-    allowance = ALLOWANCE_PAID if key is not None and key.free_tier is False else ALLOWANCE_DEFAULT
+    allowance = (
+        allowance
+        if allowance is not None
+        else (ALLOWANCE_PAID if key is not None and key.free_tier is False else ALLOWANCE_DEFAULT)
+    )
     spent = account_today if account_today is not None else today
     return FreeUsage(
         requests_today=today,
@@ -372,3 +466,6 @@ class UsageList(BaseModel):
 
     items: list[AgentUsage] = Field(default_factory=list[AgentUsage])
     """One row per agent, by name."""
+    totals: dict[str, Decimal] = Field(default_factory=dict)
+    """What each account has spent today, in all its agents (27.15), keyed by the udl
+    connection the key was read through; empty when no connection could be read."""

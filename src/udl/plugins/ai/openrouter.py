@@ -99,6 +99,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
                 left=credit,
                 spent_today=as_money(key.usage_daily),
                 is_free_tier=key.is_free_tier,
+                free_model_daily_requests=key.free_model_daily_requests,
             ),
         )
 
@@ -146,6 +147,7 @@ class _KeyInfo(BaseModel):
     limit_remaining: JsonValue = None
     usage_daily: JsonValue = None
     is_free_tier: bool | None = None
+    free_model_daily_requests: int | None = None
 
 
 class _Key(BaseModel):

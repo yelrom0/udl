@@ -32,7 +32,7 @@ import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Final, Self
+from typing import Final, Literal, Self
 from uuid import UUID
 
 # Package Imports
@@ -1702,6 +1702,8 @@ class AgentRecords:
                 await self._records.delete(SessionEvent, event.id)
             await self._records.delete(AgentSession, session.id)
         await self.tokens.delete_for(name)
+        for alert in await self._records.list(UsageAlert, RecordQuery(where={"agent": name})):
+            await self._records.delete(UsageAlert, alert.id)
         return await self._records.delete(Agent, agent.id)
 
     async def _check_hierarchy(self, agent: Agent) -> None:
@@ -2192,3 +2194,48 @@ async def _delete_links(records: AppRecords, project: str, owner_kind: str, owne
     """Delete every link hanging on the record `owner` of `owner_kind` in `project` (what
     deleting it takes with it, so a link never answers for a task that is gone)."""
     await LinkRecords(records).delete_for(project, OwnerKind(owner_kind), owner)
+
+
+class UsageAlert(Record):
+    """Where an agent's usage was last seen (27.15): one row per agent, so a crossing is
+    published once — `low` or `out` when it changes, and back to `ok` without an event."""
+
+    kind = "orch_usage_alert"
+    indexed = ("agent",)
+    unique = (("agent",),)
+
+    agent: Name
+    """The agent it is of."""
+    usage_state: Literal["ok", "low", "out"]
+    """Where its usage was last read."""
+    at: AwareDatetime
+    """When it was read."""
+
+    @classmethod
+    def example(cls) -> Self:
+        return cls(agent="deepseek-b", usage_state="ok", at=utcnow())
+
+
+class UsageAlertRecords:
+    """Where the last-seen usage state is kept (27.15): one row per agent, so a crossing is
+    published once and a return to `ok` is not an event."""
+
+    def __init__(self, records: AppRecords) -> None:
+        self._records = records
+
+    @property
+    def records(self) -> AppRecords:
+        """The records the states are kept in."""
+        return self._records
+
+    async def get(self, agent: str) -> UsageAlert | None:
+        """`agent`'s last-seen state, or None when it has never been read."""
+        found = await self._records.list(UsageAlert, RecordQuery(where={"agent": agent}))
+        return found[0] if found else None
+
+    async def save(self, alert: UsageAlert) -> UsageAlert:
+        """Store `alert` (by its agent, so storing one again replaces it)."""
+        found = await self.get(alert.agent)
+        return await self._records.save(
+            alert if found is None else alert.model_copy(update={"id": found.id})
+        )
